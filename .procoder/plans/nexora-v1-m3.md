@@ -5202,6 +5202,11 @@ func TestRecursionRootHints(t *testing.T) {
 		if n := r.eng.Metric(t, "nexora_recursor_mismatched_replies_total", map[string]string{"reason": "case"}); n != 0 {
 			t.Fatalf("case mismatches = %v, want 0 against honest servers", n)
 		}
+		// the counter is live in this run: the spoofing server's lower-cased forgery is counted
+		wantA(t, query(t, addr, "www.spoof.test", dns.TypeA, qopt{}), "192.0.2.77")
+		if n := r.eng.Metric(t, "nexora_recursor_mismatched_replies_total", map[string]string{"reason": "case"}); n < 1 {
+			t.Fatalf("case mismatches = %v after querying the spoofing server, want >= 1", n)
+		}
 	})
 }
 
@@ -5496,6 +5501,15 @@ func TestRPZPolicy(t *testing.T) {
 		}
 		if strings.Contains(rows, named.KeySecretB64) || strings.Contains(rows, hex.EncodeToString(secret)) {
 			t.Fatal("plaintext TSIG secret stored in rpz_zones")
+		}
+		// positive first: the stored snapshots do carry the transfer zone and its key name, so the
+		// byte search below looks at real snapshot content
+		var carried bool
+		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0 and position($2::bytea in snapshot) > 0), false) from config_versions", []byte("rpz.axfr.test."), []byte(named.KeyName)).Scan(&carried); err != nil {
+			t.Fatal(err)
+		}
+		if !carried {
+			t.Fatal("no stored config version carries the transfer zone and its TSIG key name")
 		}
 		var leaked bool
 		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0), false) from config_versions", secret).Scan(&leaked); err != nil {
