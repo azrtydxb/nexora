@@ -4,7 +4,7 @@ CARGO_TARGET_DIR ?= $(CURDIR)/target
 BIN := $(CURDIR)/bin
 GO_PKGS := $(foreach d,mgmt gen bench,$(if $(wildcard $(d)),./$(d)/...))
 
-.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke
+.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench
 
 proto:
 	protoc -I proto \
@@ -57,3 +57,13 @@ build: web-build
 
 fuzz-smoke:
 	cd engine/fuzz && cargo +nightly fuzz run parse_query -- -max_total_time=60
+
+# The PR-tier performance gate run once against the working tree (dev pod): cache-hit dnsperf
+# against a standalone engine; the result JSON lands in $(BIN)/perf.json.
+bench:
+	cargo build --locked --release -p nexora-engine
+	mkdir -p $(BIN)
+	cp $(CARGO_TARGET_DIR)/release/nexora-engine $(BIN)/nexora-engine
+	go build -o $(BIN)/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
+	go build -o $(BIN)/perfgate ./bench/cmd/perfgate
+	$(BIN)/perfgate run --engine $(BIN)/nexora-engine --fixture $(BIN)/nexora-fixture --names 10000 --seconds 20 --workers 2 --out $(BIN)/perf.json

@@ -1,0 +1,121 @@
+name: perf-gate
+on:
+  pull_request:
+    paths:
+      [
+        "engine/**",
+        "proto/**",
+        "Cargo.lock",
+        "bench/**",
+        ".github/workflows/perf-gate.yml",
+      ]
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: perf-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  GOCACHE: /tmp/cache/go-build
+  GOMODCACHE: /tmp/cache/gomod
+  GOPROXY: https://192.168.10.131:8443/repository/golang/,direct
+jobs:
+  relative:
+    name: relative regression vs main (PR)
+    if: github.event_name == 'pull_request'
+    # Base and head run interleaved on the same pod, so only their ratio matters, not the
+    # absolute numbers of a shared arm64 runner.
+    # debt: identical binaries varied by up to 15% between runs on the loaded dev pod, more than
+    # the 5% limit; revisit (more rounds or a dedicated runner) if this gate flakes on ARC pods.
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    timeout-minutes: 75
+    steps:
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { path: head }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { path: base, ref: "${{ github.event.pull_request.base.sha }}" }
+      - name: Build base and head engines, fixture and perfgate
+        run: |
+          (cd base && CARGO_TARGET_DIR=/tmp/target-base cargo build --locked --release -p nexora-engine)
+          (cd head && CARGO_TARGET_DIR=/tmp/target-head cargo build --locked --release -p nexora-engine)
+          (cd head && go build -o ../perfgate ./bench/cmd/perfgate && go build -o ../nexora-fixture ./e2e/fixtures/cmd/nexora-fixture)
+      # The order alternates each round (base-head, head-base, base-head) so a steady drift in the
+      # pod's speed does not always land on the same side.
+      - name: Interleaved A/B benchmark (3 rounds)
+        run: |
+          bench() { ./perfgate run --engine "/tmp/target-$1/release/nexora-engine" --fixture ./nexora-fixture --names 10000 --seconds 20 --workers 2 --out "$1-$2.json"; }
+          bench base 1 && bench head 1
+          bench head 2 && bench base 2
+          bench base 3 && bench head 3
+      - name: Fail on more than 5% QPS drop
+        run: ./perfgate compare --base base-1.json,base-2.json,base-3.json --head head-1.json,head-2.json,head-3.json --max-drop 0.05
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with: { name: perf-relative, path: "*.json" }
+
+  absolute:
+    name: absolute gate on the reference box (nightly, release tags)
+    # Skipped until the reference box (8-core x86_64, 10GbE) is provisioned and its variables set.
+    if: github.event_name != 'pull_request' && vars.NEXORA_REFERENCE_HOST != ''
+    # debt: the load is generated from an amd64 ARC pod rather than a dedicated load host, so a
+    # failing run may be the pod's ceiling; revisit when a dedicated load host joins the org.
+    runs-on: arc-azrtydxb-amd64
+    container: { image: "rust:1.97-trixie" }
+    timeout-minutes: 90
+    env:
+      REF_HOST: ${{ vars.NEXORA_REFERENCE_HOST }}
+      REF_ADDR: ${{ vars.NEXORA_REFERENCE_DNS_ADDR }}
+    steps:
+      - name: Trust the cluster CA and install Go, protoc and dnsperf
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler dnsperf openssh-client
+          curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+          echo /usr/local/go/bin >> "$GITHUB_PATH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build release binaries
+        run: |
+          cargo build --locked --release -p nexora-engine
+          go build -o perfgate ./bench/cmd/perfgate
+          go build -o nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
+      - name: Start the engine on the reference box
+        env:
+          SSH_KEY: ${{ secrets.NEXORA_REFERENCE_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && install -m 600 /dev/null ~/.ssh/nexora-ref && printf '%s\n' "$SSH_KEY" > ~/.ssh/nexora-ref
+          scp -i ~/.ssh/nexora-ref target/release/nexora-engine perfgate nexora-fixture "$REF_HOST:/tmp/"
+          # shellcheck disable=SC2029 # REF_ADDR is meant to expand on this side.
+          ssh -i ~/.ssh/nexora-ref "$REF_HOST" "nohup /tmp/perfgate serve --engine /tmp/nexora-engine --fixture /tmp/nexora-fixture --listen $REF_ADDR --workers 8 > /tmp/perfgate.log 2>&1 & echo \$! > /tmp/perfgate.pid"
+          for _ in $(seq 1 60); do ssh -i ~/.ssh/nexora-ref "$REF_HOST" grep -q 'perfgate ready' /tmp/perfgate.log && break; sleep 1; done
+      - name: Load from this host
+        run: ./perfgate load --target "$REF_ADDR" --names 100000 --seconds 60 --clients 64 --threads 16 --out absolute.json
+      - name: Enforce >= 1,000,000 QPS and p99 < 500us
+        run: ./perfgate absolute --result absolute.json --min-qps 1000000 --max-p99 500us
+      - name: Stop the engine
+        if: always()
+        run: ssh -i ~/.ssh/nexora-ref "$REF_HOST" 'kill $(cat /tmp/perfgate.pid)' || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with: { name: perf-absolute, path: absolute.json }

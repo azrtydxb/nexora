@@ -1,0 +1,8 @@
+# The azrtydxb ARC v2 scale sets. Each runner carries exactly one label, which actionlint cannot
+# know about: arm64 tests, arm64 image push, amd64 tests, amd64 image push.
+self-hosted-runner:
+  labels:
+    - arc-azrtydxb
+    - arc-azrtydxb-publish
+    - arc-azrtydxb-amd64
+    - arc-azrtydxb-amd64-publish
