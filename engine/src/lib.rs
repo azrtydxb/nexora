@@ -1,4 +1,5 @@
 pub mod acl;
+pub mod bootstrap;
 pub mod cache;
 pub mod clock;
 pub mod edns;
@@ -6,6 +7,8 @@ pub mod filter;
 pub mod inflight;
 pub mod proto;
 pub mod runtime;
+pub mod server;
 pub mod snapshot;
+pub mod telemetry;
 pub mod upstream;
 pub mod wire;

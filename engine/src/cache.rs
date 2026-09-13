@@ -128,27 +128,9 @@ impl Cache {
         if ttl == 0 {
             return InsertOutcome::NotCacheable("ttl zero");
         }
-        let mut bytes = match info.opt_range {
-            None => upstream.to_vec(),
-            // Only a trailing OPT is stripped, so no compression pointer or TTL offset moves.
-            Some(r) if r.end == upstream.len() => {
-                let mut b = upstream[..r.start].to_vec();
-                let arcount = u16::from_be_bytes([b[10], b[11]]) - 1;
-                b[10..12].copy_from_slice(&arcount.to_be_bytes());
-                b
-            }
-            Some(_) => return InsertOutcome::NotCacheable("opt not last"),
-        };
-        let name = query.key.as_wire();
-        bytes[HEADER_LEN..HEADER_LEN + name.len()].copy_from_slice(name);
-        let entry = CachedResponse {
-            wire: bytes.into_boxed_slice(),
-            question_name_len: name.len(),
-            ttl_offsets: info.ttl_offsets.into_boxed_slice(),
-            inserted_at: now,
-            ttl,
-            stale_deadline: now.saturating_add(ttl).saturating_add(s.stale_window),
-            rcode: info.rcode,
+        let stale_deadline = now.saturating_add(ttl).saturating_add(s.stale_window);
+        let Some(entry) = entry_from(upstream, query, info, now, ttl, stale_deadline) else {
+            return InsertOutcome::NotCacheable("opt not last");
         };
         self.inner.insert(key, Arc::new(entry));
         InsertOutcome::Inserted { ttl }
@@ -165,6 +147,48 @@ impl Cache {
     pub fn bytes(&self) -> u64 {
         self.inner.weight()
     }
+}
+
+/// A `CachedResponse` for serving any parseable upstream reply once (TTL 0,
+/// SERVFAIL, TC included): `write_cached(.., now = 0, ServeMode::Fresh, ..)`
+/// emits the upstream TTLs unchanged.
+pub fn prepare_uncached(upstream: &[u8], query: &QueryView<'_>) -> Option<CachedResponse> {
+    let info = wire::walk_response(upstream, query).ok()?;
+    entry_from(upstream, query, info, 0, u32::MAX, 0)
+}
+
+/// Strips a trailing OPT and lowercases the question name; `None` when the OPT
+/// is not the last record (stripping it would move offsets).
+fn entry_from(
+    upstream: &[u8],
+    query: &QueryView<'_>,
+    info: wire::ResponseInfo,
+    inserted_at: u32,
+    ttl: u32,
+    stale_deadline: u32,
+) -> Option<CachedResponse> {
+    let mut bytes = match info.opt_range {
+        None => upstream.to_vec(),
+        // Only a trailing OPT is stripped, so no compression pointer or TTL offset moves.
+        Some(r) if r.end == upstream.len() => {
+            let mut b = upstream[..r.start].to_vec();
+            let arcount = u16::from_be_bytes([b[10], b[11]]) - 1;
+            b[10..12].copy_from_slice(&arcount.to_be_bytes());
+            b
+        }
+        Some(_) => return None,
+    };
+    let name = query.key.as_wire();
+    bytes[HEADER_LEN..HEADER_LEN + name.len()].copy_from_slice(name);
+    Some(CachedResponse {
+        wire: bytes.into_boxed_slice(),
+        question_name_len: name.len(),
+        ttl_offsets: info.ttl_offsets.into_boxed_slice(),
+        inserted_at,
+        ttl,
+        stale_deadline,
+        rcode: info.rcode,
+    })
 }
 
 pub enum ServeMode {

@@ -32,6 +32,12 @@ pub struct NameKey {
 }
 
 impl NameKey {
+    /// The root name, for records of queries whose question did not parse.
+    pub const ROOT: NameKey = NameKey {
+        len: 1,
+        buf: [0; 255],
+    };
+
     pub fn as_wire(&self) -> &[u8] {
         &self.buf[..self.len as usize]
     }
