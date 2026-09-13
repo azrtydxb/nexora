@@ -31,3 +31,8 @@
 - `/health` version is `dev`: build-image.sh must pass `--opt build-arg:VERSION=sha-<7>` and Dockerfiles must stamp it.
 - Session cookies not `Secure` on kw (HTTP ingress). Serve GUI over HTTPS on kw (cert-manager cluster-ca already issues `nexora.kw.local`) and set `NEXORA_SECURE_COOKIES=true`; plain-HTTP LoadBalancer access then becomes a redirect.
 - Engine restart re-enrolls as a new engine (emptyDir state) — M5 moves to hostPath (accepted until then).
+
+## M3 reconciliation review (2026-09-13)
+
+- REJECTED design change #2 ("global forwarding not DNSSEC-validated"): spec S-7 requires validation of recursive AND forwarded answers. Binding correction for M3 build: add global setting `dnssec_validate_forwarded` (settings table + snapshot field in the M3 100-199 range + API/GUI Settings toggle), default `true` for new installs and the kw deployment. Forward-mode validation fetches DS/DNSKEY through the forwarder up to the root trust anchor. e2e harness snapshots/settings for tests whose fixtures cannot serve a chain of trust set it `false` explicitly; `TestDNSSECValidation` must include a forward-mode subtest (validating forwarder over the private signed hierarchy) proving AD=1 / bogus->SERVFAIL in forward mode too.
+- Accepted: secrets helper pulled forward from M4, TSIG secrets only over control stream; resolution/DNSSEC/RPZ snapshot-wide (not per group); RPZ file zones as blobs; kw state emptyDir until M5; NetworkPolicy dropped.
