@@ -452,6 +452,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/policy-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPolicyGroups"];
+        put?: never;
+        post: operations["createPolicyGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getPolicyGroup"];
+        put: operations["updatePolicyGroup"];
+        post?: never;
+        delete: operations["deletePolicyGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/safe-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getGlobalSafeSearch"];
+        put: operations["updateGlobalSafeSearch"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rewrites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRewrites"];
+        put?: never;
+        post: operations["createRewrite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rewrites/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateRewrite"];
+        post?: never;
+        delete: operations["deleteRewrite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -743,6 +827,83 @@ export interface components {
                 at: string;
                 qps: number;
             }[];
+        };
+        SafeSearch: {
+            google: boolean;
+            bing: boolean;
+            duckduckgo: boolean;
+            /** @enum {string} */
+            youtube: "off" | "moderate" | "strict";
+        };
+        GlobalSafeSearch: components["schemas"]["SafeSearch"] & {
+            /** Format: int64 */
+            revision: number;
+        };
+        PolicyGroupInput: {
+            name: string;
+            /** @default  */
+            description: string;
+            cidrs: string[];
+            /** @default [] */
+            filter_list_ids: string[];
+            /** @default [] */
+            allowlist: string[];
+            safe_search?: components["schemas"]["SafeSearch"];
+        };
+        PolicyGroupUpdate: components["schemas"]["PolicyGroupInput"] & {
+            /** Format: int64 */
+            revision: number;
+        };
+        PolicyGroup: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string;
+            cidrs: string[];
+            filter_list_ids: string[];
+            allowlist: string[];
+            safe_search: components["schemas"]["SafeSearch"];
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RewriteInput: {
+            /**
+             * Format: uuid
+             * @description null means global
+             */
+            group_id?: string | null;
+            /** @description Domain or *.domain */
+            name: string;
+            /** @enum {string} */
+            type: "A" | "AAAA" | "CNAME";
+            value: string;
+            /** @default 300 */
+            ttl: number;
+        };
+        RewriteUpdate: components["schemas"]["RewriteInput"] & {
+            /** Format: int64 */
+            revision: number;
+        };
+        Rewrite: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            group_id: string | null;
+            name: string;
+            /** @enum {string} */
+            type: "A" | "AAAA" | "CNAME";
+            value: string;
+            ttl: number;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
     };
     responses: {
@@ -1741,6 +1902,276 @@ export interface operations {
                 };
             };
             503: components["responses"]["Error"];
+        };
+    };
+    listPolicyGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All client policy groups ordered by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGroup"][];
+                };
+            };
+        };
+    };
+    createPolicyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyGroupInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGroup"];
+                };
+            };
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getPolicyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGroup"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    updatePolicyGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyGroupUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGroup"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deletePolicyGroup: {
+        parameters: {
+            query: {
+                revision: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted; the group's rewrites are deleted with it. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getGlobalSafeSearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe search for clients in no group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSafeSearch"];
+                };
+            };
+        };
+    };
+    updateGlobalSafeSearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalSafeSearch"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalSafeSearch"];
+                };
+            };
+            409: components["responses"]["Error"];
+        };
+    };
+    listRewrites: {
+        parameters: {
+            query?: {
+                /** @description `all` (default), `global`, or a policy group id. */
+                scope?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rewrites ordered by scope, name, type, value. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rewrite"][];
+                };
+            };
+            422: components["responses"]["Error"];
+        };
+    };
+    createRewrite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RewriteInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rewrite"];
+                };
+            };
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateRewrite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RewriteUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rewrite"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deleteRewrite: {
+        parameters: {
+            query: {
+                revision: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
 }

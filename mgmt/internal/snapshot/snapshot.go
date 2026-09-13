@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
@@ -203,7 +204,50 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 		}
 		snap.Filter.Allowlists = append(snap.Filter.Allowlists, ref)
 	}
+	if err := buildPolicy(ctx, tx, snap); err != nil {
+		return nil, err
+	}
 	return snap, nil
+}
+
+// buildPolicy loads policy groups, rewrites, global safe search and the current blob of every
+// fetched blocklist (enabled or not, since groups may select disabled lists).
+func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot) error {
+	groups, err := store.ListPolicyGroups(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("policy groups: %w", err)
+	}
+	rewrites, err := store.ListRewrites(ctx, tx, nil, true)
+	if err != nil {
+		return fmt.Errorf("rewrites: %w", err)
+	}
+	global, err := store.GetGlobalSafeSearch(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("global safe search: %w", err)
+	}
+	rows, err := tx.Query(ctx, `select f.id, f.name, b.sha256, b.size from filter_lists f
+		join blobs b on b.sha256 = f.current_blob_sha256 where f.kind = 'block'`)
+	if err != nil {
+		return fmt.Errorf("policy blocklists: %w", err)
+	}
+	defer rows.Close()
+	listBlobs := map[uuid.UUID]*controlv1.BlobRef{}
+	for rows.Next() {
+		var id uuid.UUID
+		var size int64
+		ref := &controlv1.BlobRef{}
+		if err := rows.Scan(&id, &ref.Name, &ref.Sha256, &size); err != nil {
+			return fmt.Errorf("policy blocklists: %w", err)
+		}
+		ref.Size = uint64(size)
+		listBlobs[id] = ref
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("policy blocklists: %w", err)
+	}
+	sec := BuildPolicySection(groups, listBlobs, rewrites, global.SafeSearch)
+	snap.PolicyGroups, snap.RewriteSets, snap.GlobalRewriteSetIds = sec.Groups, sec.RewriteSets, sec.GlobalRewriteSetIDs
+	return nil
 }
 
 var (

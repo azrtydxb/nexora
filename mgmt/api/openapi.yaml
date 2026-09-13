@@ -451,6 +451,108 @@ components:
                   qps: { type: number },
                 },
             }
+    SafeSearch:
+      type: object
+      required: [google, bing, duckduckgo, youtube]
+      properties:
+        google: { type: boolean }
+        bing: { type: boolean }
+        duckduckgo: { type: boolean }
+        youtube: { type: string, enum: ["off", moderate, strict] }
+    GlobalSafeSearch:
+      allOf:
+        - { $ref: "#/components/schemas/SafeSearch" }
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: integer, format: int64 }
+    PolicyGroupInput:
+      type: object
+      required: [name, cidrs]
+      properties:
+        name: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9 _.-]{0,62}$" }
+        description: { type: string, maxLength: 500, default: "" }
+        cidrs:
+          { type: array, minItems: 1, maxItems: 1024, items: { type: string } }
+        filter_list_ids:
+          {
+            type: array,
+            maxItems: 256,
+            items: { type: string, format: uuid },
+            default: [],
+          }
+        allowlist:
+          { type: array, maxItems: 10000, items: { type: string }, default: [] }
+        safe_search: { $ref: "#/components/schemas/SafeSearch" }
+    PolicyGroupUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/PolicyGroupInput" }
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: integer, format: int64 }
+    PolicyGroup:
+      type: object
+      required:
+        [
+          id,
+          name,
+          description,
+          cidrs,
+          filter_list_ids,
+          allowlist,
+          safe_search,
+          revision,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        cidrs: { type: array, items: { type: string } }
+        filter_list_ids: { type: array, items: { type: string, format: uuid } }
+        allowlist: { type: array, items: { type: string } }
+        safe_search: { $ref: "#/components/schemas/SafeSearch" }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RewriteInput:
+      type: object
+      required: [name, type, value]
+      properties:
+        group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: null means global,
+          }
+        name:
+          { type: string, maxLength: 255, description: "Domain or *.domain" }
+        type: { type: string, enum: [A, AAAA, CNAME] }
+        value: { type: string, maxLength: 255 }
+        ttl: { type: integer, minimum: 0, maximum: 86400, default: 300 }
+    RewriteUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/RewriteInput" }
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: integer, format: int64 }
+    Rewrite:
+      type: object
+      required:
+        [id, group_id, name, type, value, ttl, revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: [string, "null"], format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [A, AAAA, CNAME] }
+        value: { type: string }
+        ttl: { type: integer }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 paths:
   /health:
     get:
@@ -1324,3 +1426,209 @@ paths:
             },
           "503": { $ref: "#/components/responses/Error" },
         }
+  /policy-groups:
+    get:
+      operationId: listPolicyGroups
+      tags: [policies]
+      responses:
+        "200":
+          description: All client policy groups ordered by name.
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/PolicyGroup" },
+                }
+    post:
+      operationId: createPolicyGroup
+      tags: [policies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyGroupInput" }
+      responses:
+        "201":
+          {
+            description: Created.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PolicyGroup" } },
+              },
+          }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /policy-groups/{id}:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    get:
+      operationId: getPolicyGroup
+      tags: [policies]
+      responses:
+        "200":
+          {
+            description: The group.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PolicyGroup" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updatePolicyGroup
+      tags: [policies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyGroupUpdate" }
+      responses:
+        "200":
+          {
+            description: Updated.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/PolicyGroup" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deletePolicyGroup
+      tags: [policies]
+      parameters:
+        - {
+            name: revision,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64 },
+          }
+      responses:
+        "204":
+          { description: Deleted; the group's rewrites are deleted with it. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /safe-search:
+    get:
+      operationId: getGlobalSafeSearch
+      tags: [policies]
+      responses:
+        "200":
+          {
+            description: Safe search for clients in no group.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/GlobalSafeSearch" } },
+              },
+          }
+    put:
+      operationId: updateGlobalSafeSearch
+      tags: [policies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GlobalSafeSearch" }
+      responses:
+        "200":
+          {
+            description: Updated.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/GlobalSafeSearch" } },
+              },
+          }
+        "409": { $ref: "#/components/responses/Error" }
+  /rewrites:
+    get:
+      operationId: listRewrites
+      tags: [rewrites]
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          description: "`all` (default), `global`, or a policy group id."
+          schema: { type: string }
+      responses:
+        "200":
+          description: Rewrites ordered by scope, name, type, value.
+          content:
+            application/json:
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/Rewrite" } }
+        "422": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createRewrite
+      tags: [rewrites]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RewriteInput" }
+      responses:
+        "201":
+          {
+            description: Created.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rewrite" } },
+              },
+          }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /rewrites/{id}:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    put:
+      operationId: updateRewrite
+      tags: [rewrites]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RewriteUpdate" }
+      responses:
+        "200":
+          {
+            description: Updated.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rewrite" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteRewrite
+      tags: [rewrites]
+      parameters:
+        - {
+            name: revision,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64 },
+          }
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }

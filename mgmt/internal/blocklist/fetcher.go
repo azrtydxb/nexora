@@ -47,7 +47,7 @@ func NewFetcher(st *store.Store, build snapshot.BuildConfig, hc *http.Client) *F
 	return &Fetcher{st: st, build: build, hc: hc, slots: make(chan struct{}, maxConcurrentRefreshes)}
 }
 
-// Run refreshes every enabled list whose refresh interval has elapsed, every 30 s, and deletes
+// Run refreshes every enabled or group-selected list whose refresh interval has elapsed, every 30 s, and deletes
 // unreferenced blobs hourly, until ctx is done.
 func (f *Fetcher) Run(ctx context.Context) {
 	tick := time.NewTicker(pollInterval)
@@ -77,7 +77,7 @@ func (f *Fetcher) RefreshNow(ctx context.Context, p auth.Principal, id string) e
 }
 
 func (f *Fetcher) refreshDue(ctx context.Context) {
-	rows, err := f.st.Pool.Query(ctx, `select id::text from filter_lists where enabled and (last_attempt_at is null
+	rows, err := f.st.Pool.Query(ctx, `select id::text from filter_lists where (enabled or id in (select filter_list_id from policy_group_filter_lists)) and (last_attempt_at is null
 		or last_attempt_at < now() - refresh_interval_seconds * interval '1 second') order by last_attempt_at nulls first`)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -240,6 +240,11 @@ func (f *Fetcher) collectBlobs(ctx context.Context) error {
 			}
 			for _, ref := range append(snap.GetFilter().GetBlocklists(), snap.GetFilter().GetAllowlists()...) {
 				keep = append(keep, ref.GetSha256())
+			}
+			for _, g := range snap.GetPolicyGroups() {
+				for _, ref := range g.GetBlocklists() {
+					keep = append(keep, ref.GetSha256())
+				}
 			}
 			return nil
 		})

@@ -107,6 +107,27 @@ func (e FilterListInputKind) Valid() bool {
 	}
 }
 
+// Defines values for GlobalSafeSearchYoutube.
+const (
+	GlobalSafeSearchYoutubeModerate GlobalSafeSearchYoutube = "moderate"
+	GlobalSafeSearchYoutubeOff      GlobalSafeSearchYoutube = "off"
+	GlobalSafeSearchYoutubeStrict   GlobalSafeSearchYoutube = "strict"
+)
+
+// Valid indicates whether the value is a known member of the GlobalSafeSearchYoutube enum.
+func (e GlobalSafeSearchYoutube) Valid() bool {
+	switch e {
+	case GlobalSafeSearchYoutubeModerate:
+		return true
+	case GlobalSafeSearchYoutubeOff:
+		return true
+	case GlobalSafeSearchYoutubeStrict:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthDatabase.
 const (
 	HealthDatabaseOk          HealthDatabase = "ok"
@@ -227,6 +248,69 @@ func (e ResolverSettingsStrategy) Valid() bool {
 	}
 }
 
+// Defines values for RewriteType.
+const (
+	RewriteTypeA     RewriteType = "A"
+	RewriteTypeAAAA  RewriteType = "AAAA"
+	RewriteTypeCNAME RewriteType = "CNAME"
+)
+
+// Valid indicates whether the value is a known member of the RewriteType enum.
+func (e RewriteType) Valid() bool {
+	switch e {
+	case RewriteTypeA:
+		return true
+	case RewriteTypeAAAA:
+		return true
+	case RewriteTypeCNAME:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RewriteInputType.
+const (
+	RewriteInputTypeA     RewriteInputType = "A"
+	RewriteInputTypeAAAA  RewriteInputType = "AAAA"
+	RewriteInputTypeCNAME RewriteInputType = "CNAME"
+)
+
+// Valid indicates whether the value is a known member of the RewriteInputType enum.
+func (e RewriteInputType) Valid() bool {
+	switch e {
+	case RewriteInputTypeA:
+		return true
+	case RewriteInputTypeAAAA:
+		return true
+	case RewriteInputTypeCNAME:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RewriteUpdateType.
+const (
+	RewriteUpdateTypeA     RewriteUpdateType = "A"
+	RewriteUpdateTypeAAAA  RewriteUpdateType = "AAAA"
+	RewriteUpdateTypeCNAME RewriteUpdateType = "CNAME"
+)
+
+// Valid indicates whether the value is a known member of the RewriteUpdateType enum.
+func (e RewriteUpdateType) Valid() bool {
+	switch e {
+	case RewriteUpdateTypeA:
+		return true
+	case RewriteUpdateTypeAAAA:
+		return true
+	case RewriteUpdateTypeCNAME:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	Admin    Role = "admin"
@@ -242,6 +326,27 @@ func (e Role) Valid() bool {
 	case Operator:
 		return true
 	case Viewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SafeSearchYoutube.
+const (
+	SafeSearchYoutubeModerate SafeSearchYoutube = "moderate"
+	SafeSearchYoutubeOff      SafeSearchYoutube = "off"
+	SafeSearchYoutubeStrict   SafeSearchYoutube = "strict"
+)
+
+// Valid indicates whether the value is a known member of the SafeSearchYoutube enum.
+func (e SafeSearchYoutube) Valid() bool {
+	switch e {
+	case SafeSearchYoutubeModerate:
+		return true
+	case SafeSearchYoutubeOff:
+		return true
+	case SafeSearchYoutubeStrict:
 		return true
 	default:
 		return false
@@ -464,6 +569,18 @@ type FilterListInput struct {
 // FilterListInputKind defines model for FilterListInput.Kind.
 type FilterListInputKind string
 
+// GlobalSafeSearch defines model for GlobalSafeSearch.
+type GlobalSafeSearch struct {
+	Bing       bool                    `json:"bing"`
+	Duckduckgo bool                    `json:"duckduckgo"`
+	Google     bool                    `json:"google"`
+	Revision   int64                   `json:"revision"`
+	Youtube    GlobalSafeSearchYoutube `json:"youtube"`
+}
+
+// GlobalSafeSearchYoutube defines model for GlobalSafeSearch.Youtube.
+type GlobalSafeSearchYoutube string
+
 // Health defines model for Health.
 type Health struct {
 	Database HealthDatabase `json:"database"`
@@ -504,6 +621,41 @@ type JoinTokenCreated struct {
 type LoginRequest struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// PolicyGroup defines model for PolicyGroup.
+type PolicyGroup struct {
+	Allowlist     []string             `json:"allowlist"`
+	Cidrs         []string             `json:"cidrs"`
+	CreatedAt     time.Time            `json:"created_at"`
+	Description   string               `json:"description"`
+	FilterListIds []openapi_types.UUID `json:"filter_list_ids"`
+	Id            openapi_types.UUID   `json:"id"`
+	Name          string               `json:"name"`
+	Revision      int64                `json:"revision"`
+	SafeSearch    SafeSearch           `json:"safe_search"`
+	UpdatedAt     time.Time            `json:"updated_at"`
+}
+
+// PolicyGroupInput defines model for PolicyGroupInput.
+type PolicyGroupInput struct {
+	Allowlist     *[]string             `json:"allowlist,omitempty"`
+	Cidrs         []string              `json:"cidrs"`
+	Description   *string               `json:"description,omitempty"`
+	FilterListIds *[]openapi_types.UUID `json:"filter_list_ids,omitempty"`
+	Name          string                `json:"name"`
+	SafeSearch    *SafeSearch           `json:"safe_search,omitempty"`
+}
+
+// PolicyGroupUpdate defines model for PolicyGroupUpdate.
+type PolicyGroupUpdate struct {
+	Allowlist     *[]string             `json:"allowlist,omitempty"`
+	Cidrs         []string              `json:"cidrs"`
+	Description   *string               `json:"description,omitempty"`
+	FilterListIds *[]openapi_types.UUID `json:"filter_list_ids,omitempty"`
+	Name          string                `json:"name"`
+	Revision      int64                 `json:"revision"`
+	SafeSearch    *SafeSearch           `json:"safe_search,omitempty"`
 }
 
 // QueryLogPage defines model for QueryLogPage.
@@ -556,8 +708,66 @@ type ResolverSettingsBlockMode string
 // ResolverSettingsStrategy defines model for ResolverSettings.Strategy.
 type ResolverSettingsStrategy string
 
+// Rewrite defines model for Rewrite.
+type Rewrite struct {
+	CreatedAt time.Time           `json:"created_at"`
+	GroupId   *openapi_types.UUID `json:"group_id"`
+	Id        openapi_types.UUID  `json:"id"`
+	Name      string              `json:"name"`
+	Revision  int64               `json:"revision"`
+	Ttl       int                 `json:"ttl"`
+	Type      RewriteType         `json:"type"`
+	UpdatedAt time.Time           `json:"updated_at"`
+	Value     string              `json:"value"`
+}
+
+// RewriteType defines model for Rewrite.Type.
+type RewriteType string
+
+// RewriteInput defines model for RewriteInput.
+type RewriteInput struct {
+	// GroupId null means global
+	GroupId *openapi_types.UUID `json:"group_id,omitempty"`
+
+	// Name Domain or *.domain
+	Name  string           `json:"name"`
+	Ttl   *int             `json:"ttl,omitempty"`
+	Type  RewriteInputType `json:"type"`
+	Value string           `json:"value"`
+}
+
+// RewriteInputType defines model for RewriteInput.Type.
+type RewriteInputType string
+
+// RewriteUpdate defines model for RewriteUpdate.
+type RewriteUpdate struct {
+	// GroupId null means global
+	GroupId *openapi_types.UUID `json:"group_id,omitempty"`
+
+	// Name Domain or *.domain
+	Name     string            `json:"name"`
+	Revision int64             `json:"revision"`
+	Ttl      *int              `json:"ttl,omitempty"`
+	Type     RewriteUpdateType `json:"type"`
+	Value    string            `json:"value"`
+}
+
+// RewriteUpdateType defines model for RewriteUpdate.Type.
+type RewriteUpdateType string
+
 // Role defines model for Role.
 type Role string
+
+// SafeSearch defines model for SafeSearch.
+type SafeSearch struct {
+	Bing       bool              `json:"bing"`
+	Duckduckgo bool              `json:"duckduckgo"`
+	Google     bool              `json:"google"`
+	Youtube    SafeSearchYoutube `json:"youtube"`
+}
+
+// SafeSearchYoutube defines model for SafeSearch.Youtube.
+type SafeSearchYoutube string
 
 // SetupRequest defines model for SetupRequest.
 type SetupRequest struct {
@@ -674,6 +884,11 @@ type DeleteFilterListParams struct {
 	Revision Revision `form:"revision" json:"revision"`
 }
 
+// DeletePolicyGroupParams defines parameters for DeletePolicyGroup.
+type DeletePolicyGroupParams struct {
+	Revision int64 `form:"revision" json:"revision"`
+}
+
 // SearchQueryLogParams defines parameters for SearchQueryLog.
 type SearchQueryLogParams struct {
 	From   *time.Time `form:"from,omitempty" json:"from,omitempty"`
@@ -686,6 +901,17 @@ type SearchQueryLogParams struct {
 	Filter *string    `form:"filter,omitempty" json:"filter,omitempty"`
 	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
 	Cursor *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListRewritesParams defines parameters for ListRewrites.
+type ListRewritesParams struct {
+	// Scope `all` (default), `global`, or a policy group id.
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty"`
+}
+
+// DeleteRewriteParams defines parameters for DeleteRewrite.
+type DeleteRewriteParams struct {
+	Revision int64 `form:"revision" json:"revision"`
 }
 
 // DeleteUpstreamParams defines parameters for DeleteUpstream.
@@ -719,8 +945,23 @@ type UpdateFilterListJSONRequestBody = FilterListInput
 // CreateJoinTokenJSONRequestBody defines body for CreateJoinToken for application/json ContentType.
 type CreateJoinTokenJSONRequestBody = JoinTokenCreate
 
+// CreatePolicyGroupJSONRequestBody defines body for CreatePolicyGroup for application/json ContentType.
+type CreatePolicyGroupJSONRequestBody = PolicyGroupInput
+
+// UpdatePolicyGroupJSONRequestBody defines body for UpdatePolicyGroup for application/json ContentType.
+type UpdatePolicyGroupJSONRequestBody = PolicyGroupUpdate
+
 // UpdateResolverSettingsJSONRequestBody defines body for UpdateResolverSettings for application/json ContentType.
 type UpdateResolverSettingsJSONRequestBody = ResolverSettings
+
+// CreateRewriteJSONRequestBody defines body for CreateRewrite for application/json ContentType.
+type CreateRewriteJSONRequestBody = RewriteInput
+
+// UpdateRewriteJSONRequestBody defines body for UpdateRewrite for application/json ContentType.
+type UpdateRewriteJSONRequestBody = RewriteUpdate
+
+// UpdateGlobalSafeSearchJSONRequestBody defines body for UpdateGlobalSafeSearch for application/json ContentType.
+type UpdateGlobalSafeSearchJSONRequestBody = GlobalSafeSearch
 
 // CompleteSetupJSONRequestBody defines body for CompleteSetup for application/json ContentType.
 type CompleteSetupJSONRequestBody = SetupRequest
@@ -827,6 +1068,21 @@ type ServerInterface interface {
 	// (DELETE /join-tokens/{id})
 	RevokeJoinToken(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (GET /policy-groups)
+	ListPolicyGroups(w http.ResponseWriter, r *http.Request)
+
+	// (POST /policy-groups)
+	CreatePolicyGroup(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /policy-groups/{id})
+	DeletePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeletePolicyGroupParams)
+
+	// (GET /policy-groups/{id})
+	GetPolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (PUT /policy-groups/{id})
+	UpdatePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
 	// (GET /query-log)
 	SearchQueryLog(w http.ResponseWriter, r *http.Request, params SearchQueryLogParams)
 
@@ -835,6 +1091,24 @@ type ServerInterface interface {
 
 	// (PUT /resolver-settings)
 	UpdateResolverSettings(w http.ResponseWriter, r *http.Request)
+
+	// (GET /rewrites)
+	ListRewrites(w http.ResponseWriter, r *http.Request, params ListRewritesParams)
+
+	// (POST /rewrites)
+	CreateRewrite(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /rewrites/{id})
+	DeleteRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeleteRewriteParams)
+
+	// (PUT /rewrites/{id})
+	UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (GET /safe-search)
+	GetGlobalSafeSearch(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /safe-search)
+	UpdateGlobalSafeSearch(w http.ResponseWriter, r *http.Request)
 
 	// (GET /setup)
 	GetSetupStatus(w http.ResponseWriter, r *http.Request)
@@ -1016,6 +1290,31 @@ func (_ Unimplemented) RevokeJoinToken(w http.ResponseWriter, r *http.Request, i
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /policy-groups)
+func (_ Unimplemented) ListPolicyGroups(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /policy-groups)
+func (_ Unimplemented) CreatePolicyGroup(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /policy-groups/{id})
+func (_ Unimplemented) DeletePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeletePolicyGroupParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /policy-groups/{id})
+func (_ Unimplemented) GetPolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /policy-groups/{id})
+func (_ Unimplemented) UpdatePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /query-log)
 func (_ Unimplemented) SearchQueryLog(w http.ResponseWriter, r *http.Request, params SearchQueryLogParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1028,6 +1327,36 @@ func (_ Unimplemented) GetResolverSettings(w http.ResponseWriter, r *http.Reques
 
 // (PUT /resolver-settings)
 func (_ Unimplemented) UpdateResolverSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rewrites)
+func (_ Unimplemented) ListRewrites(w http.ResponseWriter, r *http.Request, params ListRewritesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /rewrites)
+func (_ Unimplemented) CreateRewrite(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /rewrites/{id})
+func (_ Unimplemented) DeleteRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeleteRewriteParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /rewrites/{id})
+func (_ Unimplemented) UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /safe-search)
+func (_ Unimplemented) GetGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /safe-search)
+func (_ Unimplemented) UpdateGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1710,6 +2039,128 @@ func (siw *ServerInterfaceWrapper) RevokeJoinToken(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListPolicyGroups operation middleware
+func (siw *ServerInterfaceWrapper) ListPolicyGroups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPolicyGroups(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePolicyGroup operation middleware
+func (siw *ServerInterfaceWrapper) CreatePolicyGroup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePolicyGroup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePolicyGroup operation middleware
+func (siw *ServerInterfaceWrapper) DeletePolicyGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeletePolicyGroupParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePolicyGroup(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPolicyGroup operation middleware
+func (siw *ServerInterfaceWrapper) GetPolicyGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPolicyGroup(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdatePolicyGroup operation middleware
+func (siw *ServerInterfaceWrapper) UpdatePolicyGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdatePolicyGroup(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SearchQueryLog operation middleware
 func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http.Request) {
 
@@ -1879,6 +2330,149 @@ func (siw *ServerInterfaceWrapper) UpdateResolverSettings(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateResolverSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRewrites operation middleware
+func (siw *ServerInterfaceWrapper) ListRewrites(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRewritesParams
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRewrites(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRewrite operation middleware
+func (siw *ServerInterfaceWrapper) CreateRewrite(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRewrite(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRewrite operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRewrite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteRewriteParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRewrite(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRewrite operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRewrite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRewrite(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetGlobalSafeSearch operation middleware
+func (siw *ServerInterfaceWrapper) GetGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGlobalSafeSearch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateGlobalSafeSearch operation middleware
+func (siw *ServerInterfaceWrapper) UpdateGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateGlobalSafeSearch(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2346,6 +2940,39 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/query-log", wrapper.SearchQueryLog)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/policy-groups", wrapper.ListPolicyGroups)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/policy-groups", wrapper.CreatePolicyGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/policy-groups/{id}", wrapper.DeletePolicyGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/policy-groups/{id}", wrapper.GetPolicyGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/policy-groups/{id}", wrapper.UpdatePolicyGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/safe-search", wrapper.GetGlobalSafeSearch)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/safe-search", wrapper.UpdateGlobalSafeSearch)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rewrites", wrapper.ListRewrites)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/rewrites", wrapper.CreateRewrite)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/rewrites/{id}", wrapper.DeleteRewrite)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/rewrites/{id}", wrapper.UpdateRewrite)
 	})
 
 	return r
@@ -3290,6 +3917,223 @@ func (response RevokeJoinToken404JSONResponse) VisitRevokeJoinTokenResponse(w ht
 	return err
 }
 
+type ListPolicyGroupsRequestObject struct {
+}
+
+type ListPolicyGroupsResponseObject interface {
+	VisitListPolicyGroupsResponse(w http.ResponseWriter) error
+}
+
+type ListPolicyGroups200JSONResponse []PolicyGroup
+
+func (response ListPolicyGroups200JSONResponse) VisitListPolicyGroupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePolicyGroupRequestObject struct {
+	Body *CreatePolicyGroupJSONRequestBody
+}
+
+type CreatePolicyGroupResponseObject interface {
+	VisitCreatePolicyGroupResponse(w http.ResponseWriter) error
+}
+
+type CreatePolicyGroup201JSONResponse PolicyGroup
+
+func (response CreatePolicyGroup201JSONResponse) VisitCreatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePolicyGroup409JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreatePolicyGroup409JSONResponse) VisitCreatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreatePolicyGroup422JSONResponse Error
+
+func (response CreatePolicyGroup422JSONResponse) VisitCreatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePolicyGroupRequestObject struct {
+	Id     openapi_types.UUID `json:"id"`
+	Params DeletePolicyGroupParams
+}
+
+type DeletePolicyGroupResponseObject interface {
+	VisitDeletePolicyGroupResponse(w http.ResponseWriter) error
+}
+
+type DeletePolicyGroup204Response struct {
+}
+
+func (response DeletePolicyGroup204Response) VisitDeletePolicyGroupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeletePolicyGroup404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeletePolicyGroup404JSONResponse) VisitDeletePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeletePolicyGroup409JSONResponse Error
+
+func (response DeletePolicyGroup409JSONResponse) VisitDeletePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPolicyGroupRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type GetPolicyGroupResponseObject interface {
+	VisitGetPolicyGroupResponse(w http.ResponseWriter) error
+}
+
+type GetPolicyGroup200JSONResponse PolicyGroup
+
+func (response GetPolicyGroup200JSONResponse) VisitGetPolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPolicyGroup404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetPolicyGroup404JSONResponse) VisitGetPolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePolicyGroupRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *UpdatePolicyGroupJSONRequestBody
+}
+
+type UpdatePolicyGroupResponseObject interface {
+	VisitUpdatePolicyGroupResponse(w http.ResponseWriter) error
+}
+
+type UpdatePolicyGroup200JSONResponse PolicyGroup
+
+func (response UpdatePolicyGroup200JSONResponse) VisitUpdatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePolicyGroup404JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdatePolicyGroup404JSONResponse) VisitUpdatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePolicyGroup409JSONResponse Error
+
+func (response UpdatePolicyGroup409JSONResponse) VisitUpdatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdatePolicyGroup422JSONResponse Error
+
+func (response UpdatePolicyGroup422JSONResponse) VisitUpdatePolicyGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SearchQueryLogRequestObject struct {
 	Params SearchQueryLogParams
 }
@@ -3386,6 +4230,259 @@ func (response UpdateResolverSettings400JSONResponse) VisitUpdateResolverSetting
 type UpdateResolverSettings409JSONResponse Error
 
 func (response UpdateResolverSettings409JSONResponse) VisitUpdateResolverSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRewritesRequestObject struct {
+	Params ListRewritesParams
+}
+
+type ListRewritesResponseObject interface {
+	VisitListRewritesResponse(w http.ResponseWriter) error
+}
+
+type ListRewrites200JSONResponse []Rewrite
+
+func (response ListRewrites200JSONResponse) VisitListRewritesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRewrites422JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListRewrites422JSONResponse) VisitListRewritesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRewriteRequestObject struct {
+	Body *CreateRewriteJSONRequestBody
+}
+
+type CreateRewriteResponseObject interface {
+	VisitCreateRewriteResponse(w http.ResponseWriter) error
+}
+
+type CreateRewrite201JSONResponse Rewrite
+
+func (response CreateRewrite201JSONResponse) VisitCreateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRewrite409JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateRewrite409JSONResponse) VisitCreateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRewrite422JSONResponse Error
+
+func (response CreateRewrite422JSONResponse) VisitCreateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRewriteRequestObject struct {
+	Id     openapi_types.UUID `json:"id"`
+	Params DeleteRewriteParams
+}
+
+type DeleteRewriteResponseObject interface {
+	VisitDeleteRewriteResponse(w http.ResponseWriter) error
+}
+
+type DeleteRewrite204Response struct {
+}
+
+func (response DeleteRewrite204Response) VisitDeleteRewriteResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteRewrite404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteRewrite404JSONResponse) VisitDeleteRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRewrite409JSONResponse Error
+
+func (response DeleteRewrite409JSONResponse) VisitDeleteRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRewriteRequestObject struct {
+	Id   openapi_types.UUID `json:"id"`
+	Body *UpdateRewriteJSONRequestBody
+}
+
+type UpdateRewriteResponseObject interface {
+	VisitUpdateRewriteResponse(w http.ResponseWriter) error
+}
+
+type UpdateRewrite200JSONResponse Rewrite
+
+func (response UpdateRewrite200JSONResponse) VisitUpdateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRewrite404JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateRewrite404JSONResponse) VisitUpdateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRewrite409JSONResponse Error
+
+func (response UpdateRewrite409JSONResponse) VisitUpdateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRewrite422JSONResponse Error
+
+func (response UpdateRewrite422JSONResponse) VisitUpdateRewriteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetGlobalSafeSearchRequestObject struct {
+}
+
+type GetGlobalSafeSearchResponseObject interface {
+	VisitGetGlobalSafeSearchResponse(w http.ResponseWriter) error
+}
+
+type GetGlobalSafeSearch200JSONResponse GlobalSafeSearch
+
+func (response GetGlobalSafeSearch200JSONResponse) VisitGetGlobalSafeSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateGlobalSafeSearchRequestObject struct {
+	Body *UpdateGlobalSafeSearchJSONRequestBody
+}
+
+type UpdateGlobalSafeSearchResponseObject interface {
+	VisitUpdateGlobalSafeSearchResponse(w http.ResponseWriter) error
+}
+
+type UpdateGlobalSafeSearch200JSONResponse GlobalSafeSearch
+
+func (response UpdateGlobalSafeSearch200JSONResponse) VisitUpdateGlobalSafeSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateGlobalSafeSearch409JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateGlobalSafeSearch409JSONResponse) VisitUpdateGlobalSafeSearchResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -3920,6 +5017,21 @@ type StrictServerInterface interface {
 	// (DELETE /join-tokens/{id})
 	RevokeJoinToken(ctx context.Context, request RevokeJoinTokenRequestObject) (RevokeJoinTokenResponseObject, error)
 
+	// (GET /policy-groups)
+	ListPolicyGroups(ctx context.Context, request ListPolicyGroupsRequestObject) (ListPolicyGroupsResponseObject, error)
+
+	// (POST /policy-groups)
+	CreatePolicyGroup(ctx context.Context, request CreatePolicyGroupRequestObject) (CreatePolicyGroupResponseObject, error)
+
+	// (DELETE /policy-groups/{id})
+	DeletePolicyGroup(ctx context.Context, request DeletePolicyGroupRequestObject) (DeletePolicyGroupResponseObject, error)
+
+	// (GET /policy-groups/{id})
+	GetPolicyGroup(ctx context.Context, request GetPolicyGroupRequestObject) (GetPolicyGroupResponseObject, error)
+
+	// (PUT /policy-groups/{id})
+	UpdatePolicyGroup(ctx context.Context, request UpdatePolicyGroupRequestObject) (UpdatePolicyGroupResponseObject, error)
+
 	// (GET /query-log)
 	SearchQueryLog(ctx context.Context, request SearchQueryLogRequestObject) (SearchQueryLogResponseObject, error)
 
@@ -3928,6 +5040,24 @@ type StrictServerInterface interface {
 
 	// (PUT /resolver-settings)
 	UpdateResolverSettings(ctx context.Context, request UpdateResolverSettingsRequestObject) (UpdateResolverSettingsResponseObject, error)
+
+	// (GET /rewrites)
+	ListRewrites(ctx context.Context, request ListRewritesRequestObject) (ListRewritesResponseObject, error)
+
+	// (POST /rewrites)
+	CreateRewrite(ctx context.Context, request CreateRewriteRequestObject) (CreateRewriteResponseObject, error)
+
+	// (DELETE /rewrites/{id})
+	DeleteRewrite(ctx context.Context, request DeleteRewriteRequestObject) (DeleteRewriteResponseObject, error)
+
+	// (PUT /rewrites/{id})
+	UpdateRewrite(ctx context.Context, request UpdateRewriteRequestObject) (UpdateRewriteResponseObject, error)
+
+	// (GET /safe-search)
+	GetGlobalSafeSearch(ctx context.Context, request GetGlobalSafeSearchRequestObject) (GetGlobalSafeSearchResponseObject, error)
+
+	// (PUT /safe-search)
+	UpdateGlobalSafeSearch(ctx context.Context, request UpdateGlobalSafeSearchRequestObject) (UpdateGlobalSafeSearchResponseObject, error)
 
 	// (GET /setup)
 	GetSetupStatus(ctx context.Context, request GetSetupStatusRequestObject) (GetSetupStatusResponseObject, error)
@@ -4769,6 +5899,147 @@ func (sh *strictHandler) RevokeJoinToken(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// ListPolicyGroups operation middleware
+func (sh *strictHandler) ListPolicyGroups(w http.ResponseWriter, r *http.Request) {
+	var request ListPolicyGroupsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPolicyGroups(ctx, request.(ListPolicyGroupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPolicyGroups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPolicyGroupsResponseObject); ok {
+		if err := validResponse.VisitListPolicyGroupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreatePolicyGroup operation middleware
+func (sh *strictHandler) CreatePolicyGroup(w http.ResponseWriter, r *http.Request) {
+	var request CreatePolicyGroupRequestObject
+
+	var body CreatePolicyGroupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreatePolicyGroup(ctx, request.(CreatePolicyGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreatePolicyGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreatePolicyGroupResponseObject); ok {
+		if err := validResponse.VisitCreatePolicyGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeletePolicyGroup operation middleware
+func (sh *strictHandler) DeletePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeletePolicyGroupParams) {
+	var request DeletePolicyGroupRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeletePolicyGroup(ctx, request.(DeletePolicyGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeletePolicyGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeletePolicyGroupResponseObject); ok {
+		if err := validResponse.VisitDeletePolicyGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPolicyGroup operation middleware
+func (sh *strictHandler) GetPolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request GetPolicyGroupRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPolicyGroup(ctx, request.(GetPolicyGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPolicyGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPolicyGroupResponseObject); ok {
+		if err := validResponse.VisitGetPolicyGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdatePolicyGroup operation middleware
+func (sh *strictHandler) UpdatePolicyGroup(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UpdatePolicyGroupRequestObject
+
+	request.Id = id
+
+	var body UpdatePolicyGroupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdatePolicyGroup(ctx, request.(UpdatePolicyGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdatePolicyGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdatePolicyGroupResponseObject); ok {
+		if err := validResponse.VisitUpdatePolicyGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // SearchQueryLog operation middleware
 func (sh *strictHandler) SearchQueryLog(w http.ResponseWriter, r *http.Request, params SearchQueryLogParams) {
 	var request SearchQueryLogRequestObject
@@ -4843,6 +6114,178 @@ func (sh *strictHandler) UpdateResolverSettings(w http.ResponseWriter, r *http.R
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateResolverSettingsResponseObject); ok {
 		if err := validResponse.VisitUpdateResolverSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListRewrites operation middleware
+func (sh *strictHandler) ListRewrites(w http.ResponseWriter, r *http.Request, params ListRewritesParams) {
+	var request ListRewritesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRewrites(ctx, request.(ListRewritesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRewrites")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRewritesResponseObject); ok {
+		if err := validResponse.VisitListRewritesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateRewrite operation middleware
+func (sh *strictHandler) CreateRewrite(w http.ResponseWriter, r *http.Request) {
+	var request CreateRewriteRequestObject
+
+	var body CreateRewriteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateRewrite(ctx, request.(CreateRewriteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateRewrite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateRewriteResponseObject); ok {
+		if err := validResponse.VisitCreateRewriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteRewrite operation middleware
+func (sh *strictHandler) DeleteRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID, params DeleteRewriteParams) {
+	var request DeleteRewriteRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteRewrite(ctx, request.(DeleteRewriteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteRewrite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteRewriteResponseObject); ok {
+		if err := validResponse.VisitDeleteRewriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateRewrite operation middleware
+func (sh *strictHandler) UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request UpdateRewriteRequestObject
+
+	request.Id = id
+
+	var body UpdateRewriteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateRewrite(ctx, request.(UpdateRewriteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateRewrite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateRewriteResponseObject); ok {
+		if err := validResponse.VisitUpdateRewriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetGlobalSafeSearch operation middleware
+func (sh *strictHandler) GetGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
+	var request GetGlobalSafeSearchRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetGlobalSafeSearch(ctx, request.(GetGlobalSafeSearchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetGlobalSafeSearch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetGlobalSafeSearchResponseObject); ok {
+		if err := validResponse.VisitGetGlobalSafeSearchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateGlobalSafeSearch operation middleware
+func (sh *strictHandler) UpdateGlobalSafeSearch(w http.ResponseWriter, r *http.Request) {
+	var request UpdateGlobalSafeSearchRequestObject
+
+	var body UpdateGlobalSafeSearchJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateGlobalSafeSearch(ctx, request.(UpdateGlobalSafeSearchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateGlobalSafeSearch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateGlobalSafeSearchResponseObject); ok {
+		if err := validResponse.VisitUpdateGlobalSafeSearchResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -5140,62 +6583,76 @@ func (sh *strictHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id I
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
