@@ -6312,10 +6312,11 @@ Interfaces:
 // web/src/api/zones.ts
 export function useZones(): UseQueryResult<Schemas["Zone"][]>;
 export function useZone(zoneId: string): UseQueryResult<Schemas["Zone"]>;
+// "Load more" pages with useInfiniteQuery; the cursor is the page param.
 export function useRecords(
   zoneId: string,
-  filter: { name?: string; type?: string; cursor?: string },
-): UseQueryResult<Schemas["RecordPage"]>;
+  filter: { name?: string; type?: string },
+): UseInfiniteQueryResult<InfiniteData<Schemas["RecordPage"]>>;
 export function useSaveRecord(
   zoneId: string,
 ): UseMutationResult<
@@ -6337,7 +6338,7 @@ export function ZoneRecordEditor(props: {
 }): JSX.Element;
 ```
 
-- [ ] Make `TestGUICoverage` start its management plane with key storage — in `e2e/gui_test.go`: `env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}})` — and update M3's `web/e2e/screens/15-rpz.spec.ts`: in the transfer-zone dialog, replace
+- [x] Make `TestGUICoverage` start its management plane with key storage — in `e2e/gui_test.go`: `env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}})` — and update M3's `web/e2e/screens/15-rpz.spec.ts`: in the transfer-zone dialog, replace
 
 ```ts
 await dialog.getByRole("button", { name: "Save" }).click();
@@ -6358,7 +6359,7 @@ with
 
 so the following `Policy override` selection and `Save` store the transfer zone with `hmac-sha256`, `rpz-key.` and the derived secret (the row assertions after it stay).
 
-- [ ] Write the failing `web/e2e/screens/18-zones.spec.ts`:
+- [x] Write the failing `web/e2e/screens/18-zones.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
@@ -6472,7 +6473,7 @@ test("viewer sees zones read-only", async ({ page }) => {
 });
 ```
 
-- [ ] Write the failing `web/e2e/screens/19-zone-security.spec.ts`:
+- [x] Write the failing `web/e2e/screens/19-zone-security.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
@@ -6553,18 +6554,18 @@ test("admin manages TSIG keys, zone signing, rollovers, a secondary refresh and 
 });
 ```
 
-- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect FAIL: Playwright times out on `getByTestId("nav-zones")` and the coverage report lists the M4 operations (e.g. "listZones (GET /zones)") as uncovered.
-- [ ] Implement `web/src/api/zones.ts` in the style of `resolution.ts` (`useQuery`/`useMutation` over `api.GET/POST/PUT/PATCH/DELETE` with `unwrap`, query keys `["zones"]`, `["zones", id]`, `["zones", id, "records", filter]`, `["zones", id, "dnssec"]`, `["tsig-keys"]`, invalidation on success), and extend `ApiError`/`unwrap` in `client.ts` with `details`. Export downloads fetch `/api/v1/zones/{id}/export` with `credentials: "same-origin"` and save through a Blob URL on an `<a download="<zone>zone">`.
-- [ ] Implement the pages:
+- [x] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect FAIL: Playwright times out on `getByTestId("nav-zones")` and the coverage report lists the M4 operations (e.g. "listZones (GET /zones)") as uncovered.
+- [x] Implement `web/src/api/zones.ts` in the style of `resolution.ts` (`useQuery`/`useMutation` over `api.GET/POST/PUT/PATCH/DELETE` with `unwrap`, query keys `["zones"]`, `["zones", id]`, `["zones", id, "records", filter]`, `["zones", id, "dnssec"]`, `["tsig-keys"]`, invalidation on success), and extend `ApiError`/`unwrap` in `client.ts` with `details`. Export downloads fetch `/api/v1/zones/{id}/export` with `credentials: "same-origin"` and save through a Blob URL on an `<a download="<zone>zone">`.
+- [x] Implement the pages:
   - `ZonesPage`: heading "Zones", table (name link, kind, serial, DNSSEC badge, secondary status: last success / expired), link "TSIG keys", "New zone" dialog (title "New zone"; Kind select Primary/Secondary; primary: Zone name, Default TTL, Primary name server, Responsible mailbox, Name servers; secondary: Zone name, Primaries `ip:port` + optional TSIG key), buttons hidden unless `createZone` is permitted (`permissions.ts`).
   - `ZoneDetailPage` (`/zones/:zoneId`): heading = zone name, serial and kind, Radix `Tabs` Records / Transfers / DNSSEC / Import/Export, "Delete zone" with the shared destructive confirm (`data-testid="confirm-delete"`), navigating to `/zones` afterwards.
   - `ZoneRecordsTab`: names shown relative to the zone (`@` for apex), type filter, "Load more" by cursor, "Add record", per-row "Edit"/"Delete"; secondary zones read-only.
-  - `ZoneRecordEditor` (dialog title "Record"): fields Name (relative input, sent absolute), Type (Radix select of the 17 managed types), TTL, Data (placeholder from `zoneRdataHints`); 422 shows `message` under Data; 409 opens an `alertdialog` "This record was changed by someone else" showing the current server value (refetched with `listZoneRecords` by name and type) with buttons Reload (replaces form values and revision) and Cancel.
+  - `ZoneRecordEditor` (dialog title "Record"): fields Name (relative input, sent absolute), Type (Radix select of the 17 managed types), TTL, Data (placeholder from `zoneRdataHints`); 422 shows `message` under Data; 409 opens an `alertdialog` "This record was changed by someone else" showing the current server value (refetched with `listZoneRecords` by name and type) with buttons Reload (replaces form values and revision) and Cancel. The `alertdialog` is rendered inside the Record dialog in place of the form (no nested modal); the Data input also runs a client-side per-type check (`checkRdata` in `zoneRdataHints.ts`: IPv4/IPv6, absolute target names, numeric fields, hex) whose message shows under the field before any request.
   - `ZoneTransfersTab`: Allowed transfer networks (comma-separated input), transfer TSIG key select, notify targets list, update TSIG keys multi-select; secondaries: primaries list, status fields and "Refresh now" (`refreshZone`, then "Refresh requested"); "Save settings" sends `updateZone` with the zone `revision`, shows "Settings saved", and a 409 shows a reload banner.
-  - `ZoneDnssecTab`: enable form (algorithm 13 default / 8, NSEC3 default / NSEC, key backend, propagation delay, parent DS TTL, ZSK lifetime days) with "Enable signing"; a 503 shows the server `message` (M3's "Key storage is not configured on the management plane (NEXORA_KEK_FILE)"); keys table with accessible name "Signing keys" (role, algorithm, tag, state, DS state, backend); DS records (`<zone> IN DS …`) with copy buttons; "Roll ZSK", "Roll KSK" (confirmation `alertdialog` with "Confirm"), "Parent DS published" on KSKs with `ds_state=pending`.
+  - `ZoneDnssecTab`: enable form (algorithm 13 default / 8, NSEC3 default / NSEC, key backend, propagation delay, parent DS TTL, ZSK lifetime days) with "Enable signing"; a 503 shows the server `message` (M3's "Key storage is not configured on the management plane (NEXORA_KEK_FILE)"); keys table with accessible name "Signing keys" (role, algorithm, tag, state, DS state, backend); DS records (`<zone> IN DS …`) with copy buttons; "Roll ZSK", "Roll KSK" (confirmation `alertdialog` with "Confirm"), "Parent DS published" for each active KSK with `ds_state=pending`, listed under the DS records rather than inside the keys table (so the table's state assertions only see key states).
   - `ZoneImportExportTab`: textarea labelled "Zone file" + file picker, "Import" (sends the zone revision; 422 renders `details` as "line N: message" in a `role="alert"` list; success shows "Imported N records"), "Export" button.
   - `TsigKeysPage` (`/zones/tsig-keys`): table, "New TSIG key" dialog (Key name, algorithm select, optional secret) whose success view shows "This secret is shown once", the secret with a copy button, a BIND `key {}` snippet and "Done"; per-row "Delete" with the destructive confirm (sends `revision`).
-- [ ] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, lint including `check-permissions.mjs`, build); then `scripts/dev-exec.sh make e2e-build` and `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect PASS with no uncovered operation.
+- [x] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, lint including `check-permissions.mjs`, build); then `scripts/dev-exec.sh make e2e-build` and `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect PASS with no uncovered operation.
 - [ ] Commit: `git add web e2e/gui_test.go && git commit -m "feat(web): zones, records, transfers, DNSSEC, import/export and TSIG key screens"`.
 
 ## Task 16: kw deployment key storage and smoke subtests

@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Cpu,
   Funnel,
+  Globe,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -108,6 +109,13 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "DNSSEC",
         icon: BadgeCheck,
         op: "getDnssecSettings",
+      },
+      {
+        route: "zones",
+        path: "/zones",
+        label: "Zones",
+        icon: Globe,
+        op: "listZones",
       },
       {
         route: "access-control",

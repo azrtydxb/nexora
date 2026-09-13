@@ -19,7 +19,7 @@ func TestGUICoverage(t *testing.T) {
 	pg := env.StartPostgres()
 	ca := env.InitCA()
 	oidc := env.StartOIDCFixture(harness.OIDCUser{Username: "ada", Email: "ada@example.test", Groups: []string{"nexora-admins"}})
-	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins"})
+	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}})
 	web := env.StartHTTPFixture()
 	web.SetList(t, "gui", "a.gui.test\nb.gui.test\n")
 	fx := env.StartDNSFixture()

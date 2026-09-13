@@ -16,8 +16,11 @@ import { RewritesPage } from "@/pages/RewritesPage";
 import { RpzPage } from "@/pages/RpzPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SetupPage } from "@/pages/SetupPage";
+import { TsigKeysPage } from "@/pages/TsigKeysPage";
 import { UpstreamsPage } from "@/pages/UpstreamsPage";
 import { UsersPage } from "@/pages/UsersPage";
+import { ZoneDetailPage } from "@/pages/ZoneDetailPage";
+import { ZonesPage } from "@/pages/ZonesPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -39,6 +42,9 @@ export const router = createBrowserRouter([
       { path: "rewrites", element: <RewritesPage /> },
       { path: "rpz", element: <RpzPage /> },
       { path: "dnssec", element: <DnssecPage /> },
+      { path: "zones", element: <ZonesPage /> },
+      { path: "zones/tsig-keys", element: <TsigKeysPage /> },
+      { path: "zones/:zoneId", element: <ZoneDetailPage /> },
       { path: "engines", element: <EnginesPage /> },
       { path: "users", element: <UsersPage /> },
       { path: "api-tokens", element: <ApiTokensPage /> },

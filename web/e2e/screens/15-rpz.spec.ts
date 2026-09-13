@@ -71,13 +71,8 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
   await dialog
     .getByLabel("TSIG secret (base64)")
     .fill(btoa("fixture-tsig-key"));
-  await dialog.getByRole("button", { name: "Save" }).click();
-  // TestGUICoverage's management plane runs without NEXORA_KEK_FILE.
-  await expect(dialog.getByRole("alert")).toContainText(
-    "Key storage is not configured on the management plane (NEXORA_KEK_FILE)",
-  );
-  await dialog.getByLabel("TSIG algorithm").click();
-  await page.getByRole("option", { name: "None", exact: true }).click();
+  // TestGUICoverage's management plane has key storage since M4, so the TSIG secret is sealed and
+  // saved; the 503 path without NEXORA_KEK_FILE stays covered by mgmt/internal/api/resolution_test.go.
   await dialog.getByLabel("Policy override").click();
   await page.getByRole("option", { name: "NXDOMAIN", exact: true }).click();
   await dialog.getByRole("button", { name: "Save" }).click();
