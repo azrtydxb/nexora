@@ -2,6 +2,7 @@ pub mod acl;
 pub mod bootstrap;
 pub mod cache;
 pub mod clock;
+pub mod control;
 pub mod edns;
 pub mod filter;
 pub mod inflight;

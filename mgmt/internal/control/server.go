@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
@@ -111,6 +112,11 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	})
 	if err != nil {
 		return grpcError(err)
+	}
+	// Headers now, not with the first snapshot: an engine that is already current would otherwise
+	// wait indefinitely for the response to start and never learn that its Hello was accepted.
+	if err := stream.SendHeader(metadata.MD{}); err != nil {
+		return err
 	}
 
 	sub := newSubscriber(id, hello.AppliedVersion)

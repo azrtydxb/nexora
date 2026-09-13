@@ -23,6 +23,8 @@ func TLSConfig(ca *pki.CA, serverNames []string) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The CA travels in the chain so an enrolling engine can find and pin it by fingerprint.
+	cert.Certificate = append(cert.Certificate[:1:1], ca.Cert.Raw)
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   tls.VerifyClientCertIfGiven,

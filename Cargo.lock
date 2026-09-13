@@ -1187,6 +1187,7 @@ dependencies = [
  "nix",
  "opentelemetry-proto",
  "parking_lot",
+ "pem",
  "prometheus-client",
  "prost",
  "quick_cache",

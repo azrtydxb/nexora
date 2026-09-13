@@ -5809,8 +5809,10 @@ Files:
 - `engine/src/lib.rs` (modify) — add `pub mod control;`
 - `engine/src/main.rs` (modify) — managed mode runs `control::run` on the `nexora-control` runtime
 - `engine/tests/control_unit.rs` (create)
+- `engine/Cargo.toml` (modify) — `pem` (DER to PEM) and `tokio-stream` (request stream) as normal dependencies
 - `mgmt/internal/control/tls.go` (modify) — serve the CA certificate in the chain so engines can pin it during enrollment
-- `e2e/harness/mgmt.go` (create) — CA init, management plane processes, API client, bootstrap, managed engines, raw snapshot publish
+- `mgmt/internal/control/server.go` (modify) — `Connect` sends response headers right after accepting `Hello`; tonic's bidi call resolves only on response headers, so an engine that is already current would otherwise never see the stream start
+- `e2e/harness/mgmt.go` (create) — CA init, management plane processes, API client, bootstrap, managed engines, raw snapshot publish (`InitCA`, `StartMgmt`, `NewAPI`, `Bootstrap` moved here from `e2e/harness/web.go`, where Task 19 added them first; `web.go` keeps `RunPlaywright`)
 - `e2e/harness/lb.go` (create) — in-process TCP load balancer
 - `e2e/control_test.go` (create) — `TestInvalidSnapshotRejected`, `TestMgmtStatelessHA`
 
@@ -5821,7 +5823,7 @@ Interfaces:
 - `e2e/harness/mgmt.go`: `type CA struct { Dir, CertFile, KeyFile string }`; `func (e *Env) InitCA() *CA`; `type MgmtOptions struct { QueryLogBackend, OpenSearchURL, OTLPEndpoint string; OIDC *OIDCFixture; OIDCAdminGroup, OIDCOperatorGroup string; ExtraEnv []string }`; `type Mgmt struct { HTTPAddr, GRPCAddr, BaseURL, GRPCURL string; Proc *Proc }`; `func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt`; `func (m *Mgmt) SetupToken(t *testing.T) string` (from the log line `setup token: `, empty when another instance created it); `type API struct { T *testing.T; Base string; HC *http.Client; Bearer string }`; `func (e *Env) NewAPI(baseURL string) *API` (cookie jar, `DisableKeepAlives: true`); `func (a *API) Do(method, path string, body, out any) (int, error)`; `func (a *API) Must(method, path string, body, out any, want int)`; `func Bootstrap(t *testing.T, e *Env, setupToken, baseURL string) *API` (completes setup as `admin` / `admin-password-e2e`, creates an admin API token, returns a bearer client); `func (a *API) CreateJoinToken() string`; `func (a *API) LatestVersion() uint64`; `func (a *API) WaitEngine(nodeName string, timeout time.Duration, cond func(EngineView) bool) EngineView`; `type EngineView struct { ID, NodeName, Status, RejectedReason string; AppliedVersion uint64; RejectedVersion *uint64; Connected bool }`; `func (e *Env) StartManagedEngine(nodeName string, grpcURLs []string, joinToken string) *Engine`; `func PublishRawSnapshot(t *testing.T, pgURL string, snap *controlv1.ConfigSnapshot) uint64`.
 - `e2e/harness/lb.go`: `type Balancer struct { Addr string }`; `func (e *Env) StartTCPBalancer(backends ...string) *Balancer` (each accepted connection dials backends in order with a 200 ms timeout and pipes bytes both ways; closed on cleanup).
 
-- [ ] Write the failing Rust unit test `engine/tests/control_unit.rs`:
+- [x] Write the failing Rust unit test `engine/tests/control_unit.rs`:
 
 ```rust
 use nexora_engine::control::{backoff, load_identity, parse_join_token, save_identity, Identity};
@@ -5864,7 +5866,7 @@ fn backoff_grows_jitters_and_caps() {
 }
 ```
 
-- [ ] Write the failing acceptance tests `e2e/control_test.go`:
+- [x] Write the failing acceptance tests `e2e/control_test.go`:
 
 ```go
 package e2e
@@ -5992,23 +5994,23 @@ func TestMgmtStatelessHA(t *testing.T) {
 }
 ```
 
-with `func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }` added to `e2e/main_test.go` (import `regexp`).
+with `func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }` defined in `e2e/control_test.go` itself (import `regexp`; `e2e/main_test.go` belongs to Task 11 and did not exist when this task was built).
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect FAIL with ``could not find `control` in `nexora_engine` ``; run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect FAIL with `env.InitCA undefined`.
-- [ ] Modify `mgmt/internal/control/tls.go` so the served `tls.Certificate.Certificate` is `[leafDER, ca.Cert.Raw]`.
-- [ ] Implement `control.rs`:
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect FAIL with ``could not find `control` in `nexora_engine` ``; run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect FAIL with `env.StartManagedEngine undefined` (`InitCA`/`StartMgmt`/`Bootstrap` already existed from Task 19).
+- [x] Modify `mgmt/internal/control/tls.go` so the served `tls.Certificate.Certificate` is `[leafDER, ca.Cert.Raw]`, and `server.go` so `Connect` calls `stream.SendHeader(metadata.MD{})` after the Hello's database update.
+- [x] Implement `control.rs`:
   - `parse_join_token` trims, splits on `.` into exactly `nxj1`, a non-empty `[A-Z2-7]+` secret and 64 lowercase hex.
   - `fetch_pinned_ca` opens a `tokio_rustls` connection to the URL host:port with a custom `rustls::client::danger::ServerCertVerifier` that searches the presented chain (`end_entity` + `intermediates`) for a certificate whose SHA-256 equals `fingerprint`, then verifies the end entity against a `RootCertStore` containing only that CA using `rustls::client::WebPkiServerVerifier`; returns that CA as PEM or `ControlError::Tls("CA fingerprint mismatch")`.
   - `enroll`: `fetch_pinned_ca`, generate an ECDSA P-256 key and CSR with `rcgen` (`KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)`, `CertificateParams::default().serialize_request(&key)`), call `Enroll` over a tonic channel whose `ClientTlsConfig` trusts only the pinned CA (`domain_name` = URL host), convert the returned DER certificates to PEM, and build `Identity`.
   - `channel`: `Endpoint::from_shared(url)?.connect_timeout(3s).http2_keep_alive_interval(10s).keep_alive_timeout(5s).tls_config(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)).identity(tonic::transport::Identity::from_pem(cert, key)).domain_name(host))?.connect().await`.
-  - `fetch_blobs`: for each `BlobRef` in `filter.blocklists` and `filter.allowlists` missing from `blob_dir/<sha256>`, stream `GetBlob` into `blob_dir/<sha256>.tmp`, `verify_blob`, rename.
+  - `fetch_blobs`: for each `BlobRef` in `filter.blocklists` and `filter.allowlists` missing from `blob_dir/<sha256>`, collect the `GetBlob` chunks (refusing more than `size` bytes), `verify_blob`, write `blob_dir/<sha256>.tmp`, rename (the runtime build reads the whole blob into memory anyway).
   - `run`: `identity = load_identity(state_dir)` or, when absent, read `join_token_file`, try `enroll` against each `management_urls` entry with `backoff(attempt)` between rounds, `save_identity`, set `shared.engine_id`. Then loop forever over `management_urls` (round-robin): `channel` -> store `shared.mgmt_channel`, create `EngineControlClient`, `tokio::sync::mpsc::channel::<EngineMessage>(16)` feeding `client.connect(ReceiverStream)`, send `Hello { engine_id, node_name, applied_version: shared.runtime.load().version, engine_version: env!("CARGO_PKG_VERSION") }`, set `metrics.control_connected = true`, reset the attempt counter, spawn a 10 s ticker sending `Stats` (`metrics.stats(&runtime)`), and process inbound messages: `Snapshot` -> `fetch_blobs` (errors become `Rejected{reason}`) -> `tokio::task::spawn_blocking(move || snapshot::apply(&shared.runtime, snap, &DirBlobs { dir: state_dir.join("blobs") }, Some(&state_dir)))` -> send `Applied{version, persist_error}` (and store `metrics.config_version`) or `Rejected{version, reason}`; `VersionAhead` -> stderr line. Any stream/transport error sets `control_connected = false`, clears `mgmt_channel`, sleeps `backoff(attempt)` and moves to the next URL.
-- [ ] Modify `main.rs`: in managed mode, after serving the persisted snapshot (if any), spawn `control::run(shared.clone(), boot.clone())` on the `nexora-control` runtime.
-- [ ] Implement `e2e/harness/mgmt.go`: `InitCA` runs `nexora-mgmt ca init --out <Dir>/ca`; `StartMgmt` picks HTTP/gRPC ports and runs `nexora-mgmt serve` with env `NEXORA_DATABASE_URL`, `NEXORA_HTTP_LISTEN=127.0.0.1:<p>`, `NEXORA_GRPC_LISTEN=127.0.0.1:<p>`, `NEXORA_CA_CERT_FILE`, `NEXORA_CA_KEY_FILE`, `NEXORA_GRPC_SERVER_NAMES=127.0.0.1`, `NEXORA_PUBLIC_URL=http://127.0.0.1:<p>`, `NEXORA_SECURE_COOKIES=false`, `NEXORA_QUERYLOG_BACKEND` (default `builtin`), OpenSearch/OTLP/OIDC variables from options (OIDC client secret file from the fixture), waits for `http listening on` and `grpc listening on`. `StartManagedEngine` writes the join token to `<dir>/join-token` and `engine.toml` with `management_urls`, `join_token_file`, loopback listeners, `workers = 2`, and waits for `control connected to`. `PublishRawSnapshot` connects with pgx, takes `pg_advisory_xact_lock(hashtext('nexora:config_version'))`, sets `snap.Version = max+1`, inserts into `config_versions(version, created_by, summary, snapshot)` with `created_by='e2e'`, and runs `select pg_notify('nexora_config', $1)`. `WaitEngine` polls `GET /engines` every 200 ms matching `node_name`.
-- [ ] Implement `e2e/harness/lb.go` per the interface.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect PASS: `3 passed`.
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect PASS: `--- PASS: TestInvalidSnapshotRejected` and `--- PASS: TestMgmtStatelessHA`.
-- [ ] Commit: `git add engine mgmt/internal/control/tls.go e2e && git commit -m "engine: management-plane client with pinned enrollment; e2e invalid snapshot and HA tests"`.
+- [x] Modify `main.rs`: in managed mode, after serving the persisted snapshot (if any), spawn `control::run(shared.clone(), boot.clone())` on the `nexora-control` runtime.
+- [x] Implement `e2e/harness/mgmt.go`: `InitCA` runs `nexora-mgmt ca init --out <Dir>/ca`; `StartMgmt` picks HTTP/gRPC ports and runs `nexora-mgmt serve` with env `NEXORA_DATABASE_URL`, `NEXORA_HTTP_LISTEN=127.0.0.1:<p>`, `NEXORA_GRPC_LISTEN=127.0.0.1:<p>`, `NEXORA_CA_CERT_FILE`, `NEXORA_CA_KEY_FILE`, `NEXORA_GRPC_SERVER_NAMES=127.0.0.1,localhost`, `NEXORA_PUBLIC_URL=http://127.0.0.1:<p>`, `NEXORA_SECURE_COOKIES=false`, `NEXORA_QUERYLOG_BACKEND` (default `builtin`), OpenSearch/OTLP/OIDC variables from options (OIDC client secret file from the fixture), waits for `http listening on` and `grpc listening on`. `StartManagedEngine` writes the join token to `<dir>/join-token` and `engine.toml` with `management_urls`, `join_token_file`, loopback listeners, `workers = 2`, and waits for `control connected to`. `PublishRawSnapshot` connects with pgx, takes `pg_advisory_xact_lock(hashtext('nexora:config_version'))`, sets `snap.Version = max+1`, inserts into `config_versions(version, created_by, summary, snapshot)` with `created_by='e2e'`, and runs `select pg_notify('nexora_config', $1)`. `WaitEngine` polls `GET /engines` every 200 ms matching `node_name`.
+- [x] Implement `e2e/harness/lb.go` per the interface.
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect PASS: `3 passed`.
+- [x] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect PASS: `--- PASS: TestInvalidSnapshotRejected` and `--- PASS: TestMgmtStatelessHA`.
+- [x] Commit with explicit paths: `engine/src/control.rs engine/src/lib.rs engine/src/main.rs engine/tests/control_unit.rs engine/Cargo.toml Cargo.lock mgmt/internal/control/tls.go mgmt/internal/control/server.go e2e/harness/mgmt.go e2e/harness/web.go e2e/harness/lb.go e2e/control_test.go`.
 
 ## Task 17: Blocklist subscriptions — fetcher, parser, normalised blobs, and the subscription acceptance test
 
@@ -7512,7 +7514,10 @@ Files:
 - `bench/cmd/perfgate/gate.go` (create) — threshold logic
 - `bench/cmd/perfgate/gate_test.go` (create)
 - `bench/corpus/names.go` (create) — deterministic cache-hit corpus generator
+- `bench/dnsperf/dnsperf.go`, `bench/dnsperf/dnsperf_test.go`, `bench/dnsperf/testdata/output.txt` (create) — as built: Task 18 had not run yet, so this task created the package to Task 18's `dnsperf.{Options, Result, Run, Parse}` interface with its capture step and tests; Task 18 consumes it as existing
 - `.github/workflows/perf-gate.yml` (create)
+- `.github/actionlint.yaml` (create) — the four ARC runner labels, so actionlint accepts them
+- `Makefile` (modify) — `bench` target (the PR-tier run once, into `bin/perf.json`)
 
 Interfaces:
 
@@ -7521,13 +7526,13 @@ Interfaces:
 - `func Compare(base, head []dnsperf.Result, maxDrop float64) (Verdict, error)` where `type Verdict struct { BaseQPS, HeadQPS, Drop float64; Pass bool }` uses the median QPS of each side; `Pass` is `head >= base*(1-maxDrop)`.
 - `func Absolute(r dnsperf.Result, minQPS float64, maxP99 time.Duration) (Verdict2, error)` with `type Verdict2 struct { QPS float64; P99 time.Duration; Pass bool; Reasons []string }`.
 - CLI:
-  - `perfgate run --engine PATH --fixture PATH --names 10000 --seconds 20 --workers N --out FILE` — starts the fixture and a standalone engine on loopback (engine `workers = N`), warms every name once, runs dnsperf, writes the `dnsperf.Result` JSON.
+  - `perfgate run --engine PATH --fixture PATH --names 10000 --seconds 20 --workers N --out FILE [--clients 64] [--threads T]` (as built: `--threads` defaults to `GOMAXPROCS - workers`) — starts the fixture and a standalone engine on loopback (engine `workers = N`), warms every name once, runs dnsperf, writes the `dnsperf.Result` JSON.
   - `perfgate serve --engine PATH --fixture PATH --listen ADDR --workers N` — same setup bound to `ADDR`, prints `perfgate ready`, runs until SIGTERM (reference box).
   - `perfgate load --target ADDR --names 10000 --seconds 60 --clients 64 --threads 16 --out FILE` — warm + dnsperf against a remote engine (load host).
   - `perfgate compare --base a.json,b.json,c.json --head d.json,e.json,f.json --max-drop 0.05` — prints the verdict, exit 1 when failing.
   - `perfgate absolute --result FILE --min-qps 1000000 --max-p99 500us` — prints reasons, exit 1 when failing.
 
-- [ ] Write the failing test `bench/cmd/perfgate/gate_test.go`:
+- [x] Write the failing test `bench/cmd/perfgate/gate_test.go`:
 
 ```go
 package main
@@ -7576,10 +7581,11 @@ func TestAbsoluteThresholds(t *testing.T) {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./bench/cmd/perfgate/...` — expect FAIL with `undefined: Compare`.
-- [ ] Implement `gate.go` (median of sorted QPS values; `Drop = 1 - head/base`; errors on empty inputs or `Completed == 0`), `corpus/names.go`, and `main.go` (the fixture is started with `nexora-fixture dns` on free loopback ports; the snapshot is `version 1`, one UDP upstream to the fixture, cache `max_bytes` 512 MiB, `stale_window` 0, ACL `0.0.0.0/0` and `::/0`, telemetry empty; warm-up uses 64 goroutines of `miekg/dns` UDP queries; `serve` writes the snapshot with the listen address from `--listen`).
-- [ ] Run `scripts/dev-exec.sh bash -c 'go test ./bench/... && make e2e-build && bin/perfgate run --engine bin/nexora-engine --fixture bin/nexora-fixture --names 2000 --seconds 5 --workers 2 --out /tmp/perf.json && cat /tmp/perf.json'` — expect PASS: tests `ok` and a JSON result with `"QPS"` greater than 0.
-- [ ] Write `.github/workflows/perf-gate.yml`:
+- [x] Run `scripts/dev-exec.sh go test ./bench/cmd/perfgate/...` — expect FAIL with `undefined: Compare`.
+- [x] Implement `gate.go` (median of sorted QPS values; `Drop = 1 - head/base`; errors on empty inputs or `Completed == 0`), `corpus/names.go`, and `main.go` (the fixture is started with `nexora-fixture dns` on free loopback ports; the snapshot is `version 1`, one UDP upstream to the fixture, cache `max_bytes` 512 MiB, `stale_window` 0, ACL `0.0.0.0/0` and `::/0`, telemetry empty; warm-up uses 64 goroutines of `miekg/dns` UDP queries; `serve` writes the snapshot with the listen address from `--listen`).
+- [x] (As built: `dnsperf.Run` keeps dnsperf's default of 100 outstanding queries — `-q 4096` measured more lost queries (in flight at the time limit) and higher latency on the dev pod; a `debt:` comment records it. The warm-up fails the run if any name gets no answer after three tries.)
+- [x] Run `scripts/dev-exec.sh bash -c 'go test ./bench/... && make e2e-build && bin/perfgate run --engine bin/nexora-engine --fixture bin/nexora-fixture --names 2000 --seconds 5 --workers 2 --out /tmp/perf.json && cat /tmp/perf.json'` — expect PASS: tests `ok` and a JSON result with `"QPS"` greater than 0.
+- [x] Write `.github/workflows/perf-gate.yml`. As built (kw facts from azrtydxb/internal-lab override the original GitHub-hosted draft): the PR tier runs on the arm64 ARC scale set `arc-azrtydxb` inside the dev toolbox image (runner images carry no toolchains), bootstraps the cluster CA, and alternates the base/head order per round so steady drift in the pod's speed does not always land on one side; the absolute tier runs on `arc-azrtydxb-amd64` in `rust:1.97-trixie` and is skipped until `vars.NEXORA_REFERENCE_HOST` is set; actions are pinned by commit SHA; cancel-in-progress only for pull requests:
 
 ```yaml
 name: perf-gate
@@ -7602,51 +7608,83 @@ permissions:
   contents: read
 concurrency:
   group: perf-gate-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  GOCACHE: /tmp/cache/go-build
+  GOMODCACHE: /tmp/cache/gomod
+  GOPROXY: https://192.168.10.131:8443/repository/golang/,direct
 jobs:
   relative:
     name: relative regression vs main (PR)
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    # Base and head run interleaved on the same pod, so only their ratio matters, not the
+    # absolute numbers of a shared arm64 runner.
+    # debt: identical binaries varied by up to 15% between runs on the loaded dev pod, more than
+    # the 5% limit; revisit (more rounds or a dedicated runner) if this gate flakes on ARC pods.
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-        with: { path: head }
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-        with: { path: base, ref: "${{ github.event.pull_request.base.sha }}" }
-      - name: Toolchains
+      - name: Trust the cluster CA
         run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler dnsperf
-          rustup toolchain install 1.97 --profile minimal
-          curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
-          echo /usr/local/go/bin >> "$GITHUB_PATH"
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { path: head }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { path: base, ref: "${{ github.event.pull_request.base.sha }}" }
       - name: Build base and head engines, fixture and perfgate
         run: |
-          (cd base && cargo build --locked --release -p nexora-engine)
-          (cd head && cargo build --locked --release -p nexora-engine)
+          (cd base && CARGO_TARGET_DIR=/tmp/target-base cargo build --locked --release -p nexora-engine)
+          (cd head && CARGO_TARGET_DIR=/tmp/target-head cargo build --locked --release -p nexora-engine)
           (cd head && go build -o ../perfgate ./bench/cmd/perfgate && go build -o ../nexora-fixture ./e2e/fixtures/cmd/nexora-fixture)
+      # The order alternates each round (base-head, head-base, base-head) so a steady drift in the
+      # pod's speed does not always land on the same side.
       - name: Interleaved A/B benchmark (3 rounds)
         run: |
-          for i in 1 2 3; do
-            ./perfgate run --engine base/target/release/nexora-engine --fixture ./nexora-fixture --names 10000 --seconds 20 --workers 2 --out base-$i.json
-            ./perfgate run --engine head/target/release/nexora-engine --fixture ./nexora-fixture --names 10000 --seconds 20 --workers 2 --out head-$i.json
-          done
+          bench() { ./perfgate run --engine "/tmp/target-$1/release/nexora-engine" --fixture ./nexora-fixture --names 10000 --seconds 20 --workers 2 --out "$1-$2.json"; }
+          bench base 1 && bench head 1
+          bench head 2 && bench base 2
+          bench base 3 && bench head 3
       - name: Fail on more than 5% QPS drop
         run: ./perfgate compare --base base-1.json,base-2.json,base-3.json --head head-1.json,head-2.json,head-3.json --max-drop 0.05
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with: { name: perf-relative, path: "*.json" }
 
   absolute:
     name: absolute gate on the reference box (nightly, release tags)
-    if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, linux, x64, nexora-load]
+    # Skipped until the reference box (8-core x86_64, 10GbE) is provisioned and its variables set.
+    if: github.event_name != 'pull_request' && vars.NEXORA_REFERENCE_HOST != ''
+    # debt: the load is generated from an amd64 ARC pod rather than a dedicated load host, so a
+    # failing run may be the pod's ceiling; revisit when a dedicated load host joins the org.
+    runs-on: arc-azrtydxb-amd64
+    container: { image: "rust:1.97-trixie" }
     timeout-minutes: 90
     env:
       REF_HOST: ${{ vars.NEXORA_REFERENCE_HOST }}
       REF_ADDR: ${{ vars.NEXORA_REFERENCE_DNS_ADDR }}
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: Trust the cluster CA and install Go, protoc and dnsperf
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler dnsperf openssh-client
+          curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+          echo /usr/local/go/bin >> "$GITHUB_PATH"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build release binaries
         run: |
           cargo build --locked --release -p nexora-engine
@@ -7656,24 +7694,38 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.NEXORA_REFERENCE_SSH_KEY }}
         run: |
-          install -m 600 /dev/null ~/.ssh/nexora-ref && printf '%s\n' "$SSH_KEY" > ~/.ssh/nexora-ref
+          mkdir -p ~/.ssh && install -m 600 /dev/null ~/.ssh/nexora-ref && printf '%s\n' "$SSH_KEY" > ~/.ssh/nexora-ref
           scp -i ~/.ssh/nexora-ref target/release/nexora-engine perfgate nexora-fixture "$REF_HOST:/tmp/"
+          # shellcheck disable=SC2029 # REF_ADDR is meant to expand on this side.
           ssh -i ~/.ssh/nexora-ref "$REF_HOST" "nohup /tmp/perfgate serve --engine /tmp/nexora-engine --fixture /tmp/nexora-fixture --listen $REF_ADDR --workers 8 > /tmp/perfgate.log 2>&1 & echo \$! > /tmp/perfgate.pid"
-          for i in $(seq 1 60); do ssh -i ~/.ssh/nexora-ref "$REF_HOST" grep -q 'perfgate ready' /tmp/perfgate.log && break; sleep 1; done
+          for _ in $(seq 1 60); do ssh -i ~/.ssh/nexora-ref "$REF_HOST" grep -q 'perfgate ready' /tmp/perfgate.log && break; sleep 1; done
       - name: Load from this host
         run: ./perfgate load --target "$REF_ADDR" --names 100000 --seconds 60 --clients 64 --threads 16 --out absolute.json
       - name: Enforce >= 1,000,000 QPS and p99 < 500us
         run: ./perfgate absolute --result absolute.json --min-qps 1000000 --max-p99 500us
       - name: Stop the engine
         if: always()
-        run: ssh -i ~/.ssh/nexora-ref "$REF_HOST" 'kill $(cat /tmp/perfgate.pid) || true'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        run: ssh -i ~/.ssh/nexora-ref "$REF_HOST" 'kill $(cat /tmp/perfgate.pid)' || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with: { name: perf-absolute, path: absolute.json }
 ```
 
-- [ ] Validate the workflow syntax: `scripts/dev-exec.sh bash -c 'go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/perf-gate.yml .github/workflows/fuzz.yml'` — expect PASS with no output.
-- [ ] Commit: `git add bench .github/workflows/perf-gate.yml && git commit -m "bench: perfgate tool and two-tier dnsperf performance gate workflow"`.
+- [x] Write `.github/actionlint.yaml`:
+
+```yaml
+# The azrtydxb ARC v2 scale sets. Each runner carries exactly one label, which actionlint cannot
+# know about: arm64 tests, arm64 image push, amd64 tests, amd64 image push.
+self-hosted-runner:
+  labels:
+    - arc-azrtydxb
+    - arc-azrtydxb-publish
+    - arc-azrtydxb-amd64
+    - arc-azrtydxb-amd64-publish
+```
+
+- [x] Validate the workflow syntax: `scripts/dev-exec.sh 'GOBIN=/tmp/t22tools go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 && /tmp/t22tools/actionlint -config-file .github/actionlint.yaml .github/workflows/*.yml'` (the pod copy has no `.git`, so the config and files are named) — expect PASS with no output. The pod has no shellcheck, so also run `actionlint` (1.7.12, with shellcheck) on the laptop — expect PASS with no output.
+- [x] Commit: `git add bench .github/workflows/perf-gate.yml .github/actionlint.yaml Makefile && git commit -m "bench: perfgate tool and two-tier dnsperf performance gate workflow"`.
 
 ## Task 22: Container images and CI workflows
 
@@ -7682,18 +7734,19 @@ Files:
 - `deploy/docker/engine.Dockerfile` (create)
 - `deploy/docker/mgmt.Dockerfile` (create)
 - `.dockerignore` (create)
-- `engine/src/main.rs` (modify) — `#[command(version)]` so `nexora-engine --version` works
+- `engine/src/main.rs` (modify) — `#[command(version)]` so `nexora-engine --version` works (as built: NOT done in this task — `engine/**` was owned by the concurrent Task 9 implementer; the image was verified with `--help` instead, and the one-line attribute is left to the engine owner)
 - `mgmt/cmd/nexora-mgmt/main.go` (modify) — `version` subcommand printing `nexora-mgmt <version>` (`-ldflags -X main.version`)
-- `.github/workflows/images.yml` (create) — multi-arch (amd64, arm64) images to `ghcr.io/piwi3910/nexora-engine` and `ghcr.io/piwi3910/nexora-mgmt`
+- `.github/workflows/images.yml` (create) — multi-arch (amd64, arm64) images pushed to Nexus `192.168.10.131:5000/azrtydxb/nexora-{engine,mgmt}` (plan review: not ghcr.io)
 - `.github/workflows/ci.yml` (create) — engine, management plane and GUI unit tests and lint
+- `Makefile` (modify) — `images` target (both images on the kw BuildKit, tag `dev-<sha>[-dirty]`)
 
 Interfaces:
 
 - Consumes `make build` outputs (Tasks 1, 8, 15, 20) and `scripts/build-image.sh -f <dockerfile relative to context> -n <name> -t <tag> <context>`.
 - Produces images `192.168.10.131:5000/azrtydxb/nexora-engine:<tag>` and `.../nexora-mgmt:<tag>` (pulled as `192.168.10.131/azrtydxb/<name>:<tag>`), consumed by Task 23. Engine image: entrypoint `/usr/local/bin/nexora-engine`, default args `--config /etc/nexora/engine.toml`, user 10001, ports 53/udp, 53/tcp, 9153/tcp. Management image: entrypoint `/nexora-mgmt`, default args `serve`, user nonroot, ports 8080, 9443.
 
-- [ ] Run the image build before the Dockerfile exists: `scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t m1-check .` — expect FAIL with `failed to read dockerfile`.
-- [ ] Write `.dockerignore`:
+- [x] Run the image build before the Dockerfile exists: `scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t m1-check .` — expect FAIL (as built, buildctl fails earlier with `invalid local: resolve : lstat deploy/docker: no such file or directory`).
+- [x] Write `.dockerignore`:
 
 ```
 .git
@@ -7707,7 +7760,9 @@ bin
 .procoder
 ```
 
-- [ ] Write `deploy/docker/engine.Dockerfile`:
+(As built: `.dockerignore` also excludes `**/*.tsbuildinfo` — a stale laptop build-info file would make `tsc -b` skip work — and `mgmt/internal/webui/dist`, which the mgmt image fills from its web stage.)
+
+- [x] Write `deploy/docker/engine.Dockerfile`:
 
 ```dockerfile
 # syntax=docker/dockerfile:1.10
@@ -7735,7 +7790,7 @@ ENTRYPOINT ["/usr/local/bin/nexora-engine"]
 CMD ["--config", "/etc/nexora/engine.toml"]
 ```
 
-- [ ] Write `deploy/docker/mgmt.Dockerfile`:
+- [x] Write `deploy/docker/mgmt.Dockerfile`:
 
 ```dockerfile
 # syntax=docker/dockerfile:1.10
@@ -7761,14 +7816,16 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /nexora-mgmt /nexora-mgmt
+# The distroless :nonroot image already defaults to this user; stated so it cannot silently change.
+USER nonroot:nonroot
 EXPOSE 8080 9443
 ENTRYPOINT ["/nexora-mgmt"]
 CMD ["serve"]
 ```
 
-- [ ] Add `#[command(version)]` to the engine `Args` and the `version` subcommand to `nexora-mgmt`, then build both images on kw BuildKit: `tag=m1-$(git rev-parse --short HEAD) && scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" . && scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag" .` — expect PASS: both print `pull as 192.168.10.131/azrtydxb/<name>:m1-<sha>`.
-- [ ] Verify the images run on arm64 kw nodes: `kubectl --context kw -n nexora-dev run engine-version --rm -i --restart=Never --image=192.168.10.131/azrtydxb/nexora-engine:$tag --overrides='{"spec":{"imagePullSecrets":[{"name":"nexus-pull"}]}}' -- --version` — expect `nexora-engine 0.1.0`; and the same with `nexora-mgmt:$tag` and args `version` — expect `nexora-mgmt m1-...` or `nexora-mgmt dev`.
-- [ ] Write `.github/workflows/ci.yml`:
+- [x] Add the `version` subcommand to `nexora-mgmt` (the engine `#[command(version)]` is left to the engine owner, see Files), then build both images on kw BuildKit: `tag=dev-$(git rev-parse --short HEAD) && scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" . && scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag" .` — expect PASS: both print `pull as 192.168.10.131/azrtydxb/<name>:m1-<sha>`.
+- [x] Verify the images run on arm64 kw nodes (as built: `nexora-dev` has no `nexus-pull` secret and pulls from :443 are anonymous, so no override): `kubectl --context kw -n nexora-dev run engine-help --rm -i --restart=Never --image=192.168.10.131/azrtydxb/nexora-engine:$tag -- --help` — expect the clap usage with `--config <CONFIG>  [default: /etc/nexora/engine.toml]` (`--version` once the engine owner adds the attribute); and `nexora-mgmt:$tag` with args `version` — expect `nexora-mgmt dev` (`scripts/build-image.sh` passes no `VERSION` build arg).
+- [x] Write `.github/workflows/ci.yml`. As built: every job runs on `arc-azrtydxb` inside the dev toolbox image with the cluster CA bootstrapped; the mgmt job builds `bin/nexora-fixture` so `TestOIDCLoginAndProviderDown` runs instead of being skipped (PostgreSQL tests run as the image's `dev` user); the GUI job is `make web-test`:
 
 ```yaml
 name: ci
@@ -7779,92 +7836,220 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Every job runs on the arm64 ARC scale set inside the dev toolbox image (deploy/dev/Dockerfile:
+# Rust 1.97, Go 1.27, Node 26 + pnpm, protoc, PostgreSQL 17, dnsperf), because the runner image
+# carries no toolchains. The image's /work paths only exist in the dev pod, so caches move to /tmp.
+env:
+  CARGO_TARGET_DIR: /tmp/target
+  GOCACHE: /tmp/cache/go-build
+  GOMODCACHE: /tmp/cache/gomod
+  PNPM_HOME: /tmp/cache/pnpm
+  GOPROXY: https://192.168.10.131:8443/repository/golang/,direct
 jobs:
   engine:
-    runs-on: ubuntu-24.04
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - run: rustup toolchain install 1.97 --profile minimal --component clippy,rustfmt
+      # The Nexus proxies serve a cluster-CA certificate. It is added to the system bundle (rather
+      # than pointing the tools at the lone CA) so public endpoints keep verifying too.
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked -p nexora-engine --all-targets -- -D warnings
       - run: cargo test --locked -p nexora-engine --all-targets
+
   mgmt:
-    runs-on: ubuntu-24.04
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - name: Toolchain and PostgreSQL binaries
+      - name: Trust the cluster CA
         run: |
-          curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
-          echo /usr/local/go/bin >> "$GITHUB_PATH"
-          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
-          sudo apt-get update && sudo apt-get install -y postgresql
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: make webui-placeholder
+      - name: gofmt
+        run: test -z "$(gofmt -l mgmt e2e bench | tee /dev/stderr)"
       - run: go vet ./...
-      - run: go test -race -count=1 -skip 'TestOIDCLoginAndProviderDown' ./mgmt/... ./gen/... ./bench/...
+      # TestOIDCLoginAndProviderDown starts the OIDC fixture, which the harness finds in bin/.
+      # PostgreSQL-backed tests run as the image's `dev` user (PostgreSQL refuses root).
+      - run: go build -o bin/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
+      - run: go test -race -count=1 ./mgmt/... ./gen/... ./bench/...
+
   web:
-    runs-on: ubuntu-24.04
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - run: curl -fsSL https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz | sudo tar -C /usr/local --strip-components=1 -xJ && sudo npm install -g pnpm@10
-      - run: cd web && pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run lint && pnpm run build
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make web-test
 ```
 
-`TestOIDCLoginAndProviderDown` is skipped in CI because it needs the `nexora-fixture` binary; it runs in the dev pod through `make mgmt-test` after `make e2e-build`. The end-to-end suite runs in the dev pod (`make e2e`), not on GitHub runners.
+The end-to-end suite runs in the dev pod (`make e2e`), not on runners.
 
-- [ ] Write `.github/workflows/images.yml` (multi-arch via QEMU/buildx; tags `sha-<short>` on main, `vX.Y.Z` on tags):
+- [x] Write `.github/workflows/images.yml`. As built: each architecture builds natively on its own publish runner (`arc-azrtydxb-publish` arm64, `arc-azrtydxb-amd64-publish` amd64 — no QEMU), pushes by digest to Nexus with NEXUS_USER/NEXUS_PASSWORD, and a `merge` job assembles `sha-<7>` (main) or `vX.Y.Z` (tags) with `docker buildx imagetools create`. These jobs drive the runner's Docker daemon, so they run without `container:` like the org's other image workflows; `build-push-action` v7 with `ignore-error=true` on `cache-to`:
 
 ```yaml
-name: images
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch: {}
 permissions:
   contents: read
-  packages: write
 concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: false
+env:
+  # Push on :5000 (the hosted repository); the cluster pulls the same images through :443.
+  REGISTRY: 192.168.10.131:5000/azrtydxb
 jobs:
+  # Each architecture builds natively on its own publish runner (kw is arm64 with no emulation,
+  # novanas is amd64) and pushes by digest; `merge` then tags the multi-arch manifest list.
+  # These jobs drive the runner's Docker daemon, so unlike the test jobs they run without
+  # `container:`, as the org's other image workflows do.
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
     strategy:
+      fail-fast: false
       matrix:
         image:
           - { name: nexora-engine, file: deploy/docker/engine.Dockerfile }
           - { name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile }
+        arch:
+          - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb-publish }
+          - {
+              name: amd64,
+              platform: linux/amd64,
+              runner: arc-azrtydxb-amd64-publish,
+            }
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          {
-            registry: ghcr.io,
-            username: "${{ github.actor }}",
-            password: "${{ secrets.GITHUB_TOKEN }}",
-          }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: meta
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
-      - uses: docker/build-push-action@v6
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
+      - name: Set up buildx
+        run: |
+          # BuildKit runs in its own container without the cluster CA, so both Nexus ports are
+          # marked insecure; :443 fronts the docker.io proxy used as a mirror. A mirror that fails
+          # TLS silently falls back to Docker Hub, which is why :443 needs its entry too.
+          cat > /tmp/buildkitd.toml <<'TOML'
+          [registry."192.168.10.131"]
+            insecure = true
+          [registry."192.168.10.131:5000"]
+            insecure = true
+          [registry."docker.io"]
+            mirrors = ["192.168.10.131"]
+          TOML
+          docker buildx create --name nexora --driver docker-container \
+            --platform "${{ matrix.arch.platform }}" --buildkitd-config /tmp/buildkitd.toml --use
+          docker buildx inspect --bootstrap
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: 192.168.10.131:5000
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ${{ matrix.image.file }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: VERSION=${{ steps.meta.outputs.tag }}
-          tags: ghcr.io/piwi3910/${{ matrix.image.name }}:${{ steps.meta.outputs.tag }}
+          builder: nexora
+          platforms: ${{ matrix.arch.platform }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }}
+          # ignore-error: a cache write must never fail a publish.
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }},mode=max,image-manifest=true,ignore-error=true
+          provenance: false
+          sbom: false
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: mkdir -p /tmp/digests && touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    strategy:
+      matrix:
+        image: [nexora-engine, nexora-mgmt]
+    runs-on: arc-azrtydxb-publish
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
+      # `imagetools create` talks to the registry from this client, not from BuildKit, so it needs
+      # the cluster CA; Go reads SSL_CERT_FILE, and the bundle keeps the public roots.
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cat /etc/ssl/certs/ca-certificates.crt /tmp/cluster-ca.crt > /tmp/ca-bundle.crt
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/tmp/ca-bundle.crt"
+            echo "SSL_CERT_FILE=/tmp/ca-bundle.crt"
+            echo "GIT_SSL_CAINFO=/tmp/ca-bundle.crt"
+          } >> "$GITHUB_ENV"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: 192.168.10.131:5000
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+      - name: Create the multi-arch manifest list
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          refs=()
+          for d in *; do refs+=("$IMAGE@sha256:$d"); done
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "${refs[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
 ```
 
-- [ ] Pin the four `docker/*` actions to commit SHAs: for each `<repo>@<tag>` run `gh api repos/<repo>/commits/<tag> --jq .sha` (for example `gh api repos/docker/build-push-action/commits/v6 --jq .sha`) and replace `@<tag>` with `@<sha> # <tag>`; then run `scripts/dev-exec.sh bash -c 'go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7'` — expect PASS with no output.
-- [ ] Commit: `git add .dockerignore deploy/docker .github/workflows/images.yml .github/workflows/ci.yml engine/src/main.rs mgmt/cmd/nexora-mgmt/main.go && git commit -m "deploy: engine and management plane images; CI and multi-arch image workflows"`.
+- [x] Pin actions by commit SHA (`gh api repos/<repo>/releases/latest --jq .tag_name`, then `gh api repos/<repo>/commits/<tag> --jq .sha`): checkout v7.0.1, upload-artifact v7.0.1, download-artifact v8.0.1, docker/login-action v4.6.0, docker/build-push-action v7.3.0; then run actionlint as in Task 21 — expect PASS with no output.
+- [x] Commit: `git add .dockerignore deploy/docker .github/workflows/images.yml .github/workflows/ci.yml mgmt/cmd/nexora-mgmt/main.go && git commit -m "deploy: engine and management plane images; CI and multi-arch image workflows"`.
 
 ## Task 23: First deployment to kw and `TestKwSmoke`
 

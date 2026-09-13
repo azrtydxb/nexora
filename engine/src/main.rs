@@ -92,6 +92,9 @@ fn main() -> ExitCode {
             }
             Err(e) => eprintln!("nexora-engine: SIGHUP handler: {e}"),
         }
+    } else {
+        // The persisted snapshot (if any) is already served; the control stream only updates it.
+        control.spawn(nexora_engine::control::run(shared.clone(), boot.clone()));
     }
 
     for w in workers {
