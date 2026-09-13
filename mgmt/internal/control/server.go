@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
-	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
@@ -141,27 +141,26 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
 	defer s.dnsTLS.Unregister(id)
 
-	// Keys before the snapshot, so a transfer zone's first refresh can already sign its request.
-	if keys, digest, ok := s.hub.loadKeys(ctx); ok {
-		sub.offerKeys(keys, digest)
+	// Registered before loading the target, so a rollout change in between is not missed. Keys go
+	// before the snapshot, so a transfer zone's first refresh can already sign its request.
+	t, err := fleet.TargetFor(ctx, s.st.Pool, sub.id)
+	if errors.Is(err, store.ErrNotFound) {
+		return status.Error(codes.PermissionDenied, "unknown or deleted engine")
 	}
-	if km, digest, ok := s.hub.loadKeyMaterial(ctx); ok {
-		sub.offerKeyMaterial(km, digest)
-		clearKeyMaterial(km)
-	}
-	// Registered before reading the latest version, so a version published in between is not missed.
-	version, snap, err := snapshot.Latest(ctx, s.st.Pool)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-	case err != nil:
+	if err != nil {
 		return grpcError(err)
-	case hello.AppliedVersion < version:
-		sub.offer(version, snap)
-	case hello.AppliedVersion > version:
+	}
+	ks := s.hub.loadKeySets(ctx)
+	offerTarget(sub, t, ks)
+	clearKeyMaterial(ks.km)
+	if t.Version > 0 && hello.AppliedVersion > t.Version {
 		if _, err := s.st.Pool.Exec(ctx, "update engines set version_ahead = true where id = $1", id); err != nil {
 			return grpcError(err)
 		}
-		sub.send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_VersionAhead{VersionAhead: &controlv1.VersionAhead{ServerVersion: version}}})
+		sub.send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_VersionAhead{VersionAhead: &controlv1.VersionAhead{ServerVersion: t.Version}}})
+	}
+	if t.RotateRequested {
+		sub.renew()
 	}
 
 	// A failed Send breaks the stream, which also ends Recv in the loop below.
@@ -203,6 +202,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				if err := stream.Send(msg); err != nil {
 					return
 				}
+			case msg := <-sub.control:
+				if err := stream.Send(msg); err != nil {
+					return
+				}
 			case m := <-tlsCh:
 				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}); err != nil {
 					return
@@ -210,7 +213,13 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 			}
 		}
 	}()
-	err = s.receive(ctx, stream, sub)
+	received := make(chan error, 1)
+	go func() { received <- s.receive(ctx, stream, sub) }()
+	select {
+	case err = <-received:
+	case <-sub.revoked:
+		err = status.Error(codes.PermissionDenied, "certificate revoked")
+	}
 	stopSend()
 	<-sendDone
 	return err
@@ -239,10 +248,16 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 				rejected_version = case when rejected_version <= $2 then null else rejected_version end,
 				last_seen_at = now()
 				where id = $1`, sub.engineID, int64(m.Applied.Version), m.Applied.PersistError)
+			if err == nil {
+				err = s.notifyRollout(ctx, sub)
+			}
 		case *controlv1.EngineMessage_Rejected:
 			sub.observe(m.Rejected.Version)
 			_, err = s.st.Pool.Exec(ctx, "update engines set rejected_version = $2, rejected_reason = $3, last_seen_at = now() where id = $1",
 				sub.engineID, int64(m.Rejected.Version), m.Rejected.Reason)
+			if err == nil {
+				err = s.notifyRollout(ctx, sub)
+			}
 		case *controlv1.EngineMessage_Stats:
 			_, err = s.st.Pool.Exec(ctx, "update engines set last_seen_at = now() where id = $1", sub.engineID)
 			if s.OnStats != nil {
@@ -271,6 +286,13 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			return grpcError(err)
 		}
 	}
+}
+
+// notifyRollout wakes the rollout controllers and hubs of the engine's group after an ack or a
+// rejection, so the rollout steps at once instead of on the next tick.
+func (s *Server) notifyRollout(ctx context.Context, sub *subscriber) error {
+	_, err := s.st.Pool.Exec(ctx, "select pg_notify($2, engine_group_id::text) from engines where id = $1", sub.engineID, ChannelRollout)
+	return err
 }
 
 const (

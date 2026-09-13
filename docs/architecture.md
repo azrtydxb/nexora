@@ -479,7 +479,8 @@ components ported from the first Nexora (`components/ui`), openapi-typescript
 - Every instance runs `rollout.Controller`: tick `NEXORA_ROLLOUT_TICK` plus
   LISTEN `nexora_rollout`. Per open rollout: `BEGIN`,
   `pg_try_advisory_xact_lock(hashtext('nexora:rollout:' || id))` (skip when not
-  acquired), `SELECT ... FOR UPDATE`, `rollout.Step` with `now()` from
+  acquired), the engine group row `FOR NO KEY UPDATE` (the order rollout
+  creation locks them in), `SELECT ... FOR UPDATE`, `rollout.Step` with `now()` from
   PostgreSQL, `UPDATE`, `pg_notify('nexora_rollout', engine_group_id)`,
   `COMMIT`. The hub LISTENs on `nexora_rollout` and pushes to its connected
   engines of that group whose target is above the version last sent; acks and

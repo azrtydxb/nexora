@@ -30,11 +30,12 @@ type ResolutionSettings struct {
 
 // ForwardZone sends queries at or below Domain to its own servers.
 type ForwardZone struct {
-	ID        uuid.UUID
-	Domain    string
-	Addresses []string
-	Validate  bool
-	Revision  int64
+	ID            uuid.UUID
+	EngineGroupID *uuid.UUID // nil: every engine group
+	Domain        string
+	Addresses     []string
+	Validate      bool
+	Revision      int64
 }
 
 // DnssecSettings are the global validation switches.
@@ -60,6 +61,7 @@ type NegativeTrustAnchor struct {
 // RPZZone is one response policy zone, loaded from an uploaded file or by zone transfer.
 type RPZZone struct {
 	ID                                         uuid.UUID
+	EngineGroupID                              *uuid.UUID // nil: every engine group
 	Name                                       string
 	Position                                   int32
 	SourceType                                 string // file | transfer
@@ -134,11 +136,13 @@ func UpdateResolutionSettings(ctx context.Context, tx pgx.Tx, s ResolutionSettin
 	return GetResolutionSettings(ctx, tx)
 }
 
-const selectForwardZones = "select id, domain, addresses, validate, revision from forward_zones"
+const forwardZoneColumns = "id, engine_group_id, domain, addresses, validate, revision"
+
+const selectForwardZones = "select " + forwardZoneColumns + " from forward_zones"
 
 func scanForwardZone(row pgx.Row) (ForwardZone, error) {
 	var z ForwardZone
-	err := row.Scan(&z.ID, &z.Domain, &z.Addresses, &z.Validate, &z.Revision)
+	err := row.Scan(&z.ID, &z.EngineGroupID, &z.Domain, &z.Addresses, &z.Validate, &z.Revision)
 	return z, err
 }
 
@@ -156,7 +160,7 @@ func GetForwardZone(ctx context.Context, q PolicyQuerier, id uuid.UUID) (Forward
 // CreateForwardZone inserts z (a duplicate domain is ErrConflict).
 func CreateForwardZone(ctx context.Context, tx pgx.Tx, z ForwardZone) (ForwardZone, error) {
 	created, err := scanForwardZone(tx.QueryRow(ctx, `insert into forward_zones(domain, addresses, validate) values ($1, $2, $3)
-		returning id, domain, addresses, validate, revision`, z.Domain, z.Addresses, z.Validate))
+		returning `+forwardZoneColumns, z.Domain, z.Addresses, z.Validate))
 	return created, MapError(err)
 }
 
@@ -164,7 +168,7 @@ func CreateForwardZone(ctx context.Context, tx pgx.Tx, z ForwardZone) (ForwardZo
 func UpdateForwardZone(ctx context.Context, tx pgx.Tx, z ForwardZone) (ForwardZone, error) {
 	updated, err := scanForwardZone(tx.QueryRow(ctx, `update forward_zones set domain = $2, addresses = $3, validate = $4,
 		revision = revision + 1, updated_at = now() where id = $1 and revision = $5
-		returning id, domain, addresses, validate, revision`, z.ID, z.Domain, z.Addresses, z.Validate, z.Revision))
+		returning `+forwardZoneColumns, z.ID, z.Domain, z.Addresses, z.Validate, z.Revision))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ForwardZone{}, missingOrStale(ctx, tx, "forward_zones", z.ID)
 	}
@@ -268,14 +272,14 @@ func DeleteExpiredNegativeTrustAnchors(ctx context.Context, tx pgx.Tx, now time.
 	return tag.RowsAffected(), err
 }
 
-const selectRPZZones = `select z.id, z.name, z.position, z.source_type, z.blob_sha256, coalesce(b.size, 0), z.file_records,
+const selectRPZZones = `select z.id, z.engine_group_id, z.name, z.position, z.source_type, z.blob_sha256, coalesce(b.size, 0), z.file_records,
 	z.primary_address, z.tsig_key_name, z.tsig_algorithm, z.tsig_secret_envelope, z.min_refresh_seconds,
 	z.policy_override, z.refresh_nonce, z.revision
 	from rpz_zones z left join blobs b on b.sha256 = z.blob_sha256`
 
 func scanRPZZone(row pgx.Row) (RPZZone, error) {
 	var z RPZZone
-	err := row.Scan(&z.ID, &z.Name, &z.Position, &z.SourceType, &z.BlobSHA256, &z.BlobSize, &z.FileRecords,
+	err := row.Scan(&z.ID, &z.EngineGroupID, &z.Name, &z.Position, &z.SourceType, &z.BlobSHA256, &z.BlobSize, &z.FileRecords,
 		&z.PrimaryAddress, &z.TSIGKeyName, &z.TSIGAlgorithm, &z.TSIGSecretEnvelope, &z.MinRefreshSeconds,
 		&z.PolicyOverride, &z.RefreshNonce, &z.Revision)
 	return z, err
@@ -417,14 +421,16 @@ func ListEngineDnssecStatus(ctx context.Context, q PolicyQuerier) ([]EngineDnsse
 		})
 }
 
-// LoadResolution reads every M3 configuration table.
-func LoadResolution(ctx context.Context, q PolicyQuerier) (ResolutionRows, error) {
+// LoadResolution reads every M3 configuration table; forward and RPZ zones are those of every
+// engine group plus engineGroupID's.
+func LoadResolution(ctx context.Context, q PolicyQuerier, engineGroupID uuid.UUID) (ResolutionRows, error) {
 	var r ResolutionRows
 	var err error
 	if r.Resolution, err = GetResolutionSettings(ctx, q); err != nil {
 		return r, err
 	}
-	if r.ForwardZones, err = ListForwardZones(ctx, q); err != nil {
+	const inGroup = " where engine_group_id is null or engine_group_id = $1"
+	if r.ForwardZones, err = collect(ctx, q, selectForwardZones+inGroup+" order by domain", scanForwardZone, engineGroupID); err != nil {
 		return r, err
 	}
 	if r.Dnssec, err = GetDnssecSettings(ctx, q); err != nil {
@@ -436,12 +442,13 @@ func LoadResolution(ctx context.Context, q PolicyQuerier) (ResolutionRows, error
 	if r.NTAs, err = ListNegativeTrustAnchors(ctx, q); err != nil {
 		return r, err
 	}
-	r.RPZ, err = ListRPZZones(ctx, q)
+	r.RPZ, err = collect(ctx, q, selectRPZZones+" where z.engine_group_id is null or z.engine_group_id = $1 order by z.position",
+		scanRPZZone, engineGroupID)
 	return r, err
 }
 
-func collect[T any](ctx context.Context, q PolicyQuerier, sql string, scan func(pgx.Row) (T, error)) ([]T, error) {
-	rows, err := q.Query(ctx, sql)
+func collect[T any](ctx context.Context, q PolicyQuerier, sql string, scan func(pgx.Row) (T, error), args ...any) ([]T, error) {
+	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, MapError(err)
 	}

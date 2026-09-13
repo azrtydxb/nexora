@@ -37,6 +37,7 @@ type SafeSearch struct {
 // PolicyGroup is a client group selected by source CIDR.
 type PolicyGroup struct {
 	ID                   uuid.UUID
+	EngineGroupID        *uuid.UUID // nil: every engine group
 	Name, Description    string
 	CIDRs                []netip.Prefix
 	FilterListIDs        []uuid.UUID
@@ -52,7 +53,7 @@ type GlobalSafeSearch struct {
 	Revision int64
 }
 
-const selectPolicyGroups = `select g.id, g.name, g.description, g.safe_search_google, g.safe_search_bing,
+const selectPolicyGroups = `select g.id, g.engine_group_id, g.name, g.description, g.safe_search_google, g.safe_search_bing,
 	g.safe_search_duckduckgo, g.safe_search_youtube, g.revision, g.created_at, g.updated_at,
 	array(select c.cidr from policy_group_cidrs c where c.group_id = g.id order by c.cidr),
 	array(select l.filter_list_id from policy_group_filter_lists l where l.group_id = g.id order by l.filter_list_id),
@@ -61,7 +62,7 @@ const selectPolicyGroups = `select g.id, g.name, g.description, g.safe_search_go
 
 func scanPolicyGroup(row pgx.Row) (PolicyGroup, error) {
 	var g PolicyGroup
-	err := row.Scan(&g.ID, &g.Name, &g.Description, &g.SafeSearch.Google, &g.SafeSearch.Bing, &g.SafeSearch.DuckDuckGo,
+	err := row.Scan(&g.ID, &g.EngineGroupID, &g.Name, &g.Description, &g.SafeSearch.Google, &g.SafeSearch.Bing, &g.SafeSearch.DuckDuckGo,
 		&g.SafeSearch.YouTube, &g.Revision, &g.CreatedAt, &g.UpdatedAt, &g.CIDRs, &g.FilterListIDs, &g.Allowlist)
 	return g, err
 }

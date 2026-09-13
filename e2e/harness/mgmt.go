@@ -388,9 +388,36 @@ func PublishRawSnapshot(t *testing.T, pgURL string, snap *controlv1.ConfigSnapsh
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "insert into config_versions(version, created_by, summary, snapshot) values ($1, 'e2e', 'raw snapshot', $2)",
-			version, raw); err != nil {
+		if _, err := tx.Exec(ctx, "insert into config_versions(version, created_by, summary) values ($1, 'e2e', 'raw snapshot')", version); err != nil {
 			return err
+		}
+		// Every engine group gets the snapshot, rolled out at once (the management plane's
+		// snapshot.PublishRaw, which the harness cannot import).
+		rows, err := tx.Query(ctx, "select id::text from engine_groups order by id for no key update")
+		if err != nil {
+			return err
+		}
+		groups, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, g := range groups {
+			if _, err := tx.Exec(ctx, `insert into group_snapshots(version, engine_group_id, snapshot, content_sha256)
+				values ($1, $2, $3, encode(sha256($3), 'hex'))`, int64(version), g, raw); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `update rollouts set state = 'superseded', finished_at = now(), updated_at = now()
+				where engine_group_id = $1 and state in ('pending', 'canary', 'verifying', 'rolling', 'halted')`, g); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `insert into rollouts(engine_group_id, version, kind, strategy, state, params, created_by, phase_started_at)
+				values ($1, $2, 'change', 'all_at_once', 'rolling', '{"strategy":"all_at_once","ack_timeout_seconds":60}', 'e2e', now())`,
+				g, int64(version)); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, "select pg_notify('nexora_rollout', $1)", g); err != nil {
+				return err
+			}
 		}
 		_, err = tx.Exec(ctx, "select pg_notify('nexora_config', $1)", fmt.Sprint(version))
 		return err

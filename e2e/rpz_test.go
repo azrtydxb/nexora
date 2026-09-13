@@ -92,14 +92,14 @@ func TestRPZPolicy(t *testing.T) {
 		// positive first: the stored snapshots do carry the transfer zone and its key name, so the
 		// byte search below looks at real snapshot content
 		var carried bool
-		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0 and position($2::bytea in snapshot) > 0), false) from config_versions", []byte("rpz.axfr.test."), []byte(named.KeyName)).Scan(&carried); err != nil {
+		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0 and position($2::bytea in snapshot) > 0), false) from group_snapshots", []byte("rpz.axfr.test."), []byte(named.KeyName)).Scan(&carried); err != nil {
 			t.Fatal(err)
 		}
 		if !carried {
 			t.Fatal("no stored config version carries the transfer zone and its TSIG key name")
 		}
 		var leaked bool
-		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0), false) from config_versions", secret).Scan(&leaked); err != nil {
+		if err := conn.QueryRow(ctx, "select coalesce(bool_or(position($1::bytea in snapshot) > 0), false) from group_snapshots", secret).Scan(&leaked); err != nil {
 			t.Fatal(err)
 		}
 		if leaked {

@@ -27,6 +27,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
+	"github.com/piwi3910/nexora/mgmt/internal/rollout"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
@@ -76,6 +77,7 @@ func setupServers(t *testing.T, instances int, adjust func(*store.Store, *contro
 			adjust(st, hub)
 		}
 		go func() { _ = hub.Run(ctx) }()
+		go (&rollout.Controller{Store: st, Tick: 100 * time.Millisecond}).Run(ctx)
 		tlsCfg, err := control.TLSConfig(ca, []string{"127.0.0.1"})
 		if err != nil {
 			t.Fatal(err)

@@ -19,6 +19,7 @@ import (
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/rollout"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
@@ -37,7 +38,7 @@ type Querier interface {
 }
 
 // Mutate runs fn and publishes the resulting configuration in one transaction:
-// change rows -> audit row -> build snapshot -> insert config_versions -> pg_notify.
+// change rows -> audit row -> config_versions -> per engine group: snapshot and rollout -> pg_notify.
 func Mutate(ctx context.Context, st *store.Store, cfg BuildConfig, a auth.Actor, fn func(tx pgx.Tx) (auth.Change, error)) (uint64, error) {
 	var version uint64
 	err := st.InTx(ctx, func(tx pgx.Tx) error {
@@ -72,8 +73,12 @@ func EnsureInitial(ctx context.Context, st *store.Store, cfg BuildConfig) (uint6
 	return version, err
 }
 
-// PublishRaw stores snap unvalidated as the next version and notifies. Tests use it to push
-// snapshots the builder would never produce; no production code path calls it.
+// ErrUnknownVersion is returned by Republish when the engine group has no snapshot of the version.
+var ErrUnknownVersion = errors.New("version not found for this engine group")
+
+// PublishRaw stores snap unvalidated as the next version of every engine group, rolled out at
+// once, and notifies. Tests use it to push snapshots the builder would never produce; no
+// production code path calls it.
 func PublishRaw(ctx context.Context, st *store.Store, snap *controlv1.ConfigSnapshot, createdBy string) (uint64, error) {
 	var version uint64
 	err := st.InTx(ctx, func(tx pgx.Tx) error {
@@ -82,20 +87,33 @@ func PublishRaw(ctx context.Context, st *store.Store, snap *controlv1.ConfigSnap
 			return err
 		}
 		snap.Version = version
-		raw, err := proto.Marshal(snap)
+		if err := insertVersion(ctx, tx, version, createdBy, "raw snapshot"); err != nil {
+			return err
+		}
+		groups, err := engineGroupIDs(ctx, tx)
 		if err != nil {
 			return err
 		}
-		return insertVersion(ctx, tx, version, createdBy, "raw snapshot", raw)
+		for _, g := range groups {
+			if err := insertGroupSnapshot(ctx, tx, version, g, snap); err != nil {
+				return err
+			}
+			if _, _, err := rollout.Create(ctx, tx, rollout.CreateParams{EngineGroupID: g, Version: version, Kind: rollout.KindChange,
+				Immediate: true, Actor: createdBy}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return version, err
 }
 
-// Latest returns the newest config version and its snapshot (store.ErrNotFound when none exists).
+// Latest returns the default engine group's newest snapshot (store.ErrNotFound when none exists).
 func Latest(ctx context.Context, q Querier) (uint64, *controlv1.ConfigSnapshot, error) {
 	var version int64
 	var raw []byte
-	if err := q.QueryRow(ctx, "select version, snapshot from config_versions order by version desc limit 1").Scan(&version, &raw); err != nil {
+	if err := q.QueryRow(ctx, `select version, snapshot from group_snapshots where engine_group_id = $1
+		order by version desc limit 1`, store.DefaultEngineGroupID).Scan(&version, &raw); err != nil {
 		return 0, nil, store.MapError(err)
 	}
 	snap := &controlv1.ConfigSnapshot{}
@@ -105,6 +123,59 @@ func Latest(ctx context.Context, q Querier) (uint64, *controlv1.ConfigSnapshot, 
 	return uint64(version), snap, nil
 }
 
+// ContentDigest is the lowercase hex SHA-256 of snap's deterministic encoding with version and
+// creation time zeroed: equal digests mean an engine would serve the same configuration.
+func ContentDigest(snap *controlv1.ConfigSnapshot) (string, error) {
+	c := proto.Clone(snap).(*controlv1.ConfigSnapshot)
+	c.Version, c.CreatedUnixMs = 0, 0
+	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// Republish copies engine group groupID's snapshot of fromVersion into a new version (re-encoded
+// with the new number) and rolls it out to that group at once. Other groups get no snapshot of the
+// new version, so their targets do not change.
+func Republish(ctx context.Context, tx pgx.Tx, a auth.Actor, groupID uuid.UUID, fromVersion uint64, kind rollout.Kind) (uint64, uuid.UUID, error) {
+	version, err := nextVersion(ctx, tx)
+	if err != nil {
+		return 0, uuid.Nil, err
+	}
+	var raw []byte
+	if err := tx.QueryRow(ctx, "select snapshot from group_snapshots where version = $1 and engine_group_id = $2",
+		int64(fromVersion), groupID).Scan(&raw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, uuid.Nil, ErrUnknownVersion
+		}
+		return 0, uuid.Nil, err
+	}
+	snap := &controlv1.ConfigSnapshot{}
+	if err := proto.Unmarshal(raw, snap); err != nil {
+		return 0, uuid.Nil, fmt.Errorf("engine group %s version %d: %w", groupID, fromVersion, err)
+	}
+	change := auth.Change{Action: string(kind) + "EngineGroup", TargetType: "engine_group", TargetID: groupID.String(),
+		After: map[string]uint64{"from_version": fromVersion}}
+	if err := auth.WriteAudit(ctx, tx, a, change, &version); err != nil {
+		return 0, uuid.Nil, err
+	}
+	if err := insertVersion(ctx, tx, version, a.Name, fmt.Sprintf("%s engine group %s to %d", kind, groupID, fromVersion)); err != nil {
+		return 0, uuid.Nil, err
+	}
+	snap.Version, snap.CreatedUnixMs = version, time.Now().UnixMilli()
+	if err := insertGroupSnapshot(ctx, tx, version, groupID, snap); err != nil {
+		return 0, uuid.Nil, err
+	}
+	id, _, err := rollout.Create(ctx, tx, rollout.CreateParams{EngineGroupID: groupID, Version: version, FromVersion: &fromVersion,
+		Kind: kind, Immediate: true, Actor: a.Name})
+	return version, id, err
+}
+
+// publish writes the next version: the audit row, the config_versions row, and for every engine
+// group its snapshot and rollout. A group whose content equals its stable version's rolls out at
+// once; any other change follows the group's strategy.
 func publish(ctx context.Context, tx pgx.Tx, cfg BuildConfig, a auth.Actor, change auth.Change) (uint64, error) {
 	version, err := nextVersion(ctx, tx)
 	if err != nil {
@@ -113,16 +184,59 @@ func publish(ctx context.Context, tx pgx.Tx, cfg BuildConfig, a auth.Actor, chan
 	if err := auth.WriteAudit(ctx, tx, a, change, &version); err != nil {
 		return 0, err
 	}
-	snap, err := Build(ctx, tx, version, cfg)
-	if err != nil {
-		return 0, err
-	}
-	raw, err := proto.Marshal(snap)
-	if err != nil {
-		return 0, err
-	}
 	summary := strings.TrimSpace(change.Action + " " + change.TargetType + " " + change.TargetID)
-	return version, insertVersion(ctx, tx, version, a.Name, summary, raw)
+	if err := insertVersion(ctx, tx, version, a.Name, summary); err != nil {
+		return 0, err
+	}
+	groups, err := engineGroupIDs(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	for _, g := range groups {
+		snap, err := BuildForGroup(ctx, tx, version, cfg, g)
+		if err != nil {
+			return 0, err
+		}
+		if err := insertGroupSnapshot(ctx, tx, version, g, snap); err != nil {
+			return 0, err
+		}
+		var immediate bool
+		if err := tx.QueryRow(ctx, `select coalesce((select gs.content_sha256 from engine_groups g
+			join group_snapshots gs on gs.engine_group_id = g.id and gs.version = g.stable_version where g.id = $1)
+			= (select content_sha256 from group_snapshots where engine_group_id = $1 and version = $2), false)`,
+			g, int64(version)).Scan(&immediate); err != nil {
+			return 0, err
+		}
+		if _, _, err := rollout.Create(ctx, tx, rollout.CreateParams{EngineGroupID: g, Version: version, Kind: rollout.KindChange,
+			Immediate: immediate, Actor: a.Name}); err != nil {
+			return 0, err
+		}
+	}
+	return version, nil
+}
+
+// engineGroupIDs lists every engine group, the default group first.
+func engineGroupIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, "select id from engine_groups order by (id <> $1), name", store.DefaultEngineGroupID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
+
+// insertGroupSnapshot stores snap (whose Version must be version) as the group's snapshot.
+func insertGroupSnapshot(ctx context.Context, tx pgx.Tx, version uint64, groupID uuid.UUID, snap *controlv1.ConfigSnapshot) error {
+	digest, err := ContentDigest(snap)
+	if err != nil {
+		return err
+	}
+	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "insert into group_snapshots (version, engine_group_id, snapshot, content_sha256) values ($1, $2, $3, $4)",
+		int64(version), groupID, raw, digest)
+	return err
 }
 
 func lockVersions(ctx context.Context, tx pgx.Tx) error {
@@ -139,18 +253,32 @@ func nextVersion(ctx context.Context, tx pgx.Tx) (uint64, error) {
 	return version, err
 }
 
-func insertVersion(ctx context.Context, tx pgx.Tx, version uint64, createdBy, summary string, raw []byte) error {
-	if _, err := tx.Exec(ctx, "insert into config_versions(version, created_by, summary, snapshot) values ($1, $2, $3, $4)",
-		version, createdBy, summary, raw); err != nil {
+// insertVersion inserts the config_versions row (snapshots live in group_snapshots) and notifies.
+func insertVersion(ctx context.Context, tx pgx.Tx, version uint64, createdBy, summary string) error {
+	if _, err := tx.Exec(ctx, "insert into config_versions(version, created_by, summary) values ($1, $2, $3)",
+		version, createdBy, summary); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, "select pg_notify($1, $2)", NotifyChannel, strconv.FormatUint(version, 10))
 	return err
 }
 
-// Build reads the whole configuration inside tx and returns it as snapshot version `version`.
-// A non-empty allowlist is stored as a blob as a side effect.
+// Build is BuildForGroup for the default engine group.
 func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*controlv1.ConfigSnapshot, error) {
+	return BuildForGroup(ctx, tx, version, cfg, store.DefaultEngineGroupID)
+}
+
+// BuildForGroup reads the configuration of engine group groupID (the global rows plus the group's)
+// inside tx and returns it as snapshot version `version`. A non-empty allowlist is stored as a
+// blob as a side effect.
+func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig, groupID uuid.UUID) (*controlv1.ConfigSnapshot, error) {
+	var upstreamMode, groupOTLP string
+	var extraACL []string
+	if err := tx.QueryRow(ctx, `select upstream_mode,
+		array(select host(c) || '/' || masklen(c) from unnest(extra_acl_cidrs) with ordinality as u(c, n) order by n), otlp_endpoint
+		from engine_groups where id = $1`, groupID).Scan(&upstreamMode, &extraACL, &groupOTLP); err != nil {
+		return nil, fmt.Errorf("engine group %s: %w", groupID, err)
+	}
 	snap := &controlv1.ConfigSnapshot{
 		Version:       version,
 		CreatedUnixMs: time.Now().UnixMilli(),
@@ -177,20 +305,24 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 	snap.Cache.MaxBytes, snap.Cache.MinTtl, snap.Cache.MaxTtl = uint64(maxBytes), uint32(minTTL), uint32(maxTTL)
 	snap.Cache.NegativeMaxTtl, snap.Cache.StaleWindow = uint32(negTTL), uint32(stale)
 	snap.Filter.BlockTtl = uint32(blockTTL)
+	if groupOTLP != "" {
+		otlp = groupOTLP
+	}
 	snap.Telemetry.OtlpEndpoint = otlp
 	if otlp == "" {
 		snap.Telemetry.OtlpEndpoint = cfg.DefaultOTLPEndpoint
 	}
 	snap.Telemetry.TraceSampleOneIn, snap.Telemetry.TraceSlowThresholdUs = uint32(sample), uint32(slow)
 
-	if err := buildUpstreams(ctx, tx, snap); err != nil {
+	if err := buildUpstreams(ctx, tx, snap, groupID, upstreamMode); err != nil {
 		return nil, err
 	}
 	if err := tx.QueryRow(ctx, `select array(select host(c) || '/' || masklen(c)
 		from access_control, unnest(allow_cidrs) with ordinality as u(c, n) order by n)`).Scan(&snap.AclAllowCidrs); err != nil {
 		return nil, fmt.Errorf("access control: %w", err)
 	}
-	if err := buildFilterLists(ctx, tx, snap); err != nil {
+	snap.AclAllowCidrs = append(snap.AclAllowCidrs, extraACL...)
+	if err := buildFilterLists(ctx, tx, snap, groupID); err != nil {
 		return nil, err
 	}
 	var domains []string
@@ -204,30 +336,46 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 		}
 		snap.Filter.Allowlists = append(snap.Filter.Allowlists, ref)
 	}
-	if err := buildPolicy(ctx, tx, snap); err != nil {
+	if err := buildPolicy(ctx, tx, snap, groupID); err != nil {
 		return nil, err
 	}
-	rows, err := store.LoadResolution(ctx, tx)
+	rows, err := store.LoadResolution(ctx, tx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("resolution: %w", err)
 	}
 	ApplyResolution(snap, rows, time.Now())
-	if err := AddAuthZones(ctx, tx, snap); err != nil {
+	if err := AddAuthZones(ctx, tx, snap, groupID); err != nil {
 		return nil, err
 	}
 	return snap, nil
 }
 
-// buildPolicy loads policy groups, rewrites, global safe search and the current blob of every
-// fetched blocklist (enabled or not, since groups may select disabled lists).
-func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot) error {
-	groups, err := store.ListPolicyGroups(ctx, tx)
+// buildPolicy loads the policy groups of engine group groupID (global or its own), their rewrites
+// and the global rewrites of the group, global safe search and the current blob of every fetched
+// blocklist (enabled or not, since groups may select disabled lists).
+func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, groupID uuid.UUID) error {
+	all, err := store.ListPolicyGroups(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("policy groups: %w", err)
 	}
-	rewrites, err := store.ListRewrites(ctx, tx, nil, true)
+	inGroup := func(id *uuid.UUID) bool { return id == nil || *id == groupID }
+	groups := all[:0:0]
+	kept := map[uuid.UUID]bool{}
+	for _, g := range all {
+		if inGroup(g.EngineGroupID) {
+			groups = append(groups, g)
+			kept[g.ID] = true
+		}
+	}
+	allRewrites, err := store.ListRewrites(ctx, tx, nil, true)
 	if err != nil {
 		return fmt.Errorf("rewrites: %w", err)
+	}
+	var rewrites []store.Rewrite
+	for _, r := range allRewrites {
+		if r.GroupID != nil && kept[*r.GroupID] || r.GroupID == nil && inGroup(r.EngineGroupID) {
+			rewrites = append(rewrites, r)
+		}
 	}
 	global, err := store.GetGlobalSafeSearch(ctx, tx)
 	if err != nil {
@@ -276,9 +424,11 @@ var (
 	}
 )
 
-func buildUpstreams(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot) error {
+// buildUpstreams lists the group's upstreams first, then (upstream mode inherit) the global ones.
+func buildUpstreams(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, groupID uuid.UUID, mode string) error {
 	rows, err := tx.Query(ctx, `select id::text, name, protocol, address, tls_server_name, doh_url, timeout_ms, ca_certificate_pem
-		from upstreams where enabled order by position, name`)
+		from upstreams where enabled and (engine_group_id = $1 or ($2 = 'inherit' and engine_group_id is null))
+		order by (engine_group_id is null), position, name`, groupID, mode)
 	if err != nil {
 		return fmt.Errorf("upstreams: %w", err)
 	}
@@ -300,10 +450,11 @@ func buildUpstreams(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapsh
 	return rows.Err()
 }
 
-func buildFilterLists(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot) error {
+func buildFilterLists(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, groupID uuid.UUID) error {
 	rows, err := tx.Query(ctx, `select f.name, f.kind, f.current_blob_sha256, b.size
 		from filter_lists f join blobs b on b.sha256 = f.current_blob_sha256
-		where f.enabled and f.current_blob_sha256 is not null order by f.name`)
+		where f.enabled and f.current_blob_sha256 is not null and (f.engine_group_id is null or f.engine_group_id = $1)
+		order by f.name`, groupID)
 	if err != nil {
 		return fmt.Errorf("filter lists: %w", err)
 	}

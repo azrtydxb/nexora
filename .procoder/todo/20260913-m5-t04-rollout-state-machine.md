@@ -12,17 +12,24 @@ is committed.
 
 ## Acceptance criteria
 
-- [ ] Every step of Task 4 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
-- [ ] `TestAllAtOnceCompletesWhenConnectedEnginesApply` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestCanaryHappyPath` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestHaltsOnCanaryRejectAndAckTimeout` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestHaltsOnServfailRatio` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestHaltsWhenCanaryStopsReporting` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestLowTrafficPassesGate` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestPausedGroupHoldsChangesOnly` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestSelectCanaries` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestTarget` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] Every step of Task 4 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
+- [x] `TestAllAtOnceCompletesWhenConnectedEnginesApply` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestCanaryHappyPath` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestHaltsOnCanaryRejectAndAckTimeout` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestHaltsOnServfailRatio` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestHaltsWhenCanaryStopsReporting` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestLowTrafficPassesGate` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestPausedGroupHoldsChangesOnly` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestSelectCanaries` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestTarget` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
+Implemented 2026-09-14, not committed (lead commits).
+
+- Red: `scripts/dev-exec.sh 'go test ./mgmt/internal/rollout/ -count=1'` -> build failed, `undefined: Rollout`.
+- Green: `scripts/dev-exec.sh 'go test ./mgmt/internal/rollout/ -count=1 -race -v'` -> all 12 tests PASS, `ok`.
+- Added property-style tests (plan updated): `TestStepTransitionTable` (~2.5M enumerated steps without -race), `TestStepRandomWalk`, `TestTargetTable`.
+- Mutation: `ratio > r.Params.MaxServfailRatio` -> `ratio >= 1` -> FAIL `TestHaltsOnServfailRatio`, `TestStepTransitionTable`, `TestStepRandomWalk`; restored -> ok.
+- Gate: `procoder check` over changed files -> 0 unformatted, 0 blocking.

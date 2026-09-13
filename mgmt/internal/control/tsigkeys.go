@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/proto"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
@@ -70,6 +71,26 @@ func (k *TSIGKeys) Load(ctx context.Context) (*controlv1.KeyMaterial, string, er
 	sum := sha256.Sum256(raw)
 	clear(raw)
 	return km, hex.EncodeToString(sum[:]), nil
+}
+
+// ZoneKeyNames returns the names of the keys some zone of any engine group uses (transfer, NOTIFY
+// target, update or primary key).
+func (k *TSIGKeys) ZoneKeyNames(ctx context.Context) (map[string]bool, error) {
+	rows, err := k.st.Pool.Query(ctx, `SELECT k.name FROM tsig_keys k WHERE EXISTS (SELECT 1 FROM zones z
+		WHERE z.transfer_tsig_key_id = k.id OR k.id = ANY(z.update_tsig_key_ids)
+		OR EXISTS (SELECT 1 FROM jsonb_array_elements(z.notify_targets || z.primaries) e WHERE e->>'tsig_key_id' = k.id::text))`)
+	if err != nil {
+		return nil, store.MapError(err)
+	}
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, store.MapError(err)
+	}
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[n] = true
+	}
+	return out, nil
 }
 
 // clearKeyMaterial zeroes the secrets of km (nil-safe).

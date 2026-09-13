@@ -13,17 +13,20 @@ import (
 type Rewrite struct {
 	ID                   uuid.UUID
 	GroupID              *uuid.UUID
+	EngineGroupID        *uuid.UUID // global rewrites only; a policy group rewrite follows its policy group
 	Name, Type, Value    string
 	TTL                  int32
 	Revision             int64
 	CreatedAt, UpdatedAt time.Time
 }
 
-const selectRewrites = "select id, group_id, name, type, value, ttl, revision, created_at, updated_at from rewrites"
+const rewriteColumns = "id, group_id, engine_group_id, name, type, value, ttl, revision, created_at, updated_at"
+
+const selectRewrites = "select " + rewriteColumns + " from rewrites"
 
 func scanRewrite(row pgx.Row) (Rewrite, error) {
 	var r Rewrite
-	err := row.Scan(&r.ID, &r.GroupID, &r.Name, &r.Type, &r.Value, &r.TTL, &r.Revision, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.GroupID, &r.EngineGroupID, &r.Name, &r.Type, &r.Value, &r.TTL, &r.Revision, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
@@ -67,7 +70,7 @@ func CreateRewrite(ctx context.Context, tx pgx.Tx, r Rewrite) (Rewrite, error) {
 		return Rewrite{}, err
 	}
 	created, err := scanRewrite(tx.QueryRow(ctx, `insert into rewrites(group_id, name, type, value, ttl) values ($1, $2, $3, $4, $5)
-		returning id, group_id, name, type, value, ttl, revision, created_at, updated_at`, r.GroupID, r.Name, r.Type, r.Value, r.TTL))
+		returning `+rewriteColumns, r.GroupID, r.Name, r.Type, r.Value, r.TTL))
 	if err != nil {
 		return Rewrite{}, policyError(err)
 	}
@@ -81,7 +84,7 @@ func UpdateRewrite(ctx context.Context, tx pgx.Tx, r Rewrite) (Rewrite, error) {
 	}
 	updated, err := scanRewrite(tx.QueryRow(ctx, `update rewrites set group_id = $2, name = $3, type = $4, value = $5, ttl = $6,
 		revision = revision + 1, updated_at = now() where id = $1 and revision = $7
-		returning id, group_id, name, type, value, ttl, revision, created_at, updated_at`,
+		returning `+rewriteColumns,
 		r.ID, r.GroupID, r.Name, r.Type, r.Value, r.TTL, r.Revision))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Rewrite{}, missingOrStale(ctx, tx, "rewrites", r.ID)

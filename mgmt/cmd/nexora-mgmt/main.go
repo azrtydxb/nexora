@@ -35,8 +35,10 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
+	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
+	"github.com/piwi3910/nexora/mgmt/internal/rollout"
 	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
@@ -283,6 +285,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	hub.RPZTsig = control.NewRPZTsig(st, box)
 	hub.TSIGKeys = control.NewTSIGKeys(st, box)
 	go func() { _ = hub.Run(ctx) }()
+	go (&rollout.Controller{Store: st, Tick: cfg.RolloutTick}).Run(ctx)
 	go snapshot.RunNTAExpiry(ctx, st, build)
 
 	fetcher := blocklist.NewFetcher(st, build, &http.Client{})
@@ -304,7 +307,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		stats.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter, xfrin.NotifyIgnored)
+		stats.NewCollector(st), fleet.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter, xfrin.NotifyIgnored)
 	dnsTLS := control.NewDNSTLSFanout()
 	if cfg.DNSTLSCertFile != "" {
 		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)

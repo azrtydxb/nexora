@@ -26,6 +26,8 @@ type Config struct {
 	KEKFile string
 	// PKCS#11 token holding DNSSEC keys and the envelope wrap key; all three or none.
 	PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string
+	// RolloutTick is how often the rollout controller steps open rollouts without a notification.
+	RolloutTick time.Duration
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -122,6 +124,11 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_RELOAD_INTERVAL must be a duration of at least 1s")
 	}
 	c.DNSTLSReloadInterval = interval
+	tick, err := time.ParseDuration(get("NEXORA_ROLLOUT_TICK", "1s"))
+	if err != nil || tick < 100*time.Millisecond || tick > time.Minute {
+		return Config{}, fmt.Errorf("NEXORA_ROLLOUT_TICK must be between 100ms and 1m")
+	}
+	c.RolloutTick = tick
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {
 			return Config{}, fmt.Errorf("NEXORA_OIDC_CLIENT_ID is required when NEXORA_OIDC_ISSUER is set")

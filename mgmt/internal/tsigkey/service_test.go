@@ -69,7 +69,7 @@ func TestCreateStoresOnlyEnvelopeAndPublishes(t *testing.T) {
 		t.Fatalf("audit row does not describe the key: %s", audit)
 	}
 	var snap []byte
-	if err := st.Pool.QueryRow(ctx, `SELECT snapshot FROM config_versions ORDER BY version DESC LIMIT 1`).Scan(&snap); err != nil {
+	if err := st.Pool.QueryRow(ctx, `SELECT snapshot FROM group_snapshots ORDER BY version DESC LIMIT 1`).Scan(&snap); err != nil {
 		t.Fatal(err)
 	}
 	for what, blob := range map[string][]byte{"audit row": []byte(audit), "snapshot": snap} {

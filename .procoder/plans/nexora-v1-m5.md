@@ -1111,6 +1111,7 @@ func Target(e Engine, stable uint64, latest *Rollout) uint64
   `fleet.TargetFor` (Task 6) passes the newest non-superseded rollout; a `rolled_back` rollout is always older than the rollback rollout that marked it, so the `RolledBack` case only keeps `Target` total.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/rollout/ -count=1 -race` and expect `ok`.
 - [ ] Mutation check: temporarily change `ratio > r.Params.MaxServfailRatio` to `ratio >= 1` and rerun; expect FAIL with `--- FAIL: TestHaltsOnServfailRatio`. Restore the line and expect `ok` again.
+- [ ] Add `mgmt/internal/rollout/rollout_property_test.go`: `TestStepTransitionTable` enumerates every state x kind x strategy x pause x phase age (0, 29, 30, 60, 61 s) x observation (every one- and two-engine combination of connected/applied/rejected/health, a sample of three-engine ones, with and without canary membership) and checks the invariants of each `Step` (only the allowed successor states, at most one transition, unchanged rollouts are returned untouched, identity/version/params never change, the phase starts at `Now`, halt reasons exactly on halting, canaries are distinct connected engines leaving one out, no unhealthy canary passes, `completed` only when every connected engine applied); `TestStepRandomWalk` walks random observation sequences and asserts no state is entered twice; `TestTargetTable` covers `Target` over every state.
 - [ ] Commit: `git add mgmt/internal/rollout && git commit -m "feat(rollout): staged rollout state machine"`.
 
 ## Task 5: Per-group snapshots, rollout creation and publishing
@@ -1410,7 +1411,12 @@ func LoadResolution(ctx context.Context, q PolicyQuerier, engineGroupID uuid.UUI
 - [ ] Change `AddAuthZones(ctx, tx, snap, groupID)` in `mgmt/internal/snapshot/authzones.go`: add `and (z.engine_group_id is null or z.engine_group_id = $1)` to the zones query. Update the call sites `mgmt/internal/snapshot/authzones_test.go` (pass `store.DefaultEngineGroupID`) and `mgmt/internal/snapshot/snapshot_test.go` (unchanged `snapshot.Build`).
 - [ ] Change `harness.PublishRawSnapshot` in `e2e/harness/mgmt.go` (the harness cannot import `mgmt/internal`): inside the same transaction after the version lock, `insert into config_versions(version, created_by, summary) values ($1, 'e2e', 'raw snapshot')`, then for each `select id from engine_groups`: `insert into group_snapshots(version, engine_group_id, snapshot, content_sha256) values ($1, $2, $3, encode(sha256($3), 'hex'))`, `update rollouts set state = 'superseded', finished_at = now() where engine_group_id = $2 and state in ('pending','canary','verifying','rolling','halted')`, `insert into rollouts(engine_group_id, version, kind, strategy, state, params, created_by, phase_started_at) values ($2, $1, 'change', 'all_at_once', 'rolling', '{"strategy":"all_at_once","ack_timeout_seconds":60}', 'e2e', now())`, `select pg_notify('nexora_rollout', $2::text)`; keep `pg_notify('nexora_config', version)`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/snapshot/ ./mgmt/internal/rollout/ ./mgmt/internal/store/ -count=1 && go vet ./mgmt/... ./e2e/...'` and expect `ok` for each package and no vet output.
-- [ ] Commit: `git add mgmt/internal/snapshot mgmt/internal/rollout/create.go mgmt/internal/store e2e/harness/mgmt.go && git commit -m "feat(snapshot): one snapshot and rollout per engine group"`.
+- [ ] Reconciled with the code while building (binding):
+  - `buildPolicy` lives in `snapshot.go`, not `policy.go` (unchanged file); `store.LoadResolution` reads the scoped forward and RPZ zones through `collect(..., args...)`.
+  - `rollout.Create` locks the engine group row `FOR NO KEY UPDATE` (not `FOR UPDATE`, which would block every foreign-key insert naming the group), and the controller (Task 6) takes the same lock before the rollout row, so publish and step never deadlock. `harness.PublishRawSnapshot` locks the engine group rows the same way first.
+  - `Republish` takes the version lock (`nextVersion`) before loading the source snapshot.
+  - Three readers of `config_versions.snapshot` the first draft missed now read `group_snapshots`: blob garbage collection in `mgmt/internal/blocklist/fetcher.go` keeps the blobs of the group snapshots of the newest 20 versions plus every group's stable version and open or halted rollouts (new `TestCollectBlobsKeepsStableGroupSnapshots` in `gc_test.go`); `mgmt/internal/tsigkey/service_test.go`; and `e2e/rpz_test.go`'s snapshot byte search.
+- [ ] Commit: `git add mgmt/internal/snapshot mgmt/internal/rollout/create.go mgmt/internal/store mgmt/internal/blocklist mgmt/internal/tsigkey/service_test.go e2e/harness/mgmt.go e2e/rpz_test.go && git commit -m "feat(snapshot): one snapshot and rollout per engine group"`.
 
 ## Task 6: Rollout controller, targeted pushes and fleet status
 
@@ -1448,7 +1454,7 @@ func ConnectEngine(t *testing.T, st *store.Store, engineID uuid.UUID)
 
 package control
 func FilterRPZKeys(snap *controlv1.ConfigSnapshot, keys *controlv1.RpzTsigKeys) *controlv1.RpzTsigKeys
-func FilterKeyMaterial(snap *controlv1.ConfigSnapshot, km *controlv1.KeyMaterial) *controlv1.KeyMaterial
+func FilterKeyMaterial(snap *controlv1.ConfigSnapshot, km *controlv1.KeyMaterial, zoned map[string]bool) *controlv1.KeyMaterial
 ```
 
 - [ ] Create the fixture `mgmt/internal/store/storetest/fleet.go`:
@@ -2090,7 +2096,13 @@ func FilterKeyMaterial(snap *controlv1.ConfigSnapshot, km *controlv1.KeyMaterial
 - [ ] Change `mgmt/internal/api/handlers_fleet.go`: `ListEngines`, `GetEngine` and `DeleteEngine`'s `before` map `fleet.EngineView` to the existing `Engine` schema fields (`Status` from the view; the M1 fields keep their meaning) instead of `engineSelect`; remove `engineSelect` and `scanEngine`.
 - [ ] Add `RolloutTick time.Duration` to `mgmt/internal/config/config.go` from `NEXORA_ROLLOUT_TICK` (default `1s`; outside `100ms`..`1m` -> `NEXORA_ROLLOUT_TICK must be between 100ms and 1m`) with a case in `config_test.go` for `50ms` expecting that error; in `serve` of `mgmt/cmd/nexora-mgmt/main.go` start `go (&rollout.Controller{Store: st, Tick: cfg.RolloutTick}).Run(ctx)` after `snapshot.EnsureInitial` and register `fleet.NewCollector(st)` next to `stats.NewCollector(st)`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... -count=1 && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA|TestPerClientPolicy|TestAuthoritativeZonePropagation" -count=1 -timeout 20m'` and expect every package and test `ok` (all_at_once is the default, so M1–M4 flows reach every engine without a controller tick).
-- [ ] Commit: `git add mgmt/internal/rollout mgmt/internal/fleet mgmt/internal/control mgmt/internal/store/storetest/fleet.go mgmt/internal/api/handlers_fleet.go mgmt/internal/config mgmt/cmd/nexora-mgmt && git commit -m "feat(mgmt): rollout controller, targeted pushes, fleet status and metrics"`.
+- [ ] Reconciled with the code while building (binding):
+  - `driveOne` locks, after the advisory lock, the engine group row `FOR NO KEY UPDATE`, then the rollout `FOR UPDATE` (same order as `rollout.Create`); a rollout deleted with its group since listing is skipped; health is loaded for canaries only.
+  - `fleet.Targets(ctx, q, EngineFilter) (map[uuid.UUID]Target, error)` loads many targets decoding each group snapshot once; `TargetFor` uses it. The hub pushes through it and coalesces notifications arriving within 10 ms (at most 256) into one push per engine group or engine. The hub no longer LISTENs on `nexora_config`.
+  - `FilterKeyMaterial(snap, km, zoned map[string]bool)` keeps the keys `snap`'s auth zones name (also `AuthZone.primary_tsig_keys`, M4 per-primary NOTIFY keys) plus every key no zone of any group names (`zoned` from the new `(*TSIGKeys).ZoneKeyNames`); only keys used exclusively by other groups' zones are left out. TSIG keys are fleet-wide objects and M4's `TestSecondaryAndDynamicUpdate` expects a NOTIFY signed with a valid key no zone names to be REFUSED, not BADKEY; `keys_test.go` adds such a key.
+  - Extra tests in `mgmt/internal/rollout/controller_ha_test.go`: `TestTwoControllersNeverDoubleAdvance` (two instances, each a running controller plus four goroutines calling `Step`; a trigger logs every controller write, and the committed log must be exactly `pending->canary, canary->verifying, verifying->rolling, rolling->completed`) and `TestControllerRestartResumesFromDatabase` (a controller exits mid-rollout, another dies holding the lock with an uncommitted transition and is terminated; a controller on a second instance resumes from the committed state).
+  - `fleet_test.go` needs `github.com/kylelemons/godebug` (via `prometheus/testutil`) in `go.mod`.
+- [ ] Commit: `git add go.mod docs/architecture.md mgmt/internal/rollout mgmt/internal/fleet mgmt/internal/control mgmt/internal/store/storetest/fleet.go mgmt/internal/api/handlers_fleet.go mgmt/internal/config mgmt/cmd/nexora-mgmt && git commit -m "feat(mgmt): rollout controller, targeted pushes, fleet status and metrics"`.
 
 ## Task 7: Fleet HTTP API, engine-group scoping in the API, and the fleet harness
 
@@ -3320,7 +3332,7 @@ operationIds `revokeEngine` (admin), `rotateEngineCertificate` (admin).
 
 ## Task 9: Engine side of renewal, rotation, revocation and node naming
 
-Files: `engine/src/cert_renewal.rs` (renewal timing, CSR, atomic identity swap, recovery), `engine/src/lib.rs` (module declaration), `engine/src/control.rs` (stream handling of the new messages, identity reload per session, revoked backoff), `engine/src/telemetry/metrics.rs` (`nexora_control_revoked`, `nexora_control_cert_renewals_total`), `engine/src/bootstrap.rs` (`NEXORA_ENGINE_NODE_NAME`)
+Files: `engine/src/cert_renewal.rs` (renewal timing, CSR, verification of the issued certificate, staged identity, atomic swap, recovery), `engine/src/lib.rs` (module declaration), `engine/src/control.rs` (stream handling of the new messages, identity reload per session, staged-identity confirmation, revoked backoff), `engine/src/telemetry/metrics.rs` (`nexora_control_revoked`, `nexora_control_cert_renewals_total`), `engine/tests/telemetry_export.rs` (both names in the scrape), `engine/src/bootstrap.rs` (`NEXORA_ENGINE_NODE_NAME`), `engine/tests/control_renewal.rs` (the control loop against a fake management plane)
 Interfaces:
 
 ```rust
@@ -3328,16 +3340,24 @@ Interfaces:
 pub fn renewal_due(not_before: SystemTime, not_after: SystemTime, now: SystemTime) -> bool;
 pub fn cert_validity(cert_pem: &str) -> Option<(SystemTime, SystemTime)>;
 pub fn new_csr(engine_id: &str) -> Result<(Vec<u8> /* csr der */, rcgen::KeyPair), rcgen::Error>;
-pub fn swap_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> std::io::Result<()>;
+pub fn cert_serial(cert_pem: &str) -> String; // lowercase hex, mgmt notation
+pub fn verify_issued(engine_id: &str, ca_pem: &str, key: &rcgen::KeyPair, issued: &CertificateIssued, now: SystemTime) -> Result<String /* cert pem */, String>;
+pub fn staged_dir(state_dir: &Path) -> PathBuf; // state_dir/identity.new
+pub fn stage_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> std::io::Result<()>;
+pub fn promote_identity(state_dir: &Path) -> std::io::Result<()>;
+pub fn discard_staged(state_dir: &Path) -> std::io::Result<()>;
+pub fn swap_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> std::io::Result<()>; // stage + promote
 pub fn recover_identity(state_dir: &Path) -> std::io::Result<()>;
-// engine/src/control.rs
+// engine/src/control.rs (ControlError gains `Renewed`)
 pub fn reconnect_delay(status: Option<&tonic::Status>, attempt: u32, jitter: f64 /* 0.0..=1.0 */) -> Duration;
 // engine/src/bootstrap.rs
 pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<String>) -> anyhow::Result<()>;
 // engine/src/telemetry/metrics.rs: Metrics gains `pub control_revoked: AtomicBool`, `pub cert_renewals: AtomicU64`
 ```
 
-- [ ] Write the failing unit tests at the bottom of a new `engine/src/cert_renewal.rs` (declare `pub mod cert_renewal;` in `engine/src/lib.rs`):
+> As built (deviation, 2026-09-14): rcgen 0.14 has no `KeyPair::public_key_der`; the SPKI comes from `rcgen::PublicKeyData::subject_public_key_info`. To keep the old identity until the new certificate is confirmed working, `CertIssued` stages the identity (`identity.new.tmp` -> `identity.new`, so a present `identity.new` is always complete) and `run` tries the staged identity first; it is promoted (`identity` -> `identity.old`, `identity.new` -> `identity`, old removed) right after the management plane accepts `Connect` with it, which is also when the plane supersedes the old serial. A staged identity refused with `PermissionDenied`/`Unauthenticated` is discarded and the current identity retried at once. `recover_identity` keeps a complete `identity.new` next to an intact `identity` (unconfirmed renewal). `verify_issued` additionally verifies the certificate as a client certificate under the pinned CA with webpki. `cert_renewals` counts promotions. Extra tests: `issued_certificate_must_match_pinned_ca_key_and_engine_id`, `staged_identity_survives_recovery_until_promoted_or_discarded`, and `engine/tests/control_renewal.rs` `renews_rotates_and_backs_off_when_revoked` (renewal, rotation, refused staged fallback, revoked backoff against a fake mTLS control server).
+
+- [x] Write the failing unit tests at the bottom of a new `engine/src/cert_renewal.rs` (declare `pub mod cert_renewal;` in `engine/src/lib.rs`):
   ```rust
   #[cfg(test)]
   mod tests {
@@ -3364,7 +3384,7 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
           let cn = csr.certification_request_info.subject.iter_common_name().next().unwrap();
           assert_eq!(cn.as_str().unwrap(), id);
           csr.verify_signature().unwrap();
-          assert_eq!(csr.certification_request_info.subject_pki.raw, key.public_key_der().as_slice());
+          assert_eq!(csr.certification_request_info.subject_pki.raw, key.subject_public_key_info().as_slice());
       }
 
       fn identity(dir: &std::path::Path, cert: &[u8], key: &[u8]) {
@@ -3415,8 +3435,8 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       }
   }
   ```
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine cert_renewal` and expect FAIL with ``cannot find function `renewal_due` in this scope``.
-- [ ] Implement `engine/src/cert_renewal.rs` above the tests (`rcgen` with its `x509-parser` feature and `x509-parser` are already dependencies; `tempfile` is a dev-dependency):
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine cert_renewal` and expect FAIL with ``cannot find function `renewal_due` in this scope``.
+- [x] Implement `engine/src/cert_renewal.rs` above the tests (`rcgen` with its `x509-parser` feature and `x509-parser` are already dependencies; `tempfile` is a dev-dependency):
   ```rust
   //! Engine certificate renewal: timing, CSR generation and the atomic swap of
   //! `state_dir/identity`. Runs on the control runtime only.
@@ -3507,7 +3527,7 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
   }
   ```
   Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine cert_renewal` and expect `test result: ok. 4 passed`.
-- [ ] Write the failing tests: in `engine/src/control.rs` (add `#[cfg(test)] mod tests` when absent)
+- [x] Write the failing tests: in `engine/src/control.rs` (add `#[cfg(test)] mod tests` when absent)
   ```rust
   #[test]
   fn revoked_or_unknown_engine_backs_off_five_minutes() {
@@ -3538,13 +3558,13 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       assert_eq!(b.node_name, "edge-b-worker-24");
   }
   ```
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine -- revoked_or_unknown_engine_backs_off_five_minutes node_name_env_override_is_validated` and expect FAIL with ``cannot find function `reconnect_delay` ``.
-- [ ] Implement:
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine -- revoked_or_unknown_engine_backs_off_five_minutes node_name_env_override_is_validated` and expect FAIL with ``cannot find function `reconnect_delay` ``.
+- [x] Implement:
   - `reconnect_delay` in `engine/src/control.rs`: a `PermissionDenied` status whose message is `certificate revoked` or `unknown or deleted engine` -> `Duration::from_secs_f64(300.0 * (0.9 + 0.2 * jitter))`; otherwise M1's `backoff(attempt)` computed with the given jitter (`500 ms × 2^attempt` capped at 30 s, times `0.8 + 0.4 * jitter`). `backoff(attempt)` keeps its signature and calls `reconnect_delay(None, attempt, rand::rng().random_range(0.0..=1.0))`.
   - `apply_env_overrides` in `engine/src/bootstrap.rs`: when `NEXORA_ENGINE_NODE_NAME` is set, validate it with the same rule as `node_name` (error `NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{1,63}`) and replace `node_name`; `load` calls `apply_env_overrides(&mut b, |k| std::env::var(k).ok())` right after parsing and before its own `node_name` check.
   - `engine/src/telemetry/metrics.rs`: `Metrics` gains `control_revoked: AtomicBool` and `cert_renewals: AtomicU64`; `render` registers `nexora_control_revoked` (`1 while the management plane refuses this engine's certificate`) and `nexora_control_cert_renewals_total` (`Engine certificates renewed over the control stream`).
-  - `engine/src/control.rs`: `obtain_identity` calls `cert_renewal::recover_identity(&boot.state_dir)` before `load_identity`; `run` reloads the identity with `load_identity` before every `session` (so a swapped identity is used on reconnect) and sleeps `reconnect_delay(status, attempt, jitter)` where `status` is the `tonic::Status` inside `ControlError::Grpc`; a revoked/unknown status sets `control_revoked` true, a successful `connect` sets it false. Inside `session` (control runtime only): keep `pending: Option<(rcgen::KeyPair, Instant)>`; on stream open and on every stats tick, when `cert_validity(&id.cert_pem)` says `renewal_due` and no renewal younger than 30 s is pending, `new_csr(&id.engine_id)` and send `Msg::CertRequest(CertificateRequest { csr_der, reason: Reason::Renewal as i32 })`; on `ServerMsg::RenewCertificate` do the same with `Reason::Rotate`; on `ServerMsg::CertIssued(ci)` with a pending key: require `sha256(ci.ca_der)` to equal the SHA-256 of the DER in `id.ca_pem`, the issued certificate's SubjectPublicKeyInfo to equal `key.public_key_der()`, and its CN to equal the engine id; then `swap_identity(state_dir, cert_pem, key.serialize_pem())`, increment `cert_renewals`, log `nexora-engine: certificate renewed (serial <hex>)` and return `stream_closed()` so `run` reconnects at once with the new identity (attempt reset to 0); any failed check logs `nexora-engine: rejected issued certificate: <reason>` and drops the pending key. The pending private key is never written to disk before it is issued and never logged. Serving from the last applied snapshot continues in every case.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings && cargo fmt --all -- --check'` and expect `test result: ok` for every suite (including `cache_hit_path_does_not_allocate`) and no clippy or fmt findings.
+  - `engine/src/control.rs`: `obtain_identity` calls `cert_renewal::recover_identity(&boot.state_dir)` before `load_identity`; `run` reloads the identity with `load_identity` before every `session` (so a swapped identity is used on reconnect) and sleeps `reconnect_delay(status, attempt, jitter)` where `status` is the `tonic::Status` inside `ControlError::Grpc`; a revoked/unknown status sets `control_revoked` true, a successful `connect` sets it false. Inside `session` (control runtime only): keep `pending: Option<(rcgen::KeyPair, Instant)>`; on stream open and on every stats tick, when `cert_validity(&id.cert_pem)` says `renewal_due` and no renewal younger than 30 s is pending, `new_csr(&id.engine_id)` and send `Msg::CertRequest(CertificateRequest { csr_der, reason: Reason::Renewal as i32 })`; on `ServerMsg::RenewCertificate` do the same with `Reason::Rotate`; on `ServerMsg::CertIssued(ci)` with a pending key: require `sha256(ci.ca_der)` to equal the SHA-256 of the DER in `id.ca_pem`, the issued certificate's SubjectPublicKeyInfo to equal `key.public_key_der()`, and its CN to equal the engine id; and verify it under the pinned CA (`verify_issued`); then `stage_identity(state_dir, cert_pem, key.serialize_pem())` and return `ControlError::Renewed` so `run` reconnects at once with the staged identity (attempt reset to 0); when that stream is accepted, `promote_identity`, increment `cert_renewals` and log `nexora-engine: certificate renewed (serial <hex>)`; a staged identity refused with `PermissionDenied`/`Unauthenticated` is discarded and the current identity retried at once; any failed check logs `nexora-engine: rejected issued certificate: <reason>` and drops the pending key. The pending private key is never written to disk before it is issued and never logged. Serving from the last applied snapshot continues in every case.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings && cargo fmt --all -- --check'` and expect `test result: ok` for every suite (including `cache_hit_path_does_not_allocate`) and no clippy or fmt findings.
 - [ ] Commit: `git add engine && git commit -m "feat(engine): certificate renewal and rotation, revoked backoff, node name override"`.
 
 ## Task 10: Fleet acceptance tests
@@ -4586,7 +4606,7 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
 
 ## Task 13: Helm chart
 
-Files: `deploy/helm/nexora/Chart.yaml`, `deploy/helm/nexora/values.yaml`, `deploy/helm/nexora/values.schema.json`, `deploy/helm/nexora/templates/_helpers.tpl`, `templates/mgmt-deployment.yaml`, `templates/mgmt-services.yaml` (http and gRPC ClusterIP, optional gRPC LoadBalancer), `templates/mgmt-ingress.yaml`, `templates/mgmt-pdb.yaml`, `templates/engine-configmap.yaml`, `templates/engine-workloads.yaml` (one DaemonSet or Deployment per entry of `engine.groups`), `templates/engine-services.yaml` (per-group DNS Service, metrics Service), `templates/database-cnpg.yaml`, `templates/servicemonitor.yaml`, `templates/prometheusrule.yaml`, `templates/NOTES.txt`, `deploy/helm/nexora/ci/lint-values.yaml`, `deploy/kw/values-kw.yaml` (kw release values), `deploy/deploytest/helm_test.go` (`TestHelmTemplate`), `Makefile` (`GO_PKGS` includes `deploy`)
+Files: `deploy/helm/nexora/Chart.yaml`, `deploy/helm/nexora/values.yaml`, `deploy/helm/nexora/values.schema.json`, `deploy/helm/nexora/templates/_helpers.tpl`, `templates/mgmt-deployment.yaml`, `templates/mgmt-services.yaml` (http and gRPC ClusterIP, optional gRPC LoadBalancer), `templates/mgmt-ingress.yaml`, `templates/mgmt-pdb.yaml`, `templates/engine-configmap.yaml`, `templates/engine-workloads.yaml` (one DaemonSet or Deployment per entry of `engine.groups`), `templates/engine-services.yaml` (per-group DNS Service, metrics Service), `templates/database-cnpg.yaml`, `templates/servicemonitor.yaml`, `templates/prometheusrule.yaml`, `templates/otel-collector.yaml` (optional collector), `templates/NOTES.txt`, `deploy/helm/nexora/ci/lint-values.yaml`, `deploy/kw/values-kw.yaml` (kw release values), `deploy/deploytest/helm_test.go` (`TestHelmTemplate`), `Makefile` (`GO_PKGS` includes `deploy`), `.prettierignore` (Helm templates are not YAML)
 Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora`, else `R-nexora`; objects `F-mgmt` (Deployment, http Service, Ingress unless `mgmt.ingress.name` is set, PodDisruptionBudget), `F-mgmt-grpc` (ClusterIP Service), `F-mgmt-lb` (LoadBalancer Service when `mgmt.grpcLoadBalancer.enabled`), per engine group entry `workloadName` (default `F-engine-<name>`) for the ConfigMap and workload and `service.name` (default `F-dns-<name>`) for the DNS Service, `F-engine-metrics` (Service), CNPG `Cluster` `database.cnpg.clusterName`, `F` (ServiceMonitor, PrometheusRule); pod labels `app.kubernetes.io/name` (`nexora-mgmt` or `nexora-engine`), `app.kubernetes.io/instance`, `nexora.io/engine-group`.
 
 - [ ] Write the failing test `deploy/deploytest/helm_test.go`:
@@ -4634,14 +4654,14 @@ Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora
   	var docs []obj
   	dec := yaml.NewDecoder(bytes.NewBufferString(out))
   	for {
-  		var o obj
+  		var o map[string]any // unnamed: yaml.v3 gives nested mappings the target map type
   		if err := dec.Decode(&o); errors.Is(err, io.EOF) {
   			break
   		} else if err != nil {
   			t.Fatalf("decode: %v", err)
   		}
   		if o != nil {
-  			docs = append(docs, o)
+  			docs = append(docs, obj(o))
   		}
   	}
   	return docs
@@ -4774,7 +4794,7 @@ Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora
   		t.Errorf("service monitor metadata = %v", sm["metadata"])
   	}
   	rule, _ := yaml.Marshal(find(t, kw, "PrometheusRule", "nexora"))
-  	for _, want := range []string{"max(nexora_mgmt_engines_disconnected", `nexora_mgmt_rollouts{state="halted"}`, "NexoraManagementPlaneDown"} {
+  	for _, want := range []string{"max(nexora_mgmt_engines_disconnected", `nexora_mgmt_rollouts{state="halted",namespace="nexora"}`, "NexoraManagementPlaneDown"} {
   		if !strings.Contains(string(rule), want) {
   			t.Errorf("prometheus rule lacks %q:\n%s", want, rule)
   		}
@@ -5108,6 +5128,7 @@ Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora
     prometheusRule:
       { enabled: true, namespace: monitoring, labels: { release: kps } }
   ```
+- [ ] As built (additions to the steps above, all covered by extra assertions in `TestHelmTemplate` after the `cnpg` render): `engine.hostNetwork` (default false; true sets `hostNetwork: true`, `dnsPolicy: ClusterFirstWithHostNet` and drops the pod sysctl, which is namespaced and rejected with host networking); `otelCollector` (`enabled: false`, `image`, `resources`, `config` string) rendering `templates/otel-collector.yaml` (`<prefix>-otelcol` ConfigMap, Deployment, Service), and when enabled with an empty `mgmt.otlpEndpoint` mgmt gets `NEXORA_OTLP_ENDPOINT=http://<prefix>-otelcol.<namespace>.svc.cluster.local:4317` (helper `nexora.otlpEndpoint`); mgmt pod `runAsGroup: 65532` and engine pod `runAsGroup: 10001` (the 0440 secret volumes, as on kw); helpers `nexora.engineWorkload` and `nexora.engineToml` so the ConfigMap and the per-group `checksum/config` share one rendering; `servicemonitor.yaml` and `prometheusrule.yaml` fail with a message when `monitoring.coreos.com/v1` is absent; group `service` and `replicas` may be omitted (`--set-json` groups replace the defaults wholesale); `values.schema.json` also forbids unknown keys in a group and its `service`. `.prettierignore` excludes `deploy/helm/*/templates/`.
 - [ ] Change `Makefile`: `GO_PKGS := $(foreach d,mgmt gen bench deploy,$(if $(wildcard $(d)),./$(d)/...))` so `make mgmt-test` (and the CI `mgmt` job) runs `deploy/deploytest`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -count=1 -v'` and expect `--- PASS: TestHelmTemplate`, `--- PASS: TestImagesWorkflow`, `--- PASS: TestComposeExample`.
 - [ ] Commit: `git add deploy/helm/nexora deploy/kw/values-kw.yaml deploy/deploytest/helm_test.go Makefile && git commit -m "feat(helm): chart with engine-group workloads, CNPG or external database, monitoring"`.

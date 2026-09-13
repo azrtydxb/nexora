@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
@@ -31,9 +32,10 @@ type endpointJSON struct {
 	TSIGKeyID *string `json:"tsig_key_id"`
 }
 
-// AddAuthZones lists every served zone (primaries and loaded secondaries) with its image, the
-// contiguous journal deltas, transfer/NOTIFY/update settings and TSIG key names.
-func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot) error {
+// AddAuthZones lists every zone engine group engineGroupID serves (primaries and loaded
+// secondaries of every group or of that group) with its image, the contiguous journal deltas,
+// transfer/NOTIFY/update settings and TSIG key names.
+func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, engineGroupID uuid.UUID) error {
 	keyNames := map[string]string{}
 	rows, err := tx.Query(ctx, "SELECT id::text, name FROM tsig_keys")
 	if err != nil {
@@ -49,7 +51,7 @@ func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot
 		coalesce(z.transfer_tsig_key_id::text, ''), z.notify_targets, z.primaries,
 		array(SELECT k.name FROM tsig_keys k WHERE k.id = ANY(z.update_tsig_key_ids) ORDER BY k.name), z.expired
 		FROM zones z JOIN zone_images i ON i.zone_id = z.id AND i.seq = z.image_seq JOIN blobs b ON b.sha256 = i.blob_sha256
-		WHERE z.kind = 'primary' OR z.loaded ORDER BY z.name`)
+		WHERE (z.kind = 'primary' OR z.loaded) AND (z.engine_group_id IS NULL OR z.engine_group_id = $1) ORDER BY z.name`, engineGroupID)
 	if err != nil {
 		return fmt.Errorf("auth zones: %w", err)
 	}

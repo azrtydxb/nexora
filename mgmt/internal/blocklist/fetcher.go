@@ -227,7 +227,13 @@ func (f *Fetcher) collectBlobs(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtext('nexora:config_version'))"); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, "select version, snapshot from config_versions order by version desc limit $1", keptVersions)
+		// The group snapshots of the newest versions, plus every snapshot an engine may still be told
+		// to run: a group's stable version and the versions of its open or halted rollouts.
+		rows, err := tx.Query(ctx, `select version, snapshot from group_snapshots
+			where version in (select version from config_versions order by version desc limit $1)
+			or (engine_group_id, version) in (select id, stable_version from engine_groups where stable_version is not null)
+			or (engine_group_id, version) in (select engine_group_id, version from rollouts
+				where state in ('pending', 'canary', 'verifying', 'rolling', 'halted'))`, keptVersions)
 		if err != nil {
 			return err
 		}

@@ -10,56 +10,48 @@ import (
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
+	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
-// An engine counts as connected while the instance holding its stream heartbeats (every 5 s).
-const engineSelect = `select e.id::text, e.node_name, e.engine_version, e.enrolled_at, e.last_seen_at,
-	(e.connected_instance is not null and coalesce(i.heartbeat_at > now() - interval '15 seconds', false)),
-	e.applied_version, e.rejected_version, e.rejected_reason, e.persist_error, e.version_ahead,
-	(select coalesce(max(version), 0) from config_versions)
-	from engines e left join instances i on i.id = e.connected_instance where e.deleted_at is null`
+// engineFromView maps a fleet engine view to the API schema.
+func engineFromView(v fleet.EngineView) Engine {
+	e := Engine{Id: v.ID, NodeName: v.NodeName, EngineVersion: v.EngineVersion, EnrolledAt: v.EnrolledAt, LastSeenAt: v.LastSeenAt,
+		Connected: v.Connected, AppliedVersion: int64(v.AppliedVersion), RejectedReason: v.RejectedReason,
+		PersistError: v.PersistError, VersionAhead: v.VersionAhead, Status: EngineStatus(v.Status)}
+	if v.RejectedVersion != nil {
+		r := int64(*v.RejectedVersion)
+		e.RejectedVersion = &r
+	}
+	return e
+}
 
-func scanEngine(row pgx.Row) (Engine, error) {
-	var e Engine
-	var id string
-	var latest int64
-	err := row.Scan(&id, &e.NodeName, &e.EngineVersion, &e.EnrolledAt, &e.LastSeenAt, &e.Connected, &e.AppliedVersion,
-		&e.RejectedVersion, &e.RejectedReason, &e.PersistError, &e.VersionAhead, &latest)
+func getEngine(ctx context.Context, q store.PolicyQuerier, id uuid.UUID) (Engine, error) {
+	views, err := fleet.ListEngines(ctx, q, fleet.EngineFilter{EngineID: &id})
 	if err != nil {
-		return e, store.MapError(err)
+		return Engine{}, err
 	}
-	e.Id = uuid.MustParse(id)
-	switch {
-	case e.VersionAhead:
-		e.Status = Ahead
-	case !e.Connected:
-		e.Status = Disconnected
-	case e.RejectedVersion != nil && *e.RejectedVersion > e.AppliedVersion:
-		e.Status = Rejected
-	case e.AppliedVersion == latest:
-		e.Status = Current
-	default:
-		e.Status = Behind
+	if len(views) == 0 {
+		return Engine{}, store.ErrNotFound
 	}
-	return e, nil
+	return engineFromView(views[0]), nil
 }
 
 func (h *handlers) ListEngines(ctx context.Context, _ ListEnginesRequestObject) (ListEnginesResponseObject, error) {
-	rows, err := h.d.Store.Pool.Query(ctx, engineSelect+" order by e.node_name, e.enrolled_at")
+	views, err := fleet.ListEngines(ctx, h.d.Store.Pool, fleet.EngineFilter{})
 	if err != nil {
-		return nil, store.MapError(err)
+		return nil, err
 	}
-	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Engine, error) { return scanEngine(r) })
-	if err != nil {
-		return nil, store.MapError(err)
+	out := make([]Engine, len(views))
+	for i, v := range views {
+		out[i] = engineFromView(v)
 	}
 	return ListEngines200JSONResponse(out), nil
 }
 
 func (h *handlers) GetEngine(ctx context.Context, req GetEngineRequestObject) (GetEngineResponseObject, error) {
-	e, err := scanEngine(h.d.Store.Pool.QueryRow(ctx, engineSelect+" and e.id = $1", req.Id))
+	e, err := getEngine(ctx, h.d.Store.Pool, req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +61,7 @@ func (h *handlers) GetEngine(ctx context.Context, req GetEngineRequestObject) (G
 // DeleteEngine marks the engine deleted; its certificate stops being accepted on the next call.
 func (h *handlers) DeleteEngine(ctx context.Context, req DeleteEngineRequestObject) (DeleteEngineResponseObject, error) {
 	err := h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
-		before, err := scanEngine(tx.QueryRow(ctx, engineSelect+" and e.id = $1", req.Id))
+		before, err := getEngine(ctx, tx, req.Id)
 		if err != nil {
 			return auth.Change{}, err
 		}

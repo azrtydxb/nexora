@@ -8,6 +8,7 @@ import (
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
+	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
@@ -39,7 +40,7 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := &controlv1.ConfigSnapshot{}
-	if err := snapshot.AddAuthZones(ctx, tx, snap); err != nil {
+	if err := snapshot.AddAuthZones(ctx, tx, snap, store.DefaultEngineGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if len(snap.AuthZones) != 1 {

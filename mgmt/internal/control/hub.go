@@ -2,26 +2,43 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/protobuf/proto"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
-	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
+	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
 const (
 	hubSafetyInterval = 30 * time.Second
 	hubReconnectDelay = time.Second
+	// hubBatchWindow and hubBatchMax bound how long and how many notifications are coalesced into
+	// one push round (every applied version notifies nexora_rollout).
+	hubBatchWindow = 10 * time.Millisecond
+	hubBatchMax    = 256
 )
 
-// Hub tracks the engine streams connected to this instance and pushes every new config version
-// (announced by pg_notify on snapshot.NotifyChannel) to them.
+// Notification channels the hub listens on. Rollout carries an engine group id; the others an
+// engine id.
+const (
+	ChannelRollout       = "nexora_rollout"
+	ChannelEngineUpdated = "nexora_engine_updated"
+	ChannelEngineRevoked = "nexora_engine_revoked"
+	ChannelEngineRotate  = "nexora_engine_rotate"
+)
+
+// Hub tracks the engine streams connected to this instance and pushes each engine its target
+// version (fleet.TargetFor) whenever a rollout of its engine group changes.
 type Hub struct {
 	st         *store.Store
 	instanceID string
@@ -39,8 +56,14 @@ type Hub struct {
 // snapshot replaces an unsent older one.
 type subscriber struct {
 	engineID string
+	id       uuid.UUID
 	out      chan *controlv1.ServerMessage
-	keys     chan *controlv1.RpzTsigKeys // at most one pending key set; a newer set replaces it
+	// control carries certificate messages (RenewCertificate); nothing replaces a queued one.
+	control chan *controlv1.ServerMessage
+	// revoked is closed once when the engine is revoked; Connect then ends the stream.
+	revoked    chan struct{}
+	revokeOnce sync.Once
+	keys       chan *controlv1.RpzTsigKeys // at most one pending key set; a newer set replaces it
 	// keyMaterial holds at most one pending KeyMaterial, owned by this subscriber: the send loop
 	// clears its secrets once sent and a replaced pending set is cleared at once.
 	keyMaterial chan *controlv1.KeyMaterial
@@ -51,9 +74,10 @@ type subscriber struct {
 	updateSlots chan struct{}
 
 	mu                sync.Mutex
-	version           uint64 // highest version sent, applied or rejected
-	keysDigest        string // digest of the last key set queued ("" = none)
-	keyMaterialDigest string // digest of the last KeyMaterial queued ("" = none)
+	engineGroupID     uuid.UUID // from the last target loaded
+	version           uint64    // highest version sent, applied or rejected
+	keysDigest        string    // digest of the last key set queued ("" = none)
+	keyMaterialDigest string    // digest of the last KeyMaterial queued ("" = none)
 	updateTokens      float64
 	updateRefilled    time.Time
 }
@@ -66,7 +90,8 @@ const (
 )
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
-	return &subscriber{engineID: engineID, version: applied, out: make(chan *controlv1.ServerMessage, 1),
+	return &subscriber{engineID: engineID, id: uuid.MustParse(engineID), version: applied, out: make(chan *controlv1.ServerMessage, 1),
+		control: make(chan *controlv1.ServerMessage, 4), revoked: make(chan struct{}),
 		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1),
 		results: make(chan *controlv1.ServerMessage, resultsQueue), updateSlots: make(chan struct{}, maxInflightUpdates),
 		updateTokens: updateBurst}
@@ -154,6 +179,23 @@ func (s *subscriber) replace(msg *controlv1.ServerMessage) {
 	s.out <- msg
 }
 
+// renew queues RenewCertificate without blocking (a full queue already holds requests).
+func (s *subscriber) renew() {
+	select {
+	case s.control <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RenewCertificate{RenewCertificate: &controlv1.RenewCertificate{
+		Reason: controlv1.CertificateRequest_REASON_ROTATE}}}:
+	default:
+	}
+}
+
+func (s *subscriber) revoke() { s.revokeOnce.Do(func() { close(s.revoked) }) }
+
+func (s *subscriber) group() uuid.UUID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.engineGroupID
+}
+
 // observe records a version the engine reported as applied or rejected.
 func (s *subscriber) observe(version uint64) {
 	s.mu.Lock()
@@ -209,18 +251,35 @@ func (h *Hub) listen(ctx context.Context) error {
 		return store.MapError(err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	if _, err := conn.Exec(ctx, "listen "+snapshot.NotifyChannel); err != nil {
-		return store.MapError(err)
+	for _, ch := range []string{ChannelRollout, ChannelEngineUpdated, ChannelEngineRevoked, ChannelEngineRotate} {
+		if _, err := conn.Exec(ctx, "listen "+ch); err != nil {
+			return store.MapError(err)
+		}
 	}
 	// Anything published while disconnected is picked up here.
-	h.broadcast(ctx)
+	h.pushAll(ctx)
 	for {
 		wctx, cancel := context.WithTimeout(ctx, hubSafetyInterval)
-		_, err := conn.WaitForNotification(wctx)
+		n, err := conn.WaitForNotification(wctx)
 		cancel()
 		switch {
-		case err == nil, ctx.Err() == nil && errors.Is(wctx.Err(), context.DeadlineExceeded):
-			h.broadcast(ctx)
+		case err == nil:
+			batch := []*pgconn.Notification{n}
+			for len(batch) < hubBatchMax {
+				bctx, cancel := context.WithTimeout(ctx, hubBatchWindow)
+				more, err := conn.WaitForNotification(bctx)
+				cancel()
+				if err != nil {
+					if ctx.Err() == nil && !errors.Is(err, context.DeadlineExceeded) {
+						return store.MapError(err)
+					}
+					break
+				}
+				batch = append(batch, more)
+			}
+			h.handle(ctx, batch)
+		case ctx.Err() == nil && errors.Is(wctx.Err(), context.DeadlineExceeded):
+			h.pushAll(ctx)
 		case ctx.Err() != nil:
 			return nil
 		default:
@@ -229,38 +288,128 @@ func (h *Hub) listen(ctx context.Context) error {
 	}
 }
 
-// broadcast loads the latest snapshot and offers it to every subscriber.
-func (h *Hub) broadcast(ctx context.Context) {
-	h.mu.Lock()
-	subs := make([]*subscriber, 0, len(h.subs))
-	for s := range h.subs {
-		subs = append(subs, s)
+// handle acts on a batch of notifications: revocations and rotations at once, then one push per
+// engine group or engine named.
+func (h *Hub) handle(ctx context.Context, batch []*pgconn.Notification) {
+	groups, engines := map[uuid.UUID]bool{}, map[uuid.UUID]bool{}
+	for _, n := range batch {
+		id, err := uuid.Parse(n.Payload)
+		if err != nil {
+			slog.Warn("notification payload is not a uuid", "channel", n.Channel)
+			continue
+		}
+		switch n.Channel {
+		case ChannelRollout:
+			groups[id] = true
+		case ChannelEngineUpdated:
+			engines[id] = true
+		case ChannelEngineRevoked:
+			for _, s := range h.subscribers(func(s *subscriber) bool { return s.id == id }) {
+				s.revoke()
+			}
+		case ChannelEngineRotate:
+			for _, s := range h.subscribers(func(s *subscriber) bool { return s.id == id }) {
+				s.renew()
+			}
+		}
 	}
-	h.mu.Unlock()
+	for g := range groups {
+		h.push(ctx, fleet.EngineFilter{EngineGroupID: &g}, func(s *subscriber) bool { return s.group() == g })
+	}
+	for e := range engines {
+		h.push(ctx, fleet.EngineFilter{EngineID: &e}, func(s *subscriber) bool { return s.id == e })
+	}
+}
+
+func (h *Hub) subscribers(match func(*subscriber) bool) []*subscriber {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []*subscriber
+	for s := range h.subs {
+		if match(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// pushAll offers every subscriber its target (the initial and the periodic safety resync).
+func (h *Hub) pushAll(ctx context.Context) {
+	h.push(ctx, fleet.EngineFilter{}, func(*subscriber) bool { return true })
+}
+
+// push loads the targets of the engines matching f and offers them to the matching subscribers.
+func (h *Hub) push(ctx context.Context, f fleet.EngineFilter, match func(*subscriber) bool) {
+	subs := h.subscribers(match)
 	if len(subs) == 0 {
 		return
 	}
-	version, snap, err := snapshot.Latest(ctx, h.st.Pool)
+	targets, err := fleet.Targets(ctx, h.st.Pool, f)
 	if err != nil {
-		if ctx.Err() == nil && !errors.Is(err, store.ErrNotFound) {
-			slog.Warn("load latest config version", "err", err)
+		if ctx.Err() == nil {
+			slog.Warn("load engine targets", "err", err)
 		}
 		return
 	}
+	ks := h.loadKeySets(ctx)
+	defer clearKeyMaterial(ks.km)
 	for _, s := range subs {
-		s.offer(version, snap)
-	}
-	if keys, digest, ok := h.loadKeys(ctx); ok {
-		for _, s := range subs {
-			s.offerKeys(keys, digest)
+		if t, ok := targets[s.id]; ok {
+			offerTarget(s, t, ks)
 		}
 	}
-	if km, digest, ok := h.loadKeyMaterial(ctx); ok {
-		for _, s := range subs {
-			s.offerKeyMaterial(km, digest)
-		}
-		clearKeyMaterial(km)
+}
+
+// keySets are the complete key sets filtered per engine; an ok flag is false when the set could
+// not be loaded (nothing of it is offered then). km must be cleared by the loader's caller.
+type keySets struct {
+	rpz   *controlv1.RpzTsigKeys
+	rpzOK bool
+	km    *controlv1.KeyMaterial
+	zoned map[string]bool
+	kmOK  bool
+}
+
+func (h *Hub) loadKeySets(ctx context.Context) keySets {
+	var ks keySets
+	ks.rpz, _, ks.rpzOK = h.loadKeys(ctx)
+	ks.km, ks.zoned, ks.kmOK = h.loadKeyMaterial(ctx)
+	return ks
+}
+
+// offerTarget offers s its target: the RPZ and hosted-zone TSIG keys it may hold (FilterRPZKeys,
+// FilterKeyMaterial), then the snapshot.
+func offerTarget(s *subscriber, t fleet.Target, ks keySets) {
+	s.mu.Lock()
+	s.engineGroupID = t.EngineGroupID
+	s.mu.Unlock()
+	if t.Snapshot == nil {
+		return
 	}
+	if ks.rpzOK {
+		k := FilterRPZKeys(t.Snapshot, ks.rpz)
+		s.offerKeys(k, keySetDigest(k, len(k.Keys)))
+	}
+	if ks.kmOK {
+		m := FilterKeyMaterial(t.Snapshot, ks.km, ks.zoned)
+		s.offerKeyMaterial(m, keySetDigest(m, len(m.TsigKeys)))
+	}
+	s.offer(t.Version, t.Snapshot)
+}
+
+// keySetDigest is the lowercase hex SHA-256 of the deterministic encoding of a key set of n keys
+// ("" for an empty set, so an engine that never had keys is not sent an empty set).
+func keySetDigest(m proto.Message, n int) string {
+	if n == 0 {
+		return ""
+	}
+	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+	if err != nil {
+		return "" // key messages always encode; "" would only suppress a resend
+	}
+	sum := sha256.Sum256(raw)
+	clear(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // loadKeys loads the RPZ TSIG key set; ok is false without a loader or on error (logged, never the keys).
@@ -278,18 +427,26 @@ func (h *Hub) loadKeys(ctx context.Context) (*controlv1.RpzTsigKeys, string, boo
 	return keys, digest, true
 }
 
-// loadKeyMaterial loads the hosted-zone TSIG key set; ok is false without a loader or on error
-// (logged, never the keys). The caller clears the returned set.
-func (h *Hub) loadKeyMaterial(ctx context.Context) (*controlv1.KeyMaterial, string, bool) {
+// loadKeyMaterial loads the hosted-zone TSIG key set and the names zones use; ok is false without
+// a loader or on error (logged, never the keys). The caller clears the returned set.
+func (h *Hub) loadKeyMaterial(ctx context.Context) (*controlv1.KeyMaterial, map[string]bool, bool) {
 	if h.TSIGKeys == nil {
-		return nil, "", false
+		return nil, nil, false
 	}
-	km, digest, err := h.TSIGKeys.Load(ctx)
+	km, _, err := h.TSIGKeys.Load(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("load tsig key material", "err", err)
 		}
-		return nil, "", false
+		return nil, nil, false
 	}
-	return km, digest, true
+	zoned, err := h.TSIGKeys.ZoneKeyNames(ctx)
+	if err != nil {
+		clearKeyMaterial(km)
+		if ctx.Err() == nil {
+			slog.Warn("load zone tsig key names", "err", err)
+		}
+		return nil, nil, false
+	}
+	return km, zoned, true
 }
