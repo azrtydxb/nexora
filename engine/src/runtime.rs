@@ -4,6 +4,7 @@ use crate::acl::Acl;
 use crate::cache::{Cache, CacheSettings};
 use crate::filter::{self, BlockMode, FilterSet, ListStats, PolicyTable};
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
+use crate::recursor::dispatch::ResolutionRuntime;
 use crate::snapshot::{BlobSource, SnapshotError};
 use crate::upstream::{Protocol, Strategy, UpstreamSet, UpstreamSpec};
 use std::sync::Arc;
@@ -26,13 +27,15 @@ pub struct Runtime {
     pub filter: Arc<FilterSet>,
     /// Per-client policy groups and rewrites; selects `filter` for global clients.
     pub policy: PolicyTable,
-    /// `b:<sha256>` per blocklist, `a:<sha256>` per allowlist, then `g:<key>`
-    /// per policy-group cache partition.
+    /// `b:<sha256>` per blocklist, `a:<sha256>` per allowlist, `g:<key>` per
+    /// policy-group cache partition, then `r:<ResolutionRuntime::config_key>`.
     pub filter_hashes: Vec<String>,
     pub filter_stats: ListStats,
     pub cache: Arc<Cache>,
     pub upstreams: Arc<UpstreamSet>,
     pub telemetry: TelemetrySettings,
+    /// Resolution mode, forward zones, DNSSEC and RPZ settings (M3).
+    pub resolution: Arc<ResolutionRuntime>,
 }
 
 impl Runtime {
@@ -55,6 +58,7 @@ impl Runtime {
             })),
             upstreams: Arc::new(UpstreamSet::new(Vec::new(), Strategy::Ordered, None)),
             telemetry: TelemetrySettings::default(),
+            resolution: Arc::new(ResolutionRuntime::default()),
         }
     }
 
@@ -121,18 +125,22 @@ impl Runtime {
         let filter = Arc::new(filter);
         let policy =
             PolicyTable::build(s, filter.clone(), blobs).map_err(SnapshotError::Invalid)?;
+        let resolution =
+            Arc::new(ResolutionRuntime::build(s, blobs).map_err(SnapshotError::Invalid)?);
         let filter_hashes: Vec<String> = f
             .blocklists
             .iter()
             .map(|b| format!("b:{}", b.sha256))
             .chain(f.allowlists.iter().map(|a| format!("a:{}", a.sha256)))
             .chain(policy.partition_keys().iter().map(|k| format!("g:{k}")))
+            .chain(std::iter::once(format!("r:{}", resolution.config_key)))
             .collect();
         if let Some(p) = reused
             && p.filter_hashes != filter_hashes
         {
             // Cached answers must be re-filtered: CNAME cloaking is checked on the
-            // miss path, per cache partition.
+            // miss path, per cache partition; resolution, DNSSEC and RPZ settings
+            // change answers too.
             cache.clear();
         }
 
@@ -152,6 +160,7 @@ impl Runtime {
                 trace_slow_threshold_us: t.trace_slow_threshold_us,
                 querylog_to_management: t.querylog_to_management,
             },
+            resolution,
         })
     }
 }

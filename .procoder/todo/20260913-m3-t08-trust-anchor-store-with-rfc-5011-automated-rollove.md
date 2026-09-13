@@ -23,3 +23,5 @@ is committed.
 - OPEN: `refresh_loop`, `spawn_background`, `RecursorState::sync`, `control.rs`/`main.rs` calls and `telemetry/metrics.rs` trust-anchor metrics/Stats wait for Task 5 (`RecursorState`, `Shared.recursor`, `RoutedFetcher`). `refresh_zone` implements the refresh itself.
 - `cargo fmt -p nexora-engine --check` clean (dev pod); `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` reports nothing under `recursor/dnssec` (the crate still fails clippy on the concurrent RPZ work in `rpz/apply.rs` and `rpz/tsig.rs`); `cargo test --locked -p nexora-engine --lib` -> `117 passed; 0 failed; 2 ignored`.
 - Not committed (lead commits serially).
+
+- Integration steps completed together with M3 Task 5 (see Task 5 As-built notes in the plan): `refresh_loop`/`spawn_background` (in `recursor/mod.rs`), `RecursorState::sync` called from `control.rs` and `main.rs`, trust-anchor metrics and `Stats.recursion`/`Stats.dnssec`. Verified by `recursor::dispatch_tests` (6 passed), `tests/rpz_pipeline.rs` (1 passed), `cache_hit_path_does_not_allocate` (forward, recursive+validation, RPZ triggers) and `make engine-test` exit 0. Not committed (lead commits).

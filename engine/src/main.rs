@@ -1,5 +1,6 @@
 use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
+use nexora_engine::recursor::{self, RecursorState};
 use nexora_engine::server::tls::CertStore;
 use nexora_engine::server::{self, Shared};
 use nexora_engine::snapshot::{self, ApplyOutcome, DirBlobs};
@@ -27,7 +28,11 @@ fn main() -> ExitCode {
         }
     };
     clock::start_ticker();
-    let shared = Shared::new(boot.worker_count());
+    let shared = Shared::with_recursor(
+        boot.worker_count(),
+        RecursorState::new(Some(&boot.state_dir)),
+    );
+    shared.recursor.recursor.detect_ipv6();
     shared.node_name.store(Arc::new(boot.node_name.clone()));
     let cert_store = Arc::new(CertStore::new());
 
@@ -42,7 +47,9 @@ fn main() -> ExitCode {
                 let blobs = DirBlobs {
                     dir: boot.state_dir.join("blobs"),
                 };
-                report(&shared, snapshot::apply(&shared.runtime, s, &blobs, None));
+                if report(&shared, snapshot::apply(&shared.runtime, s, &blobs, None)) {
+                    shared.recursor.sync(&shared.runtime.load_full());
+                }
             }
             Ok(None) => {}
             Err(e) => eprintln!("nexora-engine: persisted snapshot unreadable: {e}"),
@@ -56,6 +63,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    if let Err(e) = recursor::spawn_background(shared.clone()) {
+        eprintln!("nexora-engine: recursor thread: {e}");
+        return ExitCode::FAILURE;
+    }
 
     let control = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -177,7 +189,11 @@ fn apply_standalone(shared: &Arc<Shared>, boot: &Bootstrap) -> bool {
             reason: e.to_string(),
         },
     };
-    report(shared, outcome)
+    let applied = report(shared, outcome);
+    if applied {
+        shared.recursor.sync(&shared.runtime.load_full());
+    }
+    applied
 }
 
 /// Installs `tls_cert_file`/`tls_key_file` when set; a bad certificate leaves the

@@ -508,7 +508,9 @@ async fn session(
             every.tick().await;
             loop {
                 every.tick().await;
-                let stats = shared.metrics.stats(&shared.runtime.load());
+                let stats = shared
+                    .metrics
+                    .stats(&shared.runtime.load(), &shared.recursor);
                 let msg = EngineMessage {
                     msg: Some(Msg::Stats(stats)),
                 };
@@ -550,7 +552,9 @@ async fn session(
                     break stream_closed();
                 }
             }
-            Some(ServerMsg::RpzTsigKeys(_)) | None => {}
+            // The secrets are never logged and never persisted.
+            Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),
+            None => {}
         }
     };
     ticker.abort();
@@ -573,12 +577,16 @@ async fn apply_snapshot(
         Ok(()) => {
             let (shared, state_dir) = (shared.clone(), state_dir.to_owned());
             tokio::task::spawn_blocking(move || {
-                snapshot::apply(
+                let outcome = snapshot::apply(
                     &shared.runtime,
                     snap,
                     &DirBlobs { dir: blob_dir },
                     Some(&state_dir),
-                )
+                );
+                if matches!(outcome, ApplyOutcome::Applied { .. }) {
+                    shared.recursor.sync(&shared.runtime.load_full());
+                }
+                outcome
             })
             .await
             .unwrap_or_else(|e| ApplyOutcome::Rejected {

@@ -33,15 +33,9 @@ static GLOBAL: Counting = Counting;
 
 #[test]
 fn cache_hit_path_does_not_allocate() {
-    use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
-    use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A, rdata::opt::EdnsOption};
-    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-    use nexora_engine::cache::CacheKey;
-    use nexora_engine::edns::Transport;
     use nexora_engine::proto::*;
-    use nexora_engine::server::{FastOutcome, Shared, WorkerCtx, handle_packet};
+    use nexora_engine::server::Shared;
     use nexora_engine::snapshot::{DirBlobs, apply};
-    use nexora_engine::wire::parse_query;
 
     let shared = Shared::new(1);
     let snap = ConfigSnapshot {
@@ -85,14 +79,55 @@ fn cache_hit_path_does_not_allocate() {
         ..Default::default()
     };
     let tmp = tempfile::tempdir().unwrap();
-    apply(
-        &shared.runtime,
-        snap,
-        &DirBlobs {
-            dir: tmp.path().into(),
-        },
-        None,
-    );
+    // Forward mode (M1/M2), then recursive mode with DNSSEC validation (M3): a cache hit takes the
+    // same allocation-free path in both.
+    let mut recursive = snap.clone();
+    recursive.version = 2;
+    recursive.resolution_mode = ResolutionMode::Recursive as i32;
+    recursive.dnssec = Some(DnssecConfig {
+        validation: true,
+        rfc5011: true,
+        ..Default::default()
+    });
+    for snap in [snap, recursive] {
+        assert!(matches!(
+            apply(
+                &shared.runtime,
+                snap,
+                &DirBlobs {
+                    dir: tmp.path().into(),
+                },
+                None,
+            ),
+            nexora_engine::snapshot::ApplyOutcome::Applied { .. }
+        ));
+        measure(&shared);
+    }
+    // With RPZ query triggers loaded, a non-matching name still hits the cache without allocating.
+    use nexora_engine::recursor::rpz::{index, parse};
+    let origin = hickory_proto::rr::Name::from_ascii("rpz.test.").unwrap();
+    let zone = parse::parse_rpz_text(
+        &origin,
+        "$TTL 60\n@ SOA ns h 1 60 60 60 60\nbad.example CNAME .\n32.9.0.0.10.rpz-client-ip CNAME .\n",
+    )
+    .unwrap();
+    shared
+        .recursor
+        .rpz
+        .publish(index::RpzSet::new(vec![std::sync::Arc::new(
+            index::RpzZoneIndex::build("z", &zone, 0),
+        )]));
+    measure(&shared);
+}
+
+fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
+    use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A, rdata::opt::EdnsOption};
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+    use nexora_engine::cache::CacheKey;
+    use nexora_engine::edns::Transport;
+    use nexora_engine::server::{FastOutcome, WorkerCtx, handle_packet};
+    use nexora_engine::wire::parse_query;
 
     let mut m = Message::new(1, MessageType::Query, OpCode::Query);
     m.metadata.recursion_desired = true;
@@ -127,6 +162,7 @@ fn cache_hit_path_does_not_allocate() {
         );
     }
     let ctx = WorkerCtx::new(0, shared.clone());
+    let before_hits = shared.metrics.sum_cache_hits();
     let mut out = [0u8; 1232];
     for _ in 0..64 {
         let rt = shared.runtime.load();
@@ -135,6 +171,7 @@ fn cache_hit_path_does_not_allocate() {
             FastOutcome::Reply(_)
         ));
     }
+    ALLOCS.store(0, Ordering::Relaxed);
     ARMED.with(|a| a.set(true));
     for _ in 0..50_000 {
         let rt = shared.runtime.load();
@@ -147,8 +184,9 @@ fn cache_hit_path_does_not_allocate() {
     assert_eq!(
         ALLOCS.load(Ordering::Relaxed),
         0,
-        "cache-hit path allocated"
+        "cache-hit path allocated (resolution mode {:?})",
+        shared.runtime.load().resolution.mode
     );
-    assert!(shared.metrics.sum_cache_hits() >= 50_000);
+    assert!(shared.metrics.sum_cache_hits() >= before_hits + 50_000);
     assert!(!shared.querylog.is_empty(), "query records were pushed");
 }

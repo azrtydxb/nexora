@@ -11,6 +11,9 @@ pub const OPT_COOKIE_LEN: usize = 4 + 24;
 
 const TYPE_OPT: u16 = 41;
 const OPTION_COOKIE: u16 = 10;
+/// Extended DNS Error (RFC 8914): option header (4) + INFO-CODE (2), no EXTRA-TEXT.
+const OPTION_EDE: u16 = 15;
+pub const OPT_EDE_LEN: usize = 6;
 const UDP_NO_EDNS_LIMIT: usize = 512;
 /// DNS flag day 2020 default; larger UDP replies fragment.
 const UDP_MAX_LIMIT: usize = 1232;
@@ -59,6 +62,8 @@ pub struct ReplyOpt {
     pub do_bit: bool,
     pub ext_rcode: u8,
     pub cookie: Option<([u8; 8], [u8; 16])>,
+    /// RFC 8914 INFO-CODE.
+    pub ede: Option<u16>,
 }
 
 impl ReplyOpt {
@@ -69,6 +74,7 @@ impl ReplyOpt {
             } else {
                 0
             }
+            + if self.ede.is_some() { OPT_EDE_LEN } else { 0 }
     }
 }
 
@@ -164,6 +170,12 @@ pub fn write_opt(out: &mut [u8], opt: &ReplyOpt) -> usize {
         out[15..23].copy_from_slice(client);
         out[23..39].copy_from_slice(server);
     }
+    if let Some(code) = opt.ede {
+        let at = len - OPT_EDE_LEN;
+        out[at..at + 2].copy_from_slice(&OPTION_EDE.to_be_bytes());
+        out[at + 2..at + 4].copy_from_slice(&2u16.to_be_bytes());
+        out[at + 4..at + 6].copy_from_slice(&code.to_be_bytes());
+    }
     len
 }
 
@@ -247,6 +259,7 @@ mod tests {
                 do_bit: true,
                 ext_rcode: 0,
                 cookie: Some(([1; 8], [2; 16])),
+                ede: None,
             },
         );
         assert_eq!(n, OPT_BASE_LEN + OPT_COOKIE_LEN);
@@ -254,6 +267,26 @@ mod tests {
         assert_eq!(&out[1..3], &41u16.to_be_bytes());
         assert_eq!(&out[3..5], &1232u16.to_be_bytes());
         assert_eq!(out[7] & 0x80, 0x80, "DO bit");
+        let n = write_opt(
+            &mut out,
+            &ReplyOpt {
+                udp_size: 1232,
+                do_bit: false,
+                ext_rcode: 0,
+                cookie: Some(([1; 8], [2; 16])),
+                ede: Some(15),
+            },
+        );
+        assert_eq!(n, OPT_BASE_LEN + OPT_COOKIE_LEN + OPT_EDE_LEN);
+        assert_eq!(
+            &out[9..11],
+            &((OPT_COOKIE_LEN + OPT_EDE_LEN) as u16).to_be_bytes()
+        );
+        assert_eq!(
+            &out[39..45],
+            &[0, 15, 0, 2, 0, 15],
+            "EDE option 15, INFO-CODE 15"
+        );
         assert_eq!(
             write_opt(
                 &mut out[..5],
@@ -261,7 +294,8 @@ mod tests {
                     udp_size: 1232,
                     do_bit: false,
                     ext_rcode: 0,
-                    cookie: None
+                    cookie: None,
+                    ede: None,
                 }
             ),
             0

@@ -19,22 +19,7 @@ mod validator_tests;
 use crate::proto;
 use hickory_proto::rr::Name;
 
-/// An RFC 8914 Extended DNS Error. Only the INFO-CODE goes on the wire; the text is for tests and
-/// logs.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Ede {
-    pub code: u16,
-    pub text: String,
-}
-
-impl Ede {
-    pub fn new(code: u16, text: impl Into<String>) -> Self {
-        Ede {
-            code,
-            text: text.into(),
-        }
-    }
-}
+pub use crate::recursor::Ede;
 
 /// Per-snapshot DNSSEC settings.
 #[derive(Default, Debug, Clone)]

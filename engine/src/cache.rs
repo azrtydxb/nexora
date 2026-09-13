@@ -7,6 +7,9 @@ use std::sync::Arc;
 const HEADER_LEN: usize = 12;
 const FLAG_TC: u8 = 0x02;
 const FLAG_RD: u8 = 0x01;
+/// AD in the second flags byte, and in `QueryView::flags`.
+const FLAG_AD: u8 = 0x20;
+const FLAG_AD_QUERY: u16 = 0x0020;
 const STALE_TTL: u32 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -246,6 +249,10 @@ pub fn write_cached(
     };
     out[..2].copy_from_slice(&q.id.to_be_bytes());
     out[2] = (out[2] & !FLAG_RD) | (q.flags >> 8) as u8 & FLAG_RD;
+    // AD only for clients that set DO or AD (RFC 6840 §5.8)
+    if q.flags & FLAG_AD_QUERY == 0 && !q.do_bit() {
+        out[3] &= !FLAG_AD;
+    }
     out[HEADER_LEN..HEADER_LEN + q.qname.len()].copy_from_slice(q.qname);
     if let Some(opt) = opt {
         pos += edns::write_opt(&mut out[pos..], opt);
@@ -316,6 +323,34 @@ mod tests {
         assert_eq!(m.queries[0].name().to_ascii(), "ExAmPlE.CoM.");
         let ttls: Vec<u32> = m.answers.iter().map(|r| r.ttl).collect();
         assert_eq!(ttls, vec![270, 90]);
+    }
+
+    #[test]
+    fn ad_is_cleared_for_clients_without_do_or_ad() {
+        let q1 = q("secure.example.", 1);
+        let v1 = parse_query(&q1).unwrap();
+        let mut m = Message::from_bytes(&answer(&q1, &[300], ResponseCode::NoError)).unwrap();
+        m.metadata.authentic_data = true;
+        let e = prepare_uncached(&m.to_bytes().unwrap(), &v1).unwrap();
+        let mut out = [0u8; 512];
+        let n = write_cached(&e, &v1, 0, ServeMode::Fresh, &mut out, 512, None);
+        assert!(
+            !Message::from_bytes(&out[..n])
+                .unwrap()
+                .metadata
+                .authentic_data
+        );
+        let mut asks_ad = Message::from_bytes(&q1).unwrap();
+        asks_ad.metadata.authentic_data = true;
+        let q2 = asks_ad.to_bytes().unwrap();
+        let v2 = parse_query(&q2).unwrap();
+        let n = write_cached(&e, &v2, 0, ServeMode::Fresh, &mut out, 512, None);
+        assert!(
+            Message::from_bytes(&out[..n])
+                .unwrap()
+                .metadata
+                .authentic_data
+        );
     }
 
     #[test]

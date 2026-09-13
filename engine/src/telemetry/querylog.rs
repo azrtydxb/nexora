@@ -70,6 +70,33 @@ pub struct QueryRecord {
     pub upstream_start_us: u32,
     pub upstream_us: u32,
     pub duration_us: u32,
+    /// `recursor::dispatch::RouteTaken`: 0 forward, 1 recursive, 2 forward zone.
+    pub route: u8,
+    /// `recursor::dispatch::SecurityTag`: 0 none, 1 secure, 2 insecure, 3 bogus, 4 indeterminate.
+    pub dnssec: u8,
+    /// 0 none, else `RpzAction::log_code`.
+    pub rpz_action: u8,
+}
+
+/// `QueryRecord.route` names.
+pub const ROUTE_NAMES: [&str; 3] = ["forward", "recursive", "forward_zone"];
+/// `QueryRecord.dnssec` names.
+pub const DNSSEC_NAMES: [&str; 5] = ["none", "secure", "insecure", "bogus", "indeterminate"];
+/// `QueryRecord.rpz_action` names; 7 is `disabled` (a hit in a zone whose override is DISABLED).
+pub const RPZ_NAMES: [&str; 8] = [
+    "none",
+    "nxdomain",
+    "nodata",
+    "passthru",
+    "drop",
+    "tcp_only",
+    "local_data",
+    "disabled",
+];
+
+/// The name at `index`, or the first one when out of range.
+pub fn name_at(names: &[&'static str], index: u8) -> &'static str {
+    names.get(usize::from(index)).copied().unwrap_or(names[0])
 }
 
 /// Pushes `r`, counting it as a dropped log when the ring is full.

@@ -54,7 +54,7 @@ pub trait Fetcher {
 }
 
 /// What is trusted at one zone: configured DS records and keys accepted by RFC 5011.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TrustPoint {
     pub ds: Vec<DS>,
     pub keys: Vec<DNSKEY>,
@@ -66,7 +66,7 @@ impl TrustPoint {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TrustPoints {
     pub zones: Vec<(Name, TrustPoint)>,
 }

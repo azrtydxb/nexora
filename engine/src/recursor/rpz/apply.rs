@@ -5,12 +5,7 @@ use super::parse::{CnameTarget, RpzAction};
 use hickory_proto::op::{Message, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::CNAME};
 
-/// Extended DNS Error (RFC 8914). Only `code` goes on the wire; `text` is for logs and tests.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Ede {
-    pub code: u16,
-    pub text: String,
-}
+pub use crate::recursor::Ede;
 
 /// EDE 15 "Blocked".
 pub const EDE_BLOCKED: u16 = 15;

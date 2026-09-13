@@ -36,6 +36,9 @@ fn record(rcode: u8) -> QueryRecord {
         upstream_start_us: 6,
         upstream_us: 900,
         duration_us: 950,
+        route: 1,
+        dnssec: 1,
+        rpz_action: 0,
     }
 }
 
@@ -271,7 +274,9 @@ fn metrics_endpoint_exposes_every_architecture_name() {
     ] {
         assert!(body.contains(name), "missing {name}");
     }
-    let stats = shared.metrics.stats(&shared.runtime.load());
+    let stats = shared
+        .metrics
+        .stats(&shared.runtime.load(), &shared.recursor);
     assert_eq!(stats.queries_total, 1);
     assert_eq!(stats.duration_bucket_bounds_us.len(), 15);
 }
@@ -296,7 +301,9 @@ fn failed_export_counts_every_record_of_the_batch() {
     }
     assert_eq!(shared.metrics.dropped(Signal::Logs), 10);
     assert_eq!(shared.metrics.dropped(Signal::Traces), 4);
-    let body = shared.metrics.render(&shared.runtime.load());
+    let body = shared
+        .metrics
+        .render(&shared.runtime.load(), &shared.recursor);
     assert!(
         body.contains("nexora_export_dropped_total{signal=\"logs\"} 10"),
         "{body}"

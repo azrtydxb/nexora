@@ -20,17 +20,25 @@ use crate::clock;
 use crate::edns::{self, CookieSecret, ReplyOpt, Transport};
 use crate::filter::{EffectivePolicy, RewriteAnswer, Verdict};
 use crate::inflight::{self, InFlight, Join, Resolution};
+use crate::recursor::dispatch::{self, ForwardUpstream, MissQuery, RpzPending};
+use crate::recursor::rpz::apply::{PolicyOutcome, apply_action};
+use crate::recursor::rpz::index::QueryPhase;
+use crate::recursor::rpz::parse::RpzAction;
+use crate::recursor::{LocalBoxFuture, RecursorState};
 use crate::runtime::Runtime;
 use crate::telemetry::metrics::{Metrics, WorkerCounters};
 use crate::telemetry::querylog::{
     self, CacheOutcome, FilterOutcome, NO_POLICY_GROUP, QueryRecord, RING_CAPACITY,
 };
-use crate::upstream::{self, Question, WorkerUpstreams};
+use crate::upstream::{self, Question, UpstreamSet, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use crossbeam_queue::ArrayQueue;
+use hickory_proto::rr::{Name, RecordType};
+use hickory_proto::serialize::binary::BinDecodable;
 use rand::RngExt;
+use std::cell::Cell;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -52,10 +60,17 @@ pub struct Shared {
     pub node_name: ArcSwap<String>,
     /// The management-plane channel while the control stream is connected.
     pub mgmt_channel: ArcSwapOption<tonic::transport::Channel>,
+    /// Recursion, DNSSEC and RPZ state that survives snapshot swaps.
+    pub recursor: Arc<RecursorState>,
 }
 
 impl Shared {
+    /// With an in-memory recursor state (nothing persisted).
     pub fn new(workers: usize) -> Arc<Shared> {
+        Shared::with_recursor(workers, RecursorState::new(None))
+    }
+
+    pub fn with_recursor(workers: usize, recursor: Arc<RecursorState>) -> Arc<Shared> {
         let mut secret = [0u8; 16];
         rand::rng().fill(&mut secret[..]);
         Arc::new(Shared {
@@ -67,6 +82,34 @@ impl Shared {
             engine_id: ArcSwap::from_pointee(String::new()),
             node_name: ArcSwap::from_pointee(String::new()),
             mgmt_channel: ArcSwapOption::empty(),
+            recursor,
+        })
+    }
+}
+
+/// The global upstreams of one worker as the recursor's forward route.
+pub struct WorkerForward<'a> {
+    pub set: &'a UpstreamSet,
+    pub worker: &'a WorkerUpstreams,
+    /// The upstream that answered last; `u8::MAX` while none did.
+    pub upstream_index: Cell<u8>,
+}
+
+impl ForwardUpstream for WorkerForward<'_> {
+    fn forward<'a>(&'a self, query: &'a [u8]) -> LocalBoxFuture<'a, Result<Bytes, String>> {
+        Box::pin(async move {
+            let q = wire::parse_query(query).map_err(|e| e.to_string())?;
+            let question = Question {
+                key: q.key,
+                qtype: q.qtype,
+                qclass: q.qclass,
+            };
+            let fwd = upstream::forward(self.set, self.worker, query, &question)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.upstream_index
+                .set(fwd.upstream_index.min(usize::from(u8::MAX - 1)) as u8);
+            Ok(fwd.response)
         })
     }
 }
@@ -153,6 +196,9 @@ pub struct MissJob {
     pub started: std::time::Instant,
     pub filter_us: u32,
     pub cache_us: u32,
+    /// An RPZ query-phase decision that needs resolution; such misses bypass in-flight
+    /// coalescing and the cache.
+    pub rpz: RpzPending,
 }
 
 /// Per-packet context for counting and logging a reply.
@@ -183,6 +229,9 @@ impl Scope<'_> {
             upstream_start_us: 0,
             upstream_us: 0,
             duration_us: 0,
+            route: 0,
+            dnssec: 0,
+            rpz_action: 0,
         }
     }
 
@@ -243,6 +292,7 @@ pub fn handle_packet(
         do_bit: o.do_bit,
         ext_rcode: 0,
         cookie: None,
+        ede: None,
     });
     // debt: EDNS versions other than 0 are answered as version 0 instead of
     // BADVERS; revisit when a client that sends EDNS1 shows up.
@@ -302,6 +352,74 @@ pub fn handle_packet(
         }
     }
 
+    let recursor = &ctx.shared.recursor;
+    if recursor.rpz.query_triggers.load(Ordering::Relaxed) {
+        let set = recursor.rpz.set.load();
+        let pending = match set.check_query(q.key.as_wire(), client.ip()) {
+            QueryPhase::NoMatch => RpzPending::None,
+            QueryPhase::Hit { zone, action } => match set.effective_action(zone, action) {
+                None => {
+                    rec.rpz_action = dispatch::RPZ_DISABLED;
+                    RpzPending::None
+                }
+                Some(RpzAction::Passthru) => {
+                    rec.rpz_action = RpzAction::Passthru.log_code();
+                    RpzPending::None
+                }
+                Some(action) => RpzPending::Apply { zone, action },
+            },
+            QueryPhase::Deferred { zone, action } => RpzPending::Deferred {
+                zone,
+                action: action.clone(),
+            },
+        };
+        match pending {
+            RpzPending::None => {}
+            RpzPending::Apply { zone, action } if !matches!(&action, RpzAction::LocalData(d) if d.cname.is_some()) =>
+            {
+                // allocates only on an RPZ hit
+                let qname = Name::from_bytes(q.key.as_wire()).unwrap_or_else(|_| Name::root());
+                rec.rpz_action = action.log_code();
+                let over_tcp = transport != Transport::Udp;
+                match apply_action(
+                    &qname,
+                    RecordType::from(q.qtype),
+                    over_tcp,
+                    &set.zones[zone],
+                    &action,
+                ) {
+                    PolicyOutcome::Respond { wire, ede } => {
+                        return rpz_reply(&scope, rec, &q, &wire, Some(ede.code), out, limit, opt);
+                    }
+                    PolicyOutcome::Truncate { wire } => {
+                        return rpz_reply(&scope, rec, &q, &wire, None, out, limit, opt);
+                    }
+                    PolicyOutcome::Drop => return FastOutcome::Drop,
+                    PolicyOutcome::Passthru | PolicyOutcome::ChaseCname { .. } => {}
+                }
+            }
+            pending => {
+                return FastOutcome::Miss(MissJob {
+                    query: packet.into(),
+                    client,
+                    transport,
+                    key: CacheKey::in_partition(&q, policy.cache_partition()),
+                    question: Question {
+                        key: q.key,
+                        qtype: q.qtype,
+                        qclass: q.qclass,
+                    },
+                    limit,
+                    opt,
+                    started: scope.started,
+                    filter_us: rec.filter_us,
+                    cache_us: 0,
+                    rpz: pending,
+                });
+            }
+        }
+    }
+
     let now = clock::now_secs();
     let key = CacheKey::in_partition(&q, policy.cache_partition());
     let lookup = rt.cache.lookup(&key, now);
@@ -329,7 +447,28 @@ pub fn handle_packet(
         started: scope.started,
         filter_us: rec.filter_us,
         cache_us: rec.cache_us,
+        rpz: RpzPending::None,
     })
+}
+
+/// Serves a synthesised RPZ response (never cached) with its EDE.
+#[allow(clippy::too_many_arguments)]
+fn rpz_reply(
+    scope: &Scope<'_>,
+    rec: QueryRecord,
+    q: &QueryView<'_>,
+    wire: &[u8],
+    ede: Option<u16>,
+    out: &mut [u8],
+    limit: usize,
+    opt: Option<ReplyOpt>,
+) -> FastOutcome {
+    let Some(entry) = cache::prepare_uncached(wire, q) else {
+        return FastOutcome::Drop;
+    };
+    let opt = opt.map(|o| ReplyOpt { ede, ..o });
+    let n = cache::write_cached(&entry, q, 0, ServeMode::Fresh, out, limit, opt.as_ref());
+    reply(scope, rec, out, n)
 }
 
 fn reply(scope: &Scope<'_>, rec: QueryRecord, out: &[u8], n: usize) -> FastOutcome {
@@ -362,37 +501,96 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
     rec.upstream_start_us = micros(job.started.elapsed());
     let upstream_started = Instant::now();
 
-    let answer = match ctx.shared.inflight.join(job.key) {
-        Join::Leader(guard) => {
-            match upstream::forward(&rt.upstreams, &ctx.upstreams, &job.query, &job.question).await
-            {
-                Ok(fwd) => {
-                    rec.upstream = fwd.upstream_index.min(usize::from(u8::MAX - 1)) as u8;
-                    let answer =
-                        leader_answer(&ctx, &rt, policy, &q, job.key, fwd.response, &mut rec);
-                    // The cache insert above happens before the in-flight entry is freed.
-                    guard.complete(match &answer {
-                        Some(bytes) => Resolution::Answer(bytes.clone()),
-                        None => Resolution::ServFail,
-                    });
-                    answer
-                }
-                Err(_) => {
-                    guard.complete(Resolution::ServFail);
+    let mut ede: Option<u16> = None;
+    let mut dropped = false;
+    let forward = WorkerForward {
+        set: &rt.upstreams,
+        worker: &ctx.upstreams,
+        upstream_index: Cell::new(u8::MAX),
+    };
+    let bypass = !matches!(job.rpz, RpzPending::None);
+    let answer = if bypass {
+        // The answer depends on this client's RPZ decision: no coalescing, never cached.
+        match MissQuery::from_view(
+            &q,
+            &job.query,
+            job.client.ip(),
+            job.transport,
+            job.rpz.clone(),
+        ) {
+            None => None,
+            Some(mq) => {
+                let ans =
+                    dispatch::resolve_miss(&rt.resolution, &ctx.shared.recursor, &forward, &mq)
+                        .await;
+                note_answer(&mut rec, &ans, &forward);
+                ede = ans.ede.as_ref().map(|e| e.code);
+                dropped = ans.drop;
+                if ans.failed || ans.drop {
                     None
+                } else if ans.cacheable {
+                    leader_answer(&ctx, &rt, policy, &q, job.key, ans.wire, &mut rec, false)
+                } else {
+                    Some(ans.wire)
                 }
             }
         }
-        Join::Follower(rx) => match inflight::wait(rx).await {
-            Resolution::Answer(bytes) => Some(bytes),
-            Resolution::ServFail => None,
-        },
+    } else {
+        match ctx.shared.inflight.join(job.key) {
+            Join::Leader(guard) => {
+                let rpz_at_start = ctx.shared.recursor.rpz.set.load_full();
+                let Some(mq) = MissQuery::from_view(
+                    &q,
+                    &job.query,
+                    job.client.ip(),
+                    job.transport,
+                    RpzPending::None,
+                ) else {
+                    guard.complete(Resolution::ServFail);
+                    return Vec::new();
+                };
+                let ans =
+                    dispatch::resolve_miss(&rt.resolution, &ctx.shared.recursor, &forward, &mq)
+                        .await;
+                note_answer(&mut rec, &ans, &forward);
+                ede = ans.ede.as_ref().map(|e| e.code);
+                dropped = ans.drop;
+                let answer = if ans.failed || ans.drop {
+                    None
+                } else if ans.cacheable {
+                    // A snapshot or RPZ publication during resolution may have cleared the cache.
+                    let insert = Arc::ptr_eq(&rt, &ctx.shared.runtime.load_full())
+                        && Arc::ptr_eq(&rpz_at_start, &ctx.shared.recursor.rpz.set.load_full());
+                    leader_answer(&ctx, &rt, policy, &q, job.key, ans.wire, &mut rec, insert)
+                } else {
+                    Some(ans.wire)
+                };
+                // The cache insert above happens before the in-flight entry is freed.
+                guard.complete(match &answer {
+                    Some(bytes) => Resolution::Answer(bytes.clone()),
+                    None => Resolution::ServFail,
+                });
+                answer
+            }
+            Join::Follower(rx) => match inflight::wait(rx).await {
+                Resolution::Answer(bytes) => Some(bytes),
+                Resolution::ServFail => None,
+            },
+        }
     };
+    if dropped {
+        return Vec::new();
+    }
     rec.upstream_us = micros(upstream_started.elapsed());
 
-    let opt = job.opt.as_ref();
+    let opt = job.opt.map(|o| ReplyOpt { ede, ..o });
+    let opt = opt.as_ref();
     let now = clock::now_secs();
-    let lookup = rt.cache.lookup(&job.key, now);
+    let lookup = if bypass {
+        Lookup::Miss
+    } else {
+        rt.cache.lookup(&job.key, now)
+    };
     let reply = match (
         &lookup,
         answer.and_then(|a| cache::prepare_uncached(&a, &q)),
@@ -416,9 +614,20 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
     reply
 }
 
-/// Checks a forwarded response for CNAME cloaking against the client's
-/// policy and caches it in that policy's partition (`key`); `None` when the
-/// response does not walk.
+/// Records the route, DNSSEC state, RPZ action and upstream of a miss answer.
+fn note_answer(rec: &mut QueryRecord, ans: &dispatch::MissAnswer, forward: &WorkerForward<'_>) {
+    rec.upstream = forward.upstream_index.get();
+    rec.route = ans.route as u8;
+    rec.dnssec = ans.security as u8;
+    if ans.rpz_action != 0 {
+        rec.rpz_action = ans.rpz_action;
+    }
+}
+
+/// Checks a resolved response for CNAME cloaking against the client's
+/// policy and, with `insert`, caches it in that policy's partition (`key`);
+/// `None` when the response does not walk.
+#[allow(clippy::too_many_arguments)]
 fn leader_answer(
     ctx: &WorkerCtx,
     rt: &Runtime,
@@ -427,6 +636,7 @@ fn leader_answer(
     key: CacheKey,
     response: Bytes,
     rec: &mut QueryRecord,
+    insert: bool,
 ) -> Option<Bytes> {
     let info = wire::walk_response(&response, q).ok()?;
     if policy.filter().cloaked(&info.cname_targets) {
@@ -439,7 +649,9 @@ fn leader_answer(
         buf.truncate(n);
         return Some(Bytes::from(buf));
     }
-    rt.cache.insert(key, &response, q, clock::now_secs());
+    if insert {
+        rt.cache.insert(key, &response, q, clock::now_secs());
+    }
     Some(response)
 }
 

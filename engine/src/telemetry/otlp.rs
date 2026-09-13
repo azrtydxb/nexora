@@ -4,7 +4,7 @@
 //! can block a worker.
 
 use super::metrics::Signal;
-use super::querylog::QueryRecord;
+use super::querylog::{DNSSEC_NAMES, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at};
 use crate::runtime::{Runtime, TelemetrySettings};
 use crate::server::Shared;
 use crate::wire;
@@ -87,6 +87,9 @@ pub fn log_record(
             },
             kv("nexora.transport", r.transport.as_str()),
             kv("nexora.engine.id", engine_id),
+            kv("nexora.route", name_at(&ROUTE_NAMES, r.route)),
+            kv("nexora.dnssec", name_at(&DNSSEC_NAMES, r.dnssec)),
+            kv("nexora.rpz", name_at(&RPZ_NAMES, r.rpz_action)),
         ],
         ..Default::default()
     }

@@ -3,7 +3,8 @@
 
 use crate::clock;
 use crate::edns::Transport;
-use crate::proto::{Stats, UpstreamStatus};
+use crate::proto::{DnssecStats, RecursionStats, Stats, TrustAnchorState, UpstreamStatus};
+use crate::recursor::RecursorState;
 use crate::runtime::Runtime;
 use crate::server::Shared;
 use bytes::Bytes;
@@ -415,7 +416,7 @@ impl Metrics {
     }
 
     /// The OpenMetrics text exposition, built from a fresh registry per scrape.
-    pub fn render(&self, rt: &Runtime) -> String {
+    pub fn render(&self, rt: &Runtime, recursor: &RecursorState) -> String {
         let t = self.totals();
         let mut reg = Registry::default();
 
@@ -546,6 +547,8 @@ impl Metrics {
         );
 
         ENCRYPTED.register(&mut reg);
+        register_recursor(&mut reg, rt, recursor);
+        recursor.rpz.manager.register_metrics(&mut reg);
 
         let mut out = String::with_capacity(4096);
         text::encode(&mut out, &reg).expect("writing to a String cannot fail");
@@ -553,7 +556,7 @@ impl Metrics {
     }
 
     /// The periodic `Stats` report, from the same sums as `render`.
-    pub fn stats(&self, rt: &Runtime) -> Stats {
+    pub fn stats(&self, rt: &Runtime, recursor: &RecursorState) -> Stats {
         let t = self.totals();
         let now = clock::now_secs();
         let mut cumulative = 0;
@@ -596,12 +599,200 @@ impl Metrics {
                 .collect(),
             cache_entries: rt.cache.entries(),
             cache_bytes: rt.cache.bytes(),
-            // M3 Tasks 5, 8 and 10 fill these from the recursor state.
-            recursion: None,
-            dnssec: None,
-            rpz_zones: Vec::new(),
+            recursion: Some(recursion_stats(recursor)),
+            dnssec: Some(dnssec_stats(rt, recursor)),
+            rpz_zones: recursor.rpz.manager.status(),
         }
     }
+}
+
+fn recursion_stats(recursor: &RecursorState) -> RecursionStats {
+    let m = &recursor.metrics;
+    let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
+    RecursionStats {
+        upstream_queries: load(&m.upstream_queries),
+        mismatched_replies: load(&m.mismatched_id)
+            + load(&m.mismatched_question)
+            + load(&m.mismatched_case)
+            + load(&m.malformed_replies),
+        tcp_fallbacks: load(&m.tcp_fallbacks),
+        work_limit_exceeded: load(&m.limit_queries)
+            + load(&m.limit_delegation_depth)
+            + load(&m.limit_cname_depth),
+        infra_entries: u32::try_from(recursor.recursor.infra.len()).unwrap_or(u32::MAX),
+        lame_marked: load(&m.lame_marked),
+    }
+}
+
+fn active_ntas(rt: &Runtime) -> u32 {
+    let now = clock::unix_now();
+    rt.resolution
+        .dnssec
+        .ntas
+        .iter()
+        .filter(|(_, expires)| *expires > now)
+        .count() as u32
+}
+
+fn dnssec_stats(rt: &Runtime, recursor: &RecursorState) -> DnssecStats {
+    let m = &recursor.metrics;
+    let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
+    DnssecStats {
+        secure: load(&m.dnssec_secure),
+        insecure: load(&m.dnssec_insecure),
+        bogus: load(&m.dnssec_bogus),
+        indeterminate: load(&m.dnssec_indeterminate),
+        trust_anchors: recursor.anchors.status(),
+        active_negative_trust_anchors: active_ntas(rt),
+    }
+}
+
+/// Recursion, DNSSEC and trust-anchor families; every label value is created even at zero.
+fn register_recursor(reg: &mut Registry, rt: &Runtime, recursor: &RecursorState) {
+    let m = &recursor.metrics;
+    let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
+    let counter = |v: u64| ConstCounter::new(v);
+    let family = |pairs: &[(&'static str, &str, u64)]| {
+        let f = Family::<Labels, PromCounter>::default();
+        for (label, value, n) in pairs {
+            f.get_or_create(&vec![(*label, (*value).to_owned())])
+                .inc_by(*n);
+        }
+        f
+    };
+    reg.register(
+        "nexora_recursor_upstream_queries",
+        "Queries sent to authoritative and forward-zone servers",
+        counter(load(&m.upstream_queries)),
+    );
+    reg.register(
+        "nexora_recursor_upstream_timeouts",
+        "Authoritative exchanges that timed out",
+        counter(load(&m.upstream_timeouts)),
+    );
+    reg.register(
+        "nexora_recursor_mismatched_replies",
+        "Replies dropped for not matching the query",
+        family(&[
+            ("reason", "id", load(&m.mismatched_id)),
+            ("reason", "question", load(&m.mismatched_question)),
+            ("reason", "case", load(&m.mismatched_case)),
+            ("reason", "malformed", load(&m.malformed_replies)),
+        ]),
+    );
+    reg.register(
+        "nexora_recursor_tcp_fallback",
+        "Truncated replies retried over TCP",
+        counter(load(&m.tcp_fallbacks)),
+    );
+    reg.register(
+        "nexora_recursor_edns_fallback",
+        "Servers retried without EDNS",
+        counter(load(&m.edns_fallbacks)),
+    );
+    reg.register(
+        "nexora_recursor_lame_servers",
+        "Servers marked lame for a zone",
+        counter(load(&m.lame_marked)),
+    );
+    reg.register(
+        "nexora_recursor_work_limit_exceeded",
+        "Resolutions stopped by a work limit",
+        family(&[
+            ("limit", "upstream_queries", load(&m.limit_queries)),
+            ("limit", "delegation_depth", load(&m.limit_delegation_depth)),
+            ("limit", "cname_depth", load(&m.limit_cname_depth)),
+        ]),
+    );
+    reg.register(
+        "nexora_recursor_cname_loops",
+        "Resolutions stopped by a CNAME/DNAME loop",
+        counter(load(&m.cname_loops)),
+    );
+    reg.register(
+        "nexora_resolutions",
+        "Misses resolved without the global upstreams",
+        family(&[
+            ("route", "recursive", load(&m.resolutions_recursive)),
+            ("route", "forward_zone", load(&m.resolutions_forward_zone)),
+        ]),
+    );
+    reg.register(
+        "nexora_resolution_failures",
+        "Misses that got no usable answer",
+        counter(load(&m.resolution_failures)),
+    );
+    reg.register(
+        "nexora_recursor_infra_entries",
+        "Servers in the infrastructure cache",
+        ConstGauge::new(recursor.recursor.infra.len() as i64),
+    );
+    reg.register(
+        "nexora_dnssec_validations",
+        "DNSSEC validation results",
+        family(&[
+            ("result", "secure", load(&m.dnssec_secure)),
+            ("result", "insecure", load(&m.dnssec_insecure)),
+            ("result", "bogus", load(&m.dnssec_bogus)),
+            ("result", "indeterminate", load(&m.dnssec_indeterminate)),
+        ]),
+    );
+    let bogus = Family::<Labels, PromCounter>::default();
+    for (code, c) in m.dnssec_bogus_by_ede.iter().enumerate() {
+        let n = load(c);
+        if n > 0 {
+            bogus
+                .get_or_create(&vec![("ede", code.to_string())])
+                .inc_by(n);
+        }
+    }
+    reg.register(
+        "nexora_dnssec_bogus",
+        "Bogus answers by EDE INFO-CODE",
+        bogus,
+    );
+    reg.register(
+        "nexora_dnssec_aggressive_synthesized",
+        "Negative answers synthesised from validated NSEC/NSEC3 (RFC 8198)",
+        counter(load(&m.dnssec_aggressive_synthesized)),
+    );
+    reg.register(
+        "nexora_dnssec_trust_anchor_refresh_failures",
+        "Failed RFC 5011 trust-anchor refreshes",
+        counter(load(&m.trust_anchor_refresh_failures)),
+    );
+
+    let keys = Family::<Labels, Gauge>::default();
+    let last = Family::<Labels, Gauge>::default();
+    for a in recursor.anchors.status() {
+        let state = match TrustAnchorState::try_from(a.state) {
+            Ok(TrustAnchorState::Configured) => "configured",
+            Ok(TrustAnchorState::AddPend) => "add_pend",
+            Ok(TrustAnchorState::Valid) => "valid",
+            Ok(TrustAnchorState::Missing) => "missing",
+            Ok(TrustAnchorState::Revoked) => "revoked",
+            _ => "unspecified",
+        };
+        keys.get_or_create(&vec![("zone", a.zone.clone()), ("state", state.to_owned())])
+            .inc();
+        last.get_or_create(&vec![("zone", a.zone)])
+            .set(a.last_refresh_success_unix);
+    }
+    reg.register(
+        "nexora_dnssec_trust_anchor_keys",
+        "Trust-anchor keys by zone and RFC 5011 state",
+        keys,
+    );
+    reg.register(
+        "nexora_dnssec_trust_anchor_last_refresh_success_timestamp_seconds",
+        "Last successful RFC 5011 refresh of the zone's trust anchors",
+        last,
+    );
+    reg.register(
+        "nexora_dnssec_negative_trust_anchors",
+        "Negative trust anchors in effect",
+        ConstGauge::new(i64::from(active_ntas(rt))),
+    );
 }
 
 const SCRAPE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -643,7 +834,9 @@ pub async fn serve_metrics_on(
 fn scrape<B>(req: &Request<B>, shared: &Shared) -> Response<Full<Bytes>> {
     let mut resp = Response::new(Full::new(Bytes::new()));
     if req.method() == Method::GET && req.uri().path() == "/metrics" {
-        let body = shared.metrics.render(&shared.runtime.load());
+        let body = shared
+            .metrics
+            .render(&shared.runtime.load(), &shared.recursor);
         *resp.body_mut() = Full::new(Bytes::from(body));
         resp.headers_mut().insert(
             hyper::header::CONTENT_TYPE,
@@ -676,7 +869,7 @@ mod tests {
             &http::Method::POST,
             http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
         );
-        let text = Metrics::new(1).render(&Runtime::initial());
+        let text = Metrics::new(1).render(&Runtime::initial(), &RecursorState::new(None));
         assert!(
             has_positive(
                 &text,

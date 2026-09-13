@@ -22,3 +22,5 @@ is committed.
 - `make engine-test` (CARGO_TARGET_DIR=/tmp/rpz-target): exit 0, 14 `test result: ok`, `cache_hit_path_does_not_allocate ... ok`.
 - clippy `--all-targets`: no warnings under `recursor/rpz/`.
 - NOT DONE: query-path / dispatch integration (`server/mod.rs`, `dispatch.rs`, `RecursorState.rpz`) — blocked on Task 5 (no `RecursorState`, `dispatch.rs`, `Shared.recursor` yet); plan marks those steps "Integration (after Task 5)". Not committed (lead commits).
+
+- Integration steps completed together with M3 Task 5 (see Task 5 As-built notes in the plan): query-phase hook in `handle_packet` (`rpz_reply`), `MissJob.rpz` bypassing coalescing and cache, response-phase check and local-data CNAME chase in `dispatch.rs`. Verified by `recursor::dispatch_tests` (6 passed), `tests/rpz_pipeline.rs` (1 passed), `cache_hit_path_does_not_allocate` (forward, recursive+validation, RPZ triggers) and `make engine-test` exit 0. Not committed (lead commits).

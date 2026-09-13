@@ -250,8 +250,10 @@ mod tests {
         assert!(!r.applied);
         assert_eq!(r.error, "fingerprint mismatch");
 
-        let text =
-            crate::telemetry::metrics::Metrics::new(1).render(&crate::runtime::Runtime::initial());
+        let text = crate::telemetry::metrics::Metrics::new(1).render(
+            &crate::runtime::Runtime::initial(),
+            &crate::recursor::RecursorState::new(None),
+        );
         assert!(
             text.contains("nexora_tls_material_updates_total{result=\"rejected\"} "),
             "{text}"
