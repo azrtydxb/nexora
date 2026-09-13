@@ -108,3 +108,23 @@ pub fn from_ascii(s: &str) -> Option<Vec<u8>> {
     out.push(0);
     (out.len() <= 255).then_some(out)
 }
+
+/// Dotted ASCII (trailing dot) of an uncompressed wire name built by [`from_ascii`]: labels are
+/// joined verbatim, non-UTF-8 octets replaced.
+pub fn to_ascii(wire: &[u8]) -> String {
+    let mut out = String::with_capacity(wire.len());
+    let mut i = 0;
+    while let Some(&l) = wire.get(i) {
+        if l == 0 {
+            break;
+        }
+        let end = (i + 1 + usize::from(l)).min(wire.len());
+        out.push_str(&String::from_utf8_lossy(&wire[i + 1..end]));
+        out.push('.');
+        i = end;
+    }
+    if out.is_empty() {
+        out.push('.');
+    }
+    out
+}

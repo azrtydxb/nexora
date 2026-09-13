@@ -103,7 +103,8 @@ pub fn validate(zones: &[proto::AuthZone]) -> Result<(), String> {
             .transfer
             .iter()
             .map(|t| &t.tsig_key)
-            .chain(z.notify.iter().map(|t| &t.tsig_key));
+            .chain(z.notify.iter().map(|t| &t.tsig_key))
+            .chain(&z.update_tsig_keys);
         if let Some(k) = keys
             .filter(|k| !k.is_empty())
             .find(|k| !k.ends_with('.') || from_ascii(k).is_none())
@@ -254,11 +255,15 @@ fn load_zone(
     Ok(Arc::new(zone))
 }
 
-/// A zone's transfer ACL, required transfer key and NOTIFY targets (already validated).
+/// A zone's transfer ACL, required transfer key, NOTIFY targets, kind, primaries and UPDATE keys
+/// (already validated).
 struct Policy {
     allow: Vec<ipnet::IpNet>,
     key: Option<Box<[u8]>>,
     notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
+    secondary: bool,
+    primaries: Vec<SocketAddr>,
+    update_keys: Vec<Box<[u8]>>,
 }
 
 /// `None` for an empty name (no key).
@@ -287,6 +292,13 @@ impl Policy {
                 .iter()
                 .filter_map(|t| Some((t.address.parse().ok()?, key_wire(&t.tsig_key))))
                 .collect(),
+            secondary: z.kind == proto::AuthZoneKind::Secondary as i32,
+            primaries: z.primaries.iter().filter_map(|a| a.parse().ok()).collect(),
+            update_keys: z
+                .update_tsig_keys
+                .iter()
+                .filter_map(|k| key_wire(k))
+                .collect(),
         }
     }
 
@@ -294,12 +306,18 @@ impl Policy {
         zone.transfer_allow == self.allow
             && zone.transfer_key == self.key
             && zone.notify == self.notify
+            && zone.secondary == self.secondary
+            && zone.primaries == self.primaries
+            && zone.update_keys == self.update_keys
     }
 
     fn set(&self, zone: &mut Zone) {
         zone.transfer_allow = self.allow.clone();
         zone.transfer_key = self.key.clone();
         zone.notify = self.notify.clone();
+        zone.secondary = self.secondary;
+        zone.primaries = self.primaries.clone();
+        zone.update_keys = self.update_keys.clone();
     }
 }
 

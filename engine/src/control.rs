@@ -480,7 +480,7 @@ async fn session(
         Err(e) => return e,
     };
     let mut client = EngineControlClient::new(ch.clone());
-    let (tx, rx) = mpsc::channel::<EngineMessage>(16);
+    let (tx, rx) = mpsc::channel::<EngineMessage>(1024);
     let hello = Msg::Hello(Hello {
         engine_id: id.engine_id.clone(),
         node_name: boot.node_name.clone(),
@@ -500,6 +500,8 @@ async fn session(
     };
     eprintln!("nexora-engine: control connected to {url}");
     shared.mgmt_channel.store(Some(Arc::new(ch)));
+    // NOTIFY and UPDATE forwarding from the workers use this stream while it is up.
+    shared.auth.attach(tx.clone());
     shared
         .metrics
         .control_connected
@@ -561,12 +563,12 @@ async fn session(
             Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),
             // Hosted-zone TSIG keys: never logged, never persisted.
             Some(ServerMsg::KeyMaterial(km)) => shared.auth.keyring.apply(km),
-            // M4 contract (Task 1); update results arrive with Task 11.
-            Some(ServerMsg::UpdateResult(_)) => {}
+            Some(ServerMsg::UpdateResult(r)) => shared.auth.complete_update(r),
             None => {}
         }
     };
     ticker.abort();
+    shared.auth.detach();
     err
 }
 

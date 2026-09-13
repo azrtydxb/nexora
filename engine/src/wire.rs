@@ -10,6 +10,7 @@ pub const RCODE_SERVFAIL: u8 = 2;
 pub const RCODE_NXDOMAIN: u8 = 3;
 pub const RCODE_NOTIMP: u8 = 4;
 pub const RCODE_REFUSED: u8 = 5;
+pub const RCODE_NOTAUTH: u8 = 9;
 
 const HEADER_LEN: usize = 12;
 const MAX_NAME_LEN: usize = 255;

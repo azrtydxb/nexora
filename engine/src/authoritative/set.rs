@@ -67,6 +67,25 @@ impl AuthSet {
         Some(z)
     }
 
+    /// Test helper: this set with the zone `origin`'s UPDATE keys replaced by `keys`.
+    #[cfg(test)]
+    pub fn with_update_keys(mut self, origin: &str, keys: Vec<String>) -> AuthSet {
+        use super::name::from_ascii;
+        let wire: Box<[u8]> = from_ascii(origin).expect("origin").into();
+        let zone = self.zones.get_mut(&wire).expect("zone in set");
+        let mut z = (**zone).clone();
+        z.update_keys = keys
+            .iter()
+            .map(|k| {
+                from_ascii(&k.to_ascii_lowercase())
+                    .expect("key name")
+                    .into()
+            })
+            .collect();
+        *zone = Arc::new(z);
+        self
+    }
+
     pub fn zones(&self) -> impl Iterator<Item = &Arc<Zone>> {
         self.zones.values()
     }

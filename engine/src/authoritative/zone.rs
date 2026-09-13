@@ -136,6 +136,12 @@ pub struct Zone {
     pub transfer_key: Option<Box<[u8]>>,
     /// NOTIFY targets and the lowercase wire name of the key signing each, set by the loader.
     pub notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
+    /// A secondary zone (pulled by the management plane), set by the loader.
+    pub secondary: bool,
+    /// Secondary: the primaries whose IPs are accepted as NOTIFY sources, set by the loader.
+    pub primaries: Vec<SocketAddr>,
+    /// Lowercase wire names of the TSIG keys allowed to UPDATE (empty refuses), set by the loader.
+    pub update_keys: Vec<Box<[u8]>>,
 }
 
 fn covered(r: &RecordRef<'_>) -> Result<(u16, bool), ZoneError> {
@@ -279,6 +285,9 @@ impl Zone {
             transfer_allow: Vec::new(),
             transfer_key: None,
             notify: Vec::new(),
+            secondary: false,
+            primaries: Vec::new(),
+            update_keys: Vec::new(),
         };
         let mut key = Vec::with_capacity(512);
         for r in &p.a {
@@ -289,7 +298,7 @@ impl Zone {
     }
 
     /// Returns the zone at the delta's target serial; `self` is unchanged. The result carries no
-    /// IXFR history, transfer policy or NOTIFY targets and is not expired (the loader sets them).
+    /// IXFR history, transfer/update policy, primaries or NOTIFY targets and is not expired (the loader sets them).
     pub fn apply(&self, d: &Parsed<'_>) -> Result<Zone, ZoneError> {
         if d.kind != Kind::Delta {
             return Err(ZoneError::NotDelta);
@@ -325,6 +334,9 @@ impl Zone {
             transfer_allow: Vec::new(),
             transfer_key: None,
             notify: Vec::new(),
+            secondary: false,
+            primaries: Vec::new(),
+            update_keys: Vec::new(),
         };
         zone.finalize()?;
         Ok(zone)
@@ -426,6 +438,12 @@ impl Zone {
     }
 
     /// Lowercase wire origin.
+    /// Test setter: marks the zone secondary with `primaries` as its NOTIFY sources.
+    pub fn set_secondary_primaries(&mut self, primaries: Vec<SocketAddr>) {
+        self.secondary = true;
+        self.primaries = primaries;
+    }
+
     pub fn origin(&self) -> &[u8] {
         &self.origin
     }

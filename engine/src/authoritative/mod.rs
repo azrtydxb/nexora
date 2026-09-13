@@ -1,5 +1,5 @@
 //! Authoritative service for zones hosted in Nexora: the NZF1 zone format and the in-memory zone
-//! model (M4), answers, zone transfers out and NOTIFY.
+//! model (M4), answers, zone transfers out, NOTIFY out and in, and dynamic update forwarding.
 
 pub mod answer;
 pub mod dispatch;
@@ -8,11 +8,13 @@ pub mod loader;
 pub mod lookup;
 pub mod msg;
 pub mod name;
+pub mod notify_in;
 pub mod notify_out;
 pub mod nsec3;
 pub mod nzf;
 pub mod set;
 pub mod state;
+pub mod update;
 pub mod writer;
 pub mod xfr;
 pub mod zone;
@@ -26,7 +28,11 @@ mod dnssec_tests;
 #[cfg(test)]
 mod loader_tests;
 #[cfg(test)]
+mod notify_in_tests;
+#[cfg(test)]
 mod notify_out_tests;
+#[cfg(test)]
+mod update_tests;
 #[cfg(test)]
 mod xfr_tests;
 #[cfg(test)]

@@ -2,13 +2,26 @@
 //! applied snapshot.
 
 use super::T_SOA;
+use super::notify_in::NotifySink;
 use super::notify_out::{NotifyJob, NotifyResult, send_notify};
+use super::update::UpdateForwarder;
+use crate::proto::{self, EngineMessage, engine_message::Msg};
 use crate::runtime::Runtime;
 use crate::server::Shared;
 use crate::tsig::KeyRing;
+use parking_lot::Mutex;
+use rustc_hash::FxHashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+
+/// How long an UPDATE waits for the management plane's `UpdateResult`.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Updates waiting for a result at once; further ones fail (SERVFAIL) without forwarding.
+const MAX_PENDING_UPDATES: usize = 1024;
 
 /// NOTIFY retry schedule: 2 s, doubling, 5 attempts.
 const NOTIFY_FIRST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -31,6 +44,10 @@ pub struct AuthState {
     applied_version: AtomicU64,
     /// The newest runtime version whose changed zones were notified.
     notified_version: AtomicU64,
+    /// The control stream's outbound queue while connected.
+    control_tx: Mutex<Option<mpsc::Sender<EngineMessage>>>,
+    /// Forwarded updates waiting for their `UpdateResult`, by request id.
+    pending_updates: Mutex<FxHashMap<String, oneshot::Sender<proto::UpdateResult>>>,
 }
 
 impl AuthState {
@@ -40,7 +57,34 @@ impl AuthState {
             control: OnceLock::new(),
             applied_version: AtomicU64::new(0),
             notified_version: AtomicU64::new(0),
+            control_tx: Mutex::new(None),
+            pending_updates: Mutex::new(FxHashMap::default()),
         })
+    }
+
+    /// Attaches the control stream's outbound queue (`control::session`, after connecting).
+    pub fn attach(&self, tx: mpsc::Sender<EngineMessage>) {
+        *self.control_tx.lock() = Some(tx);
+    }
+
+    /// Detaches the queue when the stream ends; waiting updates fail at once.
+    pub fn detach(&self) {
+        *self.control_tx.lock() = None;
+        self.pending_updates.lock().clear();
+    }
+
+    /// Delivers an `UpdateResult` to the update waiting for it (ignored when none is).
+    pub fn complete_update(&self, r: proto::UpdateResult) {
+        if let Some(waiter) = self.pending_updates.lock().remove(&r.request_id) {
+            let _ = waiter.send(r);
+        }
+    }
+
+    fn try_send(&self, msg: Msg) -> bool {
+        self.control_tx
+            .lock()
+            .as_ref()
+            .is_some_and(|tx| tx.try_send(EngineMessage { msg: Some(msg) }).is_ok())
     }
 
     /// Set once when the control runtime exists; later calls are ignored.
@@ -50,6 +94,42 @@ impl AuthState {
 
     pub fn control_runtime(&self) -> Option<&tokio::runtime::Handle> {
         self.control.get()
+    }
+}
+
+impl NotifySink for AuthState {
+    fn notify(&self, ev: proto::NotifyReceived) -> bool {
+        self.try_send(Msg::NotifyReceived(ev))
+    }
+}
+
+impl UpdateForwarder for AuthState {
+    fn forward(
+        &self,
+        req: proto::UpdateRequest,
+    ) -> Pin<Box<dyn Future<Output = Option<proto::UpdateResult>> + Send + '_>> {
+        Box::pin(async move {
+            let id = req.request_id.clone();
+            let (tx, rx) = oneshot::channel();
+            {
+                let mut pending = self.pending_updates.lock();
+                if pending.len() >= MAX_PENDING_UPDATES || pending.contains_key(&id) {
+                    return None;
+                }
+                pending.insert(id.clone(), tx);
+            }
+            if !self.try_send(Msg::UpdateRequest(req)) {
+                self.pending_updates.lock().remove(&id);
+                return None;
+            }
+            match tokio::time::timeout(UPDATE_TIMEOUT, rx).await {
+                Ok(Ok(r)) => Some(r),
+                _ => {
+                    self.pending_updates.lock().remove(&id);
+                    None
+                }
+            }
+        })
     }
 }
 

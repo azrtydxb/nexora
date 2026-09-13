@@ -2,12 +2,15 @@
 //! ACL, policy, RPZ, cache and resolution stages.
 
 use super::answer::{self, Limits, Served};
-use super::msg::{EdnsInfo, Question};
+use super::msg::{EdnsInfo, OPCODE_NOTIFY, OPCODE_UPDATE, Question};
 use super::name::lowercase_into;
-use super::xfr;
+use super::notify_in::{self, NotifySink};
+use super::state::AuthState;
 use super::{T_AXFR, T_IXFR};
+use super::{update, xfr};
 use crate::clock;
 use crate::edns::{self, ReplyOpt, Transport};
+use crate::proto;
 use crate::runtime::Runtime;
 use crate::server::WorkerCtx;
 use crate::tsig::{self, Verified};
@@ -36,13 +39,19 @@ pub enum AuthOutcome {
     NotHosted,
     /// The reply is in `out[..n]`.
     Reply(usize),
-    /// Answered off the fast path (zone transfers).
+    /// Answered off the fast path (zone transfers, dynamic updates).
     Slow(SlowJob),
 }
 
 pub enum SlowKind {
     Transfer,
+    Update,
 }
+
+/// `AuthCounters::notify_received` slots.
+const NOTIFY_FORWARDED: usize = 0;
+const NOTIFY_DROPPED: usize = 1;
+const NOTIFY_REFUSED: usize = 2;
 
 pub struct SlowJob {
     pub query: Box<[u8]>,
@@ -79,6 +88,43 @@ pub async fn run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec
             xfr::count(&ctx.shared.metrics.auth, q.qtype, &plan);
             xfr::messages(&plan, &job.query, &q, signing, now)
         }
+        SlowKind::Update => {
+            let auth = ctx.shared.auth.clone();
+            let (reply, slot) = update::handle_update(
+                job.query.into(),
+                job.client,
+                rt,
+                auth.keyring.clone(),
+                auth,
+                unix_now(),
+            )
+            .await;
+            ctx.shared.metrics.auth.updates[slot].fetch_add(1, Ordering::Relaxed);
+            if reply.is_empty() {
+                Vec::new()
+            } else {
+                vec![reply]
+            }
+        }
+    }
+}
+
+/// The production NOTIFY sink with the forwarded/dropped count.
+struct CountingSink<'a> {
+    auth: &'a AuthState,
+    counters: &'a [std::sync::atomic::AtomicU64; 3],
+}
+
+impl NotifySink for CountingSink<'_> {
+    fn notify(&self, ev: proto::NotifyReceived) -> bool {
+        let sent = self.auth.notify(ev);
+        let slot = if sent {
+            NOTIFY_FORWARDED
+        } else {
+            NOTIFY_DROPPED
+        };
+        self.counters[slot].fetch_add(1, Ordering::Relaxed);
+        sent
     }
 }
 
@@ -167,9 +213,10 @@ pub fn fast(
 }
 
 /// Messages `wire::parse_query` rejects (NOTIFY, UPDATE, IXFR with an authority SOA, TSIG-signed
-/// queries). `None` keeps M1's FORMERR/NOTIMP reply. Transfers go to the slow path on TCP/DoT
-/// and are answered inline on UDP; other TSIG-signed queries for hosted names are verified and
-/// answered signed, for other names REFUSED. Tasks 10 and 11 add NOTIFY and UPDATE.
+/// queries). `None` keeps M1's FORMERR/NOTIMP reply. NOTIFY is answered inline and forwarded to
+/// the management plane; UPDATE goes to the slow path on every transport. Transfers go to the
+/// slow path on TCP/DoT and are answered inline on UDP; other TSIG-signed queries for hosted names
+/// are verified and answered signed, for other names REFUSED.
 pub fn unparsed(
     ctx: &WorkerCtx,
     rt: &Runtime,
@@ -178,6 +225,32 @@ pub fn unparsed(
     transport: Transport,
     out: &mut [u8],
 ) -> Option<AuthOutcome> {
+    let opcode = (*packet.get(2)? >> 3) & 0x0f;
+    if opcode == OPCODE_NOTIFY {
+        let counters = &ctx.shared.metrics.auth.notify_received;
+        let sink = CountingSink {
+            auth: &ctx.shared.auth,
+            counters,
+        };
+        let auth = &ctx.shared.auth;
+        let reply =
+            notify_in::handle_notify(packet, client, &rt.auth, &auth.keyring, &sink, unix_now());
+        if reply
+            .get(3)
+            .is_some_and(|b| b & 0x0f != wire::RCODE_NOERROR)
+        {
+            counters[NOTIFY_REFUSED].fetch_add(1, Ordering::Relaxed);
+        }
+        return Some(copy_out(&reply, out));
+    }
+    if opcode == OPCODE_UPDATE {
+        return Some(AuthOutcome::Slow(SlowJob {
+            query: packet.into(),
+            client,
+            transport,
+            kind: SlowKind::Update,
+        }));
+    }
     let q = Question::parse(packet).ok()?;
     let transfer = q.qtype == T_AXFR || q.qtype == T_IXFR;
     if q.opcode != 0 || (q.tsig_at.is_none() && !transfer) {

@@ -6,8 +6,8 @@ use super::{T_IXFR, T_OPT, T_SOA, T_TSIG};
 use std::ops::Range;
 
 const HEADER_LEN: usize = 12;
-const OPCODE_NOTIFY: u8 = 4;
-const OPCODE_UPDATE: u8 = 5;
+pub const OPCODE_NOTIFY: u8 = 4;
+pub const OPCODE_UPDATE: u8 = 5;
 const MAX_POINTER_JUMPS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

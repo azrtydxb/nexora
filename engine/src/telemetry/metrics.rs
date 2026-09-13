@@ -80,6 +80,10 @@ pub const AUTH_TRANSFER_TYPES: [&str; 2] = ["axfr", "ixfr"];
 pub const AUTH_TRANSFER_RESULTS: [&str; 4] = ["full", "incremental", "uptodate", "refused"];
 /// The `result` label per slot of `AuthCounters::notify_sent`.
 pub const AUTH_NOTIFY_RESULTS: [&str; 4] = ["acked", "rejected", "timeout", "nokey"];
+/// The `result` label per slot of `AuthCounters::notify_received`.
+pub const AUTH_NOTIFY_RECEIVED_RESULTS: [&str; 3] = ["forwarded", "dropped", "refused"];
+/// The `result` label per slot of `AuthCounters::updates` (`authoritative::update::UPDATE_*`).
+pub const AUTH_UPDATE_RESULTS: [&str; 4] = ["applied", "rejected", "refused", "failed"];
 
 /// Process-wide authoritative counters updated off the query path.
 #[derive(Default)]
@@ -90,6 +94,10 @@ pub struct AuthCounters {
     pub transfers: [[AtomicU64; 4]; 2],
     /// NOTIFY messages sent by `AUTH_NOTIFY_RESULTS` slot; shared with the sending tasks.
     pub notify_sent: Arc<[AtomicU64; 4]>,
+    /// NOTIFY messages received by `AUTH_NOTIFY_RECEIVED_RESULTS` slot.
+    pub notify_received: [AtomicU64; 3],
+    /// UPDATE messages received by `AUTH_UPDATE_RESULTS` slot.
+    pub updates: [AtomicU64; 4],
 }
 
 impl WorkerCounters {
@@ -640,6 +648,31 @@ impl Metrics {
             "NOTIFY messages sent to secondaries by outcome",
             notify,
         );
+        let received = Family::<Labels, PromCounter>::default();
+        for (result, c) in AUTH_NOTIFY_RECEIVED_RESULTS
+            .iter()
+            .zip(&self.auth.notify_received)
+        {
+            received
+                .get_or_create(&vec![("result", (*result).to_owned())])
+                .inc_by(c.load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_auth_notify_received",
+            "NOTIFY messages received for hosted zones: forwarded to the management plane, dropped (control stream down or full) or refused",
+            received,
+        );
+        let updates = Family::<Labels, PromCounter>::default();
+        for (result, c) in AUTH_UPDATE_RESULTS.iter().zip(&self.auth.updates) {
+            updates
+                .get_or_create(&vec![("result", (*result).to_owned())])
+                .inc_by(c.load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_auth_updates",
+            "Dynamic updates received: applied or rejected by the management plane, refused by the engine, or failed without a result",
+            updates,
+        );
     }
 
     /// The periodic `Stats` report, from the same sums as `render`.
@@ -980,6 +1013,8 @@ mod tests {
         m.auth.loads[1].fetch_add(1, Ordering::Relaxed);
         m.auth.transfers[1][1].fetch_add(3, Ordering::Relaxed);
         m.auth.notify_sent[0].fetch_add(1, Ordering::Relaxed);
+        m.auth.notify_received[0].fetch_add(1, Ordering::Relaxed);
+        m.auth.updates[2].fetch_add(1, Ordering::Relaxed);
         let text = m.render(&Runtime::initial(), &RecursorState::new(None));
         assert!(text.contains("nexora_auth_zones 0"), "{text}");
         for kind in AUTH_LOAD_KINDS {
@@ -1016,6 +1051,28 @@ mod tests {
         assert!(has_positive(
             &text,
             "nexora_auth_notify_sent_total{result=\"acked\"} "
+        ));
+        for result in AUTH_NOTIFY_RECEIVED_RESULTS {
+            assert!(
+                text.contains(&format!(
+                    "nexora_auth_notify_received_total{{result=\"{result}\"}}"
+                )),
+                "{text}"
+            );
+        }
+        for result in AUTH_UPDATE_RESULTS {
+            assert!(
+                text.contains(&format!("nexora_auth_updates_total{{result=\"{result}\"}}")),
+                "{text}"
+            );
+        }
+        assert!(has_positive(
+            &text,
+            "nexora_auth_notify_received_total{result=\"forwarded\"} "
+        ));
+        assert!(has_positive(
+            &text,
+            "nexora_auth_updates_total{result=\"refused\"} "
         ));
         assert!(has_positive(
             &text,
