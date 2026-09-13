@@ -9,7 +9,25 @@ Ship milestone M4 "Authoritative" (S-3, S-8, S-17, S-18, S-19, S-23): engines se
 
 ## Architecture
 
-The management plane owns all zone state in PostgreSQL: records, a per-zone journal of serial diffs, DNSSEC keys and signatures. On every change it rebuilds the zone's _served_ RR set (signed when DNSSEC is on), diffs it against the previous one, writes the diff as an NZF delta blob and periodically a full NZF image blob, and references both from the `ConfigSnapshot`; engines apply deltas incrementally, answer from an in-memory canonical-order tree before ACL/filter/cache/recursion, stream AXFR/IXFR from the same deltas, send NOTIFY, and forward incoming NOTIFY and UPDATE messages to the management plane over the existing control stream. Key material reaches engines only as an in-memory `KeyMaterial` control message.
+The management plane owns all zone state in PostgreSQL: records, a per-zone journal of serial diffs, DNSSEC keys and signatures. On every change it rebuilds the zone's _served_ RR set (signed when DNSSEC is on), diffs it against the previous one, writes the diff as an NZF delta blob and periodically a full NZF image blob into the M1 `blobs` table, and references both as `BlobRef`s from the `ConfigSnapshot`; engines fetch them with the M1 blob path, apply deltas incrementally in `Runtime::build`, answer hosted names from an in-memory canonical-order tree in `server::handle_packet` right after parsing (before the ACL, M2 policy, M3 RPZ, cache and resolution stages), stream AXFR/IXFR from the same deltas over TCP and DoT, send NOTIFY, and forward incoming NOTIFY and UPDATE messages to the management plane over the existing `Connect` stream. TSIG secrets reach engines only in the in-memory `KeyMaterial` control message, following M3's `RpzTsigKeys`; DNSSEC private keys never leave the management plane.
+
+The engine query pipeline after M4 (M1-M3 stages unchanged apart from the moved cookie steps): `wire::parse_query` → EDNS reply limit and OPT → bad-cookie FORMERR and server cookie (moved above the ACL so authoritative answers carry cookies) → **authoritative stage**: when `!rt.auth.is_empty()`, `authoritative::dispatch::fast` answers a hosted name (`FastOutcome::Reply`, query log `nexora.cache=auth`), refuses AXFR over UDP, or hands a transfer to `FastOutcome::Slow`; otherwise the query continues → ACL (REFUSED) → M2 `rt.policy.select`/`check` → M3 RPZ query phase → cache → `resolve_miss` (M3 `recursor::dispatch::resolve_miss`). Messages `parse_query` rejects with FORMERR/NOTIMP (opcodes NOTIFY and UPDATE, IXFR queries with NSCOUNT=1, queries whose additional section carries TSIG) first go to `authoritative::dispatch::unparsed`, which answers them inline or returns `FastOutcome::Slow`; everything else keeps M1's error reply.
+
+### Reconciled with M1-M3 code
+
+Design-level changes against the original M4 plan (HEAD 083f943 plus M3 Task 5's query-path shape from `.procoder/plans/nexora-v1-m3.md`):
+
+1. **Authoritative answering sits inside `server::handle_packet`**, not in `server/udp.rs`/`tcp.rs`: all transports (UDP, TCP, DoT, DoH, DoQ) share that function, and the M3 pipeline already runs ACL → policy → RPZ → cache there. The stage runs after the cookie steps (moved above the ACL) and before the ACL; the cache-hit path gains one `AuthSet::is_empty` load. `FastOutcome` gains `Slow(authoritative::dispatch::SlowJob)` (NOTIFY needing no reply wait is answered inline; UPDATE waits for the management plane; transfers produce several messages). Multi-message transfers are written by `server::stream::serve_dns_stream` through a new `Answerer::answer_frames` method (default: one frame from `answer`), so AXFR/IXFR work on TCP and DoT; DoH and DoQ answer AXFR/IXFR with REFUSED; UDP keeps FORMERR for AXFR and a single SOA for IXFR.
+2. **Zone blobs are ordinary M1 blobs.** Images and deltas are zstd NZF1 bytes stored with `store.PutBlob` in `blobs`, referenced by the existing `BlobRef` message (no `ZoneBlobRef`, no `zone_blobs` table, no GetBlob change, no separate GC: `blocklist.Fetcher.collectBlobs` keeps blobs referenced by kept snapshots' `auth_zones` and by `zone_images`/`zone_journal`). `control::fetch_blobs` downloads every missing referenced blob; the loader runs synchronously inside `Runtime::build` over `snapshot::BlobSource` (`DirBlobs` verifies size and SHA-256) and reads only the blobs it applies.
+3. **Zone mutations publish through `snapshot.Mutate`** (change rows → `auth.WriteAudit` → `snapshot.Build` → `config_versions` → `pg_notify`), with `auth.Actor` and `auth.Change`, instead of the assumed `zone.Publisher`/`zone.Auditor`; `snapshot.Build` calls `snapshot.AddAuthZones`. Zone errors reuse `store.ErrNotFound`/`store.ErrConflict`. Unit tests use a new helper `storetest.New(t) *store.Store` (fresh PostgreSQL from `harness.StartPostgres`, migrated), since no `storetest.NewPool` exists.
+4. **Key storage extends `mgmt/internal/secrets`** (M3 already implements the NXE1 file-KEK envelope there) instead of creating `mgmt/internal/keystore`: `secrets.Open(secrets.Config)` adds the PKCS#11 backend (envelope wrap byte 2), DNSSEC signing-key generation/signers and backend selection; `secrets.LoadKEKFile` keeps working, `api.Deps.Secrets` stays the single handle, and the M3 API message for `key_storage_unconfigured` is unchanged.
+5. **Engine TSIG reuses M3's implementation.** `engine/src/recursor/rpz/tsig.rs` (ring HMAC, request signing, multi-message response verification) moves to `engine/src/tsig.rs` (`recursor/rpz/mod.rs` re-exports it as `rpz::tsig`, so M3 call sites compile unchanged) and gains HMAC-SHA384, server-side request verification, stream signing, TSIG error responses and the in-memory `KeyRing`. No `hmac`/`sha1` crates are added: HMAC and NSEC3 SHA-1 use `ring`, which the engine already pins. `TsigAlgorithm` gains `TSIG_ALGORITHM_HMAC_SHA384 = 3` (M3's RPZ validation keeps accepting only SHA-256/512).
+6. **`KeyMaterial` follows the `RpzTsigKeys` delivery pattern:** the complete TSIG key set without a generation counter, loaded by `control.TSIGKeys` (unsealed per load), digest-deduplicated per subscriber, sent before the snapshot on `Connect` and offered on every hub broadcast. TSIG key create/delete therefore run through `snapshot.Mutate` (publishing a config version) instead of a `key_material_state` table and a `nexora_keys` channel. Replies to engine requests (`UpdateResult`) use a new per-subscriber results channel, because the capacity-1 `out` channel keeps only the latest snapshot.
+7. **Engine process state for M4 lives in `Shared.auth: Arc<authoritative::AuthState>`** (key ring, control-stream sender for NOTIFY/UPDATE forwarding, pending update waiters, control-runtime handle), created by `Shared::new`/`Shared::with_recursor` like M3's `Shared.recursor`. `Runtime.auth: Arc<AuthSet>` (plus load counts and changed zones) is built in `Runtime::build(s, blobs, previous)`; `authoritative::after_apply(&shared, &runtime)` runs at the call sites of M3's `shared.recursor.sync` (control apply, persisted and standalone snapshots) to count loads and send NOTIFY. Metrics are added to `telemetry::metrics::Metrics` (`auth` counters, `WorkerCounters.auth_answers`), so `render`/`stats` keep their M3 signatures.
+8. **HTTP conventions:** every non-2xx response references `#/components/responses/Error`; zone validation failures are 422 with a specific `code` and the `Error` schema gains an optional `details: [{line, message}]`; `jsonOnly` keeps the 4 MiB body cap except `POST /api/v1/zones/{zoneId}/import` (64 MiB).
+9. **Tests use the real harness:** `harness.New`, `StartPostgres`, `InitCA`, `StartMgmt(pg, ca, MgmtOptions{ExtraEnv})`, `Bootstrap`, `StartManagedEngine`, `WaitEngine`, `(*API).Must/Do` with paths relative to `/api/v1`, `(*Engine).Metric`, `harness.WriteKEK`, `(*Env).FreePort`; `harness.QueryOpts` gains `DO`; M3's BIND helper is generalised as `(*Env).StartNamedConfig`. Fixture secrets are computed, never literal.
+10. **GUI follows the M2/M3 layout:** pages in `web/src/pages/`, hooks in `web/src/api/zones.ts`, routes in `web/src/app/router.tsx`, nav in `web/src/components/layout/AppShell.tsx`, Playwright specs `web/e2e/screens/18-zones.spec.ts` and `19-zone-security.spec.ts` counted by request-based `TestGUICoverage` (no annotations, no Vitest: the web package has no unit-test runner). `TestGUICoverage` gets `NEXORA_KEK_FILE`, so M3's `15-rpz.spec.ts` saves its TSIG transfer zone instead of asserting the 503 (still covered by `mgmt/internal/api/resolution_test.go`).
+11. **kw:** the engine DaemonSet's DNS LoadBalancer already exposes TCP 53 with `externalTrafficPolicy: Local`, so only `deploy/kw/mgmt.yaml` (secret `nexora-kek`) and `scripts/kw-deploy.sh` (creates the secret) change. The repository has no Helm chart or compose file; M4 does not add them. The smoke test is `TestKwSmokeM4` in package `e2e`, reusing `loadKwEnv`/`kwLogin`/`kwWaitApplied`.
 
 ### Design decisions (not settled by docs/architecture.md)
 
@@ -17,21 +35,21 @@ The management plane owns all zone state in PostgreSQL: records, a per-zone jour
 2. **Engines send NOTIFY, after applying the new version.** The source address then matches the primary address secondaries are configured with, and a secondary that reacts immediately transfers from an engine that already holds the new serial. Every engine notifies (duplicates are harmless).
 3. **Engines serve AXFR/IXFR from the deltas listed in the snapshot**; the journal of record lives in `zone_journal` in Postgres; the last 32 journal entries (plus everything after the current image) are listed per zone. Requests older than that fall back to AXFR-style full responses (RFC 1995 §4).
 4. **NZF1 binary zone format** (Task 1) carries full images and deltas; blobs are zstd-compressed and addressed by SHA-256 hex of the compressed bytes, as blocklist blobs are. A new image is written when 64 deltas or deltas totalling a quarter of the image size accumulated.
-5. **Proto numbering:** M4 owns field numbers 200-299 in `ConfigSnapshot` and in both `Connect` stream envelope `oneof`s, so parallel milestones cannot collide.
-6. **Migrations** `mgmt/migrations/00400_zones.sql` and `00401_dnssec.sql` (M4 owns 004xx).
-7. **Go DNS library:** `github.com/miekg/dns v1.1.73` for RDATA parsing/printing, TSIG, AXFR/IXFR client, DNSSEC signing, NSEC3 hashing. The zone-file _lexer_ (directives, parentheses, comments, owner inheritance, `$INCLUDE`/`$GENERATE` refusal) is Nexora code; RDATA text of each logical record goes through miekg's parser.
-8. **Engine TSIG is Nexora code** (`hmac 0.13.0`, `sha2 0.11.0`), cross-checked against miekg-generated vectors. Algorithms: hmac-sha256, hmac-sha384, hmac-sha512 only.
+5. **Proto numbering:** M4 owns field numbers 200-299 in `ConfigSnapshot` and in both `Connect` stream envelope `oneof`s (`ServerMessage`, `EngineMessage`); nothing in `control.proto` uses 200-299 at 083f943. New messages number from 1.
+6. **Migrations** `mgmt/migrations/00400_zones.sql` and `00401_dnssec.sql` (after M1 `00001`, M2 `00200`, M3 `00300`-`00302`).
+7. **Go DNS library:** `github.com/miekg/dns v1.1.73` (already in `go.mod`) for RDATA parsing/printing, TSIG, AXFR/IXFR client, DNSSEC signing, NSEC3 hashing. The zone-file _lexer_ (directives, parentheses, comments, owner inheritance, `$INCLUDE`/`$GENERATE` refusal) is Nexora code; RDATA text of each logical record goes through miekg's parser.
+8. **Engine TSIG is Nexora code** (M3's `ring`-based module, change 5), cross-checked against miekg-generated vectors. Algorithms: hmac-sha256, hmac-sha384, hmac-sha512 only.
 9. **TSIG verification happens on the engine** (it must sign the response); mgmt re-verifies forwarded UPDATEs (defence in depth) and authorises the key against the zone.
-10. **Authoritative answers ignore `acl_allow_cidrs`, filtering and the response cache**: the ACL restricts recursion/forwarding only; hosted data is the operator's own. Query-log `nexora.cache` gains value `auth`.
+10. **Authoritative answers ignore `acl_allow_cidrs`, M2 filtering/rewrites, M3 RPZ and the response cache**: the ACL restricts recursion/forwarding only; hosted data is the operator's own. `RA` is set when the client passes the ACL. Query-log `nexora.cache` gains value `auth`.
 11. **Authoritative behaviour details:** CNAME/DNAME chains are followed across hosted zones up to 8 hops and never into recursion; loops → SERVFAIL; DNAME result > 255 octets → YXDOMAIN; ANY → the lowest-numbered RRset at the name (RFC 8482); additional-section processing only for referral glue; DS at a cut is answered from the parent zone when it is hosted; expired secondary → SERVFAIL; UDP AXFR → FORMERR; UDP IXFR → single SOA; transfers split into messages ≤ 16384 octets, each TSIG-signed.
 12. **Queries carrying TSIG** are accepted for hosted zones only (verified, response signed); otherwise REFUSED.
 13. **Dynamic updates:** unsigned → REFUSED; bad TSIG → NOTAUTH with TSIG error; key not in zone's `update.tsig_key_ids` → REFUSED; zone not hosted → NOTAUTH; secondary zone → REFUSED; engine waits 5 s for `UpdateResult`, otherwise SERVFAIL. Updates touching DNSKEY/RRSIG/NSEC/NSEC3/NSEC3PARAM/CDS/CDNSKEY or types outside the managed list → REFUSED.
 14. **Zone data model:** SOA fields live on the `zones` row (SOA is not a record); owners stored case-preserved in miekg presentation form, uniqueness on `lower(owner)`; writing a record sets the TTL of its whole RRset; every record change bumps the zone `revision`; records carry their own `revision` (stale → 409); import replaces all records and requires the zone revision.
 15. **Serial policy:** primaries increment by one (RFC 1982, `4294967295 + 1 = 0`); an imported SOA serial is adopted only when RFC 1982-greater than the current one.
-16. **Key storage:** envelope layout `NXE1` (Task 6). File KEK = 32 bytes base64 in `NEXORA_KEK_FILE`. Both backends may be configured at once; DNSSEC keys use the zone's `key_backend` (`kek` | `pkcs11`, default `pkcs11` when configured); TSIG secrets are wrapped by the file KEK when set, else by a non-extractable AES-256 key `nexora-kek` (CKA_ID `nexora-kek-v1`) in the token. With neither configured, creating TSIG keys or enabling DNSSEC returns **503 `key_storage_unconfigured`**. Partial PKCS#11 configuration refuses to start.
+16. **Key storage:** envelope layout `NXE1` (M3 `mgmt/internal/secrets`). File KEK = 32 bytes base64 in `NEXORA_KEK_FILE`. Both backends may be configured at once; DNSSEC keys use the zone's `key_backend` (`kek` | `pkcs11`, default `pkcs11` when configured); TSIG secrets are wrapped by the file KEK when set, else by a non-extractable AES-256 key `nexora-kek` (CKA_ID `nexora-kek-v1`) in the token. With neither configured, creating TSIG keys or enabling DNSSEC returns **503 `key_storage_unconfigured`**. Partial PKCS#11 configuration refuses to start.
 17. **DNSSEC timings:** RRSIG inception now−1 h, expiration now+14 d minus `fnv32a(owner|type) mod 3600` s, re-signed when < 7 d remain; DNSKEY/CDS/CDNSKEY TTL = SOA TTL; NSEC/NSEC3 TTL = min(SOA TTL, SOA MINIMUM). ZSK pre-publish: publish → activate after DNSKEY TTL + propagation delay → retire → remove after max zone TTL + propagation delay; automatic every `zsk_lifetime_days` (default 90, 0 = manual). KSK double-signature: new KSK signs the DNSKEY RRset at once, CDS/CDNSKEY advertise KSKs with `ds_state=pending`; the operator confirms the parent DS (`confirmZoneKskDs`); the old KSK is removed after `parent_ds_ttl_seconds` + propagation delay. Algorithm rollovers are refused (422 `algorithm_rollover_unsupported`). NSEC3: SHA-1, 0 iterations, empty salt, no opt-out.
-18. **Engine metrics added:** `nexora_auth_zones`, `nexora_auth_zone_loads_total{kind="full|delta|reused"}`, `nexora_auth_answers_total{result="answer|nodata|nxdomain|referral|servfail"}`, `nexora_auth_transfers_total{type="axfr|ixfr",result="full|incremental|uptodate|refused"}`, `nexora_auth_notify_sent_total{result="acked|rejected|timeout|nokey"}`, `nexora_auth_notify_received_total{result="forwarded|refused|dropped"}`, `nexora_auth_updates_total{result="forwarded|refused|notauth|servfail"}`.
-19. **New Go packages:** `mgmt/internal/nzf`, `zone`, `zonefile`, `keystore`, `tsigkey`, `dnssec`, `xfrin`, `dynupdate`; **new engine files** under `engine/src/authoritative/`.
+18. **Engine metrics added** (prometheus-client counters registered without `_total`, every label value created at zero): `nexora_auth_zones`, `nexora_auth_zone_loads_total{kind="full|delta|reused"}`, `nexora_auth_answers_total{result="answer|nodata|nxdomain|referral|servfail"}`, `nexora_auth_transfers_total{type="axfr|ixfr",result="full|incremental|uptodate|refused"}`, `nexora_auth_notify_sent_total{result="acked|rejected|timeout|nokey"}`, `nexora_auth_notify_received_total{result="forwarded|refused|dropped"}`, `nexora_auth_updates_total{result="forwarded|refused|notauth|servfail"}`.
+19. **New Go packages:** `mgmt/internal/nzf`, `zone`, `zonefile`, `tsigkey`, `dnssec`, `xfrin`, `dynupdate`, `store/storetest`; `mgmt/internal/secrets` is extended. **New engine files** under `engine/src/authoritative/`, plus `engine/src/tsig.rs` (moved) and `engine/src/tsig_tests.rs`.
 20. **GUI routes:** `/zones`, `/zones/tsig-keys`, `/zones/:zoneId` (tabs Records, Transfers, DNSSEC, Import/Export). Export content type `text/plain; charset=utf-8`. Import body limit 64 MiB, 1,000,000 records.
 
 ## Constraints
@@ -50,19 +68,25 @@ Copied from the spec (verbatim):
 
 From docs/architecture.md (binding):
 
-- Go module `github.com/piwi3910/nexora`; generated Go protobuf package `github.com/piwi3910/nexora/gen/go/nexora/control/v1` (`controlv1`); goose migrations embedded from `mgmt/migrations/`; HTTP API under `/api/v1`, OpenAPI 3.1 at `mgmt/api/openapi.yaml`, errors `{"code": "...", "message": "..."}`, stale `revision` → 409 `conflict`; permissions keyed by operationId in `mgmt/internal/auth/permissions.go`; every config mutation runs in one transaction: change rows → audit row → build snapshot → insert `config_versions` → `pg_notify('nexora_config', version)`.
+- Go module `github.com/piwi3910/nexora`; generated Go protobuf package `github.com/piwi3910/nexora/gen/go/nexora/control/v1` (`controlv1`); goose migrations embedded from `mgmt/migrations/`; HTTP API under `/api/v1`, OpenAPI 3.1 at `mgmt/api/openapi.yaml`, errors `{"code": "...", "message": "..."}`, stale `revision` → 409 `conflict`; permissions keyed by operationId in `mgmt/internal/auth/permissions.go` (mirrored in `web/src/auth/permissions.ts`, checked by `pnpm lint`); every config mutation runs in one transaction: change rows → audit row → build snapshot → insert `config_versions` → `pg_notify('nexora_config', version)`.
 - Env vars `NEXORA_KEK_FILE`, `NEXORA_PKCS11_MODULE`, `NEXORA_PKCS11_TOKEN_LABEL`, `NEXORA_PKCS11_PIN_FILE`. Secrets come from files, never from the database in plaintext.
-- Engine hot path: config read via `ArcSwap<Runtime>::load()` once per packet; counters are per-worker `CachePadded<AtomicU64>`; snapshot applies atomically, is persisted to `state_dir/snapshot.binpb`, acked `Applied`/`Rejected`.
-- All builds/tests run in the dev pod: sync with `scripts/dev-sync.sh`, then run every command below as `scripts/dev-exec.sh <cmd>` (the sync is implied before each command). `git` commands run on the laptop.
-- Versions pinned for M4: Go `github.com/miekg/dns v1.1.73`, `github.com/miekg/pkcs11 v1.1.2`, `github.com/klauspost/compress v1.20.0`; Rust `hmac = "0.13.0"`, `sha2 = "0.11.0"`, `sha1 = "0.11.0"`, `zeroize = "1.9.0"`, `hickory-proto = "0.26"` (tests only for M4 code). Dev image already contains `named`, `delv`, `dig`, `nsupdate`, `ldns-compare-zones`, `softhsm2-util`, `/usr/lib/softhsm/libsofthsm2.so`.
+- Engine hot path: config read via `ArcSwap<Runtime>::load()` once per packet; counters are per-worker `CachePadded<AtomicU64>`; snapshot applies atomically, is persisted to `state_dir/snapshot.binpb`, acked `Applied`/`Rejected`. Enforced by `cache_hit_path_does_not_allocate`.
+- All builds/tests run in the dev pod: every command below runs from the repository root on the laptop as `scripts/dev-exec.sh <cmd>` (which syncs the tree first). `git` commands run on the laptop.
+- Versions pinned for M4: Go `github.com/miekg/dns v1.1.73` and `github.com/klauspost/compress v1.20.0` (both already in `go.mod`), new `github.com/miekg/pkcs11 v1.1.2`; Rust: no new crates — `ring =0.17.14` (HMAC, SHA-1), `sha2 0.11`, `zeroize 1.9.0`, `data-encoding 2`, `zstd 0.14`, `rand 0.10`, `hickory-proto =0.26.3` (`dnssec-ring`, tests and slow paths only). Dev image already contains `named`, `delv`, `dig`, `nsupdate`, `ldns-compare-zones`, `softhsm2-util`, `/usr/lib/softhsm/libsofthsm2.so`.
 
-Consumed from M1 (names this plan calls; if M1 spelled one differently, change only the call site, never the M4 behaviour):
+Plan-wide conventions (from M3, still binding):
 
-- Engine: `crate::wire::parse_query`, `QueryView`; `crate::runtime::Runtime`; `crate::snapshot` validation entry; M1's blob fetch path (GetBlob + SHA-256 check + `state_dir` cache); `crate::edns` OPT writer; M1's per-worker metrics registry.
-- Proto: the server→engine stream envelope `ServerMessage` and engine→server envelope `EngineMessage`, each with a `oneof msg`.
-- Mgmt: `storetest.NewPool(t) *pgxpool.Pool` (fresh migrated database); the snapshot publisher (build snapshot + `config_versions` + `pg_notify`) and the audit writer, wrapped in Task 5 behind `zone.Publisher` and `zone.Auditor`; the engine hub's per-engine outbound send queue; the GetBlob handler.
-- E2E harness: `harness.New(t) *Env`; `env.StartMgmt(harness.MgmtOptions{Env map[string]string}) *Mgmt` with `DatabaseURL`; `env.StartEngine(m, harness.EngineOptions{Name string}) *Engine` with `DNSAddr` ("127.0.0.1:port", UDP+TCP), `MetricsURL`, `StateDir`; `mg.AdminAPI(t) *API` with `Do(t, method, path string, body, out any) int`, `MustDo(t, method, path string, body, out any)` (fails the test on non-2xx, message includes the path), `BaseURL string`, `HTTP *http.Client`.
-- Playwright coverage convention read by `TestGUICoverage`: each test declares `annotation: [{ type: 'operation', description: '<operationId>' }]`.
+- Engine commands use the workspace form `cargo test --locked -p nexora-engine --lib <filter>`; the whole engine suite is `make engine-test`.
+- Generated sources are regenerated with the pinned toolchains in the dev pod and copied back to the laptop: protobuf with `scripts/dev-exec.sh 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto'`, the HTTP server with `scripts/dev-exec.sh 'cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml'`, each followed by a copy back, e.g. `kubectl --context kw -n nexora-dev exec -i deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - gen/go/nexora/control/v1 mgmt/internal/api/gen.go | tar -xf -`; `web/src/api/schema.d.ts` with `pnpm --dir web run gen:api` on the laptop. "Regenerate the API" below means the last two.
+- Test secrets are derived at run time (`base64.StdEncoding.EncodeToString([]byte("fixture-…"))`, `btoa("fixture-…")`, random bytes), never written as literals.
+
+Consumed from M1-M3 (reconciled against 083f943 and M3 Task 5; if a name here and the code disagree, the code's name wins and the M4 behaviour stays):
+
+- Engine (crate `nexora_engine`): `crate::proto` (prost, e.g. `proto::AuthZone`, enums without prefix); `wire::{parse_query, QueryView { id, flags, qname, key, qtype, qclass, question_end, opt }, ParseError::{TooShort, FormErr, NotImp, IsResponse}, write_error_reply, write_rcode_reply, RCODE_*}`; `edns::{ReplyOpt, write_opt, reply_limit, server_cookie, Transport::{Udp, Tcp, Dot, Doh, Doq}}`; `runtime::Runtime { version, acl, filter, policy, filter_hashes, filter_stats, cache, upstreams, telemetry, resolution }` with `Runtime::initial()` and `Runtime::build(s, blobs: &dyn snapshot::BlobSource, previous: Option<&Runtime>) -> Result<Runtime, SnapshotError>`; `snapshot::{validate, apply, BlobSource { fn read(&self, r: &BlobRef) -> Result<Vec<u8>, SnapshotError> }, DirBlobs, verify_blob, SnapshotError::{Invalid, Blob}}`; `snapshot_m3::validate_m3` (called from `snapshot::validate`); `control::{fetch_blobs, session, apply_snapshot}` (`session`'s `mpsc::channel::<EngineMessage>(16)` sender and `ServerMsg` match with the `RpzTsigKeys` arm); `server::{Shared { runtime, inflight, metrics, querylog, cookie_secret, engine_id, node_name, mgmt_channel, recursor }, Shared::new, Shared::with_recursor, WorkerCtx, handle_packet, FastOutcome::{Reply, Drop, Miss, Rewrite}, resolve_miss, Answerer, WorkerAnswerer, ClientInfo, stream::serve_dns_stream, udp::run_udp, rewrite::WorkerRewriteCtx}`; `recursor::RecursorState::sync` call sites; `recursor::rpz::tsig::{TsigAlg, TsigKey { name: Name, alg, secret: Zeroizing<Vec<u8>> }, sign_request, sign_response, TsigVerifier, extract_mac, TsigError, FUDGE}`; `telemetry::metrics::{Metrics { workers, .. }, WorkerCounters}`; `telemetry::querylog::{QueryRecord, CacheOutcome}`.
+- Proto: `ServerMessage`/`EngineMessage` with `oneof msg`; `BlobRef { sha256, size, name }`; `TsigAlgorithm { NONE, HMAC_SHA256, HMAC_SHA512 }`; `GetBlob`.
+- Mgmt: `store.Store { Pool }`, `(*Store).InTx`, `store.PutBlob(ctx, tx, data) (sha, size, err)`, `store.MapError`, `store.ErrNotFound`/`ErrConflict`; `snapshot.Mutate(ctx, st, cfg BuildConfig, a auth.Actor, fn func(tx pgx.Tx) (auth.Change, error)) (uint64, error)`, `snapshot.Build`, `snapshot.EnsureInitial`, `snapshot.Latest`; `auth.Actor { Type ("user"|"api_token"|"system"), ID, Name }`, `auth.Change { Action, TargetType, TargetID, Before, After }`, `auth.Permissions`; `secrets.{Box, LoadKEKFile, ErrUnconfigured, ErrKEKMismatch, ErrBackendUnavailable, WrapFileKEK, WrapPKCS11}`; `control.{Hub (RPZTsig, broadcast, loadKeys), subscriber (out, keys, offerKeys), Server (Connect send loop, receive, OnStats), RPZTsig}`; `blocklist.Fetcher.collectBlobs`; `api.{Deps (Store, Build, Secrets, ..), handlers.mutate, invalid, mapError, writeError, jsonOnly, maxBodyBytes}`; API test helpers `newAPI(t)`, `newAPIWith(t, adjust)`, `roleClients(t)`, `(*client).do`; `dnssecconf.{ValidateDomain, IsIPPort}`; `rpz.TsigPurpose`; `config.Config.KEKFile`.
+- E2E harness (package `harness`): `New(t) *Env` (`T`, `Dir`), `(*Env).StartPostgres() *Postgres` (`URL`), `(*Env).InitCA() *CA`, `(*Env).StartMgmt(pg, ca, MgmtOptions{ExtraEnv []string}) *Mgmt` (`BaseURL`, `GRPCURL`), `(*Mgmt).SetupToken(t)`, `Bootstrap(t, env, token, baseURL) *API` (bearer admin), `(*API).Must(method, path, body, out, want)`, `(*API).Do(method, path, body, out) (int, error)` (path relative to `/api/v1`; fields `Base`, `HC`, `Bearer`), `(*API).CreateJoinToken()`, `(*API).LatestVersion()`, `(*API).WaitEngine(node, timeout, cond)`, `(*Env).StartManagedEngine(node, grpcURLs, token) *Engine` (`DNS` UDP+TCP address, `Metrics`, `StateDir`), `(*Engine).Metric(t, name, labels) float64`, `Query`/`MustQuery(t, server, name, qtype, QueryOpts{TCP, EDNSSize, Cookie, Timeout})`, `Eventually(t, timeout, func() error)`, `EventuallyTrue(t, timeout, func() bool, msg)`, `WriteKEK(t)`, `(*Env).FreePort()`, `(*Env).StartNamed(zoneName, zoneText) *Named` (`Addr`, `KeyName`, `KeySecretB64`), `(*Env).Start`, `RunPlaywright`; package `e2e` helper `waitLatestApplied(t, api, nodes...)`; kw helpers `loadKwEnv`, `kwLogin`, `kwWaitApplied`.
+- GUI: `web/src/api/client.ts` (`api`, `unwrap`, `ApiError`), `components/ui/*` (Radix `Select`, `Dialog`, `Tabs`, `Table`), `web/e2e/fixtures.ts` (`test`, `expect`, `env`, `login`), nav test ids `nav-<route>`, destructive confirm `data-testid="confirm-delete"`; `TestGUICoverage` runs `web/e2e/screens/[01][0-9]-*.spec.ts` and counts recorded `/api/v1` browser requests per operation.
 
 ## Task 1: Contract additions and the NZF zone format
 
@@ -70,7 +94,7 @@ Files:
 
 - `proto/nexora/control/v1/control.proto` — M4 messages and fields (modify)
 - `gen/go/nexora/control/v1/*.pb.go` — regenerated
-- `mgmt/internal/control/proto_m4_test.go` — field-number guard
+- `mgmt/internal/control/contract_m4_test.go` — field-number guard (package `control_test`, like `contract_m3_test.go`)
 - `mgmt/internal/nzf/format.go` — NZF1 types, encoder, decoder
 - `mgmt/internal/nzf/canon.go` — canonical name key and record ordering (RFC 4034 §6)
 - `mgmt/internal/nzf/rr.go` — miekg `dns.RR` ↔ `nzf.Record`
@@ -78,7 +102,8 @@ Files:
 - `mgmt/internal/nzf/nzf_test.go` — unit + golden tests
 - `mgmt/internal/zone/serial.go`, `mgmt/internal/zone/serial_test.go` — RFC 1982
 - `testdata/nzf/basic-full.nzf`, `basic-delta.nzf`, `basic-after.nzf`, `big-full.nzf` — goldens shared with the engine
-- `go.mod`, `go.sum` — miekg/dns, klauspost/compress
+
+`go.mod` needs no change: `github.com/miekg/dns v1.1.73` and `github.com/klauspost/compress v1.20.0` are already required (M3, M1).
 
 Interfaces:
 
@@ -103,7 +128,7 @@ func SerialLess(a, b uint32) bool
 func SerialNext(s uint32) uint32
 ```
 
-Proto messages `AuthZone`, `ZoneBlobRef`, `ZoneDelta`, `TransferPolicy`, `NotifyTarget`, `TsigSecret`, `KeyMaterial`, `NotifyReceived`, `UpdateRequest`, `UpdateResult`; fields `ConfigSnapshot.auth_zones = 200`, `ServerMessage.key_material = 200`, `ServerMessage.update_result = 201`, `EngineMessage.notify_received = 200`, `EngineMessage.update_request = 201`.
+Proto messages `AuthZone`, `ZoneDelta`, `TransferPolicy`, `NotifyTarget`, `TsigSecret`, `KeyMaterial`, `NotifyReceived`, `UpdateRequest`, `UpdateResult` and enum `AuthZoneKind`; images and deltas reuse M1's `BlobRef`; M3's `TsigAlgorithm` gains `TSIG_ALGORITHM_HMAC_SHA384 = 3`; fields `ConfigSnapshot.auth_zones = 200`, `ServerMessage.key_material = 200`, `ServerMessage.update_result = 201`, `EngineMessage.notify_received = 200`, `EngineMessage.update_request = 201`. No field in `control.proto` uses 200-299 before this task.
 
 NZF1 layout (all integers big-endian, names uncompressed wire format):
 
@@ -133,10 +158,10 @@ blob:
   zstd frame (checksum flag on) of the NZF bytes; identified by lowercase hex SHA-256 of the compressed bytes
 ```
 
-- [ ] Write the failing field-number guard `mgmt/internal/control/proto_m4_test.go`:
+- [ ] Write the failing field-number guard `mgmt/internal/control/contract_m4_test.go`:
 
 ```go
-package control
+package control_test
 
 import (
 	"testing"
@@ -145,29 +170,39 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func TestM4FieldNumbers(t *testing.T) {
+func TestM4ContractFieldNumbers(t *testing.T) {
+	snap := (&controlv1.ConfigSnapshot{}).ProtoReflect().Descriptor()
+	srv := (&controlv1.ServerMessage{}).ProtoReflect().Descriptor()
+	eng := (&controlv1.EngineMessage{}).ProtoReflect().Descriptor()
 	cases := []struct {
-		msg   protoreflect.ProtoMessage
+		msg   protoreflect.MessageDescriptor
 		field protoreflect.Name
 		num   protoreflect.FieldNumber
 	}{
-		{&controlv1.ConfigSnapshot{}, "auth_zones", 200},
-		{&controlv1.ServerMessage{}, "key_material", 200},
-		{&controlv1.ServerMessage{}, "update_result", 201},
-		{&controlv1.EngineMessage{}, "notify_received", 200},
-		{&controlv1.EngineMessage{}, "update_request", 201},
+		{snap, "auth_zones", 200},
+		{srv, "key_material", 200},
+		{srv, "update_result", 201},
+		{eng, "notify_received", 200},
+		{eng, "update_request", 201},
 	}
 	for _, c := range cases {
-		f := c.msg.ProtoReflect().Descriptor().Fields().ByName(c.field)
-		if f == nil || f.Number() != c.num {
-			t.Fatalf("%s.%s: got %v, want field number %d", c.msg.ProtoReflect().Descriptor().Name(), c.field, f, c.num)
+		f := c.msg.Fields().ByName(c.field)
+		if f == nil {
+			t.Fatalf("%s.%s missing", c.msg.FullName(), c.field)
 		}
+		if f.Number() != c.num {
+			t.Errorf("%s.%s = %d, want %d", c.msg.FullName(), c.field, f.Number(), c.num)
+		}
+	}
+	sha384 := controlv1.TsigAlgorithm_TSIG_ALGORITHM_HMAC_SHA384.Descriptor().Values().ByName("TSIG_ALGORITHM_HMAC_SHA384")
+	if sha384 == nil || sha384.Number() != 3 {
+		t.Fatalf("TsigAlgorithm HMAC_SHA384 = %v, want 3", sha384)
 	}
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestM4FieldNumbers -count=1` — expect FAIL with "got <nil>, want field number 200".
-- [ ] Append to `control.proto`, and add the five fields to `ConfigSnapshot` / the envelopes' `oneof msg`:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestM4ContractFieldNumbers -count=1` — expect FAIL to compile with "undefined: controlv1.TsigAlgorithm_TSIG_ALGORITHM_HMAC_SHA384".
+- [ ] Add `TSIG_ALGORITHM_HMAC_SHA384 = 3;` to the existing `enum TsigAlgorithm`, append the M4 section to `control.proto`, and add the five fields to `ConfigSnapshot` / the envelopes' `oneof msg`:
 
 ```proto
 // ---- M4 (authoritative). Field numbers 200-299 in ConfigSnapshot and in both
@@ -179,15 +214,12 @@ enum AuthZoneKind {
   AUTH_ZONE_KIND_SECONDARY = 2;
 }
 
-message ZoneBlobRef {
-  string sha256 = 1; // lowercase hex of the zstd-compressed NZF1 bytes
-  uint64 size = 2;   // compressed size in octets
-}
-
+// Image and delta blobs are M1 BlobRefs: sha256 = lowercase hex of the zstd-compressed NZF1 bytes,
+// size = compressed octets, name = "<zone>@<serial>" (informational). Fetched with GetBlob.
 message ZoneDelta {
   uint32 from_serial = 1;
   uint32 to_serial = 2;
-  ZoneBlobRef blob = 3;
+  BlobRef blob = 3;
 }
 
 message TransferPolicy {
@@ -204,7 +236,7 @@ message AuthZone {
   string name = 1;               // absolute, lowercase, trailing dot
   AuthZoneKind kind = 2;
   uint32 serial = 3;
-  ZoneBlobRef image = 4;         // full image at image_serial
+  BlobRef image = 4;             // full image at image_serial
   uint32 image_serial = 5;
   repeated ZoneDelta deltas = 6; // contiguous chain; last to_serial == serial
   uint32 image_delta_offset = 7; // deltas[image_delta_offset..] apply on top of image
@@ -216,15 +248,16 @@ message AuthZone {
 }
 
 message TsigSecret {
-  string name = 1;      // absolute, lowercase
-  string algorithm = 2; // "hmac-sha256" | "hmac-sha384" | "hmac-sha512"
+  string name = 1;             // absolute, lowercase
+  TsigAlgorithm algorithm = 2; // HMAC_SHA256 | HMAC_SHA384 | HMAC_SHA512
   bytes secret = 3;
 }
 
-// Sent after Hello and whenever TSIG keys change. Never persisted by engines.
+// The complete TSIG key set, like RpzTsigKeys: sent on Connect before the snapshot and whenever the
+// set changes. Only on the Connect stream; held in engine memory; never part of ConfigSnapshot,
+// config_versions or state_dir.
 message KeyMaterial {
-  uint64 generation = 1;
-  repeated TsigSecret tsig_keys = 2;
+  repeated TsigSecret tsig_keys = 1;
 }
 
 message NotifyReceived {
@@ -260,7 +293,7 @@ message UpdateResult {
     UpdateRequest update_request = 201;
 ```
 
-- [ ] Run `scripts/dev-exec.sh make proto` then `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestM4FieldNumbers -count=1` — expect PASS; run `scripts/dev-exec.sh cargo build --manifest-path engine/Cargo.toml` — expect success (new prost fields default to empty).
+- [ ] Regenerate the Go protobuf code (plan-wide convention, protoc command plus copy back), then `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestM4ContractFieldNumbers -count=1` — expect PASS; run `scripts/dev-exec.sh cargo build --locked -p nexora-engine` — expect success (new prost fields default to empty; M3's matches on `TsigAlgorithm` in `snapshot_m3.rs` and `recursor/rpz/manager.rs` have catch-all arms, so RPZ keeps accepting only SHA-256/512).
 - [ ] Write the failing `mgmt/internal/zone/serial_test.go`:
 
 ```go
@@ -586,7 +619,7 @@ func SortRecords(rs []Record) {
 - [ ] Implement `format.go`. Encoder: validate origin (non-root, ≤ 255 octets); for each record validate owner is `origin` or ends with `origin` at a label boundary (case-insensitive), class 1, rdata ≤ 65535; sort full images with `SortRecords`; for deltas require `Deleted[0]` and `Added[0]` to be SOA at the origin, keep them first and sort the rest. Decoder: check magic `NZF1`, kind ∈ {1,2}, reserved 0; reject `count_a + count_b > remaining/11`; validate every owner (no octet ≥ 0x40 as a label length, labels ≤ 63, total ≤ 255, within origin); reject `rdlen` beyond the buffer and any trailing bytes; for kind 1 require exactly one SOA whose owner equals origin and whose serial field equals the header serial.
 - [ ] Implement `blob.go` with `zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderCRC(true))`, `EncodeAll`, `sha256.Sum256` over the compressed bytes, `hex.EncodeToString`; `Decompress` uses `zstd.NewReader(nil, zstd.WithDecoderMaxMemory(uint64(maxSize)))` and `DecodeAll`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/nzf/ -count=1 -update` once to write the four goldens, then `scripts/dev-exec.sh go test ./mgmt/internal/nzf/ -count=1` — expect PASS.
-- [ ] Commit: `git add proto gen mgmt/internal/control/proto_m4_test.go mgmt/internal/nzf mgmt/internal/zone/serial*.go testdata/nzf go.mod go.sum && git commit -m "feat(m4): control contract for authoritative zones and NZF1 zone format"`.
+- [ ] Commit: `git add proto gen mgmt/internal/control/contract_m4_test.go mgmt/internal/nzf mgmt/internal/zone/serial*.go testdata/nzf && git commit -m "feat(m4): control contract for authoritative zones and NZF1 zone format"`.
 
 ## Task 2: Engine NZF decoder, in-memory zone model, delta application
 
@@ -726,7 +759,7 @@ fn parser_rejects_malformed_blobs() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::zone_tests` — expect FAIL with "unresolved import".
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::zone_tests` — expect FAIL with "unresolved import".
 - [ ] Implement `name.rs`. `canon_key` is the Rust twin of Go `nzf.CanonicalKey` (Task 1) and must produce identical bytes:
 
 ```rust
@@ -855,7 +888,7 @@ fn finalize(&mut self) -> Result<(), ZoneError> {
 
 The `cuts.iter().any` scans are O(nodes × cuts); replace them with a single ordered pass (keep a stack of the most recent cut key and test `starts_with`) — the BTreeMap iterates in canonical order so every occluded name directly follows its cut. `decode_b32hex_label` decodes a 32-character RFC 4648 base32hex first label (case-insensitive) into 20 bytes, `None` otherwise. `from_image` requires `Kind::Full`, inserts all records, sets `serial`, `origin_labels`, and calls `finalize`. `apply` requires `Kind::Delta`, `origin` equality (case-insensitive) and `from_serial == self.serial`, clones the `BTreeMap` (Arc clones only), removes each deleted record (RRSIG from `sigs` of its covered type, others from `rdata`; missing → `DeleteAbsent`), inserts added records, sets `serial = p.serial` and calls `finalize`. `nsec_covering(key)` returns the greatest NSEC key ≤ `key`, wrapping to the last entry; `nsec3_covering(h)` likewise over hashes with strict `<` (a match is returned by `nsec3_node`).
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::zone_tests` — expect PASS.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::zone_tests` — expect PASS.
 - [ ] Commit: `git add engine/src/lib.rs engine/src/authoritative && git commit -m "feat(engine): NZF1 parser and in-memory authoritative zone model"`.
 
 ## Task 3: Engine authoritative answers (unsigned)
@@ -868,7 +901,8 @@ Files:
 - `engine/src/authoritative/writer.rs` — response writer with question-suffix compression and truncation
 - `engine/src/authoritative/answer.rs` — `respond`: AA, referrals + glue, wildcards, CNAME/DNAME chains, NXDOMAIN/NODATA with SOA, ANY
 - `engine/src/authoritative/answer_tests.rs`
-- `engine/Cargo.toml` — `hickory-proto` in `[dev-dependencies]` if M1 has it only as a normal dependency, nothing to change
+
+`engine/Cargo.toml` needs no change: `hickory-proto =0.26.3` with `dnssec-ring` is already a normal and a dev dependency.
 
 Interfaces:
 
@@ -1095,7 +1129,7 @@ fn names_outside_hosted_zones_are_not_hosted() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::answer_tests` — expect FAIL with "unresolved import".
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::answer_tests` — expect FAIL with "unresolved import".
 - [ ] Implement `msg.rs`: require ≥ 12 octets (`Short`); QDCOUNT == 1 (`Counts`); qname uncompressed with labels ≤ 63 and ≤ 255 octets (`Name`); ANCOUNT must be 0 except for NOTIFY (opcode 4) and UPDATE (opcode 5) which are parsed by their own handlers from `question_end`; NSCOUNT must be 0 except qtype IXFR (exactly one SOA, serial read from rdata offset `rdlen-20`) and UPDATE; the additional section may hold one OPT (class = UDP size, TTL bit 15 = DO) and one TSIG which must be the last RR (`tsig_at` = its start). `walk_rrs` decodes names with pointer targets strictly lower than the current position and at most 64 jumps.
 - [ ] Implement `set.rs` (`FxHashMap<Box<[u8]>, Arc<Zone>>`, borrowed `&[u8]` lookups):
 
@@ -1217,89 +1251,102 @@ fn synth_dname(qname: &[u8], owner: &[u8], target: &[u8], out: &mut [u8; 255]) -
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::answer_tests` — expect PASS.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::answer_tests` — expect PASS.
 - [ ] Commit: `git add engine/src/authoritative && git commit -m "feat(engine): authoritative answers with referrals, wildcards, CNAME/DNAME and negative responses"`.
 
-## Task 4: Engine runtime integration — incremental zone loading and dispatch before recursion
+## Task 4: Engine runtime integration — incremental zone loading and the authoritative pipeline stage
 
 Files:
 
-- `engine/src/authoritative/loader.rs` — build an `AuthSet` from `ConfigSnapshot.auth_zones`, reusing and incrementally updating zones
+- `engine/src/authoritative/loader.rs` — build an `AuthSet` from `ConfigSnapshot.auth_zones` over `snapshot::BlobSource`, reusing and incrementally updating zones
 - `engine/src/authoritative/loader_tests.rs`
-- `engine/src/authoritative/dispatch.rs` — UDP/TCP entry points called by the server before ACL/filter/cache
-- `engine/src/runtime.rs` — `Runtime.auth: Arc<AuthSet>` (modify)
-- `engine/src/snapshot.rs` — validation of `auth_zones` (modify)
-- `engine/src/control.rs` — call the loader while building the new `Runtime` (modify)
-- `engine/src/server/udp.rs`, `engine/src/server/tcp.rs` — call `dispatch` (modify)
-- `engine/src/telemetry/metrics.rs` — `nexora_auth_zones`, `nexora_auth_zone_loads_total{kind}`, `nexora_auth_answers_total{result}` (modify)
-- `engine/src/telemetry/querylog.rs` — `nexora.cache` value `auth` (modify)
-- `engine/Cargo.toml` — `sha2 = "0.11.0"` (loader hash verification) (modify)
+- `engine/src/authoritative/state.rs` — `AuthState` (process-wide M4 state) and `after_apply`
+- `engine/src/authoritative/dispatch.rs` — `fast` (hosted queries that parsed) and `unparsed` (messages `parse_query` rejects; filled by Tasks 7, 8, 10, 11)
+- `engine/tests/authoritative_pipeline.rs` — hosted answers through `handle_packet` on a running worker
+- `engine/src/runtime.rs` — `Runtime.auth`, `Runtime.auth_loads`, `Runtime.auth_changed` built in `Runtime::build` (modify)
+- `engine/src/snapshot.rs` — `validate` calls `authoritative::loader::validate` after `validate_m3` (modify)
+- `engine/src/control.rs` — `fetch_blobs` also collects `auth_zones` image and delta refs; `apply_snapshot` calls `authoritative::after_apply` after an `Applied` outcome (modify)
+- `engine/src/main.rs` — hands the control runtime handle to `shared.auth` and calls `after_apply` for the persisted or standalone snapshot (modify)
+- `engine/src/server/mod.rs` — `Shared.auth`, cookie steps moved above the ACL, the authoritative stage and the unparsed-message hook in `handle_packet` (modify)
+- `engine/src/telemetry/metrics.rs` — `Metrics.auth: AuthCounters`, `WorkerCounters.auth_answers`, rendering of `nexora_auth_zones`, `nexora_auth_zone_loads_total{kind}`, `nexora_auth_answers_total{result}` (modify)
+- `engine/src/telemetry/querylog.rs` — `CacheOutcome::Auth` (`"auth"`) (modify)
 
 Interfaces:
 
 ```rust
 // loader.rs
-pub trait BlobSource: Send + Sync {
-    fn fetch<'a>(&'a self, blob: &'a pb::ZoneBlobRef) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, LoadError>> + Send + 'a>>;
-}
-#[derive(Default)] pub struct LoadCounts { pub full: u64, pub delta: u64, pub reused: u64 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)] pub struct LoadCounts { pub full: u64, pub delta: u64, pub reused: u64 }
 pub struct Loaded { pub set: AuthSet, pub counts: LoadCounts, pub changed: Vec<(Box<[u8]>, u32)> } // zones whose serial changed or that are new
-pub enum LoadError { Fetch(String), Hash { sha256: String }, Nzf(NzfError), Zone(ZoneError), Chain(String) }
-pub async fn load(prev: &AuthSet, zones: &[pb::AuthZone], blobs: &dyn BlobSource) -> Result<Loaded, LoadError>;
-pub fn validate(zones: &[pb::AuthZone]) -> Result<(), String>;
+#[derive(Debug)] pub enum LoadError { Blob(crate::snapshot::SnapshotError), Nzf { zone: String, err: NzfError }, Zone { zone: String, err: ZoneError }, Chain(String) } // + Display
+pub fn load(prev: &AuthSet, zones: &[proto::AuthZone], blobs: &dyn crate::snapshot::BlobSource) -> Result<Loaded, LoadError>;
+pub fn validate(zones: &[proto::AuthZone]) -> Result<(), String>;
+
+// state.rs
+pub struct AuthState { /* control: OnceLock<tokio::runtime::Handle>, applied_version: AtomicU64; Tasks 6, 10, 11 add keyring, control-stream sender, update waiters */ }
+impl AuthState {
+    pub fn new() -> Arc<AuthState>;
+    pub fn set_control_runtime(&self, handle: tokio::runtime::Handle);
+}
+/// Once per runtime version: adds `rt.auth_loads` to `shared.metrics.auth`; Task 8 sends NOTIFY for `rt.auth_changed`.
+pub fn after_apply(shared: &Shared, rt: &Runtime);
 
 // dispatch.rs
-pub enum UdpOutcome { Reply(usize), NotHosted, Spawn(SlowJob) }
-pub fn udp_query(rt: &Runtime, view: &crate::wire::QueryView<'_>, raw: &[u8], client: SocketAddr, out: &mut [u8], udp_limit: usize) -> UdpOutcome;
-pub fn slow_path(rt: &Runtime, raw: &[u8], client: SocketAddr, transport: Transport) -> Option<SlowJob>; // NOTIFY/UPDATE/TSIG/IXFR; filled by Tasks 7, 8, 10, 11
+pub enum AuthOutcome { NotHosted, Reply(usize) } // Task 8 adds Slow(SlowJob)
+pub fn fast(ctx: &WorkerCtx, rt: &Runtime, view: &QueryView<'_>, packet: &[u8], client: SocketAddr, transport: Transport, out: &mut [u8], opt: Option<&ReplyOpt>) -> AuthOutcome;
+pub fn unparsed(ctx: &WorkerCtx, rt: &Runtime, packet: &[u8], client: SocketAddr, transport: Transport, out: &mut [u8]) -> Option<AuthOutcome>; // None in this task
 impl<'a> Question<'a> { pub fn from_query(view: &QueryView<'a>, raw: &'a [u8]) -> Question<'a>; }
+
+// runtime.rs (added fields)
+pub struct Runtime { /* M1-M3 fields */ pub auth: Arc<AuthSet>, pub auth_loads: LoadCounts, pub auth_changed: Vec<(Box<[u8]>, u32)> }
+// server/mod.rs (added field; Shared::new and Shared::with_recursor create it with AuthState::new())
+pub struct Shared { /* M1-M3 fields */ pub auth: Arc<crate::authoritative::state::AuthState> }
+// telemetry/metrics.rs
+pub struct AuthCounters { pub loads: [AtomicU64; 3] /* full, delta, reused */, /* Tasks 8, 10, 11 add transfers, notify_sent, notify_received, updates */ }
+// WorkerCounters gains `pub auth_answers: [Counter; 5]` indexed answer, nodata, nxdomain, referral, servfail
 ```
 
-- [ ] Add `pub mod loader; pub mod dispatch; #[cfg(test)] mod loader_tests;` and write the failing `loader_tests.rs`:
+- [ ] Add `pub mod loader; pub mod state; pub mod dispatch; #[cfg(test)] mod loader_tests;` to `authoritative/mod.rs` and write the failing `loader_tests.rs`:
 
 ```rust
-use super::loader::{load, validate, BlobSource, LoadError};
+use super::loader::{load, validate, LoadError};
 use super::set::AuthSet;
 use super::zone_tests::{DELTA, FULL};
-use crate::pb; // M1's prost module path for nexora.control.v1
+use crate::proto;
+use crate::snapshot::{BlobSource, SnapshotError};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Mutex;
 
 struct MapBlobs {
     blobs: HashMap<String, Vec<u8>>,
-    fetched: Mutex<Vec<String>>,
+    read: RefCell<Vec<String>>,
 }
 
 impl MapBlobs {
-    fn new(raws: &[&[u8]]) -> (Self, Vec<pb::ZoneBlobRef>) {
+    fn new(raws: &[&[u8]]) -> (Self, Vec<proto::BlobRef>) {
         let mut blobs = HashMap::new();
         let mut refs = Vec::new();
         for raw in raws {
             let data = zstd::bulk::compress(raw, 3).unwrap();
-            let sha: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
-            refs.push(pb::ZoneBlobRef { sha256: sha.clone(), size: data.len() as u64 });
+            let sha = hex::encode(Sha256::digest(&data));
+            refs.push(proto::BlobRef { sha256: sha.clone(), size: data.len() as u64, name: String::new() });
             blobs.insert(sha, data);
         }
-        (MapBlobs { blobs, fetched: Mutex::new(Vec::new()) }, refs)
+        (MapBlobs { blobs, read: RefCell::new(Vec::new()) }, refs)
     }
 }
 
 impl BlobSource for MapBlobs {
-    fn fetch<'a>(&'a self, b: &'a pb::ZoneBlobRef) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, LoadError>> + Send + 'a>> {
-        Box::pin(async move {
-            self.fetched.lock().unwrap().push(b.sha256.clone());
-            self.blobs.get(&b.sha256).cloned().ok_or_else(|| LoadError::Fetch(b.sha256.clone()))
-        })
+    fn read(&self, r: &proto::BlobRef) -> Result<Vec<u8>, SnapshotError> {
+        self.read.borrow_mut().push(r.sha256.clone());
+        self.blobs.get(&r.sha256).cloned().ok_or_else(|| SnapshotError::Blob { sha256: r.sha256.clone(), reason: "blob not present".into() })
     }
 }
 
-fn zone_msg(serial: u32, image: &pb::ZoneBlobRef, deltas: Vec<pb::ZoneDelta>, offset: u32) -> pb::AuthZone {
-    pb::AuthZone {
+fn zone_msg(serial: u32, image: &proto::BlobRef, deltas: Vec<proto::ZoneDelta>, offset: u32) -> proto::AuthZone {
+    proto::AuthZone {
         name: "example.test.".into(),
-        kind: pb::AuthZoneKind::Primary as i32,
+        kind: proto::AuthZoneKind::Primary as i32,
         serial,
         image: Some(image.clone()),
         image_serial: 2026091301,
@@ -1309,47 +1356,47 @@ fn zone_msg(serial: u32, image: &pb::ZoneBlobRef, deltas: Vec<pb::ZoneDelta>, of
     }
 }
 
-#[tokio::test]
-async fn second_version_is_applied_as_a_delta_without_refetching_the_image() {
+#[test]
+fn second_version_is_applied_as_a_delta_without_reading_the_image() {
     let (blobs, refs) = MapBlobs::new(&[FULL, DELTA]);
     let v1 = vec![zone_msg(2026091301, &refs[0], vec![], 0)];
     validate(&v1).unwrap();
-    let first = load(&AuthSet::empty(), &v1, &blobs).await.unwrap();
+    let first = load(&AuthSet::empty(), &v1, &blobs).unwrap();
     assert_eq!((first.counts.full, first.counts.delta), (1, 0));
     assert_eq!(first.changed.len(), 1);
 
-    let d = pb::ZoneDelta { from_serial: 2026091301, to_serial: 2026091302, blob: Some(refs[1].clone()) };
+    let d = proto::ZoneDelta { from_serial: 2026091301, to_serial: 2026091302, blob: Some(refs[1].clone()) };
     let v2 = vec![zone_msg(2026091302, &refs[0], vec![d], 0)];
     validate(&v2).unwrap();
-    blobs.fetched.lock().unwrap().clear();
-    let second = load(&first.set, &v2, &blobs).await.unwrap();
+    blobs.read.borrow_mut().clear();
+    let second = load(&first.set, &v2, &blobs).unwrap();
     assert_eq!((second.counts.full, second.counts.delta), (0, 1));
-    assert_eq!(*blobs.fetched.lock().unwrap(), vec![refs[1].sha256.clone()]);
+    assert_eq!(*blobs.read.borrow(), vec![refs[1].sha256.clone()]);
     let z = second.set.get(b"\x07example\x04test\x00").unwrap();
     assert_eq!(z.serial(), 2026091302);
     assert_eq!(z.deltas.len(), 1, "IXFR history retained");
 
-    let third = load(&second.set, &v2, &blobs).await.unwrap();
+    let third = load(&second.set, &v2, &blobs).unwrap();
     assert_eq!(third.counts.reused, 1);
     assert!(third.changed.is_empty());
 }
 
-#[tokio::test]
-async fn fresh_engine_builds_from_image_plus_deltas() {
+#[test]
+fn fresh_engine_builds_from_image_plus_deltas() {
     let (blobs, refs) = MapBlobs::new(&[FULL, DELTA]);
-    let d = pb::ZoneDelta { from_serial: 2026091301, to_serial: 2026091302, blob: Some(refs[1].clone()) };
-    let loaded = load(&AuthSet::empty(), &[zone_msg(2026091302, &refs[0], vec![d], 0)], &blobs).await.unwrap();
+    let d = proto::ZoneDelta { from_serial: 2026091301, to_serial: 2026091302, blob: Some(refs[1].clone()) };
+    let loaded = load(&AuthSet::empty(), &[zone_msg(2026091302, &refs[0], vec![d], 0)], &blobs).unwrap();
     assert_eq!(loaded.counts.full, 1);
     assert_eq!(loaded.set.get(b"\x07example\x04test\x00").unwrap().serial(), 2026091302);
 }
 
-#[tokio::test]
-async fn hash_mismatch_and_broken_chain_are_rejected() {
+#[test]
+fn missing_blob_and_broken_chain_are_rejected() {
     let (blobs, mut refs) = MapBlobs::new(&[FULL]);
     let good = refs[0].clone();
     refs[0].sha256 = "0".repeat(64);
-    assert!(load(&AuthSet::empty(), &[zone_msg(2026091301, &refs[0], vec![], 0)], &blobs).await.is_err());
-    let gap = pb::ZoneDelta { from_serial: 2026091300, to_serial: 2026091302, blob: Some(good.clone()) };
+    assert!(matches!(load(&AuthSet::empty(), &[zone_msg(2026091301, &refs[0], vec![], 0)], &blobs), Err(LoadError::Blob(_))));
+    let gap = proto::ZoneDelta { from_serial: 2026091300, to_serial: 2026091302, blob: Some(good.clone()) };
     assert!(validate(&[zone_msg(2026091302, &good, vec![gap], 0)]).is_err());
     let mut dup = vec![zone_msg(2026091301, &good, vec![], 0)];
     dup.push(dup[0].clone());
@@ -1357,77 +1404,200 @@ async fn hash_mismatch_and_broken_chain_are_rejected() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::loader_tests` — expect FAIL with "unresolved import `super::loader`".
-- [ ] Implement `validate`: names parse via `name::from_ascii`, are lowercase, absolute, not the root; no duplicates; `image` present with 64-hex `sha256`; every delta has a blob with 64-hex sha; `deltas[i].to_serial == deltas[i+1].from_serial`; if deltas non-empty the last `to_serial == serial`; `image_delta_offset <= deltas.len()`; `deltas[image_delta_offset..]` start at `image_serial` (or are empty with `image_serial == serial`); `transfer.allow_cidrs` parse; `notify[].address` and `primaries[]` parse as `SocketAddr`. Call it from `snapshot.rs` next to M1's checks so a bad zone rejects the whole snapshot.
-- [ ] Implement `load` per zone:
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::loader_tests` — expect FAIL with "unresolved import `super::loader`".
+- [ ] Implement `validate`: names parse via `name::from_ascii`, are lowercase, absolute, not the root; no duplicates; `image` present with 64-hex `sha256`; every delta has a blob with 64-hex sha; `deltas[i].to_serial == deltas[i+1].from_serial`; if deltas non-empty the last `to_serial == serial`; `image_delta_offset <= deltas.len()`; `deltas[image_delta_offset..]` start at `image_serial` (or are empty with `image_serial == serial`); `transfer.allow_cidrs` parse as `ipnet::IpNet`; `notify[].address` and `primaries[]` parse as `SocketAddr`. Call it from `snapshot::validate` right after `crate::snapshot_m3::validate_m3(s)` (`.map_err(SnapshotError::Invalid)?`) so a bad zone rejects the whole snapshot.
+- [ ] Implement `load` per zone (blobs are compressed NZF1; `DirBlobs::read` already verified size and SHA-256):
   1. `prev.get(name)` with equal serial and identical delta blob list → reuse the `Arc`, `reused += 1`.
-  2. else if a previous zone exists and some index `i` has `deltas[i].from_serial == old.serial()` → fetch `deltas[i..]`, verify SHA-256 of each compressed blob, `nzf::decompress` (max 1 GiB), `old.apply` in order; any error falls through to 3; success → `delta += 1`.
-  3. else fetch the image, verify hash, `Zone::from_image`, require `serial == image_serial`, apply `deltas[image_delta_offset..]`; `full += 1`.
+  2. else if a previous zone exists and some index `i` has `deltas[i].from_serial == old.serial()` → read `deltas[i..]`, `nzf::decompress` (max 1 GiB), `old.apply` in order; any error falls through to 3; success → `delta += 1`.
+  3. else read the image, `Zone::from_image`, require `serial == image_serial`, apply `deltas[image_delta_offset..]`; `full += 1`.
   4. require the final serial == `serial`, else `LoadError::Chain`.
-  5. fill `zone.deltas` with an `Arc<DeltaRecords>` for every listed delta, reusing entries of the previous zone by `(from, to)` and fetching only missing ones; set `zone.expired`.
+  5. fill `zone.deltas` with an `Arc<DeltaRecords>` for every listed delta, reusing entries of the previous zone by `(from, to)` and reading only missing ones; set `zone.expired`.
   6. push `(name, serial)` to `changed` when the zone is new or its serial differs.
-- [ ] Wire into `control.rs`: build `Runtime.auth` with `loader::load(&current.auth, &snap.auth_zones, &m1_blob_source)` on the control runtime before `ArcSwap::store`; add the load counts to `nexora_auth_zone_loads_total{kind}` and set `nexora_auth_zones`; a `LoadError` rejects the snapshot with its `Display` as the reason. `BlobSource` for production wraps M1's blob fetch path.
-- [ ] Implement `dispatch::udp_query` and call it in `server/udp.rs` right after a successful `parse_query` and **before** the ACL check:
+- [ ] Wire the runtime: in `Runtime::build`, `let empty = AuthSet::empty(); let loaded = authoritative::loader::load(previous.map_or(&empty, |p| &*p.auth), &s.auth_zones, blobs).map_err(|e| SnapshotError::Invalid(e.to_string()))?;` and set `auth: Arc::new(loaded.set)`, `auth_loads: loaded.counts`, `auth_changed: loaded.changed` (the reused `Arc<Zone>`s make an unchanged zone free); `Runtime::initial()` uses `Arc::new(AuthSet::empty())`, zero counts, no changes. Zone data never touches `filter_hashes`, so an edit does not clear the response cache. In `control::fetch_blobs`, chain `snap.auth_zones.iter().flat_map(|z| z.image.iter().chain(z.deltas.iter().filter_map(|d| d.blob.as_ref())))` into the collected refs.
+- [ ] Implement `state.rs`: `AuthState::new()` (empty `OnceLock` handle, `applied_version = 0`); `after_apply(shared, rt)` returns at once when `rt.version <= applied_version` (compare-and-swap), otherwise adds `rt.auth_loads` to `shared.metrics.auth.loads`. Call sites (the same three places that call M3's `shared.recursor.sync`): `control::apply_snapshot` after `ApplyOutcome::Applied` with `&shared.runtime.load()`; `main.rs`, right after the control runtime is built, `shared.auth.set_control_runtime(control.handle().clone())` and then `after_apply(&shared, &shared.runtime.load())` (covers the persisted and the standalone snapshot); the standalone SIGHUP reload path after `apply_standalone`.
+- [ ] Write the failing pipeline test `engine/tests/authoritative_pipeline.rs` (the ACL excludes the test client, so a forwarded name is REFUSED while the hosted zone still answers):
 
 ```rust
-pub fn udp_query(rt: &Runtime, view: &QueryView<'_>, raw: &[u8], client: SocketAddr, out: &mut [u8], udp_limit: usize) -> UdpOutcome {
-    if rt.auth.is_empty() {
-        return UdpOutcome::NotHosted;
+use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query, ResponseCode};
+use hickory_proto::rr::{Name, RecordType};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+use nexora_engine::bootstrap::Bootstrap;
+use nexora_engine::proto::*;
+use nexora_engine::server::tls::CertStore;
+use nexora_engine::server::{Shared, spawn_workers};
+use nexora_engine::snapshot::{ApplyOutcome, DirBlobs, apply};
+use sha2::Digest;
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::Arc;
+use std::time::Duration;
+
+const FULL: &[u8] = include_bytes!("../../testdata/nzf/basic-full.nzf");
+
+fn start(acl: &str) -> SocketAddr {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap().keep();
+    let boot: Bootstrap = toml::from_str(&format!(
+        "node_name = \"t\"\nstate_dir = \"{}\"\nlisten_udp = [\"127.0.0.1:{port}\"]\nlisten_tcp = [\"127.0.0.1:{port}\"]\nworkers = 2\nstandalone_snapshot = \"x\"\n",
+        dir.display()
+    ))
+    .unwrap();
+    let z = zstd::encode_all(FULL, 3).unwrap();
+    let sha = hex::encode(sha2::Sha256::digest(&z));
+    std::fs::write(dir.join(&sha), &z).unwrap();
+    let shared = Shared::new(2);
+    let snap = ConfigSnapshot {
+        version: 1,
+        resolver: Some(ResolverConfig { strategy: UpstreamStrategy::Ordered as i32 }),
+        cache: Some(CacheConfig { max_bytes: 8 << 20, max_ttl: 86400, negative_max_ttl: 3600, ..Default::default() }),
+        acl_allow_cidrs: vec![acl.into()],
+        filter: Some(FilterConfig { block_mode: BlockMode::NullIp as i32, block_ttl: 60, ..Default::default() }),
+        telemetry: Some(TelemetryConfig::default()),
+        auth_zones: vec![AuthZone {
+            name: "example.test.".into(),
+            kind: AuthZoneKind::Primary as i32,
+            serial: 2026091301,
+            image: Some(BlobRef { sha256: sha, size: z.len() as u64, name: "example.test.@2026091301".into() }),
+            image_serial: 2026091301,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(apply(&shared.runtime, snap, &DirBlobs { dir: dir.clone() }, None), ApplyOutcome::Applied { .. }));
+    spawn_workers(shared, &boot, Arc::new(CertStore::new())).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    format!("127.0.0.1:{port}").parse().unwrap()
+}
+
+fn ask(server: SocketAddr, name: &str, cookie: bool) -> (Message, Vec<u8>) {
+    let c = UdpSocket::bind("127.0.0.1:0").unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let mut m = Message::new(0x4d34, MessageType::Query, OpCode::Query);
+    m.metadata.recursion_desired = true;
+    m.add_query(Query::query(Name::from_ascii(name).unwrap(), RecordType::A));
+    let mut e = Edns::new();
+    e.set_max_payload(1232);
+    m.set_edns(e);
+    let mut wire = m.to_bytes().unwrap();
+    if cookie {
+        // append a client cookie option (code 10, 8 octets) to the OPT RR at the end of the message
+        let n = wire.len();
+        let rdlen = u16::from_be_bytes([wire[n - 2], wire[n - 1]]) + 12;
+        wire[n - 2..].copy_from_slice(&rdlen.to_be_bytes());
+        wire.extend_from_slice(&[0, 10, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
     }
-    let q = Question::from_query(view, raw);
-    if q.qtype == T_AXFR {
-        let n = formerr(&q, out);
-        return UdpOutcome::Reply(n);
+    c.send_to(&wire, server).unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = c.recv_from(&mut buf).unwrap();
+    (Message::from_bytes(&buf[..n]).unwrap(), buf[..n].to_vec())
+}
+
+#[test]
+fn hosted_names_answer_authoritatively_before_the_acl() {
+    let srv = start("10.0.0.0/8");
+    let (hosted, raw) = ask(srv, "www.example.test.", true);
+    assert_eq!(hosted.metadata.response_code, ResponseCode::NoError);
+    assert!(hosted.metadata.authoritative);
+    assert!(!hosted.metadata.recursion_available, "the client is outside the ACL");
+    assert_eq!(hosted.answers.len(), 2);
+    assert!(hosted.edns.is_some(), "OPT echoed");
+    let cookie_option = [0u8, 10, 0, 24, 1, 2, 3, 4, 5, 6, 7, 8];
+    assert!(raw.windows(cookie_option.len()).any(|w| w == cookie_option), "client + server cookie on authoritative answers");
+    let (forwarded, _) = ask(srv, "www.example.org.", false);
+    assert_eq!(forwarded.metadata.response_code, ResponseCode::Refused, "names outside hosted zones still pass the ACL");
+}
+```
+
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test authoritative_pipeline` — expect FAIL at the `ResponseCode::NoError` assertion with `left: Refused` (the stage is not wired yet; `AuthZone` compiles since Task 1).
+- [ ] Implement `dispatch::fast`:
+
+```rust
+pub fn fast(ctx: &WorkerCtx, rt: &Runtime, view: &QueryView<'_>, packet: &[u8], client: SocketAddr, transport: Transport, out: &mut [u8], opt: Option<&ReplyOpt>) -> AuthOutcome {
+    let q = Question::from_query(view, packet);
+    if rt.auth.find_for_query(view.key.as_wire(), q.qtype).is_none() {
+        return AuthOutcome::NotHosted;
     }
-    let opt_len = if q.edns.is_some() { OPT_RESERVE } else { 0 };
-    let limits = Limits { max_len: udp_limit - opt_len, recursion_available: rt.acl_allows(client.ip()) };
+    if q.qtype == T_AXFR && transport == Transport::Udp {
+        return AuthOutcome::Reply(wire::write_rcode_reply(view, wire::RCODE_FORMERR, out, opt));
+    }
+    let opt_len = opt.map_or(0, ReplyOpt::wire_len);
+    let limits = Limits { max_len: out.len().saturating_sub(opt_len), recursion_available: rt.acl.allows(client.ip()) };
     match answer::respond(&rt.auth, &q, out, limits) {
-        Served::Done(n) => UdpOutcome::Reply(append_opt(rt, &q, out, n)),
-        Served::NotHosted => UdpOutcome::NotHosted,
+        Served::Done(mut n) => {
+            count_answer(ctx, &out[..n]);
+            if let Some(o) = opt {
+                n += edns::write_opt(&mut out[n..], o);
+                let ar = u16::from_be_bytes([out[10], out[11]]) + 1;
+                out[10..12].copy_from_slice(&ar.to_be_bytes());
+            }
+            AuthOutcome::Reply(n)
+        }
+        Served::NotHosted => AuthOutcome::NotHosted,
     }
 }
 ```
 
-`OPT_RESERVE` is the size of M1's response OPT (with a cookie when the client sent one); `append_opt` calls M1's `edns` writer. `Reply` is sent through the worker's `sendmmsg` batch and logged with `nexora.cache = "auth"`; `NotHosted` continues with M1's pipeline unchanged. On TCP the same call runs with `udp_limit = 65535`. When `parse_query` fails on a message of ≥ 12 octets, `server/udp.rs` and `server/tcp.rs` first call `dispatch::slow_path` (returns `None` in this task) and only then produce M1's FORMERR/NOTIMP.
+`count_answer` increments `ctx.counters().auth_answers[i]` (SERVFAIL → servfail, NXDOMAIN → nxdomain, AA=0 → referral, ANCOUNT=0 → nodata, else answer). `Question::from_query` copies `id`, `flags`, `qname`, `qtype`, `qclass`, `question_end` and `edns` (`udp_size`, `do_bit` from `view.opt`) with `ixfr_serial: None`, `tsig_at: None`. `unparsed` returns `None` in this task.
 
-- [ ] Add `nexora_auth_answers_total{result}` increments in `respond`'s caller from the rcode/AA outcome (per-worker counters).
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative` — expect PASS; run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml cache_hit_path_does_not_allocate` — expect PASS (the `is_empty` check keeps the cache-hit path allocation-free).
-- [ ] Commit: `git add engine && git commit -m "feat(engine): load authoritative zones incrementally and answer them before recursion"`.
+- [ ] Wire `server::handle_packet`: move the bad-cookie FORMERR check and the server-cookie block (unchanged code) above `if !rt.acl.allows(client.ip())`, and insert between them and the ACL check:
+
+```rust
+if !rt.auth.is_empty() {
+    match authoritative::dispatch::fast(ctx, rt, &q, packet, client, transport, &mut out[..limit], opt.as_ref()) {
+        AuthOutcome::NotHosted => {}
+        AuthOutcome::Reply(n) => {
+            rec.cache = CacheOutcome::Auth;
+            return reply(&scope, rec, out, n);
+        }
+    }
+}
+```
+
+In the `Err(e)` arm of `wire::parse_query` (after the `TooShort | IsResponse` drop), call `authoritative::dispatch::unparsed(ctx, rt, packet, client, transport, out)` first when `!rt.auth.is_empty()`; `Some(AuthOutcome::Reply(n))` is finished with `scope.finish` and returned, `None`/`NotHosted` falls through to M1's FORMERR/NOTIMP. `Shared::new` and `Shared::with_recursor` set `auth: AuthState::new()`. `CacheOutcome::Auth` renders as `"auth"` in `as_str` (OTLP `nexora.cache`).
+
+- [ ] Metrics: `Metrics::new` creates `auth: AuthCounters::default()` and `WorkerCounters.auth_answers`; `render` registers gauge `nexora_auth_zones` (`rt.auth.zones().count()`), counter `nexora_auth_zone_loads{kind}` (full, delta, reused) and `nexora_auth_answers{result}` (sum over workers; the encoder appends `_total`), creating every label value at zero.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` and `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test authoritative_pipeline` — expect PASS; run `scripts/dev-exec.sh make engine-test` — expect PASS including `cache_hit_path_does_not_allocate` (`hot_path_alloc.rs`), `server_pipeline` and `policy_pipeline` (snapshots without `auth_zones` leave `rt.auth` empty, so the stage is one length check).
+- [ ] Commit: `git add engine && git commit -m "feat(engine): load authoritative zones incrementally and answer them before the ACL"`.
 
 ## Task 5: Management-plane zones, records, served-image builder, journal, snapshot and API
 
 Files:
 
-- `mgmt/migrations/00400_zones.sql` — zones, records, blobs, images, journal, TSIG keys, key-material generation
+- `mgmt/migrations/00400_zones.sql` — zones, records, images, journal (blobs live in M1's `blobs`), TSIG keys
+- `mgmt/internal/store/storetest/storetest.go` — `New(t) *store.Store`: a fresh PostgreSQL (`harness.StartPostgres`), opened and migrated
 - `mgmt/internal/zone/model.go` — `Zone`, `Record`, inputs, `ManagedTypes`
-- `mgmt/internal/zone/errors.go` — `ErrNotFound`, `ErrConflict`, `ValidationError`
+- `mgmt/internal/zone/errors.go` — `ErrNotFound`/`ErrConflict` (the `store` sentinels), `ErrReadOnly`, `ValidationError`
 - `mgmt/internal/zone/validate.go` — name, RDATA, CNAME/DNAME, apex NS rules
-- `mgmt/internal/zone/service.go` — CRUD in one transaction per mutation
-- `mgmt/internal/zone/build.go` — `Rebuild`: served set, diff, serial, journal, images, trimming
-- `mgmt/internal/zone/blobs.go` — `zone_blobs` store + hourly GC under advisory lock
-- `mgmt/internal/zone/service_test.go`, `mgmt/internal/zone/build_test.go`
+- `mgmt/internal/zone/service.go` — CRUD, each mutation one `snapshot.Mutate` transaction
+- `mgmt/internal/zone/build.go` — `Rebuild`: served set, diff, serial, journal, images (via `store.PutBlob`), trimming
+- `mgmt/internal/zone/service_test.go`
 - `mgmt/internal/snapshot/authzones.go`, `mgmt/internal/snapshot/authzones_test.go` — fill `ConfigSnapshot.auth_zones`
-- `mgmt/internal/control/getblob.go` — fall through to `zone_blobs` when M1's lookup misses (modify)
-- `mgmt/api/openapi.yaml` — zone and record operations (modify)
+- `mgmt/internal/snapshot/snapshot.go` — `Build` calls `AddAuthZones` (modify)
+- `mgmt/internal/blocklist/fetcher.go` — `collectBlobs` keeps blobs referenced by `auth_zones`, `zone_images` and `zone_journal` (modify)
+- `mgmt/api/openapi.yaml` — zone and record operations; optional `details` on `Error` (modify)
 - `mgmt/internal/api/zones.go` — strict-server handlers
-- `mgmt/internal/auth/permissions.go` — operation roles (modify)
-- `mgmt/cmd/nexora-mgmt/main.go` — wiring, adapters for publisher and auditor (modify)
-- `web/src/api/schema.d.ts` — regenerated
-- `e2e/harness/dns.go` — `DNSQuery`, `DNSQueryDO`, `WaitDNSAnswer`, `PromValue`, `Eventually`
-- `e2e/authoritative_test.go` — `TestAuthoritativeZonePropagation`
+- `mgmt/internal/api/server.go` — `Deps.Zones`, `mapError` cases for `*zone.ValidationError` and `zone.ErrReadOnly` (modify)
+- `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — operation roles (modify)
+- `mgmt/cmd/nexora-mgmt/main.go` — construct `zone.Service` and pass it in `api.Deps` (modify)
+- `mgmt/internal/api/gen.go`, `web/src/api/schema.d.ts` — regenerated
+- `e2e/harness/dnsclient.go` — `QueryOpts.DO` (modify)
+- `e2e/harness/authdns.go` — `WaitDNSAnswer`
+- `e2e/authoritative_test.go` — `startAuthEnv` helpers and `TestAuthoritativeZonePropagation`
 
 Interfaces:
 
 ```go
+package storetest
+func New(t *testing.T) *store.Store // harness.New(t).StartPostgres(), store.Open, Migrate, closed on cleanup
+
 package zone
-type Actor string // "user:<name>", "token:<id>", "tsig:<key>@<engine>", "system:xfrin"
-type Publisher interface{ Publish(ctx context.Context, tx pgx.Tx) error }
-type Auditor interface{ Write(ctx context.Context, tx pgx.Tx, actor Actor, action, resource string, before, after any) error }
+// Actors are auth.Actor values: API callers pass PrincipalFrom(ctx).Actor(); the management plane uses
+// auth.Actor{Type: "system", ID: "xfrin", Name: "system:xfrin"} and, for dynamic updates,
+// auth.Actor{Type: "system", ID: "tsig:<key>@<engine id>", Name: "tsig:<key>"}.
 type Signer interface { // implemented by dnssec (Task 12); nil-safe: unsigned zones skip it
 	Sign(ctx context.Context, tx pgx.Tx, z *Zone, rrs []dns.RR, now time.Time) (served []dns.RR, err error)
 	ResignSOA(ctx context.Context, tx pgx.Tx, z *Zone, served []dns.RR, now time.Time) ([]dns.RR, error)
 }
-type Service struct{ Pool *pgxpool.Pool; Publisher Publisher; Auditor Auditor; Signer Signer; Now func() time.Time }
+type Service struct{ Store *store.Store; Build snapshot.BuildConfig; Signer Signer; Now func() time.Time }
 var ManagedTypes = map[uint16]bool{dns.TypeA: true, dns.TypeAAAA: true, dns.TypeCNAME: true, dns.TypeDNAME: true, dns.TypeMX: true, dns.TypeNS: true, dns.TypePTR: true, dns.TypeSRV: true, dns.TypeTXT: true, dns.TypeCAA: true, dns.TypeSSHFP: true, dns.TypeTLSA: true, dns.TypeHTTPS: true, dns.TypeSVCB: true, dns.TypeDS: true, dns.TypeNAPTR: true, dns.TypeLOC: true}
 type SOA struct{ MName, RName string; Refresh, Retry, Expire, Minimum, TTL uint32 }
 type Endpoint struct{ Address string `json:"address"`; TSIGKeyID *uuid.UUID `json:"tsig_key_id"` }
@@ -1445,19 +1615,22 @@ type UpdateZoneInput struct{ Revision int64; DefaultTTL *uint32; SOA *SOA; Prima
 type RecordInput struct{ Name, Type string; TTL uint32; Data string }
 type ValidationError struct{ Code, Message string; Details []LineError }
 type LineError struct{ Line int `json:"line"`; Message string `json:"message"` }
-var ErrNotFound, ErrConflict, ErrReadOnly error
+var ErrNotFound, ErrConflict = store.ErrNotFound, store.ErrConflict // wrapped with detail; API maps them as for every M1-M3 resource
+var ErrReadOnly = errors.New("zone is a secondary zone and read-only")
 
-func (s *Service) CreateZone(ctx context.Context, actor Actor, in CreateZoneInput) (*Zone, error)
+func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZoneInput) (*Zone, error)
 func (s *Service) GetZone(ctx context.Context, id uuid.UUID) (*Zone, error)
 func (s *Service) ListZones(ctx context.Context) ([]Zone, error)
-func (s *Service) UpdateZone(ctx context.Context, actor Actor, id uuid.UUID, in UpdateZoneInput) (*Zone, error)
-func (s *Service) DeleteZone(ctx context.Context, actor Actor, id uuid.UUID, revision int64) error
+func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID, in UpdateZoneInput) (*Zone, error)
+func (s *Service) DeleteZone(ctx context.Context, actor auth.Actor, id uuid.UUID, revision int64) error
 func (s *Service) ListRecords(ctx context.Context, zoneID uuid.UUID, name, rtype string, after string, limit int) ([]Record, string, error)
-func (s *Service) CreateRecord(ctx context.Context, actor Actor, zoneID uuid.UUID, in RecordInput) (*Record, error)
-func (s *Service) UpdateRecord(ctx context.Context, actor Actor, zoneID, recordID uuid.UUID, revision int64, in RecordInput) (*Record, error)
-func (s *Service) DeleteRecord(ctx context.Context, actor Actor, zoneID, recordID uuid.UUID, revision int64) error
-// Mutate is the single transactional path used by records, import (Task 9), xfr-in (Task 10), dynamic updates (Task 11), DNSSEC (Task 12/14):
-func (s *Service) Mutate(ctx context.Context, zoneID uuid.UUID, fn func(tx pgx.Tx, z *Zone) (auditAction string, before, after any, opts RebuildOptions, err error), actor Actor) (*Zone, error)
+func (s *Service) CreateRecord(ctx context.Context, actor auth.Actor, zoneID uuid.UUID, in RecordInput) (*Record, error)
+func (s *Service) UpdateRecord(ctx context.Context, actor auth.Actor, zoneID, recordID uuid.UUID, revision int64, in RecordInput) (*Record, error)
+func (s *Service) DeleteRecord(ctx context.Context, actor auth.Actor, zoneID, recordID uuid.UUID, revision int64) error
+// Mutate is the single transactional path used by records, import (Task 9), xfr-in (Task 10), dynamic updates (Task 11), DNSSEC (Task 12/14).
+// It runs snapshot.Mutate(ctx, s.Store, s.Build, actor, …): lock the zone row, fn, Rebuild, then return
+// auth.Change{Action: auditAction, TargetType: "zone", TargetID: zone id, Before: before, After: after}.
+func (s *Service) Mutate(ctx context.Context, zoneID uuid.UUID, fn func(tx pgx.Tx, z *Zone) (auditAction string, before, after any, opts RebuildOptions, err error), actor auth.Actor) (*Zone, error)
 type RebuildOptions struct{ Serial *uint32; Force bool }
 func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts RebuildOptions, now time.Time) (changed bool, err error)
 func LoadServed(ctx context.Context, tx pgx.Tx, z *Zone) ([]dns.RR, error) // decode image + journal deltas
@@ -1477,17 +1650,13 @@ CREATE TABLE tsig_keys (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name            text NOT NULL UNIQUE CHECK (name ~ '^([a-z0-9_-]{1,63}\.)+$'),
     algorithm       text NOT NULL CHECK (algorithm IN ('hmac-sha256', 'hmac-sha384', 'hmac-sha512')),
-    secret_envelope bytea NOT NULL,
+    secret_envelope bytea NOT NULL CHECK (substring(secret_envelope from 1 for 4) = 'NXE1'::bytea),
     revision        bigint NOT NULL DEFAULT 1,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE key_material_state (
-    singleton  boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    generation bigint NOT NULL DEFAULT 0
-);
-INSERT INTO key_material_state DEFAULT VALUES;
+>>>>
 
 CREATE TABLE zones (
     id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1537,18 +1706,11 @@ CREATE TABLE zone_records (
 CREATE UNIQUE INDEX zone_records_rr ON zone_records (zone_id, lower(owner), rtype, sha256(rdata_wire));
 CREATE INDEX zone_records_owner ON zone_records (zone_id, lower(owner));
 
-CREATE TABLE zone_blobs (
-    sha256     text PRIMARY KEY CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-    data       bytea NOT NULL,
-    size       bigint NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE zone_images (
     zone_id     uuid NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
     seq         bigint NOT NULL,
     serial      bigint NOT NULL,
-    blob_sha256 text NOT NULL REFERENCES zone_blobs(sha256),
+    blob_sha256 text NOT NULL REFERENCES blobs(sha256),
     raw_size    bigint NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (zone_id, seq)
@@ -1559,7 +1721,7 @@ CREATE TABLE zone_journal (
     seq         bigint NOT NULL,
     from_serial bigint NOT NULL,
     to_serial   bigint NOT NULL,
-    blob_sha256 text NOT NULL REFERENCES zone_blobs(sha256),
+    blob_sha256 text NOT NULL REFERENCES blobs(sha256),
     raw_size    bigint NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (zone_id, seq)
@@ -1568,14 +1730,45 @@ CREATE TABLE zone_journal (
 -- +goose Down
 DROP TABLE zone_journal;
 DROP TABLE zone_images;
-DROP TABLE zone_blobs;
 DROP TABLE zone_records;
 DROP TABLE zones;
-DROP TABLE key_material_state;
 DROP TABLE tsig_keys;
 ```
 
-`seq` (monotonic per zone) orders journal and images because serials wrap.
+`seq` (monotonic per zone) orders journal and images because serials wrap. `tsig_keys.secret_envelope` holds an NXE1 envelope from `mgmt/internal/secrets`, checked like M3's `rpz_zones.tsig_secret_envelope`.
+
+- [ ] Write `mgmt/internal/store/storetest/storetest.go`:
+
+```go
+// Package storetest opens a fresh, migrated database for package tests.
+package storetest
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/piwi3910/nexora/e2e/harness"
+	"github.com/piwi3910/nexora/mgmt/internal/store"
+)
+
+// New starts a PostgreSQL instance for this test, migrates it and returns the store.
+func New(t *testing.T) *store.Store {
+	t.Helper()
+	pg := harness.New(t).StartPostgres()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := store.Open(ctx, pg.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+```
 
 - [ ] Write the failing `mgmt/internal/zone/service_test.go`:
 
@@ -1588,32 +1781,37 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/miekg/dns"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/nzf"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
-type nopPublisher struct{ n int }
+var actor = auth.Actor{Type: "user", ID: "test", Name: "test"}
 
-func (p *nopPublisher) Publish(context.Context, pgx.Tx) error { p.n++; return nil }
-
-type nopAuditor struct{ actions []string }
-
-func (a *nopAuditor) Write(_ context.Context, _ pgx.Tx, _ zone.Actor, action, _ string, _, _ any) error {
-	a.actions = append(a.actions, action)
-	return nil
+func newService(t *testing.T) *zone.Service {
+	return &zone.Service{Store: storetest.New(t), Now: time.Now}
 }
 
-func newService(t *testing.T) (*zone.Service, *nopPublisher, *nopAuditor) {
-	pub, aud := &nopPublisher{}, &nopAuditor{}
-	return &zone.Service{Pool: storetest.NewPool(t), Publisher: pub, Auditor: aud, Now: time.Now}, pub, aud
+// published returns the number of config versions and the audit actions in order.
+func published(t *testing.T, s *zone.Service) (int, []string) {
+	t.Helper()
+	ctx := context.Background()
+	var versions int
+	if err := s.Store.Pool.QueryRow(ctx, `SELECT count(*) FROM config_versions`).Scan(&versions); err != nil {
+		t.Fatal(err)
+	}
+	var actions []string
+	if err := s.Store.Pool.QueryRow(ctx, `SELECT coalesce(array_agg(action ORDER BY id), '{}') FROM audit_log WHERE target_type = 'zone'`).Scan(&actions); err != nil {
+		t.Fatal(err)
+	}
+	return versions, actions
 }
 
 func createZone(t *testing.T, s *zone.Service, name string) *zone.Zone {
 	t.Helper()
-	z, err := s.CreateZone(context.Background(), "user:test", zone.CreateZoneInput{
+	z, err := s.CreateZone(context.Background(), actor, zone.CreateZoneInput{
 		Name: name, Kind: "primary", DefaultTTL: 300,
 		SOA:         zone.SOA{MName: "ns1." + name, RName: "hostmaster." + name},
 		Nameservers: []string{"ns1." + name},
@@ -1625,13 +1823,14 @@ func createZone(t *testing.T, s *zone.Service, name string) *zone.Zone {
 }
 
 func TestCreateRecordBumpsSerialJournalAndPublishes(t *testing.T) {
-	s, pub, aud := newService(t)
+	s := newService(t)
 	ctx := context.Background()
 	z := createZone(t, s, "unit.test.")
 	if z.Serial != 1 || z.CurrentSeq != 1 || z.ImageSeq != 1 {
 		t.Fatalf("new zone: serial=%d seq=%d image=%d", z.Serial, z.CurrentSeq, z.ImageSeq)
 	}
-	if _, err := s.CreateRecord(ctx, "user:test", z.ID, zone.RecordInput{Name: "www.unit.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
+	versionsBefore, _ := published(t, s)
+	if _, err := s.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "www.unit.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
 	z2, _ := s.GetZone(ctx, z.ID)
@@ -1640,7 +1839,7 @@ func TestCreateRecordBumpsSerialJournalAndPublishes(t *testing.T) {
 	}
 	var from, to int64
 	var blob []byte
-	err := s.Pool.QueryRow(ctx, `SELECT j.from_serial, j.to_serial, b.data FROM zone_journal j JOIN zone_blobs b ON b.sha256 = j.blob_sha256 WHERE j.zone_id=$1 AND j.seq=2`, z.ID).Scan(&from, &to, &blob)
+	err := s.Store.Pool.QueryRow(ctx, `SELECT j.from_serial, j.to_serial, b.data FROM zone_journal j JOIN blobs b ON b.sha256 = j.blob_sha256 WHERE j.zone_id=$1 AND j.seq=2`, z.ID).Scan(&from, &to, &blob)
 	if err != nil || from != 1 || to != 2 {
 		t.Fatalf("journal row: %d->%d err=%v", from, to, err)
 	}
@@ -1652,44 +1851,46 @@ func TestCreateRecordBumpsSerialJournalAndPublishes(t *testing.T) {
 	if err != nil || len(d.Added) != 2 || d.Added[0].Type != dns.TypeSOA || d.Added[1].Type != dns.TypeA {
 		t.Fatalf("delta: %+v err=%v", d, err)
 	}
-	if pub.n != 2 || len(aud.actions) != 2 || aud.actions[1] != "createZoneRecord" {
-		t.Fatalf("publish=%d audit=%v", pub.n, aud.actions)
+	versions, actions := published(t, s)
+	if versions != versionsBefore+1 || len(actions) != 2 || actions[0] != "createZone" || actions[1] != "createZoneRecord" {
+		t.Fatalf("config versions %d -> %d, audit=%v", versionsBefore, versions, actions)
 	}
 }
 
 func TestStaleRecordRevisionConflicts(t *testing.T) {
-	s, _, _ := newService(t)
+	s := newService(t)
 	ctx := context.Background()
 	z := createZone(t, s, "conflict.test.")
-	r, err := s.CreateRecord(ctx, "user:a", z.ID, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.1"})
+	other := auth.Actor{Type: "user", ID: "other", Name: "other"}
+	r, err := s.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateRecord(ctx, "user:a", z.ID, r.ID, r.Revision, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.2"}); err != nil {
+	if _, err := s.UpdateRecord(ctx, actor, z.ID, r.ID, r.Revision, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.2"}); err != nil {
 		t.Fatalf("first update: %v", err)
 	}
-	_, err = s.UpdateRecord(ctx, "user:b", z.ID, r.ID, r.Revision, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.3"})
+	_, err = s.UpdateRecord(ctx, other, z.ID, r.ID, r.Revision, zone.RecordInput{Name: "www.conflict.test.", Type: "A", TTL: 300, Data: "192.0.2.3"})
 	if !errors.Is(err, zone.ErrConflict) {
 		t.Fatalf("stale update: got %v, want ErrConflict", err)
 	}
-	if err := s.DeleteRecord(ctx, "user:b", z.ID, r.ID, r.Revision); !errors.Is(err, zone.ErrConflict) {
+	if err := s.DeleteRecord(ctx, other, z.ID, r.ID, r.Revision); !errors.Is(err, zone.ErrConflict) {
 		t.Fatalf("stale delete: got %v", err)
 	}
 }
 
 func TestValidationRules(t *testing.T) {
-	s, _, _ := newService(t)
+	s := newService(t)
 	ctx := context.Background()
 	z := createZone(t, s, "rules.test.")
 	mustCode := func(in zone.RecordInput, code string) {
 		t.Helper()
-		_, err := s.CreateRecord(ctx, "user:t", z.ID, in)
+		_, err := s.CreateRecord(ctx, actor, z.ID, in)
 		var ve *zone.ValidationError
 		if !errors.As(err, &ve) || ve.Code != code {
 			t.Fatalf("%+v: got %v, want %s", in, err, code)
 		}
 	}
-	if _, err := s.CreateRecord(ctx, "user:t", z.ID, zone.RecordInput{Name: "www.rules.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
+	if _, err := s.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "www.rules.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
 	mustCode(zone.RecordInput{Name: "www.rules.test.", Type: "CNAME", TTL: 300, Data: "other.example."}, "cname_conflict")
@@ -1698,19 +1899,20 @@ func TestValidationRules(t *testing.T) {
 	mustCode(zone.RecordInput{Name: "rules.test.", Type: "SOA", TTL: 300, Data: "a. b. 1 2 3 4 5"}, "unsupported_type")
 	mustCode(zone.RecordInput{Name: "x.rules.test.", Type: "A", TTL: 300, Data: "not-an-ip"}, "invalid_rdata")
 	recs, _, _ := s.ListRecords(ctx, z.ID, "rules.test.", "NS", "", 10)
-	if err := s.DeleteRecord(ctx, "user:t", z.ID, recs[0].ID, recs[0].Revision); err == nil {
-		t.Fatal("deleting the last apex NS must fail with last_apex_ns")
+	var ve *zone.ValidationError
+	if err := s.DeleteRecord(ctx, actor, z.ID, recs[0].ID, recs[0].Revision); !errors.As(err, &ve) || ve.Code != "last_apex_ns" {
+		t.Fatalf("deleting the last apex NS: got %v, want last_apex_ns", err)
 	}
 }
 
 func TestSerialWrapsAroundRFC1982(t *testing.T) {
-	s, _, _ := newService(t)
+	s := newService(t)
 	ctx := context.Background()
 	z := createZone(t, s, "wrap.test.")
-	if _, err := s.Pool.Exec(ctx, `UPDATE zones SET serial = 4294967295 WHERE id = $1`, z.ID); err != nil {
+	if _, err := s.Store.Pool.Exec(ctx, `UPDATE zones SET serial = 4294967295 WHERE id = $1`, z.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRecord(ctx, "user:t", z.ID, zone.RecordInput{Name: "a.wrap.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
+	if _, err := s.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "a.wrap.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
 	z2, _ := s.GetZone(ctx, z.ID)
@@ -1718,17 +1920,17 @@ func TestSerialWrapsAroundRFC1982(t *testing.T) {
 		t.Fatalf("serial after 4294967295 = %d, want 0", z2.Serial)
 	}
 	var from, to int64
-	_ = s.Pool.QueryRow(ctx, `SELECT from_serial, to_serial FROM zone_journal WHERE zone_id=$1 ORDER BY seq DESC LIMIT 1`, z.ID).Scan(&from, &to)
+	_ = s.Store.Pool.QueryRow(ctx, `SELECT from_serial, to_serial FROM zone_journal WHERE zone_id=$1 ORDER BY seq DESC LIMIT 1`, z.ID).Scan(&from, &to)
 	if from != 4294967295 || to != 0 {
 		t.Fatalf("journal %d->%d", from, to)
 	}
 }
 
 func TestRebuildWithoutChangesKeepsSerial(t *testing.T) {
-	s, _, _ := newService(t)
+	s := newService(t)
 	ctx := context.Background()
 	z := createZone(t, s, "same.test.")
-	tx, _ := s.Pool.Begin(ctx)
+	tx, _ := s.Store.Pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 	changed, err := zone.Rebuild(ctx, tx, nil, z, zone.RebuildOptions{}, time.Now())
 	if err != nil || changed {
@@ -1739,7 +1941,7 @@ func TestRebuildWithoutChangesKeepsSerial(t *testing.T) {
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/zone/ -count=1` — expect FAIL with "undefined: zone.Service".
 - [ ] Implement `validate.go`: names absolute (append the zone name to relative input only in the GUI, the API requires absolute), inside the zone (`dns.IsSubDomain(zone, name)`), type in `ManagedTypes` (SOA and DNSSEC-generated types → `unsupported_type`), RDATA parsed with `dns.NewRR(fmt.Sprintf("%s %d IN %s %s", name, ttl, typ, data))` (`invalid_rdata` with the parser message), normalised `data` = `rr.String()` after the fourth tab-separated field; CNAME may not coexist with other types at the owner and vice versa (`cname_conflict`); no records strictly below a DNAME owner (`dname_occludes`); DS only at a delegation owner (`ds_not_at_delegation`); the apex keeps ≥ 1 NS (`last_apex_ns`); TTL ≤ 2147483647.
-- [ ] Implement `service.go`. Every mutation: `BEGIN` → `SELECT … FROM zones WHERE id=$1 FOR UPDATE` → mutate rows (records: `UPDATE … WHERE id=$1 AND revision=$2` with 0 rows → `ErrConflict`, rows exist check → `ErrNotFound`) → set the RRset TTL to the written TTL (`UPDATE zone_records SET ttl=$1, revision=revision+1 WHERE zone_id=$2 AND lower(owner)=lower($3) AND rtype=$4 AND ttl<>$1`) → `UPDATE zones SET revision=revision+1` → `Rebuild` → `Auditor.Write(actor, operationId, "zone/<id>", before, after)` → `Publisher.Publish` → `COMMIT`. Record mutations on `kind='secondary'` zones return `ErrReadOnly`. `CreateZone` inserts the row and one NS record per nameserver, then `Rebuild` with `Force: true`. `UpdateZone` / `DeleteZone` require the zone revision. `rdata_wire` is `nzf.FromRR(rr).RData`.
+- [ ] Implement `service.go`. Every mutation is one `snapshot.Mutate(ctx, s.Store, s.Build, actor, fn)` call whose `fn`: `SELECT … FROM zones WHERE id=$1 FOR UPDATE` (missing → `fmt.Errorf("zone %s: %w", id, store.ErrNotFound)`) → mutate rows (records: `UPDATE … WHERE id=$1 AND revision=$2` with 0 rows → `fmt.Errorf("record revision %d is stale: %w", rev, store.ErrConflict)`, rows exist check → `store.ErrNotFound`) → set the RRset TTL to the written TTL (`UPDATE zone_records SET ttl=$1, revision=revision+1 WHERE zone_id=$2 AND lower(owner)=lower($3) AND rtype=$4 AND ttl<>$1`) → `UPDATE zones SET revision=revision+1` → `Rebuild` → return `auth.Change{Action: <operationId>, TargetType: "zone", TargetID: <zone id>, Before, After}`; `snapshot.Mutate` then writes the audit row, builds the snapshot (which includes `auth_zones`, see below), inserts `config_versions` and notifies, all in the same transaction. Record mutations on `kind='secondary'` zones return `ErrReadOnly`. `CreateZone` inserts the row and one NS record per nameserver, then `Rebuild` with `Force: true`. `UpdateZone` / `DeleteZone` require the zone revision. `rdata_wire` is `nzf.FromRR(rr).RData`.
 - [ ] Implement `build.go`:
 
 ```go
@@ -1829,9 +2031,9 @@ func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts Rebuil
 }
 ```
 
-`LoadServed` decompresses the image at `image_seq` and applies `zone_journal` rows with `seq > image_seq` in order. `putBlob` compresses with `nzf.Compress` and `INSERT … ON CONFLICT (sha256) DO NOTHING`.
+`LoadServed` reads the image blob at `image_seq` from `blobs` and applies `zone_journal` rows with `seq > image_seq` in order. `putBlob` compresses with `nzf.Compress` and stores the compressed bytes with M1's `store.PutBlob(ctx, tx, data)` (content-addressed, `on conflict do nothing`), returning its SHA-256.
 
-- [ ] Implement `blobs.go` GC: hourly, under `pg_try_advisory_lock(hashtext('zone_blob_gc'))`, `DELETE FROM zone_blobs b WHERE created_at < now() - interval '1 hour' AND NOT EXISTS (SELECT 1 FROM zone_images i WHERE i.blob_sha256=b.sha256) AND NOT EXISTS (SELECT 1 FROM zone_journal j WHERE j.blob_sha256=b.sha256)`.
+- [ ] Extend `blocklist.Fetcher.collectBlobs` (M1's hourly blob GC under `nexora:blob-gc`): add every `snap.GetAuthZones()` image and delta `sha256` of the kept config versions to `keep`, and add `and sha256 not in (select blob_sha256 from zone_images) and sha256 not in (select blob_sha256 from zone_journal)` to the delete. No separate zone blob GC exists.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/zone/ -count=1` — expect PASS.
 - [ ] Write the failing `mgmt/internal/snapshot/authzones_test.go`:
 
@@ -1844,6 +2046,7 @@ import (
 	"time"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
@@ -1851,19 +2054,20 @@ import (
 
 func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
 	ctx := context.Background()
-	pool := storetest.NewPool(t)
-	s := &zone.Service{Pool: pool, Publisher: noPublish{}, Auditor: noAudit{}, Now: time.Now}
-	z, err := s.CreateZone(ctx, "user:t", zone.CreateZoneInput{Name: "snap.test.", Kind: "primary", DefaultTTL: 300,
+	st := storetest.New(t)
+	actor := auth.Actor{Type: "user", ID: "t", Name: "t"}
+	s := &zone.Service{Store: st, Now: time.Now}
+	z, err := s.CreateZone(ctx, actor, zone.CreateZoneInput{Name: "snap.test.", Kind: "primary", DefaultTTL: 300,
 		SOA: zone.SOA{MName: "ns1.snap.test.", RName: "h.snap.test."}, Nameservers: []string{"ns1.snap.test."}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3"} {
-		if _, err := s.CreateRecord(ctx, "user:t", z.ID, zone.RecordInput{Name: "www.snap.test.", Type: "A", TTL: 300, Data: ip}); err != nil {
+		if _, err := s.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "www.snap.test.", Type: "A", TTL: 300, Data: ip}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	tx, _ := pool.Begin(ctx)
+	tx, _ := st.Pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 	snap := &controlv1.ConfigSnapshot{}
 	if err := snapshot.AddAuthZones(ctx, tx, snap); err != nil {
@@ -1881,13 +2085,19 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
 			t.Fatalf("delta %d: %+v", i, d)
 		}
 	}
+	var stored int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM blobs WHERE sha256 = ANY($1)`, []string{az.Image.Sha256, az.Deltas[2].Blob.Sha256}).Scan(&stored); err != nil || stored != 2 {
+		t.Fatalf("image and delta blobs in blobs: %d %v", stored, err)
+	}
+	_, latest, err := snapshot.Latest(ctx, tx)
+	if err != nil || len(latest.AuthZones) != 1 || latest.AuthZones[0].Serial != 4 {
+		t.Fatalf("published snapshot does not carry the zone: %v %v", latest.GetAuthZones(), err)
+	}
 }
 ```
 
-(`noPublish` / `noAudit` are three-line no-op types in the same file.)
-
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/snapshot/ -run TestAddAuthZones -count=1` — expect FAIL with "undefined: snapshot.AddAuthZones".
-- [ ] Implement `AddAuthZones`: for each zone with `kind='primary' OR loaded`, ordered by name, emit `AuthZone` with image from `zone_images` at `image_seq`, deltas `SELECT … FROM zone_journal WHERE zone_id=$1 AND seq > LEAST($image_seq, $current_seq - 32) ORDER BY seq`, `image_delta_offset` = count of listed rows with `seq <= image_seq`, transfer CIDRs, notify/primaries addresses, TSIG key names resolved via `tsig_keys`, `update_tsig_keys`, `expired`. Call it from M1's snapshot builder. Extend GetBlob: when M1's lookup misses, `SELECT data FROM zone_blobs WHERE sha256=$1` and stream it in the same 1 MiB chunks.
+- [ ] Implement `AddAuthZones`: for each zone with `kind='primary' OR loaded`, ordered by name, emit `AuthZone` with `image` = `BlobRef{Sha256, Size (from blobs.size), Name: "<zone>@<serial>"}` from `zone_images` at `image_seq`, deltas `SELECT … FROM zone_journal WHERE zone_id=$1 AND seq > LEAST($image_seq, $current_seq - 32) ORDER BY seq` (each with its `BlobRef`), `image_delta_offset` = count of listed rows with `seq <= image_seq`, transfer CIDRs, notify/primaries addresses, TSIG key names resolved via `tsig_keys`, `update_tsig_keys`, `expired`. Call it at the end of `snapshot.Build` (after `ApplyResolution`), so every published version carries the zones. Engines fetch the blobs with M1's unchanged `GetBlob` (`select data from blobs`).
 - [ ] Run the snapshot test again — expect PASS.
 - [ ] Add the OpenAPI operations (JSON bodies; `revision` on every editable resource):
 
@@ -1938,8 +2148,8 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
                 { schema: { $ref: "#/components/schemas/Zone" } },
             },
         }
-      "409": { $ref: "#/components/responses/Conflict" }
-      "422": { $ref: "#/components/responses/Validation" }
+      "409": { $ref: "#/components/responses/Error" }
+      "422": { $ref: "#/components/responses/Error" }
 /zones/{zoneId}:
   parameters:
     [
@@ -1965,7 +2175,7 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
                     { schema: { $ref: "#/components/schemas/Zone" } },
                 },
             },
-          "404": { $ref: "#/components/responses/NotFound" },
+          "404": { $ref: "#/components/responses/Error" },
         },
     }
   patch:
@@ -1991,8 +2201,8 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
                   { schema: { $ref: "#/components/schemas/Zone" } },
               },
           },
-        "409": { $ref: "#/components/responses/Conflict" },
-        "422": { $ref: "#/components/responses/Validation" },
+        "409": { $ref: "#/components/responses/Error" },
+        "422": { $ref: "#/components/responses/Error" },
       }
   delete:
     operationId: deleteZone
@@ -2009,7 +2219,7 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
     responses:
       {
         "204": { description: deleted },
-        "409": { $ref: "#/components/responses/Conflict" },
+        "409": { $ref: "#/components/responses/Error" },
       }
 /zones/{zoneId}/records:
   parameters:
@@ -2068,7 +2278,7 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
                   { schema: { $ref: "#/components/schemas/Record" } },
               },
           },
-        "422": { $ref: "#/components/responses/Validation" },
+        "422": { $ref: "#/components/responses/Error" },
       }
 /zones/{zoneId}/records/{recordId}:
   parameters:
@@ -2114,8 +2324,8 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
                   { schema: { $ref: "#/components/schemas/Record" } },
               },
           },
-        "409": { $ref: "#/components/responses/Conflict" },
-        "422": { $ref: "#/components/responses/Validation" },
+        "409": { $ref: "#/components/responses/Error" },
+        "422": { $ref: "#/components/responses/Error" },
       }
   delete:
     operationId: deleteZoneRecord
@@ -2132,106 +2342,47 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
     responses:
       {
         "204": { description: deleted },
-        "409": { $ref: "#/components/responses/Conflict" },
+        "409": { $ref: "#/components/responses/Error" },
       }
 ```
 
-Schemas: `Zone` (id, name, kind `primary|secondary`, revision, serial, default_ttl, soa{mname,rname,refresh,retry,expire,minimum,ttl}, transfer{allow_cidrs[], tsig_key_id|null}, notify[{address, tsig_key_id|null}], update{tsig_key_ids[]}, primaries[{address, tsig_key_id|null}], secondary_status{last_refresh_at, last_success_at, next_refresh_at, expires_at, expired, last_error, last_trigger}|null, dnssec_enabled, created_at, updated_at); `ZoneCreate` (name, kind, default_ttl, soa{mname,rname,+optional timers}, nameservers[] (primary, min 1), primaries[] (secondary, min 1), transfer, notify, update); `ZoneUpdate` (revision required + optional fields of ZoneCreate except name/kind/nameservers); `RecordInput` (name, type enum of the 17 managed types, ttl 0..2147483647, data); `Record` (RecordInput + id, revision); `RecordPage` (items, next_cursor|null); `ValidationError` response `{code, message, details: [{line, message}]}`.
+Every error response above is M1's `#/components/responses/Error`; M4 adds an optional `details: { type: array, items: { type: object, required: [line, message], properties: { line: { type: integer }, message: { type: string } } } }` property to the `Error` schema. Schemas: `Zone` (id, name, kind `primary|secondary`, revision, serial, default_ttl, soa{mname,rname,refresh,retry,expire,minimum,ttl}, transfer{allow_cidrs[], tsig_key_id|null}, notify[{address, tsig_key_id|null}], update{tsig_key_ids[]}, primaries[{address, tsig_key_id|null}], secondary_status{last_refresh_at, last_success_at, next_refresh_at, expires_at, expired, last_error, last_trigger}|null, dnssec_enabled, created_at, updated_at); `ZoneCreate` (name, kind, default_ttl, soa{mname,rname,+optional timers}, nameservers[] (primary, min 1), primaries[] (secondary, min 1), transfer, notify, update); `ZoneUpdate` (revision required + optional fields of ZoneCreate except name/kind/nameservers); `RecordInput` (name, type enum of the 17 managed types, ttl 0..2147483647, data); `Record` (RecordInput + id, revision); `RecordPage` (items, next_cursor|null); `ValidationError` response `{code, message, details: [{line, message}]}`.
 
-- [ ] Implement `mgmt/internal/api/zones.go` mapping `ErrNotFound`→404 `not_found`, `ErrConflict`→409 `conflict`, `ErrReadOnly`→422 `zone_read_only`, `*ValidationError`→422 with its code, and register permissions: `listZones`, `getZone`, `listZoneRecords` → viewer; `createZone`, `updateZone`, `deleteZone`, `createZoneRecord`, `updateZoneRecord`, `deleteZoneRecord` → operator. Regenerate: `scripts/dev-exec.sh go generate ./mgmt/internal/api/...` and `scripts/dev-exec.sh pnpm --dir web exec openapi-typescript ../mgmt/api/openapi.yaml -o src/api/schema.d.ts`. Wire `zone.Service` in `main.go` with adapters over M1's publisher and audit writer, and start the blob GC loop.
-- [ ] Write `e2e/harness/dns.go`:
+- [ ] Implement `mgmt/internal/api/zones.go` (handlers call `h.d.Zones` with `PrincipalFrom(ctx).Actor()`; request bodies validated with `invalid(...)` as in `rpz.go`). `ErrNotFound`/`ErrConflict` are the `store` sentinels, so `mapError` already answers 404 `not_found` / 409 `conflict`; add two cases to `mapError` in `server.go`: `errors.Is(err, zone.ErrReadOnly)` → 422 `zone_read_only`, and `errors.As(err, &zve)` with `zve *zone.ValidationError` → 422 with `zve.Code`, `zve.Message` and `details` (write `Error{Code, Message, Details}`). `api.Deps` gains `Zones *zone.Service`. Register permissions in `mgmt/internal/auth/permissions.go` and `web/src/auth/permissions.ts`: `listZones`, `getZone`, `listZoneRecords` → viewer; `createZone`, `updateZone`, `deleteZone`, `createZoneRecord`, `updateZoneRecord`, `deleteZoneRecord` → operator. Regenerate the API. In `main.go` pass `Zones: &zone.Service{Store: st, Build: build, Now: time.Now}` in `api.Deps`.
+- [ ] Add `DO bool` to `harness.QueryOpts` in `e2e/harness/dnsclient.go` (`Query` adds EDNS when `o.EDNSSize > 0 || o.Cookie != nil || o.DO` and calls `m.SetEdns0(size, o.DO)`), and write `e2e/harness/authdns.go`:
 
 ```go
 package harness
 
 import (
-	"bufio"
-	"net/http"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
-func DNSQuery(t *testing.T, addr, name string, qtype uint16) *dns.Msg {
-	t.Helper()
-	return dnsQuery(t, addr, name, qtype, false)
-}
-
-func DNSQueryDO(t *testing.T, addr, name string, qtype uint16) *dns.Msg {
-	t.Helper()
-	return dnsQuery(t, addr, name, qtype, true)
-}
-
-func dnsQuery(t *testing.T, addr, name string, qtype uint16, do bool) *dns.Msg {
-	t.Helper()
-	m := new(dns.Msg)
-	m.SetQuestion(name, qtype)
-	m.SetEdns0(4096, do)
-	c := &dns.Client{Net: "tcp", Timeout: 2 * time.Second}
-	r, _, err := c.Exchange(m, addr)
-	if err != nil {
-		t.Fatalf("query %s %s @%s: %v", name, dns.TypeToString[qtype], addr, err)
-	}
-	return r
-}
-
-// WaitDNSAnswer polls over UDP until ok(msg) or the deadline, then fails the test.
-func WaitDNSAnswer(t *testing.T, addr, name string, qtype uint16, deadline time.Time, ok func(*dns.Msg) bool) *dns.Msg {
+// WaitDNSAnswer polls name/qtype over UDP every 100 ms until ok accepts the reply, failing the test
+// with the last reply or error after timeout.
+func WaitDNSAnswer(t *testing.T, server, name string, qtype uint16, timeout time.Duration, ok func(*dns.Msg) bool) *dns.Msg {
 	t.Helper()
 	var last *dns.Msg
 	var lastErr error
+	deadline := time.Now().Add(timeout)
 	for {
-		m := new(dns.Msg)
-		m.SetQuestion(name, qtype)
-		c := &dns.Client{Timeout: 300 * time.Millisecond}
-		r, _, err := c.Exchange(m, addr)
+		r, _, err := Query(t, server, name, qtype, QueryOpts{Timeout: 300 * time.Millisecond})
 		if err == nil && ok(r) {
 			return r
 		}
 		last, lastErr = r, err
 		if time.Now().After(deadline) {
-			t.Fatalf("%s %s @%s not satisfied by deadline; last=%v err=%v", name, dns.TypeToString[qtype], addr, last, lastErr)
+			t.Fatalf("%s %s @%s not satisfied within %s; last=%v err=%v", name, dns.TypeToString[qtype], server, timeout, last, lastErr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
-
-// PromValue returns the value of the exact series line prefix (name{labels}) or 0.
-func PromValue(t *testing.T, metricsURL, series string) float64 {
-	t.Helper()
-	resp, err := http.Get(metricsURL)
-	if err != nil {
-		t.Fatalf("scrape %s: %v", metricsURL, err)
-	}
-	defer resp.Body.Close()
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, series+" ") {
-			v, _ := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, series)), 64)
-			return v
-		}
-	}
-	return 0
-}
-
-func Eventually(t *testing.T, within time.Duration, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(within)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("condition not met within %s", within)
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
 ```
 
-- [ ] Write the failing `e2e/authoritative_test.go`:
+- [ ] Write the failing `e2e/authoritative_test.go` (its helpers are shared by the M4 e2e tests):
 
 ```go
 package e2e
@@ -2251,6 +2402,31 @@ type zoneResp struct {
 	Revision int64  `json:"revision"`
 }
 
+// authEnv is a management plane (bootstrapped admin API) with managed engines.
+type authEnv struct {
+	env     *harness.Env
+	pg      *harness.Postgres
+	ca      *harness.CA
+	mg      *harness.Mgmt
+	api     *harness.API
+	engines []*harness.Engine
+}
+
+// startAuthEnv starts PostgreSQL, one management plane with extraEnv and one managed engine per
+// node name, and waits until every engine applied the latest version.
+func startAuthEnv(t *testing.T, extraEnv []string, nodes ...string) authEnv {
+	t.Helper()
+	e := authEnv{env: harness.New(t)}
+	e.pg, e.ca = e.env.StartPostgres(), e.env.InitCA()
+	e.mg = e.env.StartMgmt(e.pg, e.ca, harness.MgmtOptions{ExtraEnv: extraEnv})
+	e.api = harness.Bootstrap(t, e.env, e.mg.SetupToken(t), e.mg.BaseURL)
+	for _, n := range nodes {
+		e.engines = append(e.engines, e.env.StartManagedEngine(n, []string{e.mg.GRPCURL}, e.api.CreateJoinToken()))
+	}
+	waitLatestApplied(t, e.api, nodes...)
+	return e
+}
+
 func createPrimaryZone(t *testing.T, api *harness.API, name string, extra map[string]any) zoneResp {
 	t.Helper()
 	body := map[string]any{
@@ -2262,24 +2438,18 @@ func createPrimaryZone(t *testing.T, api *harness.API, name string, extra map[st
 		body[k] = v
 	}
 	var z zoneResp
-	api.MustDo(t, http.MethodPost, "/api/v1/zones", body, &z)
+	api.Must(http.MethodPost, "/zones", body, &z, http.StatusCreated)
 	return z
 }
 
 func addRecord(t *testing.T, api *harness.API, zoneID, name, typ, data string) {
 	t.Helper()
-	api.MustDo(t, http.MethodPost, "/api/v1/zones/"+zoneID+"/records",
-		map[string]any{"name": name, "type": typ, "ttl": 300, "data": data}, nil)
+	api.Must(http.MethodPost, "/zones/"+zoneID+"/records", map[string]any{"name": name, "type": typ, "ttl": 300, "data": data}, nil, http.StatusCreated)
 }
 
 func TestAuthoritativeZonePropagation(t *testing.T) {
-	env := harness.New(t)
-	mg := env.StartMgmt(harness.MgmtOptions{})
-	engines := []*harness.Engine{
-		env.StartEngine(mg, harness.EngineOptions{Name: "engine-1"}),
-		env.StartEngine(mg, harness.EngineOptions{Name: "engine-2"}),
-	}
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, nil, "auth-1", "auth-2")
+	api := e.api
 
 	z := createPrimaryZone(t, api, "prop.test.", nil)
 	addRecord(t, api, z.ID, "www.prop.test.", "A", "192.0.2.10")
@@ -2287,8 +2457,8 @@ func TestAuthoritativeZonePropagation(t *testing.T) {
 	addRecord(t, api, z.ID, "ns.child.prop.test.", "A", "192.0.2.53")
 	created := time.Now()
 
-	for i, e := range engines {
-		r := harness.WaitDNSAnswer(t, e.DNSAddr, "www.prop.test.", dns.TypeA, created.Add(5*time.Second), func(m *dns.Msg) bool {
+	for i, eng := range e.engines {
+		r := harness.WaitDNSAnswer(t, eng.DNS, "www.prop.test.", dns.TypeA, 5*time.Second-time.Since(created), func(m *dns.Msg) bool {
 			return m.Rcode == dns.RcodeSuccess && len(m.Answer) == 1
 		})
 		if !r.Authoritative {
@@ -2297,103 +2467,112 @@ func TestAuthoritativeZonePropagation(t *testing.T) {
 		if a, ok := r.Answer[0].(*dns.A); !ok || a.A.String() != "192.0.2.10" {
 			t.Fatalf("engine %d answer: %v", i, r.Answer)
 		}
-		nx := harness.DNSQuery(t, e.DNSAddr, "missing.prop.test.", dns.TypeA)
+		nx := harness.MustQuery(t, eng.DNS, "missing.prop.test.", dns.TypeA, harness.QueryOpts{TCP: true})
 		if nx.Rcode != dns.RcodeNameError || !nx.Authoritative || len(nx.Ns) != 1 || nx.Ns[0].Header().Rrtype != dns.TypeSOA {
 			t.Fatalf("engine %d NXDOMAIN: %v", i, nx)
 		}
-		ref := harness.DNSQuery(t, e.DNSAddr, "host.child.prop.test.", dns.TypeA)
+		ref := harness.MustQuery(t, eng.DNS, "host.child.prop.test.", dns.TypeA, harness.QueryOpts{TCP: true})
 		if ref.Authoritative || len(ref.Ns) != 1 || len(ref.Extra) < 1 {
 			t.Fatalf("engine %d referral: %v", i, ref)
 		}
 	}
 
-	before := harness.PromValue(t, engines[0].MetricsURL, `nexora_auth_zone_loads_total{kind="delta"}`)
+	before := e.engines[0].Metric(t, "nexora_auth_zone_loads_total", map[string]string{"kind": "delta"})
 	addRecord(t, api, z.ID, "api.prop.test.", "AAAA", "2001:db8::10")
 	edited := time.Now()
-	for _, e := range engines {
-		harness.WaitDNSAnswer(t, e.DNSAddr, "api.prop.test.", dns.TypeAAAA, edited.Add(5*time.Second), func(m *dns.Msg) bool {
+	for _, eng := range e.engines {
+		harness.WaitDNSAnswer(t, eng.DNS, "api.prop.test.", dns.TypeAAAA, 5*time.Second-time.Since(edited), func(m *dns.Msg) bool {
 			return m.Authoritative && len(m.Answer) == 1
 		})
 	}
-	if after := harness.PromValue(t, engines[0].MetricsURL, `nexora_auth_zone_loads_total{kind="delta"}`); after <= before {
+	if after := e.engines[0].Metric(t, "nexora_auth_zone_loads_total", map[string]string{"kind": "delta"}); after <= before {
 		t.Fatalf("edit was not applied incrementally: delta loads %v -> %v", before, after)
+	}
+	if n := e.engines[0].Metric(t, "nexora_auth_zones", nil); n != 1 {
+		t.Fatalf("nexora_auth_zones = %v, want 1", n)
 	}
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestAuthoritativeZonePropagation -count=1` — before the handlers are registered expect FAIL with "/api/v1/zones"; after the implementation steps above expect PASS.
-- [ ] Commit: `git add mgmt web/src/api/schema.d.ts e2e && git commit -m "feat(mgmt): zones and records with journaled NZF blobs, snapshot delivery and zone API"`.
+- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestAuthoritativeZonePropagation -count=1` — before the handlers are registered expect FAIL with "POST /zones: status 404"; after the implementation steps above expect PASS.
+- [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e && git commit -m "feat(mgmt): zones and records with journaled NZF blobs, snapshot delivery and zone API"`.
 
-## Task 6: Key storage (KEK envelope, PKCS#11), TSIG keys, KeyMaterial delivery
+## Task 6: Key storage (secrets: PKCS#11 backend, DNSSEC signing keys), TSIG keys, KeyMaterial delivery
+
+M3 already ships `mgmt/internal/secrets` (NXE1 envelope, file KEK from `NEXORA_KEK_FILE`, `ErrUnconfigured`/`ErrKEKMismatch`/`ErrBackendUnavailable`, wrap byte 1, 503 `key_storage_unconfigured` in `api.mapError`) and its tests (`TestEnvelopeRoundTripBindsPurposeAndDetectsTamper`, `TestWrongKEKIsReported`, `TestUnconfiguredBoxRefusesSecrets`, `TestKEKFileValidation`). This task extends that package instead of adding a new one, and delivers TSIG keys the way M3 delivers RPZ TSIG keys.
 
 Files:
 
-- `mgmt/internal/config/config.go` — `KEKFile`, `PKCS11Module`, `PKCS11TokenLabel`, `PKCS11PinFile` + validation (modify)
-- `mgmt/internal/keystore/keystore.go` — `Store`, `Config`, errors, backend selection
-- `mgmt/internal/keystore/envelope.go` — NXE1 seal/unseal
-- `mgmt/internal/keystore/filekek.go` — KEK file loading
-- `mgmt/internal/keystore/pkcs11.go` — token session pool, key generation, HSM signer, HSM AES wrap key
-- `mgmt/internal/keystore/softkey.go` — KEK-backend DNSSEC key generation and signer
-- `mgmt/internal/keystore/keystore_test.go`, `mgmt/internal/keystore/pkcs11_test.go`
-- `mgmt/internal/tsigkey/service.go`, `mgmt/internal/tsigkey/service_test.go` — TSIG key CRUD, generation bump, in-use check
-- `mgmt/internal/control/keymaterial.go`, `mgmt/internal/control/keymaterial_test.go` — build and push `KeyMaterial`
-- `mgmt/api/openapi.yaml`, `mgmt/internal/api/tsig_keys.go`, `mgmt/internal/auth/permissions.go` — `listTsigKeys`, `createTsigKey`, `deleteTsigKey` (modify/create)
-- `mgmt/cmd/nexora-mgmt/main.go` — open keystore at start, ensure HSM wrap key under advisory lock (modify)
-- `engine/Cargo.toml` — `zeroize = "1.9.0"` (modify)
-- `engine/src/authoritative/keyring.rs`, `engine/src/authoritative/keyring_tests.rs` — in-memory TSIG keys
-- `engine/src/control.rs` — apply `KeyMaterial` (modify)
+- `mgmt/internal/config/config.go`, `mgmt/internal/config/config_test.go` — `PKCS11Module`, `PKCS11TokenLabel`, `PKCS11PinFile` + all-or-none validation (modify)
+- `mgmt/internal/secrets/secrets.go` — `Config`, `Open`, backend selection, wrap byte 2 in `Seal`/`Unseal`, `Close` (modify; `LoadKEKFile(path)` becomes `Open(Config{KEKFile: path})`)
+- `mgmt/internal/secrets/pkcs11.go` — token session pool, key generation, HSM signer, HSM AES wrap key
+- `mgmt/internal/secrets/signing.go` — `StoredKey`, `GenerateSigningKey`, `Signer`, `DestroySigningKey` (KEK backend: enveloped PKCS#8)
+- `mgmt/internal/secrets/signing_test.go`, `mgmt/internal/secrets/pkcs11_test.go`
+- `mgmt/internal/tsigkey/service.go`, `mgmt/internal/tsigkey/service_test.go` — TSIG key CRUD through `snapshot.Mutate`, in-use check
+- `mgmt/internal/control/tsigkeys.go`, `mgmt/internal/control/tsigkeys_test.go` — `TSIGKeys` loader building `KeyMaterial` (pattern of `rpztsig.go`)
+- `mgmt/internal/control/hub.go`, `mgmt/internal/control/server.go` — `Hub.TSIGKeys`, per-subscriber `keyMaterial` channel with digest, sent before the snapshot on `Connect` and offered on every broadcast (modify)
+- `mgmt/api/openapi.yaml`, `mgmt/internal/api/tsig_keys.go`, `mgmt/internal/api/server.go` (`Deps.TSIGKeys`), `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `listTsigKeys`, `createTsigKey`, `deleteTsigKey` (modify/create)
+- `mgmt/cmd/nexora-mgmt/main.go` — `secrets.Open` with the PKCS#11 settings, `EnsureHSMWrapKey` under an advisory lock, `hub.TSIGKeys` (modify)
+- `engine/src/tsig.rs` — moved from `engine/src/recursor/rpz/tsig.rs` (`git mv`), gains `KeyRing` and `TsigAlg::HmacSha384`
+- `engine/src/recursor/rpz/mod.rs` — `pub mod tsig;` becomes `pub use crate::tsig;` (modify)
+- `engine/src/lib.rs` — `pub mod tsig;` and `#[cfg(test)] mod tsig_tests;` (modify)
+- `engine/src/tsig_tests.rs` — key ring tests (Task 7 appends the TSIG protocol tests)
+- `engine/src/authoritative/state.rs` — `AuthState.keyring: Arc<KeyRing>` (modify)
+- `engine/src/control.rs` — `ServerMsg::KeyMaterial` arm next to the `RpzTsigKeys` arm (modify)
 - `go.mod`, `go.sum` — `github.com/miekg/pkcs11 v1.1.2`
 
 Interfaces:
 
 ```go
-package keystore
+package secrets
 type Backend string
 const (BackendKEK Backend = "kek"; BackendPKCS11 Backend = "pkcs11")
-var (ErrUnconfigured = errors.New("key storage unconfigured: set NEXORA_KEK_FILE or NEXORA_PKCS11_MODULE"); ErrKEKMismatch = errors.New("envelope was sealed under a different key-encryption key"); ErrBackendUnavailable = errors.New("requested key backend is not configured"))
+// Existing: ErrUnconfigured, ErrKEKMismatch, ErrBackendUnavailable, WrapFileKEK = 1, WrapPKCS11 = 2, Box, LoadKEKFile, (*Box).Configured, Seal, Unseal.
 type Config struct{ KEKFile, PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string }
-type Store struct{ /* kek *fileKEK; hsm *HSM */ }
-func New(cfg Config) (*Store, error)
-func (s *Store) Close() error
-func (s *Store) Configured() bool
-func (s *Store) HasBackend(b Backend) bool
-func (s *Store) DefaultBackend() Backend // pkcs11 when configured, else kek
-func (s *Store) EnsureHSMWrapKey(ctx context.Context) error
-func (s *Store) Seal(purpose string, plaintext []byte) ([]byte, error)
-func (s *Store) Unseal(purpose string, envelope []byte) ([]byte, error)
+func Open(cfg Config) (*Box, error)       // "" everywhere: an unconfigured Box; partial PKCS#11 settings: error
+func (b *Box) Close() error
+func (b *Box) Configured() bool            // file KEK or PKCS#11 (nil-safe, as today)
+func (b *Box) HasBackend(be Backend) bool
+func (b *Box) DefaultBackend() Backend     // pkcs11 when configured, else kek
+func (b *Box) EnsureHSMWrapKey(ctx context.Context) error
 type StoredKey struct{ Backend Backend; Algorithm uint8; KeyRef []byte; Envelope []byte; PublicKey string }
-func (s *Store) GenerateSigningKey(ctx context.Context, b Backend, alg uint8) (StoredKey, error) // alg 13 (P-256) or 8 (RSA-2048)
-func (s *Store) Signer(k StoredKey) (crypto.Signer, func(), error)                              // release func zeroes decrypted material
-func (s *Store) DestroySigningKey(k StoredKey) error
-func (s *Store) PKCS11KeyAttributes(keyRef []byte) (extractable, sensitive bool, err error)
+func (b *Box) GenerateSigningKey(ctx context.Context, be Backend, alg uint8) (StoredKey, error) // alg 13 (P-256) or 8 (RSA-2048)
+func (b *Box) Signer(k StoredKey) (crypto.Signer, func(), error)                               // release func zeroes decrypted material
+func (b *Box) DestroySigningKey(k StoredKey) error
+func (b *Box) PKCS11KeyAttributes(keyRef []byte) (extractable, sensitive bool, err error)
+func SigningKeyPurpose(keyRef []byte) string // "nexora/dnssec/v1:<hex key_ref>"
+func TSIGPurpose(name string) string         // "nexora/tsig/v1:<key name>"
 
 package tsigkey
 type Key struct{ ID uuid.UUID; Name, Algorithm string; Revision int64; CreatedAt time.Time }
 type Created struct{ Key; Secret string } // base64, returned once
-var ErrInUse, ErrNotFound, ErrConflict error
-type Service struct{ Pool *pgxpool.Pool; Keys *keystore.Store; Auditor zone.Auditor }
-func (s *Service) Create(ctx context.Context, actor zone.Actor, name, algorithm, secretB64 string) (*Created, error)
+var ErrInUse = errors.New("tsig key is in use")
+type Service struct{ Store *store.Store; Build snapshot.BuildConfig; Box *secrets.Box }
+func (s *Service) Create(ctx context.Context, actor auth.Actor, name, algorithm, secretB64 string) (*Created, error)
 func (s *Service) List(ctx context.Context) ([]Key, error)
-func (s *Service) Delete(ctx context.Context, actor zone.Actor, id uuid.UUID, revision int64) error
-func (s *Service) Secret(ctx context.Context, q pgx.Tx, id uuid.UUID) (name, algorithm string, secret []byte, err error)
+func (s *Service) Delete(ctx context.Context, actor auth.Actor, id uuid.UUID, revision int64) error
+func (s *Service) Secret(ctx context.Context, q snapshot.Querier, id uuid.UUID) (name, algorithm string, secret []byte, err error)
 
 package control
-func BuildKeyMaterial(ctx context.Context, pool *pgxpool.Pool, ks *keystore.Store) (*controlv1.KeyMaterial, error)
+type TSIGKeys struct{ /* st *store.Store; box *secrets.Box */ }
+func NewTSIGKeys(st *store.Store, box *secrets.Box) *TSIGKeys
+func (k *TSIGKeys) Load(ctx context.Context) (*controlv1.KeyMaterial, string, error) // complete set and digest ("" when empty)
+// Hub gains `TSIGKeys *TSIGKeys`; subscriber gains `keyMaterial chan *controlv1.KeyMaterial` (capacity 1) and `keyMaterialDigest string`.
 ```
 
 ```rust
-// keyring.rs
-pub enum TsigAlg { HmacSha256, HmacSha384, HmacSha512 }
-pub struct TsigKey { pub name: Box<[u8]>, pub alg: TsigAlg, pub secret: zeroize::Zeroizing<Vec<u8>> } // Debug prints "<redacted>"
-#[derive(Default)] pub struct KeyRing { /* ArcSwap<(u64, FxHashMap<Box<[u8]>, Arc<TsigKey>>)> */ }
+// engine/src/tsig.rs (additions to M3's module)
+pub enum TsigAlg { HmacSha256, HmacSha384, HmacSha512 } // name() "hmac-sha384.", ring HMAC_SHA384
+impl TsigAlg { pub fn from_proto(a: i32) -> Option<TsigAlg>; }
+#[derive(Default)] pub struct KeyRing { /* ArcSwap<FxHashMap<Box<[u8]>, Arc<TsigKey>>> keyed by lowercase wire name */ }
 impl KeyRing {
-    pub fn apply(&self, km: &pb::KeyMaterial) -> Result<(), String>; // older generation or unknown algorithm → Err, ring unchanged
+    pub fn apply(&self, km: proto::KeyMaterial); // replaces the whole set; keys with an unknown algorithm or bad name are skipped
     pub fn get(&self, lower_wire_name: &[u8]) -> Option<Arc<TsigKey>>;
-    pub fn generation(&self) -> u64;
+    pub fn len(&self) -> usize;
 }
 ```
 
-NXE1 envelope layout:
+NXE1 envelope layout (unchanged from M3; M4 adds wrap 2):
 
 ```
 offset  size  field
@@ -2404,146 +2583,89 @@ offset  size  field
 25      48    wrapped_dek = AES-256-GCM(KEK, dek_nonce, DEK[32], aad = "NXE1-dek")
 73      12    data_nonce
 85      n+16  ciphertext = AES-256-GCM(DEK, data_nonce, plaintext, aad = purpose)
-purposes: "nexora/tsig/v1:<key name>", "nexora/dnssec/v1:<hex key_ref>"
+purposes: "nexora/rpz-tsig/v1:<zone uuid>" (M3), "nexora/tsig/v1:<key name>", "nexora/dnssec/v1:<hex key_ref>"
 ```
 
-- [ ] Write the failing `mgmt/internal/keystore/keystore_test.go`:
+- [ ] Write the failing `mgmt/internal/secrets/signing_test.go` (package `secrets_test`; `writeKEK(t, n)` is M3's helper in `secrets_test.go`):
 
 ```go
-package keystore_test
+package secrets_test
 
 import (
-	"bytes"
-	"crypto/rand"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/piwi3910/nexora/mgmt/internal/keystore"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 )
 
-func writeKEK(t *testing.T, n int) string {
-	t.Helper()
-	key := make([]byte, n)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatal(err)
+func TestOpenValidatesBackends(t *testing.T) {
+	box, err := secrets.Open(secrets.Config{})
+	if err != nil || box.Configured() {
+		t.Fatalf("empty config: configured=%v err=%v", box.Configured(), err)
 	}
-	p := filepath.Join(t.TempDir(), "kek")
-	if err := os.WriteFile(p, []byte(base64.StdEncoding.EncodeToString(key)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err := box.GenerateSigningKey(t.Context(), secrets.BackendKEK, 13); !errors.Is(err, secrets.ErrUnconfigured) {
+		t.Fatalf("GenerateSigningKey without key storage: %v", err)
 	}
-	return p
-}
-
-func TestEnvelopeRoundTripBindsPurposeAndDetectsTamper(t *testing.T) {
-	ks, err := keystore.New(keystore.Config{KEKFile: writeKEK(t, 32)})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := secrets.Open(secrets.Config{PKCS11Module: "/usr/lib/softhsm/libsofthsm2.so"}); err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("partial PKCS#11 configuration: %v", err)
 	}
-	secret := []byte("super-secret-tsig-bytes")
-	env, err := ks.Seal("nexora/tsig/v1:k1.", secret)
-	if err != nil {
-		t.Fatal(err)
+	kek, err := secrets.Open(secrets.Config{KEKFile: writeKEK(t, 32)})
+	if err != nil || !kek.HasBackend(secrets.BackendKEK) || kek.HasBackend(secrets.BackendPKCS11) || kek.DefaultBackend() != secrets.BackendKEK {
+		t.Fatalf("file KEK backends: %v", err)
 	}
-	if bytes.Contains(env, secret) || string(env[:4]) != "NXE1" || env[4] != 1 || len(env) != 85+len(secret)+16 {
-		t.Fatalf("envelope layout wrong: %x", env[:13])
-	}
-	got, err := ks.Unseal("nexora/tsig/v1:k1.", env)
-	if err != nil || !bytes.Equal(got, secret) {
-		t.Fatalf("unseal: %q %v", got, err)
-	}
-	if _, err := ks.Unseal("nexora/tsig/v1:k2.", env); err == nil {
-		t.Fatal("purpose is not bound to the ciphertext")
-	}
-	env[len(env)-1] ^= 1
-	if _, err := ks.Unseal("nexora/tsig/v1:k1.", env); err == nil {
-		t.Fatal("tampering not detected")
-	}
-}
-
-func TestWrongKEKIsReported(t *testing.T) {
-	a, _ := keystore.New(keystore.Config{KEKFile: writeKEK(t, 32)})
-	b, _ := keystore.New(keystore.Config{KEKFile: writeKEK(t, 32)})
-	env, _ := a.Seal("p", []byte("x"))
-	if _, err := b.Unseal("p", env); !errors.Is(err, keystore.ErrKEKMismatch) {
-		t.Fatalf("got %v, want ErrKEKMismatch", err)
-	}
-}
-
-func TestUnconfiguredStoreRefusesSecrets(t *testing.T) {
-	ks, err := keystore.New(keystore.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ks.Configured() {
-		t.Fatal("empty config reports configured")
-	}
-	if _, err := ks.Seal("p", []byte("x")); !errors.Is(err, keystore.ErrUnconfigured) {
-		t.Fatalf("Seal: %v", err)
-	}
-	if _, err := ks.GenerateSigningKey(t.Context(), keystore.BackendKEK, 13); !errors.Is(err, keystore.ErrUnconfigured) {
-		t.Fatalf("GenerateSigningKey: %v", err)
-	}
-}
-
-func TestKEKFileValidation(t *testing.T) {
-	if _, err := keystore.New(keystore.Config{KEKFile: writeKEK(t, 16)}); err == nil || !strings.Contains(err.Error(), "32 bytes") {
-		t.Fatalf("16-byte KEK: %v", err)
-	}
-	if _, err := keystore.New(keystore.Config{PKCS11Module: "/usr/lib/softhsm/libsofthsm2.so"}); err == nil {
-		t.Fatal("partial PKCS#11 configuration accepted")
+	if _, err := kek.GenerateSigningKey(t.Context(), secrets.BackendPKCS11, 13); !errors.Is(err, secrets.ErrBackendUnavailable) {
+		t.Fatalf("PKCS#11 key without a token: %v", err)
 	}
 }
 
 func TestKEKSigningKeyIsEnvelopedPKCS8(t *testing.T) {
-	ks, _ := keystore.New(keystore.Config{KEKFile: writeKEK(t, 32)})
+	box, err := secrets.Open(secrets.Config{KEKFile: writeKEK(t, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, alg := range []uint8{13, 8} {
-		k, err := ks.GenerateSigningKey(t.Context(), keystore.BackendKEK, alg)
+		k, err := box.GenerateSigningKey(t.Context(), secrets.BackendKEK, alg)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(k.KeyRef) != 16 || k.Envelope == nil || k.PublicKey == "" {
 			t.Fatalf("alg %d: %+v", alg, k)
 		}
-		der, err := ks.Unseal("nexora/dnssec/v1:"+hexString(k.KeyRef), k.Envelope)
+		der, err := box.Unseal(secrets.SigningKeyPurpose(k.KeyRef), k.Envelope)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := x509.ParsePKCS8PrivateKey(der); err != nil {
 			t.Fatalf("alg %d: envelope does not hold PKCS#8: %v", alg, err)
 		}
-		verifySignerMatchesDNSKEY(t, ks, k)
+		verifySignerMatchesDNSKEY(t, box, k)
 	}
 }
 ```
 
-`hexString` and `verifySignerMatchesDNSKEY` live in `pkcs11_test.go` (below).
+`verifySignerMatchesDNSKEY` lives in `pkcs11_test.go` (below).
 
-- [ ] Write the failing `mgmt/internal/keystore/pkcs11_test.go`:
+- [ ] Write the failing `mgmt/internal/secrets/pkcs11_test.go` (token PINs are derived at run time):
 
 ```go
-package keystore_test
+package secrets_test
 
 import (
-	"encoding/hex"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/piwi3910/nexora/mgmt/internal/keystore"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 )
 
-func hexString(b []byte) string { return hex.EncodeToString(b) }
-
-func softhsmConfig(t *testing.T) keystore.Config {
+func softhsmConfig(t *testing.T) secrets.Config {
 	t.Helper()
 	dir := t.TempDir()
 	tokens := filepath.Join(dir, "tokens")
@@ -2551,19 +2673,24 @@ func softhsmConfig(t *testing.T) keystore.Config {
 		t.Fatal(err)
 	}
 	conf := filepath.Join(dir, "softhsm2.conf")
-	os.WriteFile(conf, []byte("directories.tokendir = "+tokens+"\nobjectstore.backend = file\nlog.level = ERROR\n"), 0o600)
+	if err := os.WriteFile(conf, []byte("directories.tokendir = "+tokens+"\nobjectstore.backend = file\nlog.level = ERROR\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("SOFTHSM2_CONF", conf)
-	if out, err := exec.Command("softhsm2-util", "--init-token", "--free", "--label", "nexora-test", "--pin", "1234", "--so-pin", "5678").CombinedOutput(); err != nil {
+	userPIN, soPIN := strings.Repeat("7", 6), strings.Repeat("8", 6)
+	if out, err := exec.Command("softhsm2-util", "--init-token", "--free", "--label", "nexora-test", "--pin", userPIN, "--so-pin", soPIN).CombinedOutput(); err != nil {
 		t.Fatalf("softhsm2-util: %v\n%s", err, out)
 	}
 	pin := filepath.Join(dir, "pin")
-	os.WriteFile(pin, []byte("1234\n"), 0o600)
-	return keystore.Config{PKCS11Module: "/usr/lib/softhsm/libsofthsm2.so", PKCS11TokenLabel: "nexora-test", PKCS11PinFile: pin}
+	if err := os.WriteFile(pin, []byte(userPIN+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return secrets.Config{PKCS11Module: "/usr/lib/softhsm/libsofthsm2.so", PKCS11TokenLabel: "nexora-test", PKCS11PinFile: pin}
 }
 
-func verifySignerMatchesDNSKEY(t *testing.T, ks *keystore.Store, k keystore.StoredKey) {
+func verifySignerMatchesDNSKEY(t *testing.T, box *secrets.Box, k secrets.StoredKey) {
 	t.Helper()
-	signer, release, err := ks.Signer(k)
+	signer, release, err := box.Signer(k)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2582,55 +2709,58 @@ func verifySignerMatchesDNSKEY(t *testing.T, ks *keystore.Store, k keystore.Stor
 }
 
 func TestPKCS11SigningKeysStayInToken(t *testing.T) {
-	ks, err := keystore.New(softhsmConfig(t))
+	box, err := secrets.Open(softhsmConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ks.Close()
+	defer box.Close()
 	for _, alg := range []uint8{13, 8} {
-		k, err := ks.GenerateSigningKey(t.Context(), keystore.BackendPKCS11, alg)
+		k, err := box.GenerateSigningKey(t.Context(), secrets.BackendPKCS11, alg)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if k.Envelope != nil {
 			t.Fatalf("alg %d: PKCS#11 key has an envelope", alg)
 		}
-		verifySignerMatchesDNSKEY(t, ks, k)
-		extractable, sensitive, err := ks.PKCS11KeyAttributes(k.KeyRef)
+		verifySignerMatchesDNSKEY(t, box, k)
+		extractable, sensitive, err := box.PKCS11KeyAttributes(k.KeyRef)
 		if err != nil || extractable || !sensitive {
 			t.Fatalf("alg %d: extractable=%v sensitive=%v err=%v", alg, extractable, sensitive, err)
 		}
-		if err := ks.DestroySigningKey(k); err != nil {
+		if err := box.DestroySigningKey(k); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := ks.PKCS11KeyAttributes(k.KeyRef); err == nil {
+		if _, _, err := box.PKCS11KeyAttributes(k.KeyRef); err == nil {
 			t.Fatalf("alg %d: key still present after destroy", alg)
 		}
 	}
 }
 
 func TestPKCS11WrapsEnvelopesWhenNoKEKFile(t *testing.T) {
-	ks, err := keystore.New(softhsmConfig(t))
+	box, err := secrets.Open(softhsmConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ks.Close()
-	if err := ks.EnsureHSMWrapKey(t.Context()); err != nil {
+	defer box.Close()
+	if !box.Configured() || box.DefaultBackend() != secrets.BackendPKCS11 {
+		t.Fatal("a PKCS#11-only box must be configured with the pkcs11 default backend")
+	}
+	if err := box.EnsureHSMWrapKey(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	env, err := ks.Seal("nexora/tsig/v1:x.", []byte("hsm-wrapped"))
-	if err != nil || env[4] != 2 {
+	env, err := box.Seal(secrets.TSIGPurpose("x."), []byte("hsm-wrapped"))
+	if err != nil || env[4] != secrets.WrapPKCS11 {
 		t.Fatalf("seal: %v wrap=%d", err, env[4])
 	}
-	got, err := ks.Unseal("nexora/tsig/v1:x.", env)
+	got, err := box.Unseal(secrets.TSIGPurpose("x."), env)
 	if err != nil || string(got) != "hsm-wrapped" {
 		t.Fatalf("unseal: %q %v", got, err)
 	}
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/keystore/ -count=1` — expect FAIL with "undefined: keystore.New".
-- [ ] Implement `filekek.go` (read file, `strings.TrimSpace`, `base64.StdEncoding.DecodeString`, exactly 32 bytes else `NEXORA_KEK_FILE must contain 32 bytes, base64-encoded (openssl rand -base64 32)`; `kek_id = sha256(key)[:8]`) and `envelope.go`:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ -count=1` — expect FAIL with "undefined: secrets.Open".
+- [ ] Refactor `secrets.go` onto one sealing path used by both wrappers (M3's layout and tests stay green):
 
 ```go
 func sealWith(wrap byte, kekID []byte, wrapDEK func(nonce, dek []byte) ([]byte, error), purpose string, plaintext []byte) ([]byte, error) {
@@ -2662,7 +2792,7 @@ func sealWith(wrap byte, kekID []byte, wrapDEK func(nonce, dek []byte) ([]byte, 
 }
 ```
 
-`Unseal` checks magic and length ≥ 101, selects the wrapper by byte 4 (`ErrBackendUnavailable` when not configured), compares `kek_id` (`ErrKEKMismatch`), unwraps the DEK with aad `NXE1-dek`, opens the ciphertext with aad = purpose, and `clear`s the DEK. `Seal` uses the file KEK when configured, else the HSM wrap key, else `ErrUnconfigured`.
+`Unseal` checks magic and length ≥ 101, selects the wrapper by byte 4 (`ErrBackendUnavailable` when that backend is not configured), compares `kek_id` (`ErrKEKMismatch`), unwraps the DEK with aad `NXE1-dek`, opens the ciphertext with aad = purpose, and `clear`s the DEK. `Seal` uses the file KEK when configured, else the HSM wrap key, else `ErrUnconfigured`. `Open` loads the KEK file exactly as `LoadKEKFile` does today, requires the three PKCS#11 settings together (`NEXORA_PKCS11_MODULE, NEXORA_PKCS11_TOKEN_LABEL and NEXORA_PKCS11_PIN_FILE must be set together`) and opens the token; `LoadKEKFile(path)` returns `Open(Config{KEKFile: path})`.
 
 - [ ] Implement `pkcs11.go`:
 
@@ -2822,10 +2952,10 @@ func (s *hsmSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) (sig [
 
 `findOne` runs `FindObjectsInit` on `{CKA_CLASS, CKA_ID}`, `FindObjects(sh, 2)`, `FindObjectsFinal`, and requires exactly one handle. `PKCS11KeyAttributes` reads `CKA_EXTRACTABLE` and `CKA_SENSITIVE` of the private key. `DestroySigningKey` destroys private and public objects with that `CKA_ID`. The HSM wrap key: `EnsureHSMWrapKey` finds `CKO_SECRET_KEY` with `CKA_ID "nexora-kek-v1"` or creates it with `CKM_AES_KEY_GEN` and attributes `CKA_CLASS=CKO_SECRET_KEY, CKA_KEY_TYPE=CKK_AES, CKA_VALUE_LEN=32, CKA_TOKEN=true, CKA_PRIVATE=true, CKA_SENSITIVE=true, CKA_EXTRACTABLE=false, CKA_ENCRYPT=true, CKA_DECRYPT=true, CKA_LABEL="nexora-kek"`; wrapping uses `params := pkcs11.NewGCMParams(dekNonce, []byte("NXE1-dek"), 128)`, `EncryptInit(sh, []*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_AES_GCM, params)}, handle)`, `Encrypt(sh, dek)`, `params.Free()` (unwrap: `DecryptInit`/`Decrypt`). `main.go` calls `EnsureHSMWrapKey` while holding `pg_advisory_lock(hashtext('pkcs11_wrap_key'))` so instances never create two.
 
-- [ ] Implement `softkey.go`: alg 13 → `ecdsa.GenerateKey(elliptic.P256(), rand.Reader)`, public = `priv.PublicKey.ECDH()` bytes without the leading 0x04; alg 8 → `rsa.GenerateKey(rand.Reader, 2048)`, public = `rsaDNSKEYPublic(big.NewInt(int64(E)).Bytes(), N.Bytes())`; private = `x509.MarshalPKCS8PrivateKey` sealed with purpose `nexora/dnssec/v1:<hex key_ref>`, `key_ref` = 16 random bytes; `Signer` unseals, parses PKCS#8, returns the key and a release func that `clear`s the DER buffer.
-- [ ] Add config validation in `mgmt/internal/config`: when any of the three `NEXORA_PKCS11_*` variables is set, all three are required (`NEXORA_PKCS11_MODULE, NEXORA_PKCS11_TOKEN_LABEL and NEXORA_PKCS11_PIN_FILE must be set together`); `main.go` exits non-zero on `keystore.New` errors and logs `key storage: none configured; TSIG keys and DNSSEC signing are disabled` when unconfigured.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/keystore/ -count=1` — expect PASS.
-- [ ] Write the failing `mgmt/internal/tsigkey/service_test.go`:
+- [ ] Implement `signing.go`: `GenerateSigningKey` returns `ErrUnconfigured` for an unconfigured box and `ErrBackendUnavailable` for a backend that is not configured; alg 13 → `ecdsa.GenerateKey(elliptic.P256(), rand.Reader)`, public = `priv.PublicKey.ECDH()` bytes without the leading 0x04; alg 8 → `rsa.GenerateKey(rand.Reader, 2048)`, public = `rsaDNSKEYPublic(big.NewInt(int64(E)).Bytes(), N.Bytes())`; private = `x509.MarshalPKCS8PrivateKey` sealed with `SigningKeyPurpose(key_ref)`, `key_ref` = 16 random bytes; the PKCS#11 backend calls `HSM.generate` with `key_ref` as `CKA_ID`. `Signer` unseals, parses PKCS#8, returns the key and a release func that `clear`s the DER buffer (PKCS#11: an `hsmSigner`, no-op release).
+- [ ] Add the settings to `mgmt/internal/config` (`NEXORA_PKCS11_MODULE`, `NEXORA_PKCS11_TOKEN_LABEL`, `NEXORA_PKCS11_PIN_FILE`; all or none, same message as `secrets.Open`, with a `config_test.go` case). In `main.go` replace `secrets.LoadKEKFile(cfg.KEKFile)` with `secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel, PKCS11PinFile: cfg.PKCS11PinFile})` (exit non-zero on error, `defer box.Close()`), and change the unconfigured log line to `key storage: none configured; RPZ TSIG secrets, TSIG keys and DNSSEC signing are refused`.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ ./mgmt/internal/config/ -count=1` — expect PASS (M3's secrets tests included).
+- [ ] Write the failing `mgmt/internal/tsigkey/service_test.go` and `mgmt/internal/control/tsigkeys_test.go`:
 
 ```go
 package tsigkey_test
@@ -2841,36 +2971,38 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/piwi3910/nexora/mgmt/internal/control"
-	"github.com/piwi3910/nexora/mgmt/internal/keystore"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
-	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
-type noAudit struct{}
+var admin = auth.Actor{Type: "user", ID: "admin", Name: "admin"}
 
-func (noAudit) Write(context.Context, pgx.Tx, zone.Actor, string, string, any, any) error { return nil }
-
-func kekStore(t *testing.T) *keystore.Store {
+func kekBox(t *testing.T) *secrets.Box {
+	t.Helper()
 	key := make([]byte, 32)
-	rand.Read(key)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(t.TempDir(), "kek")
-	os.WriteFile(p, []byte(base64.StdEncoding.EncodeToString(key)), 0o600)
-	ks, err := keystore.New(keystore.Config{KEKFile: p})
+	if err := os.WriteFile(p, []byte(base64.StdEncoding.EncodeToString(key)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	box, err := secrets.Open(secrets.Config{KEKFile: p})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ks
+	return box
 }
 
-func TestCreateStoresOnlyEnvelopeAndBumpsGeneration(t *testing.T) {
+func TestCreateStoresOnlyEnvelopeAndPublishes(t *testing.T) {
 	ctx := context.Background()
-	pool := storetest.NewPool(t)
-	ks := kekStore(t)
-	s := &tsigkey.Service{Pool: pool, Keys: ks, Auditor: noAudit{}}
-	c, err := s.Create(ctx, "user:admin", "xfr-key.", "hmac-sha256", "")
+	st := storetest.New(t)
+	s := &tsigkey.Service{Store: st, Box: kekBox(t)}
+	var before int
+	st.Pool.QueryRow(ctx, `SELECT count(*) FROM config_versions`).Scan(&before)
+	c, err := s.Create(ctx, admin, "xfr-key.", "hmac-sha256", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2879,84 +3011,140 @@ func TestCreateStoresOnlyEnvelopeAndBumpsGeneration(t *testing.T) {
 		t.Fatalf("generated secret length %d", len(secret))
 	}
 	var dump string
-	pool.QueryRow(ctx, `SELECT string_agg(t::text, E'\n') FROM tsig_keys t`).Scan(&dump)
-	if bytes.Contains([]byte(dump), []byte(c.Secret)) || bytes.Contains([]byte(dump), []byte(hexOf(secret))) {
+	st.Pool.QueryRow(ctx, `SELECT string_agg(t::text, E'\n') FROM tsig_keys t`).Scan(&dump)
+	if bytes.Contains([]byte(dump), []byte(c.Secret)) || bytes.Contains([]byte(dump), []byte(hex.EncodeToString(secret))) {
 		t.Fatal("plaintext TSIG secret stored in tsig_keys")
 	}
-	km, err := control.BuildKeyMaterial(ctx, pool, ks)
-	if err != nil || km.Generation != 1 || len(km.TsigKeys) != 1 || !bytes.Equal(km.TsigKeys[0].Secret, secret) || km.TsigKeys[0].Name != "xfr-key." {
-		t.Fatalf("key material: %+v err=%v", km, err)
+	var after int
+	st.Pool.QueryRow(ctx, `SELECT count(*) FROM config_versions`).Scan(&after)
+	if after != before+1 {
+		t.Fatalf("creating a key must publish a config version so engines get the new KeyMaterial: %d -> %d", before, after)
 	}
-	if _, err := s.Create(ctx, "user:admin", "Bad Name", "hmac-sha256", ""); err == nil {
+	provided := base64.StdEncoding.EncodeToString([]byte("fixture-tsig-key-provided"))
+	if p, err := s.Create(ctx, admin, "given-key.", "hmac-sha384", provided); err != nil || p.Secret != provided {
+		t.Fatalf("provided secret: %+v %v", p, err)
+	}
+	if _, err := s.Create(ctx, admin, "Bad Name", "hmac-sha256", ""); err == nil {
 		t.Fatal("invalid key name accepted")
 	}
-	if _, err := s.Create(ctx, "user:admin", "md5-key.", "hmac-md5", ""); err == nil {
+	if _, err := s.Create(ctx, admin, "md5-key.", "hmac-md5", ""); err == nil {
 		t.Fatal("hmac-md5 accepted")
 	}
 }
 
 func TestUnconfiguredKeyStorageRefuses(t *testing.T) {
-	ks, _ := keystore.New(keystore.Config{})
-	s := &tsigkey.Service{Pool: storetest.NewPool(t), Keys: ks, Auditor: noAudit{}}
-	if _, err := s.Create(context.Background(), "user:admin", "k.", "hmac-sha256", ""); !errors.Is(err, keystore.ErrUnconfigured) {
+	box, _ := secrets.Open(secrets.Config{})
+	s := &tsigkey.Service{Store: storetest.New(t), Box: box}
+	if _, err := s.Create(context.Background(), admin, "k.", "hmac-sha256", ""); !errors.Is(err, secrets.ErrUnconfigured) {
 		t.Fatalf("got %v, want ErrUnconfigured", err)
 	}
 }
 
 func TestDeleteInUseKeyFails(t *testing.T) {
 	ctx := context.Background()
-	pool := storetest.NewPool(t)
-	s := &tsigkey.Service{Pool: pool, Keys: kekStore(t), Auditor: noAudit{}}
-	c, _ := s.Create(ctx, "user:admin", "used.", "hmac-sha256", "")
-	if _, err := pool.Exec(ctx, `INSERT INTO zones (name, kind, soa_mname, soa_rname, transfer_tsig_key_id) VALUES ('u.test.', 'primary', 'ns.u.test.', 'h.u.test.', $1)`, c.ID); err != nil {
+	st := storetest.New(t)
+	s := &tsigkey.Service{Store: st, Box: kekBox(t)}
+	c, err := s.Create(ctx, admin, "used.", "hmac-sha256", "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Delete(ctx, "user:admin", c.ID, c.Revision); !errors.Is(err, tsigkey.ErrInUse) {
+	if _, err := st.Pool.Exec(ctx, `INSERT INTO zones (name, kind, soa_mname, soa_rname, transfer_tsig_key_id) VALUES ('u.test.', 'primary', 'ns.u.test.', 'h.u.test.', $1)`, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, admin, c.ID, c.Revision); !errors.Is(err, tsigkey.ErrInUse) {
 		t.Fatalf("got %v, want ErrInUse", err)
 	}
 }
-
-func hexOf(b []byte) string { return hex.EncodeToString(b) } // Postgres renders bytea as \x<hex>
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ -count=1` — expect FAIL with "undefined: tsigkey.Service".
-- [ ] Implement `tsigkey.Service`: names lowercased, absolute, `^([a-z0-9_-]{1,63}\.)+$`; algorithms hmac-sha256/384/512; empty secret → 32 random bytes (64 for sha512); provided secret must decode from base64 to ≥ 16 bytes; `Keys.Seal("nexora/tsig/v1:"+name, secret)`; in the same transaction `UPDATE key_material_state SET generation = generation + 1`, audit, `pg_notify('nexora_keys', generation)`. `Delete` refuses when referenced by `zones.transfer_tsig_key_id`, `update_tsig_key_ids`, or any `notify_targets` / `primaries` element's `tsig_key_id` (`ErrInUse` → 409 `tsig_key_in_use`). `BuildKeyMaterial` reads the generation and unseals every key.
-- [ ] Implement `mgmt/internal/control/keymaterial.go`: after M1 sends the snapshot for a `Hello`, enqueue `ServerMessage{Msg: KeyMaterial}` on that engine's outbound queue when the keystore is configured; each instance `LISTEN nexora_keys` and, on notification, rebuilds `KeyMaterial` once and enqueues it to every engine connected to it.
-- [ ] Add OpenAPI: `GET /tsig-keys` `listTsigKeys` → `[TsigKey{id,name,algorithm,revision,created_at}]`; `POST /tsig-keys` `createTsigKey` body `{name, algorithm, secret?}` → 201 `TsigKeyCreated` (TsigKey + `secret`), 503 `key_storage_unconfigured`; `DELETE /tsig-keys/{keyId}?revision=` `deleteTsigKey` → 204, 409 `conflict`/`tsig_key_in_use`. Permissions: `listTsigKeys` viewer, `createTsigKey` and `deleteTsigKey` admin. Map `keystore.ErrUnconfigured` → 503 `key_storage_unconfigured` in a shared helper `api.writeKeystoreError`. Regenerate server and `web/src/api/schema.d.ts` with the Task 5 commands.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ -count=1` — expect PASS.
-- [ ] Write the failing `engine/src/authoritative/keyring_tests.rs` (declare `pub mod keyring; #[cfg(test)] mod keyring_tests;`):
+```go
+package control_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"testing"
+
+	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/control"
+	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
+	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
+)
+
+func TestTSIGKeysLoadUnsealsAndDigestTracksChanges(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New(t)
+	box := kekBox(t) // M3 helper in rpztsig_test.go
+	admin := auth.Actor{Type: "user", ID: "admin", Name: "admin"}
+	loader := control.NewTSIGKeys(st, box)
+	if km, digest, err := loader.Load(ctx); err != nil || len(km.TsigKeys) != 0 || digest != "" {
+		t.Fatalf("empty set: %v %q %v", km, digest, err)
+	}
+	s := &tsigkey.Service{Store: st, Box: box}
+	secret := base64.StdEncoding.EncodeToString([]byte("fixture-tsig-key-xfr"))
+	if _, err := s.Create(ctx, admin, "xfr-key.", "hmac-sha512", secret); err != nil {
+		t.Fatal(err)
+	}
+	km, first, err := loader.Load(ctx)
+	if err != nil || len(km.TsigKeys) != 1 || first == "" {
+		t.Fatalf("one key: %v %q %v", km, first, err)
+	}
+	k := km.TsigKeys[0]
+	if k.Name != "xfr-key." || k.Algorithm != controlv1.TsigAlgorithm_TSIG_ALGORITHM_HMAC_SHA512 || !bytes.Equal(k.Secret, []byte("fixture-tsig-key-xfr")) {
+		t.Fatalf("key material: name=%q alg=%v", k.Name, k.Algorithm)
+	}
+	if _, err := s.Create(ctx, admin, "second.", "hmac-sha256", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, second, _ := loader.Load(ctx); second == first {
+		t.Fatal("digest did not change with the key set")
+	}
+}
+```
+
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ -run 'TestCreateStores|TestUnconfiguredKey|TestDeleteInUse|TestTSIGKeysLoad' -count=1` — expect FAIL with "undefined: tsigkey.Service".
+- [ ] Implement `tsigkey.Service`: names lowercased, absolute, `^([a-z0-9_-]{1,63}\.)+$`; algorithms hmac-sha256/384/512; empty secret → 32 random bytes (64 for sha512); a provided secret must decode from base64 to 16..64 bytes; seal with `Box.Seal(secrets.TSIGPurpose(name), secret)` before the transaction (an unconfigured box refuses without writing, as M3's `rpz.go` does); `Create`/`Delete` run in `snapshot.Mutate(ctx, s.Store, s.Build, actor, …)` with `auth.Change{Action: "createTsigKey"|"deleteTsigKey", TargetType: "tsig_key", TargetID: id, After: Key (never the secret)}`, so the new config version's `pg_notify` makes every hub re-offer `KeyMaterial`. `Delete` refuses when referenced by `zones.transfer_tsig_key_id`, `update_tsig_key_ids`, or any `notify_targets` / `primaries` element's `tsig_key_id` (`ErrInUse` → 409 `tsig_key_in_use`); stale revision → `store.ErrConflict`. `Secret` unseals one key for the management plane's own TSIG use (Tasks 10, 11).
+- [ ] Implement `control/tsigkeys.go` like `rpztsig.go`: select every `tsig_keys` row ordered by name, unseal, map the algorithm to `controlv1.TsigAlgorithm`, digest = SHA-256 of the deterministic marshalling (cleared after hashing). In `hub.go` add `TSIGKeys *TSIGKeys`, `loadKeyMaterial` (logs errors, never keys) and `subscriber.offerKeyMaterial(km, digest)` (same replace-pending logic as `offerKeys`); `broadcast` offers it after the RPZ keys. In `server.go` `Connect` offers it before the snapshot (next to the RPZ keys) and the send loop drains `sub.keyMaterial` with the same priority as `sub.keys`, sending `ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}`.
+- [ ] Add OpenAPI: `GET /tsig-keys` `listTsigKeys` → `[TsigKey{id,name,algorithm,revision,created_at}]`; `POST /tsig-keys` `createTsigKey` body `{name, algorithm, secret?}` → 201 `TsigKeyCreated` (TsigKey + `secret`), 400, 503; `DELETE /tsig-keys/{keyId}?revision=` `deleteTsigKey` → 204, 409 (`conflict` or `tsig_key_in_use`); all errors `#/components/responses/Error`. `mapError` gains `errors.Is(err, tsigkey.ErrInUse)` → 409 `tsig_key_in_use`; `secrets.ErrUnconfigured` already maps to 503 `key_storage_unconfigured`, and `secrets.ErrBackendUnavailable` maps to 503 `key_backend_unavailable`. Permissions: `listTsigKeys` viewer, `createTsigKey` and `deleteTsigKey` admin (Go and `permissions.ts`). `api.Deps` gains `TSIGKeys *tsigkey.Service`; `main.go` passes `&tsigkey.Service{Store: st, Build: build, Box: box}` and sets `hub.TSIGKeys = control.NewTSIGKeys(st, box)`. Regenerate the API.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ ./mgmt/internal/api/ -count=1` — expect PASS.
+- [ ] Move the engine TSIG module: `git mv engine/src/recursor/rpz/tsig.rs engine/src/tsig.rs`, add `pub mod tsig;` to `engine/src/lib.rs`, and replace `pub mod tsig;` in `engine/src/recursor/rpz/mod.rs` with `pub use crate::tsig;` (M3's `use super::tsig::…` in `manager.rs`, `transfer.rs` and `transfer_tests.rs` keep compiling). Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz` — expect PASS (pure move).
+- [ ] Write the failing `engine/src/tsig_tests.rs` (declare `#[cfg(test)] mod tsig_tests;` in `lib.rs`):
 
 ```rust
-use super::keyring::{KeyRing, TsigAlg};
-use crate::pb;
+use crate::proto;
+use crate::tsig::{KeyRing, TsigAlg};
 
-fn km(generation: u64, algorithm: &str) -> pb::KeyMaterial {
-    pb::KeyMaterial {
-        generation,
-        tsig_keys: vec![pb::TsigSecret { name: "xfr-key.".into(), algorithm: algorithm.into(), secret: vec![7u8; 32] }],
+fn km(algorithm: proto::TsigAlgorithm) -> proto::KeyMaterial {
+    proto::KeyMaterial {
+        tsig_keys: vec![proto::TsigSecret { name: "xfr-key.".into(), algorithm: algorithm as i32, secret: vec![7u8; 32] }],
     }
 }
 
 #[test]
-fn applies_newer_generations_only_and_redacts_debug() {
+fn key_ring_replaces_the_set_skips_unknown_algorithms_and_redacts_debug() {
     let ring = KeyRing::default();
-    ring.apply(&km(2, "hmac-sha256")).unwrap();
+    ring.apply(km(proto::TsigAlgorithm::HmacSha256));
     let k = ring.get(b"\x07xfr-key\x00").expect("key by lowercase wire name");
-    assert!(matches!(k.alg, TsigAlg::HmacSha256));
+    assert_eq!(k.alg, TsigAlg::HmacSha256);
     assert_eq!(&k.secret[..], &[7u8; 32][..]);
     assert!(!format!("{k:?}").contains("7, 7"), "secret bytes must not appear in Debug output");
-    assert!(ring.apply(&km(1, "hmac-sha256")).is_err(), "older generation");
-    assert!(ring.apply(&km(3, "hmac-md5")).is_err(), "unsupported algorithm");
-    assert_eq!(ring.generation(), 2, "failed applies leave the ring unchanged");
-    ring.apply(&pb::KeyMaterial { generation: 4, tsig_keys: vec![] }).unwrap();
+    ring.apply(km(proto::TsigAlgorithm::HmacSha384));
+    assert_eq!(ring.get(b"\x07xfr-key\x00").unwrap().alg, TsigAlg::HmacSha384);
+    ring.apply(km(proto::TsigAlgorithm::None));
+    assert!(ring.get(b"\x07xfr-key\x00").is_none(), "a key without a supported algorithm is skipped");
+    ring.apply(km(proto::TsigAlgorithm::HmacSha512));
+    assert_eq!(ring.len(), 1);
+    ring.apply(proto::KeyMaterial { tsig_keys: vec![] });
     assert!(ring.get(b"\x07xfr-key\x00").is_none(), "removed keys disappear");
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::keyring_tests` — expect FAIL with "unresolved import `super::keyring`".
-- [ ] Implement `keyring.rs` (`ArcSwap`, names converted with `name::from_ascii` and lowercased, secrets moved into `Zeroizing<Vec<u8>>`, manual `Debug` printing `name`, `alg` and `secret: <redacted>`), hold one `Arc<KeyRing>` in the control client next to the runtime, and apply `ServerMessage.key_material` in `control.rs`. The keyring is never written to `state_dir`; `snapshot.binpb` holds key names only.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::keyring_tests` — expect PASS.
-- [ ] Commit: `git add mgmt engine go.mod go.sum web/src/api/schema.d.ts && git commit -m "feat(m4): KEK and PKCS#11 key storage, TSIG keys, in-memory KeyMaterial on engines"`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib tsig_tests` — expect FAIL with "unresolved import `crate::tsig::KeyRing`".
+- [ ] Implement in `tsig.rs`: `TsigAlg::HmacSha384` (`name()` = `"hmac-sha384."`, `ring()` = `hmac::HMAC_SHA384`), `TsigAlg::from_proto`, and `KeyRing` (`ArcSwap<FxHashMap<Box<[u8]>, Arc<TsigKey>>>`; `apply` builds a new map from `Name::from_ascii(name)`, keyed by `name.to_lowercase().to_bytes()`, moving each secret into `Zeroizing<Vec<u8>>`; M3's manual `Debug` for `TsigKey` already prints `<redacted>`). `AuthState` gains `pub keyring: Arc<KeyRing>`; `control::session` handles `Some(ServerMsg::KeyMaterial(km)) => shared.auth.keyring.apply(km)` next to the `RpzTsigKeys` arm (never logged). The key ring is never written to `state_dir`; `snapshot.binpb` holds key names only.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib tsig_tests` and `scripts/dev-exec.sh make engine-test` — expect PASS.
+- [ ] Commit: `git add mgmt engine go.mod go.sum web/src/api/schema.d.ts web/src/auth/permissions.ts && git commit -m "feat(m4): PKCS#11 key storage and signing keys in secrets, TSIG keys, in-memory KeyMaterial on engines"`.
 
 ## Task 7: Engine TSIG (RFC 8945) and signed queries to hosted zones
 
@@ -2964,26 +3152,25 @@ Files:
 
 - `mgmt/internal/nzf/tsigvectors_test.go` — writes miekg-signed TSIG vectors (`-update`)
 - `testdata/tsig/query-hmac-sha256.bin`, `response-hmac-sha256.bin`, `query-hmac-sha512.bin` — vectors
-- `engine/Cargo.toml` — `hmac = "0.13.0"` (modify)
-- `engine/src/authoritative/tsig.rs` — find, verify, sign (request, response, stream), error responses
-- `engine/src/authoritative/tsig_tests.rs`
-- `engine/src/authoritative/dispatch.rs` — `slow_path` for TSIG-signed queries to hosted zones (modify)
+- `engine/src/tsig.rs` — server side added to M3's module: find, verify requests, stream signing, error responses (modify)
+- `engine/src/tsig_tests.rs` — appended protocol tests (modify)
+- `engine/src/authoritative/dispatch.rs` — `unparsed` answers TSIG-signed queries to hosted zones (modify)
+
+No crate is added: M3's module already computes HMAC with `ring::hmac` and builds the RFC 8945 MAC inputs (`variables`, `response_input`, `append_tsig`); `sign_request`, `sign_response(wire, key, time_signed, prior_mac, first, unsigned_before)` and `TsigVerifier` stay as they are.
 
 Interfaces:
 
 ```rust
-pub struct TsigRecord<'a> { pub start: usize, pub key_name: &'a [u8], pub alg_name: &'a [u8], pub time_signed: u64, pub fudge: u16, pub mac: &'a [u8], pub original_id: u16, pub error: u16, pub other: &'a [u8] }
+// engine/src/tsig.rs (additions; existing: TsigAlg, TsigKey, TsigError, FUDGE, skip_name, extract_mac, sign_request, sign_response, TsigVerifier, KeyRing)
+pub struct TsigRecord { pub start: usize, pub key_name: Name, pub alg_name: Name, pub time_signed: u64, pub fudge: u16, pub mac: Vec<u8>, pub original_id: u16, pub error: u16, pub other: Vec<u8> }
 pub enum TsigFailure { FormErr, BadKey, BadSig, BadTime { key: Arc<TsigKey>, request_mac: Vec<u8>, time_signed: u64 } }
 pub enum Verified { Unsigned, Signed { key: Arc<TsigKey>, request_mac: Vec<u8> } }
-pub const FUDGE: u16 = 300;
-pub fn find_tsig(msg: &[u8]) -> Result<Option<TsigRecord<'_>>, MsgError>;
+pub fn find_tsig(msg: &[u8]) -> Result<Option<TsigRecord>, TsigError>;      // TsigError::Malformed: TSIG not last, twice, or class != ANY
 pub fn verify_request(msg: &[u8], ring: &KeyRing, now: u64) -> Result<Verified, TsigFailure>;
-pub fn sign_request(msg: &mut Vec<u8>, key: &TsigKey, now: u64) -> Vec<u8>;                    // returns MAC
-pub fn sign_response(msg: &mut Vec<u8>, key: &TsigKey, request_mac: &[u8], now: u64, error: u16) -> Vec<u8>;
-pub fn verify_response(msg: &[u8], key: &TsigKey, request_mac: &[u8], now: u64) -> Result<(), TsigFailure>;
-pub struct StreamSigner { key: Arc<TsigKey>, prev_mac: Vec<u8>, first: bool }
+pub fn sign_response_error(wire: &mut Vec<u8>, key: &TsigKey, time_signed: u64, request_mac: &[u8], error: u16, other: &[u8]) -> Vec<u8>;
+pub struct StreamSigner { /* key: Arc<TsigKey>, prev_mac: Vec<u8>, first: bool */ }
 impl StreamSigner { pub fn new(key: Arc<TsigKey>, request_mac: Vec<u8>) -> Self; pub fn sign(&mut self, msg: &mut Vec<u8>, now: u64); }
-pub fn error_response(request: &[u8], q_end: usize, failure: &TsigFailure, now: u64) -> Vec<u8>; // NOTAUTH + TSIG error (16 BADSIG, 17 BADKEY, 18 BADTIME)
+pub fn error_response(request: &[u8], failure: &TsigFailure, now: u64) -> Vec<u8>; // NOTAUTH + TSIG error (16 BADSIG, 17 BADKEY, 18 BADTIME)
 ```
 
 - [ ] Write the vector generator `mgmt/internal/nzf/tsigvectors_test.go` (lives beside the other goldens; it writes only with `-update` and otherwise checks the files exist):
@@ -3054,12 +3241,11 @@ func TestTSIGVectors(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/nzf/ -run TestTSIGVectors -count=1 -update` — expect PASS and three files under `testdata/tsig/`.
-- [ ] Write the failing `engine/src/authoritative/tsig_tests.rs` (declare `pub mod tsig; #[cfg(test)] mod tsig_tests;`):
+- [ ] Append the failing protocol tests to `engine/src/tsig_tests.rs` (merge the `use` lines with the key ring test's):
 
 ```rust
-use super::keyring::KeyRing;
-use super::tsig::{find_tsig, sign_response, verify_request, StreamSigner, TsigFailure, Verified};
-use crate::pb;
+use crate::tsig::{find_tsig, sign_response, verify_request, StreamSigner, TsigFailure, Verified};
+use hickory_proto::rr::Name;
 
 const Q: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata/tsig/query-hmac-sha256.bin"));
 const R: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata/tsig/response-hmac-sha256.bin"));
@@ -3068,22 +3254,20 @@ const T0: u64 = 1757750400;
 
 pub(crate) fn test_ring() -> KeyRing {
     let ring = KeyRing::default();
-    ring.apply(&pb::KeyMaterial {
-        generation: 1,
+    ring.apply(proto::KeyMaterial {
         tsig_keys: vec![
-            pb::TsigSecret { name: "xfr-key.".into(), algorithm: "hmac-sha256".into(), secret: (0u8..32).collect() },
-            pb::TsigSecret { name: "sha512-key.".into(), algorithm: "hmac-sha512".into(), secret: (0u8..64).collect() },
+            proto::TsigSecret { name: "xfr-key.".into(), algorithm: proto::TsigAlgorithm::HmacSha256 as i32, secret: (0u8..32).collect() },
+            proto::TsigSecret { name: "sha512-key.".into(), algorithm: proto::TsigAlgorithm::HmacSha512 as i32, secret: (0u8..64).collect() },
         ],
-    })
-    .unwrap();
+    });
     ring
 }
 
 #[test]
 fn verifies_miekg_signed_queries() {
-    for (msg, name) in [(Q, &b"\x07xfr-key\x00"[..]), (Q512, &b"\x0asha512-key\x00"[..])] {
+    for (msg, name) in [(Q, "xfr-key."), (Q512, "sha512-key.")] {
         match verify_request(msg, &test_ring(), T0 + 10) {
-            Ok(Verified::Signed { key, .. }) => assert_eq!(&*key.name, name),
+            Ok(Verified::Signed { key, .. }) => assert_eq!(key.name, Name::from_ascii(name).unwrap()),
             Ok(Verified::Unsigned) => panic!("unsigned"),
             Err(_) => panic!("verification failed"),
         }
@@ -3123,7 +3307,7 @@ fn response_signature_is_byte_identical_to_miekg() {
     let mut unsigned = R[..t.start].to_vec();
     let ar = u16::from_be_bytes([unsigned[10], unsigned[11]]) - 1;
     unsigned[10..12].copy_from_slice(&ar.to_be_bytes());
-    sign_response(&mut unsigned, &key, &request_mac, T0, 0);
+    sign_response(&mut unsigned, &key, T0, &request_mac, true, &[]);
     assert_eq!(unsigned, R);
 }
 
@@ -3145,59 +3329,27 @@ fn stream_signer_chains_macs() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::tsig_tests` — expect FAIL with "unresolved import `super::tsig`".
-- [ ] Implement `tsig.rs`. MAC inputs (RFC 8945 §4.3.3 and §5.3):
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib tsig_tests` — expect FAIL with "unresolved import `crate::tsig::find_tsig`".
+- [ ] Implement the server side in `tsig.rs` on M3's primitives (MAC inputs per RFC 8945 §4.3.3 and §5.3 are M3's `variables` and `response_input`; `ring::hmac::verify` compares in constant time):
 
 ```rust
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::{Sha256, Sha384, Sha512};
-
-fn tsig_vars(out: &mut Vec<u8>, key_name: &[u8], alg_name: &[u8], time: u64, fudge: u16, error: u16, other: &[u8]) {
-    push_lower_name(out, key_name);            // canonical: lowercase, uncompressed
-    out.extend_from_slice(&255u16.to_be_bytes()); // CLASS ANY
-    out.extend_from_slice(&0u32.to_be_bytes());   // TTL
-    push_lower_name(out, alg_name);
-    out.extend_from_slice(&time.to_be_bytes()[2..]); // 48-bit time signed
-    out.extend_from_slice(&fudge.to_be_bytes());
-    out.extend_from_slice(&error.to_be_bytes());
-    out.extend_from_slice(&(other.len() as u16).to_be_bytes());
-    out.extend_from_slice(other);
-}
-
-fn mac(alg: TsigAlg, secret: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-    macro_rules! run {
-        ($h:ty) => {{
-            let mut m = <Hmac<$h> as KeyInit>::new_from_slice(secret).expect("any key length");
-            for p in parts {
-                m.update(p);
-            }
-            m.finalize().into_bytes().to_vec()
-        }};
-    }
-    match alg {
-        TsigAlg::HmacSha256 => run!(Sha256),
-        TsigAlg::HmacSha384 => run!(Sha384),
-        TsigAlg::HmacSha512 => run!(Sha512),
-    }
-}
-
-// Request: MAC(stripped message || vars).
-// Response: MAC(u16 len(request_mac) || request_mac || stripped message || vars).
-// Later stream messages: MAC(u16 len(prev_mac) || prev_mac || stripped message || time(48) || fudge(16)).
-fn stripped(msg: &[u8], t: &TsigRecord<'_>) -> Vec<u8> {
-    let mut m = msg[..t.start].to_vec();
+/// Request MAC input: the message without its TSIG RR, ARCOUNT decremented, ID = original ID, then
+/// the TSIG variables of the request (M3's `variables(key, time, error, other, false)`).
+fn request_input(msg: &[u8], t: &TsigRecord, key: &TsigKey) -> Zeroizing<Vec<u8>> {
+    let mut m = Zeroizing::new(msg[..t.start].to_vec());
     m[0..2].copy_from_slice(&t.original_id.to_be_bytes());
     let ar = u16::from_be_bytes([m[10], m[11]]) - 1;
     m[10..12].copy_from_slice(&ar.to_be_bytes());
+    m.extend(variables(key, t.time_signed, t.error, &t.other, false));
     m
 }
 ```
 
-`find_tsig` walks all sections with `msg::walk_rrs`; a TSIG anywhere but last, more than one TSIG, or class ≠ ANY → `FormErr`. `verify_request`: key lookup by lowercased name → `BadKey`; algorithm name must equal the key's (`hmac-sha256.` etc., case-insensitive) → `BadKey`; MAC length must equal the full digest length → `BadSig`; compare with `Mac::verify_slice` → `BadSig`; then `|now - time_signed| > fudge` → `BadTime`. Signing appends the TSIG RR (owner = key name, type 250, class 255, TTL 0, rdata = alg name, time 48 bit, fudge 300, MAC size + MAC, original ID = message ID, error, other len + other) uncompressed and increments ARCOUNT. `error_response` builds header (ID, QR, opcode copied, rcode NOTAUTH = 9), copies the question, and appends a TSIG RR with empty MAC for BADKEY/BADSIG, or signed with `other` = 48-bit server time for BADTIME.
+`find_tsig` walks all sections with M3's `skip_name` (like `tsig_offset`); a TSIG anywhere but last, more than one TSIG, or class ≠ ANY → `TsigError::Malformed`; it returns the record parsed by M3's `parse_tsig` plus its `start`. `verify_request`: no TSIG → `Unsigned`; malformed → `FormErr`; key lookup `ring.get(&key_name.to_lowercase().to_bytes())` → `BadKey`; algorithm name must equal the key's `alg.name()` (case-insensitive) → `BadKey`; MAC length must equal the full digest length → `BadSig`; `hmac::verify` over `request_input` → `BadSig`; then `|now - time_signed| > fudge` → `BadTime { key, request_mac, time_signed }`. `sign_response_error` is M3's `sign_response` with a non-zero error and `other` (both covered by the variables). `StreamSigner::sign` calls `sign_response(msg, &key, now, &prev_mac, first, &[])` and keeps the returned MAC, `first = false` after the first message. `error_response` builds the header (ID, QR, opcode copied, rcode NOTAUTH = 9), copies the question, and appends a TSIG RR with an empty MAC for BADKEY/BADSIG, or signs it with `sign_response_error(error = 18, other = 48-bit server time)` for BADTIME.
 
-- [ ] Extend `dispatch::slow_path`: parse with `msg::Question::parse`; when `tsig_at` is set and opcode is QUERY and qtype ∉ {AXFR, IXFR}: zone not hosted → REFUSED (unsigned); verification failure → `error_response`; success → `answer::respond` into a `Vec` with the UDP/TCP limit minus the TSIG size (key name + alg name + 16 + digest length), then `sign_response`. Replies are sent through the normal UDP batch / TCP writer.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::tsig_tests` — expect PASS.
-- [ ] Commit: `git add engine testdata/tsig mgmt/internal/nzf/tsigvectors_test.go && git commit -m "feat(engine): TSIG verification and signing cross-checked against miekg vectors"`.
+- [ ] Extend `dispatch::unparsed`: parse with `msg::Question::parse`; when `tsig_at` is set, opcode is QUERY and qtype ∉ {AXFR, IXFR}: zone not hosted → `AuthOutcome::Reply` of an unsigned REFUSED; `verify_request(packet, &ctx.shared.auth.keyring, clock::unix_now())` failure → `error_response`; `Unsigned` cannot happen here; success → `answer::respond` into a `Vec` with `max_len` = the transport limit (`edns::reply_limit`, UDP capped at 1232) minus the TSIG size (key name + alg name + 16 + digest length), then `sign_response(&mut v, &key, now, &request_mac, true, &[])`; the bytes are copied into `out` (they fit by construction) and returned as `AuthOutcome::Reply(n)`, which `handle_packet` sends and logs like any fast-path reply.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib tsig_tests` and `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz` — expect PASS.
+- [ ] Commit: `git add engine testdata/tsig mgmt/internal/nzf/tsigvectors_test.go && git commit -m "feat(engine): server-side TSIG on M3's module, cross-checked against miekg vectors"`.
 
 ## Task 8: Zone transfers out (AXFR/IXFR, ACL + TSIG) and NOTIFY to secondaries
 
@@ -3207,12 +3359,14 @@ Files:
 - `engine/src/authoritative/xfr_tests.rs`
 - `engine/src/authoritative/notify_out.rs` — NOTIFY sender with retries
 - `engine/src/authoritative/notify_out_tests.rs`
-- `engine/src/authoritative/dispatch.rs` — IXFR/AXFR routing on UDP and TCP (modify)
-- `engine/src/server/tcp.rs` — write multi-message transfers on the connection (modify)
-- `engine/src/control.rs` — spawn NOTIFY jobs for `Loaded.changed` after `ArcSwap::store` (modify)
+- `engine/src/authoritative/dispatch.rs` — AXFR/IXFR routing: `AuthOutcome::Slow`, `SlowJob`, `run_slow` (modify)
+- `engine/src/authoritative/zone.rs`, `engine/src/authoritative/loader.rs` — `DeltaRecords::from_parsed`; `Zone` transfer policy and notify targets from `AuthZone` (modify)
+- `engine/src/authoritative/state.rs` — `after_apply` sends NOTIFY for `rt.auth_changed` (modify)
+- `engine/src/server/mod.rs` — `FastOutcome::Slow`, `Answerer::answer_frames` (default one frame), `WorkerAnswerer` runs slow jobs (modify)
+- `engine/src/server/stream.rs` — `serve_dns_stream` writes every frame of `answer_frames` in order (modify)
+- `engine/src/server/udp.rs`, `engine/src/server/rewrite.rs` — handle `FastOutcome::Slow` (modify)
 - `engine/src/telemetry/metrics.rs` — `nexora_auth_transfers_total`, `nexora_auth_notify_sent_total` (modify)
-- `e2e/harness/named.go` — BIND `named` fixture (primary or secondary zones)
-- `e2e/harness/kek.go` — `WriteKEK`, `FreePort`
+- `e2e/harness/named.go` — `(*Env).StartNamedConfig` (primary and secondary zones, keys, updates, also-notify); M3's `StartNamed` becomes a wrapper (modify)
 - `e2e/xfr_test.go` — `TestAXFRIXFROut`
 
 Interfaces:
@@ -3221,22 +3375,35 @@ Interfaces:
 // xfr.rs
 pub const MAX_XFR_MESSAGE: usize = 16384;
 pub enum Plan { Refused(u8 /* rcode */), TsigError(TsigFailure), UpToDate(Arc<Zone>), Full(Arc<Zone>), Incremental(Arc<Zone>, usize /* first delta index */) }
-pub fn authorize_and_plan(rt: &Runtime, ring: &KeyRing, raw: &[u8], q: &Question<'_>, client: IpAddr, tcp: bool, now: u64) -> (Plan, Option<(Arc<TsigKey>, Vec<u8>)>);
-pub fn messages(plan: &Plan, raw: &[u8], q: &Question<'_>, tsig: Option<(Arc<TsigKey>, Vec<u8>)>, now: u64) -> Vec<Vec<u8>>; // each ≤ MAX_XFR_MESSAGE before TSIG
+pub fn authorize_and_plan(rt: &Runtime, ring: &crate::tsig::KeyRing, raw: &[u8], q: &Question<'_>, client: IpAddr, tcp: bool, now: u64) -> (Plan, Option<(Arc<crate::tsig::TsigKey>, Vec<u8>)>);
+pub fn messages(plan: &Plan, raw: &[u8], q: &Question<'_>, tsig: Option<(Arc<crate::tsig::TsigKey>, Vec<u8>)>, now: u64) -> Vec<Vec<u8>>; // each ≤ MAX_XFR_MESSAGE before TSIG
 // notify_out.rs
-pub struct NotifyJob { pub zone: Box<[u8]>, pub soa_rr: Vec<u8> /* owner+type+class+ttl+rdlen+rdata */, pub target: SocketAddr, pub key: Option<Arc<TsigKey>> }
+pub struct NotifyJob { pub zone: Box<[u8]>, pub soa_rr: Vec<u8> /* owner+type+class+ttl+rdlen+rdata */, pub target: SocketAddr, pub key: Option<Arc<crate::tsig::TsigKey>> }
 pub enum NotifyResult { Acked { attempts: u32 }, Rejected(u8), Timeout, NoKey }
 pub async fn send_notify(job: NotifyJob, first_timeout: Duration, attempts: u32) -> NotifyResult; // production: 2 s doubling, 5 attempts
+// dispatch.rs
+pub enum AuthOutcome { NotHosted, Reply(usize), Slow(SlowJob) }
+pub enum SlowKind { Transfer } // Task 11 adds Update
+pub struct SlowJob { pub query: Box<[u8]>, pub client: SocketAddr, pub transport: Transport, pub kind: SlowKind }
+pub async fn run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec<Vec<u8>>; // complete messages in send order; empty = send nothing
+// server/mod.rs
+pub enum FastOutcome { Reply(usize), Drop, Miss(MissJob), Rewrite(rewrite::RewriteJob), Slow(authoritative::dispatch::SlowJob) }
+pub trait Answerer {
+    async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>);
+    /// Stream transports (TCP, DoT): every message of the reply in order. Default: the one `answer` message.
+    async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>);
+}
 ```
 
 ```go
 package harness
-type NamedKey struct{ Name, Algorithm, Secret string }
-type NamedZone struct{ Name, Type string; Primary string /* "127.0.0.1:port" */; KeyName string; FileContent string; AllowUpdateKey string; AlsoNotify string /* "127.0.0.1:port" */ }
-type Named struct{ Addr string; Dir string }
-func StartNamed(t *testing.T, port int, keys []NamedKey, zones []NamedZone) *Named
-func WriteKEK(t *testing.T) string
-func FreePort(t *testing.T) int
+// NamedKey is a TSIG key named knows; SecretB64 is the base64 secret.
+type NamedKey struct{ Name, Algorithm, SecretB64 string }
+// NamedZone is Type "primary" (Text = zone file; optional AllowTransferKey, AllowUpdateKey, AlsoNotify "ip:port")
+// or "secondary" (Primary "ip:port", optional KeyName for the transfer).
+type NamedZone struct{ Name, Type, Text, Primary, KeyName, AllowTransferKey, AllowUpdateKey, AlsoNotify string }
+type NamedConfig struct{ Keys []NamedKey; Zones []NamedZone }
+func (e *Env) StartNamedConfig(c NamedConfig) *Named // Named{Addr, KeyName, KeySecretB64, Proc} as in M3
 ```
 
 - [ ] Write the failing `engine/src/authoritative/xfr_tests.rs` (declare `pub mod xfr; pub mod notify_out; #[cfg(test)] mod xfr_tests; #[cfg(test)] mod notify_out_tests;`):
@@ -3332,15 +3499,15 @@ fn large_zone_is_split_into_multiple_messages() {
 
 `plan_for_tests(set, raw)` is a `#[cfg(test)]` helper in `xfr.rs` that runs the plan logic with an open ACL, no TSIG requirement and TCP.
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::xfr_tests` — expect FAIL with "unresolved import `super::xfr`".
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::xfr_tests` — expect FAIL with "unresolved import `super::xfr`".
 - [ ] Implement `xfr.rs`:
   - authorisation in this order: zone hosted with `origin == qname` else NOTAUTH; `expired` → SERVFAIL; client IP outside `transfer.allow_cidrs` (empty list refuses all) → REFUSED; when `transfer.tsig_key` is set: unsigned → REFUSED, verification failure → `TsigError`, verified key name ≠ policy key → REFUSED; AXFR over UDP → FORMERR.
   - IXFR: `ixfr_serial` missing → FORMERR; `!SerialLess(client, zone.serial)` → `UpToDate`; index `i` with `deltas[i].from_serial == client` and `deltas[i..]` contiguous to `zone.serial` → `Incremental(i)`; otherwise `Full`. On UDP anything but `UpToDate` is answered as a single SOA (the client retries over TCP).
   - `messages`: header copies ID, QR=1, AA=1, opcode 0; the first message carries the question, later ones QDCOUNT=0; records are appended through `writer.rs` (question-suffix compression) until the next RR would exceed `MAX_XFR_MESSAGE`, then a new message starts. `Full`: SOA, every record of `records_sorted()` except the apex SOA, SOA. `Incremental(i)`: current SOA, then for each delta: its `deleted` (first is old SOA) and `added` (first is new SOA), then current SOA. `UpToDate`: one message with the current SOA. With TSIG, each message is signed by one `StreamSigner`.
   - metrics: axfr→`result="full"`, ixfr→`incremental|full|uptodate`, any refusal→`result="refused"`.
-- [ ] Add `DeltaRecords::from_parsed` in `zone.rs` (owned copies of `Parsed.a` / `Parsed.b`) and have the loader (Task 4) use it.
-- [ ] Route in `dispatch.rs`: on TCP after `parse_query` succeeds or through `slow_path`, qtype AXFR/IXFR for a hosted name → `authorize_and_plan` + `messages`, returned to `server/tcp.rs` as `Vec<Vec<u8>>` written length-prefixed in order on the same connection (the connection idle timeout is suspended while writing). On UDP: IXFR (reaches `slow_path` because NSCOUNT=1) → single SOA or refusal; AXFR → FORMERR.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::xfr_tests` — expect PASS.
+- [ ] Add `DeltaRecords::from_parsed` in `zone.rs` (owned copies of `Parsed.a` / `Parsed.b`) and have the loader (Task 4) use it. `Zone` gains `transfer_allow: Vec<ipnet::IpNet>`, `transfer_key: Option<Box<[u8]>>` (lowercase wire name) and `notify: Vec<(SocketAddr, Option<Box<[u8]>>)>`, set by the loader from `AuthZone.transfer` and `AuthZone.notify`.
+- [ ] Route transfers. In `dispatch::fast`, a hosted AXFR/IXFR over `Transport::Tcp` or `Transport::Dot` returns `AuthOutcome::Slow(SlowJob { query: packet.into(), client, transport, kind: SlowKind::Transfer })`, over `Doh`/`Doq` a REFUSED reply; `dispatch::unparsed` does the same for an IXFR (NSCOUNT=1) on streams and answers it inline on UDP (a single SOA, or the refusal from `authorize_and_plan`). `handle_packet` maps `AuthOutcome::Slow(job)` to `FastOutcome::Slow(job)`. `run_slow` for `Transfer`: `Question::parse`, `authorize_and_plan(&rt, &ctx.shared.auth.keyring, &job.query, &q, job.client.ip(), true, clock::unix_now())`, `messages(...)`, count `ctx.shared.metrics.auth.transfers`. `Answerer` gains `answer_frames` with the default body `let mut out = Vec::new(); self.answer(client, query, &mut out).await; if !out.is_empty() { frames.push(out); }`; `WorkerAnswerer` overrides it to push every message of `run_slow` for `FastOutcome::Slow` (and its `answer` takes the first message). `serve_dns_stream`'s per-query task calls `answer_frames` and sends each frame (length prefix + message, at most 65535 octets) to the writer channel in order, holding its pipelining permit until the last frame is queued. `server/udp.rs` spawns `run_slow` for `FastOutcome::Slow` and sends the first message with `send_reply`; `rewrite.rs`'s re-entry treats `FastOutcome::Slow(_)` like `Drop`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::xfr_tests` — expect PASS.
 - [ ] Write the failing `engine/src/authoritative/notify_out_tests.rs`:
 
 ```rust
@@ -3390,112 +3557,128 @@ async fn gives_up_after_the_attempt_budget() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::notify_out_tests` — expect FAIL with "unresolved import `super::notify_out`".
-- [ ] Implement `notify_out.rs`: bind an unconnected UDP socket on the unspecified address of the target's family, `connect(target)`; message = random ID (`rand`), flags opcode 4 + AA, QDCOUNT 1 (zone, SOA, IN), ANCOUNT 1 (`soa_rr`); TSIG-signed with `sign_request` when `key` is set. For attempt `k` (0-based) wait `first_timeout * 2^k` for a datagram with matching ID, QR=1, opcode 4 (and a valid TSIG via `verify_response` when signed); ignore other datagrams; NOERROR → `Acked{attempts: k+1}`; other rcode → `Rejected(rcode)`.
-- [ ] In `control.rs`, after storing the new runtime, for each `(zone, serial)` in `Loaded.changed` and each `notify` target: resolve the key name through the keyring (named but absent → `NoKey`), spawn `send_notify(job, 2 s, 5)` on the control runtime and count the result. On process start the first applied snapshot marks every zone changed, so secondaries are notified after restarts.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative` — expect PASS.
-- [ ] Write `e2e/harness/kek.go` (`WriteKEK` writes base64 of 32 random bytes to a temp file with mode 0600; `FreePort` binds `127.0.0.1:0` on TCP and UDP and returns a port free on both) and `e2e/harness/named.go`:
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::notify_out_tests` — expect FAIL with "unresolved import `super::notify_out`".
+- [ ] Implement `notify_out.rs`: bind an unconnected UDP socket on the unspecified address of the target's family, `connect(target)`; message = random ID (`rand`), flags opcode 4 + AA, QDCOUNT 1 (zone, SOA, IN), ANCOUNT 1 (`soa_rr`); TSIG-signed with `crate::tsig::sign_request(&mut msg, &key, now)` when `key` is set. For attempt `k` (0-based) wait `first_timeout * 2^k` for a datagram with matching ID, QR=1, opcode 4 (and, when signed, `TsigVerifier::new((*key).clone(), request_mac.clone()).verify(&reply, now)` succeeds); ignore other datagrams; NOERROR → `Acked{attempts: k+1}`; other rcode → `Rejected(rcode)`.
+- [ ] In `authoritative::after_apply` (Task 4's hook, once per runtime version), for each `(zone, serial)` in `rt.auth_changed` and each of that zone's `notify` targets: resolve the key name through `shared.auth.keyring` (named but absent → count `NoKey`, send nothing), build the `NotifyJob` from the zone's apex SOA, spawn `send_notify(job, Duration::from_secs(2), 5)` on the control runtime handle stored in `AuthState` and count the result in `shared.metrics.auth.notify_sent`. Without a stored handle (only before `main.rs` builds the control runtime) the jobs are skipped; `main.rs` calls `after_apply` once the handle is set. On process start the first applied snapshot marks every zone changed, so secondaries are notified after restarts.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` — expect PASS.
+- [ ] Generalise M3's BIND helper in `e2e/harness/named.go`. Replace the `namedConf` template with the builder below, keep `Named`, `writeFile`, `Stop` and the port-retry and run-as-`dev` logic, add a `file string` field (the first primary zone's file, used by `UpdateZone`), and let `serving` probe `version.bind. CH TXT` over TCP when `n.zone` is empty (secondary-only instances). `StartNamed(zoneName, zoneText)` keeps its signature and behaviour: it draws the random `rpz-key.` secret as today and returns `e.StartNamedConfig(NamedConfig{Keys: []NamedKey{{Name: "rpz-key.", Algorithm: "hmac-sha256", SecretB64: secret}}, Zones: []NamedZone{{Name: zoneName, Type: "primary", Text: zoneText, AllowTransferKey: "rpz-key."}}})` with `KeyName`/`KeySecretB64` set.
 
 ```go
-package harness
+// NamedKey is a TSIG key named knows; SecretB64 is the base64 secret.
+type NamedKey struct{ Name, Algorithm, SecretB64 string }
 
-import (
-	"bytes"
-	"fmt"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
+// NamedZone is one zone: Type "primary" (Text is the zone file; AllowTransferKey restricts
+// transfers to that key, otherwise any client may transfer; AllowUpdateKey enables RFC 2136
+// updates with that key; AlsoNotify is "ip:port") or "secondary" (Primary is "ip:port", KeyName
+// signs the transfer).
+type NamedZone struct{ Name, Type, Text, Primary, KeyName, AllowTransferKey, AllowUpdateKey, AlsoNotify string }
 
-	"github.com/miekg/dns"
-)
+// NamedConfig configures StartNamedConfig.
+type NamedConfig struct {
+	Keys  []NamedKey
+	Zones []NamedZone
+}
 
-func StartNamed(t *testing.T, port int, keys []NamedKey, zones []NamedZone) *Named {
+// StartNamedConfig starts `named` with c on a free loopback port, retrying when the port was
+// taken, and waits until it serves: SOA of its first primary zone, or CHAOS version.bind.
+func (e *Env) StartNamedConfig(c NamedConfig) *Named {
+	t := e.T
 	t.Helper()
-	dir := t.TempDir()
-	var conf strings.Builder
-	fmt.Fprintf(&conf, `options {
-	directory "%[1]s";
-	pid-file "%[1]s/named.pid";
-	session-keyfile "%[1]s/session.key";
-	listen-on port %[2]d { 127.0.0.1; };
-	listen-on-v6 { none; };
-	recursion no;
-	dnssec-validation no;
-	allow-transfer { any; };
-	allow-notify { 127.0.0.1; };
-	notify no;
-};
-controls { };
-`, dir, port)
-	for _, k := range keys {
-		fmt.Fprintf(&conf, "key %q { algorithm %s; secret %q; };\n", k.Name, k.Algorithm, k.Secret)
+	dir, err := os.MkdirTemp("", "nexora-named-")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, z := range zones {
-		file := strings.TrimSuffix(z.Name, ".") + ".db"
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	n := &Named{dir: dir, cred: pgCredential(t)}
+	t.Cleanup(func() {
+		n.Stop()
+		_ = os.RemoveAll(dir)
+	})
+	if n.cred != nil {
+		if err := os.Chown(dir, int(n.cred.Uid), int(n.cred.Gid)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var body strings.Builder
+	for _, k := range c.Keys {
+		fmt.Fprintf(&body, "key %q { algorithm %s; secret %q; };\n", k.Name, k.Algorithm, k.SecretB64)
+	}
+	for _, z := range c.Zones {
+		name := dns.Fqdn(z.Name)
+		file := strings.TrimSuffix(name, ".") + ".db"
 		switch z.Type {
-		case "secondary":
-			host, p, _ := net.SplitHostPort(z.Primary)
-			keyClause := ""
-			if z.KeyName != "" {
-				keyClause = fmt.Sprintf(" key %q", z.KeyName)
-			}
-			fmt.Fprintf(&conf, "zone %q { type secondary; primaries { %s port %s%s; }; file %q; };\n", z.Name, host, p, keyClause, file)
 		case "primary":
-			if err := os.WriteFile(filepath.Join(dir, file), []byte(z.FileContent), 0o644); err != nil {
-				t.Fatal(err)
+			n.writeFile(t, file, z.Text)
+			if n.zone == "" {
+				n.zone, n.file = name, file
 			}
 			extra := ""
+			if z.AllowTransferKey != "" {
+				extra += fmt.Sprintf(" allow-transfer { key %q; };", z.AllowTransferKey)
+			}
 			if z.AllowUpdateKey != "" {
 				extra += fmt.Sprintf(" allow-update { key %q; };", z.AllowUpdateKey)
 			}
 			if z.AlsoNotify != "" {
-				host, p, _ := net.SplitHostPort(z.AlsoNotify)
-				extra += fmt.Sprintf(" notify explicit; also-notify { %s port %s; };", host, p)
+				host, port, err := net.SplitHostPort(z.AlsoNotify)
+				if err != nil {
+					t.Fatal(err)
+				}
+				extra += fmt.Sprintf(" notify explicit; also-notify { %s port %s; };", host, port)
 			}
-			fmt.Fprintf(&conf, "zone %q { type primary; file %q;%s };\n", z.Name, file, extra)
+			fmt.Fprintf(&body, "zone %q { type primary; file %q;%s };\n", name, filepath.Join(dir, file), extra)
+		case "secondary":
+			host, port, err := net.SplitHostPort(z.Primary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := ""
+			if z.KeyName != "" {
+				key = fmt.Sprintf(" key %q", z.KeyName)
+			}
+			fmt.Fprintf(&body, "zone %q { type secondary; primaries { %s port %s%s; }; file %q; };\n", name, host, port, key, filepath.Join(dir, file))
 		default:
-			t.Fatalf("named zone type %q", z.Type)
+			t.Fatalf("named zone %s: unknown type %q", name, z.Type)
 		}
 	}
-	confPath := filepath.Join(dir, "named.conf")
-	if err := os.WriteFile(confPath, []byte(conf.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var log bytes.Buffer
-	cmd := exec.Command("named", "-g", "-c", confPath)
-	cmd.Stdout, cmd.Stderr = &log, &log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start named: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		if t.Failed() {
-			t.Logf("named log:\n%s", log.String())
+	for attempt := 1; ; attempt++ {
+		port := e.FreePort()
+		conf := fmt.Sprintf(`options {
+	directory %[1]q;
+	listen-on port %[2]d { 127.0.0.1; };
+	listen-on-v6 { none; };
+	pid-file "%[1]s/named.pid";
+	session-keyfile "%[1]s/session.key";
+	managed-keys-directory %[1]q;
+	recursion no;
+	notify no;
+	allow-transfer { any; };
+	ixfr-from-differences yes;
+	dnssec-validation no;
+};
+controls { };
+%[3]s`, dir, port, body.String())
+		n.writeFile(t, "named.conf", conf)
+		args := []string{"-g", "-c", filepath.Join(dir, "named.conf")}
+		if n.cred != nil {
+			args = append(args, "-u", "dev")
 		}
-	})
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		m := new(dns.Msg)
-		m.SetQuestion("version.bind.", dns.TypeTXT)
-		m.Question[0].Qclass = dns.ClassCHAOS
-		if _, _, err := (&dns.Client{Timeout: 200 * time.Millisecond}).Exchange(m, addr); err == nil {
-			break
+		n.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		n.Proc = e.Start("named", args, nil)
+		if n.serving() {
+			return n
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("named did not start:\n%s", log.String())
+		n.Proc.Stop()
+		if attempt == namedAttempts {
+			t.Fatalf("named did not start on %s after %d attempts:\n%s", n.Addr, attempt, tail(n.Proc.LogPath, 50))
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	return &Named{Addr: addr, Dir: dir}
 }
 ```
 
+- [ ] Run `scripts/dev-exec.sh go test ./e2e/harness/ -run TestNamed -count=1` — expect PASS (M3's `named_test.go` exercises `StartNamed` through the wrapper).
 - [ ] Write the failing `e2e/xfr_test.go`:
 
 ```go
@@ -3513,9 +3696,10 @@ import (
 )
 
 type tsigKeyResp struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Secret string `json:"secret"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Secret   string `json:"secret"`
+	Revision int64  `json:"revision"`
 }
 
 func axfr(addr, zone string, key *tsigKeyResp) ([]dns.RR, error) {
@@ -3540,82 +3724,103 @@ func axfr(addr, zone string, key *tsigKeyResp) ([]dns.RR, error) {
 	return out, nil
 }
 
-func soaSerial(t *testing.T, addr, zone string) (uint32, bool) {
-	t.Helper()
+func soaSerial(addr, zone string) (uint32, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(zone, dns.TypeSOA)
 	r, _, err := (&dns.Client{Timeout: time.Second}).Exchange(m, addr)
-	if err != nil || r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
-		return 0, false
+	if err != nil {
+		return 0, err
+	}
+	if r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
+		return 0, fmt.Errorf("SOA %s: rcode %s, %d answers", zone, dns.RcodeToString[r.Rcode], len(r.Answer))
 	}
 	soa, ok := r.Answer[0].(*dns.SOA)
 	if !ok {
-		return 0, false
+		return 0, fmt.Errorf("SOA %s: answer %v", zone, r.Answer[0])
 	}
-	return soa.Serial, true
+	return soa.Serial, nil
 }
 
-func getZoneSerial(t *testing.T, api *harness.API, id string) uint32 {
+func getZone(t *testing.T, api *harness.API, id string) zoneResp {
 	t.Helper()
 	var z zoneResp
-	api.MustDo(t, http.MethodGet, "/api/v1/zones/"+id, nil, &z)
-	return z.Serial
+	api.Must(http.MethodGet, "/zones/"+id, nil, &z, http.StatusOK)
+	return z
+}
+
+func waitSerial(t *testing.T, addr, zone string, want uint32) {
+	t.Helper()
+	harness.Eventually(t, 15*time.Second, func() error {
+		got, err := soaSerial(addr, zone)
+		if err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("serial %d, want %d", got, want)
+		}
+		return nil
+	})
 }
 
 func TestAXFRIXFROut(t *testing.T) {
-	env := harness.New(t)
-	mg := env.StartMgmt(harness.MgmtOptions{Env: map[string]string{"NEXORA_KEK_FILE": harness.WriteKEK(t)}})
-	eng := env.StartEngine(mg, harness.EngineOptions{Name: "engine-1"})
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}, "xfr-1")
+	api, eng := e.api, e.engines[0]
 
 	var key tsigKeyResp
-	api.MustDo(t, http.MethodPost, "/api/v1/tsig-keys", map[string]any{"name": "xfr-key.", "algorithm": "hmac-sha256"}, &key)
-	namedPort := harness.FreePort(t)
+	api.Must(http.MethodPost, "/tsig-keys", map[string]any{"name": "xfr-key.", "algorithm": "hmac-sha256"}, &key, http.StatusCreated)
 	z := createPrimaryZone(t, api, "xfr.test.", map[string]any{
 		"transfer": map[string]any{"allow_cidrs": []string{"127.0.0.1/32"}, "tsig_key_id": key.ID},
-		"notify":   []map[string]any{{"address": fmt.Sprintf("127.0.0.1:%d", namedPort), "tsig_key_id": key.ID}},
 	})
 	addRecord(t, api, z.ID, "ns1.xfr.test.", "A", "192.0.2.1")
-	harness.WaitDNSAnswer(t, eng.DNSAddr, "ns1.xfr.test.", dns.TypeA, time.Now().Add(5*time.Second), func(m *dns.Msg) bool { return len(m.Answer) == 1 })
+	harness.WaitDNSAnswer(t, eng.DNS, "ns1.xfr.test.", dns.TypeA, 5*time.Second, func(m *dns.Msg) bool { return len(m.Answer) == 1 })
 
 	// positive: TSIG-signed AXFR from an allowed address succeeds
-	rrs, err := axfr(eng.DNSAddr, "xfr.test.", &key)
+	rrs, err := axfr(eng.DNS, "xfr.test.", &key)
 	if err != nil || len(rrs) < 4 || rrs[0].Header().Rrtype != dns.TypeSOA || rrs[len(rrs)-1].Header().Rrtype != dns.TypeSOA {
 		t.Fatalf("signed AXFR: %d records, err=%v", len(rrs), err)
 	}
 	// negative: the same transfer without TSIG is refused
-	if _, err := axfr(eng.DNSAddr, "xfr.test.", nil); err == nil || !strings.Contains(err.Error(), "bad xfr rcode: 5") {
+	if _, err := axfr(eng.DNS, "xfr.test.", nil); err == nil || !strings.Contains(err.Error(), "bad xfr rcode: 5") {
 		t.Fatalf("unsigned AXFR: got %v, want REFUSED", err)
 	}
 
-	named := harness.StartNamed(t, namedPort,
-		[]harness.NamedKey{{Name: "xfr-key.", Algorithm: "hmac-sha256", Secret: key.Secret}},
-		[]harness.NamedZone{{Name: "xfr.test.", Type: "secondary", Primary: eng.DNSAddr, KeyName: "xfr-key."}})
-	initial := getZoneSerial(t, api, z.ID)
-	harness.Eventually(t, 15*time.Second, func() bool { s, ok := soaSerial(t, named.Addr, "xfr.test."); return ok && s == initial })
+	named := e.env.StartNamedConfig(harness.NamedConfig{
+		Keys:  []harness.NamedKey{{Name: "xfr-key.", Algorithm: "hmac-sha256", SecretB64: key.Secret}},
+		Zones: []harness.NamedZone{{Name: "xfr.test.", Type: "secondary", Primary: eng.DNS, KeyName: "xfr-key."}},
+	})
+	initial := getZone(t, api, z.ID)
+	waitSerial(t, named.Addr, "xfr.test.", initial.Serial)
 
-	ixfrBefore := harness.PromValue(t, eng.MetricsURL, `nexora_auth_transfers_total{type="ixfr",result="incremental"}`)
+	// the secondary's address is known only now: add it as a NOTIFY target
+	api.Must(http.MethodPatch, "/zones/"+z.ID, map[string]any{
+		"revision": initial.Revision,
+		"notify":   []map[string]any{{"address": named.Addr, "tsig_key_id": key.ID}},
+	}, nil, http.StatusOK)
+	waitLatestApplied(t, api, "xfr-1")
+
+	ixfrBefore := eng.Metric(t, "nexora_auth_transfers_total", map[string]string{"type": "ixfr", "result": "incremental"})
 	addRecord(t, api, z.ID, "www.xfr.test.", "A", "192.0.2.80")
-	edited := getZoneSerial(t, api, z.ID)
-	if edited == initial {
+	edited := getZone(t, api, z.ID)
+	if edited.Serial == initial.Serial {
 		t.Fatalf("zone serial did not advance on edit")
 	}
-	harness.Eventually(t, 15*time.Second, func() bool { s, ok := soaSerial(t, named.Addr, "xfr.test."); return ok && s == edited })
-	r := harness.DNSQuery(t, named.Addr, "www.xfr.test.", dns.TypeA)
+	// SOA refresh is 10800 s: only NOTIFY makes the secondary transfer within 15 s
+	waitSerial(t, named.Addr, "xfr.test.", edited.Serial)
+	r := harness.MustQuery(t, named.Addr, "www.xfr.test.", dns.TypeA, harness.QueryOpts{})
 	if len(r.Answer) != 1 {
 		t.Fatalf("secondary does not serve the new record: %v", r)
 	}
-	if after := harness.PromValue(t, eng.MetricsURL, `nexora_auth_transfers_total{type="ixfr",result="incremental"}`); after <= ixfrBefore {
+	if after := eng.Metric(t, "nexora_auth_transfers_total", map[string]string{"type": "ixfr", "result": "incremental"}); after <= ixfrBefore {
 		t.Fatalf("secondary did not use an incremental IXFR (%v -> %v)", ixfrBefore, after)
 	}
-	if sent := harness.PromValue(t, eng.MetricsURL, `nexora_auth_notify_sent_total{result="acked"}`); sent < 1 {
+	if sent := eng.Metric(t, "nexora_auth_notify_sent_total", map[string]string{"result": "acked"}); sent < 1 {
 		t.Fatalf("no acknowledged NOTIFY")
 	}
 }
 ```
 
 - [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestAXFRIXFROut -count=1` — expect PASS (before the engine routing step it fails with "signed AXFR").
-- [ ] Commit: `git add engine e2e && git commit -m "feat(engine): AXFR/IXFR out with ACL and TSIG, NOTIFY to secondaries"`.
+- [ ] Commit: `git add engine e2e && git commit -m "feat(engine): AXFR/IXFR out with ACL and TSIG over TCP and DoT, NOTIFY to secondaries"`.
 
 ## Task 9: BIND zone file import and export
 
@@ -3627,7 +3832,8 @@ Files:
 - `mgmt/internal/zonefile/zonefile_test.go`
 - `mgmt/internal/zonefile/testdata/all-types.zone`, `testdata/all-types.export.golden`
 - `mgmt/internal/zone/import.go` — `Service.Import`, `Service.Export`
-- `mgmt/api/openapi.yaml`, `mgmt/internal/api/zonefile.go`, `mgmt/internal/auth/permissions.go` — `importZoneFile`, `exportZoneFile` (modify/create)
+- `mgmt/api/openapi.yaml`, `mgmt/internal/api/zonefile.go`, `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `importZoneFile`, `exportZoneFile` (modify/create)
+- `mgmt/internal/api/server.go` — `jsonOnly` allows 64 MiB for `POST /api/v1/zones/{zoneId}/import` (modify)
 - `e2e/testdata/zones/roundtrip.test.zone`
 - `e2e/zonefile_test.go` — `TestZoneFileRoundTrip`
 
@@ -3644,7 +3850,7 @@ func Export(w io.Writer, origin string, defaultTTL uint32, soa *dns.SOA, records
 
 package zone
 type ImportResult struct{ Zone *Zone; RecordsImported int }
-func (s *Service) Import(ctx context.Context, actor Actor, zoneID uuid.UUID, revision int64, content string) (*ImportResult, error)
+func (s *Service) Import(ctx context.Context, actor auth.Actor, zoneID uuid.UUID, revision int64, content string) (*ImportResult, error)
 func (s *Service) Export(ctx context.Context, zoneID uuid.UUID, w io.Writer) error
 ```
 
@@ -3687,10 +3893,10 @@ escaped\.dot IN TXT "label with an escaped dot"
 Bin\000ary 1d IN A 192.0.2.98
 ```
 
-- [ ] Write the failing `mgmt/internal/zonefile/zonefile_test.go`:
+- [ ] Write the failing `mgmt/internal/zonefile/zonefile_test.go` (external package `zonefile_test`: `zone` imports `zonefile` for `Import`, so an internal test importing `zone.ManagedTypes` would be an import cycle):
 
 ```go
-package zonefile
+package zonefile_test
 
 import (
 	"bytes"
@@ -3702,16 +3908,17 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
+	"github.com/piwi3910/nexora/mgmt/internal/zonefile"
 )
 
 var update = flag.Bool("update", false, "rewrite export golden")
 
-func opts() Options { return Options{AllowedTypes: zone.ManagedTypes, MaxRecords: 1000000} }
+func opts() zonefile.Options { return zonefile.Options{AllowedTypes: zone.ManagedTypes, MaxRecords: 1000000} }
 
 func TestParseAllTypes(t *testing.T) {
 	f, _ := os.Open("testdata/all-types.zone")
 	defer f.Close()
-	res, err := Parse(f, "example.test.", opts())
+	res, err := zonefile.Parse(f, "example.test.", opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3769,8 +3976,8 @@ func TestParseRefusals(t *testing.T) {
 		"missing soa": {"$ORIGIN example.test.\n$TTL 60\n@ NS ns1\n", "no SOA record at example.test."},
 	}
 	for name, c := range cases {
-		_, err := Parse(strings.NewReader(c.file), "example.test.", opts())
-		var le Errors
+		_, err := zonefile.Parse(strings.NewReader(c.file), "example.test.", opts())
+		var le zonefile.Errors
 		if err == nil || !strings.Contains(err.Error(), c.want) || (strings.HasPrefix(c.want, "line") && !errors.As(err, &le)) {
 			t.Errorf("%s: got %v, want %q", name, err, c.want)
 		}
@@ -3779,7 +3986,7 @@ func TestParseRefusals(t *testing.T) {
 
 func TestExportIsStableAndReparses(t *testing.T) {
 	f, _ := os.Open("testdata/all-types.zone")
-	res, err := Parse(f, "example.test.", opts())
+	res, err := zonefile.Parse(f, "example.test.", opts())
 	f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -3789,10 +3996,10 @@ func TestExportIsStableAndReparses(t *testing.T) {
 	for i, j := 0, len(shuffled)-1; i < j; i, j = i+1, j-1 {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	}
-	if err := Export(&a, "example.test.", res.DefaultTTL, res.SOA, res.Records); err != nil {
+	if err := zonefile.Export(&a, "example.test.", res.DefaultTTL, res.SOA, res.Records); err != nil {
 		t.Fatal(err)
 	}
-	if err := Export(&b, "example.test.", res.DefaultTTL, res.SOA, shuffled); err != nil {
+	if err := zonefile.Export(&b, "example.test.", res.DefaultTTL, res.SOA, shuffled); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(a.Bytes(), b.Bytes()) {
@@ -3805,7 +4012,7 @@ func TestExportIsStableAndReparses(t *testing.T) {
 	if !bytes.Equal(a.Bytes(), golden) {
 		t.Fatalf("export differs from golden:\n%s", a.String())
 	}
-	again, err := Parse(bytes.NewReader(a.Bytes()), "example.test.", opts())
+	again, err := zonefile.Parse(bytes.NewReader(a.Bytes()), "example.test.", opts())
 	if err != nil || len(again.Records) != len(res.Records) {
 		t.Fatalf("re-parse: %v (%d records)", err, len(again.Records))
 	}
@@ -3904,7 +4111,7 @@ func splitLines(r io.Reader) ([]logicalLine, error) {
 - [ ] Implement `export.go`: header `$ORIGIN <origin>` and `$TTL <defaultTTL>`; SOA first, then apex NS, then all other records ordered by `(nzf.CanonicalKey(owner wire), type, rdata wire)`; owner written relative (`@` for apex, trailing `.<origin>` removed), a line per record `owner<TAB>ttl<TAB>IN<TAB>TYPE<TAB>rdata` where rdata is the part of `rr.String()` after the fourth tab.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/zonefile/ -count=1 -update` then without `-update` — expect PASS.
 - [ ] Implement `zone.Service.Import` through `Service.Mutate`: zone kind must be primary (`ErrReadOnly`), revision must match (`ErrConflict`), `zonefile.Parse` failures → `ValidationError{Code: "zone_file_invalid", Details: …}`, the `validate.go` rules (CNAME exclusivity, DNAME occlusion, DS placement) applied to the whole parsed set with the same codes, then `SetRecords` (delete all rows, insert parsed records), SOA fields `mname, rname, refresh, retry, expire, minimum, ttl` copied to the zone row, `default_ttl` from `$TTL` when present, `RebuildOptions{Serial: &soa.Serial}` (adopted only when RFC 1982-greater, else the next serial). `Export` loads zone row and records and calls `zonefile.Export`.
-- [ ] Add OpenAPI: `POST /zones/{zoneId}/import` `importZoneFile` body `{revision: int64, content: string}` (request body limit 64 MiB) → 200 `{zone: Zone, records_imported: int}`, 409, 422 `zone_file_invalid` with `details[{line, message}]`, 422 `zone_read_only`; `GET /zones/{zoneId}/export` `exportZoneFile` → 200 `text/plain; charset=utf-8` with `Content-Disposition: attachment; filename="<zone>zone"`. Permissions: `importZoneFile` operator, `exportZoneFile` viewer. Regenerate server and web types.
+- [ ] Add OpenAPI: `POST /zones/{zoneId}/import` `importZoneFile` body `{revision: int64, content: string}` → 200 `{zone: Zone, records_imported: int}`, 409, 422 (`zone_file_invalid` with `details`, or `zone_read_only`), all errors `#/components/responses/Error`; `GET /zones/{zoneId}/export` `exportZoneFile` → 200 `text/plain; charset=utf-8` (the strict server's `ExportZoneFile200TextResponse`) with `Content-Disposition: attachment; filename="<zone>zone"`. M1's `jsonOnly` caps every body at `maxBodyBytes` (4 MiB) before routing; add `const maxZoneImportBytes = 64 << 20` and use it when `r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/zones/") && strings.HasSuffix(r.URL.Path, "/import")`; a larger body still maps to 400 `request body too large`. Permissions: `importZoneFile` operator, `exportZoneFile` viewer (Go and `permissions.ts`). Regenerate the API.
 - [ ] Write `e2e/testdata/zones/roundtrip.test.zone` as the content of `all-types.zone` with every `example.test` replaced by `roundtrip.test`, and the failing `e2e/zonefile_test.go`:
 
 ```go
@@ -3923,9 +4130,8 @@ import (
 )
 
 func TestZoneFileRoundTrip(t *testing.T) {
-	env := harness.New(t)
-	mg := env.StartMgmt(harness.MgmtOptions{})
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, nil)
+	api := e.api
 
 	original, err := os.ReadFile("testdata/zones/roundtrip.test.zone")
 	if err != nil {
@@ -3936,18 +4142,19 @@ func TestZoneFileRoundTrip(t *testing.T) {
 		Zone            zoneResp `json:"zone"`
 		RecordsImported int      `json:"records_imported"`
 	}
-	api.MustDo(t, http.MethodPost, "/api/v1/zones/"+z.ID+"/import", map[string]any{"revision": z.Revision, "content": string(original)}, &imported)
+	api.Must(http.MethodPost, "/zones/"+z.ID+"/import", map[string]any{"revision": z.Revision, "content": string(original)}, &imported, http.StatusOK)
 	if imported.RecordsImported != 24 || imported.Zone.Serial != 2026091301 {
 		t.Fatalf("import: %+v", imported)
 	}
 
 	// negative after positive: a stale revision is a conflict, not a lost write
-	if status := api.Do(t, http.MethodPost, "/api/v1/zones/"+z.ID+"/import", map[string]any{"revision": z.Revision, "content": string(original)}, nil); status != http.StatusConflict {
+	if status, _ := api.Do(http.MethodPost, "/zones/"+z.ID+"/import", map[string]any{"revision": z.Revision, "content": string(original)}, nil); status != http.StatusConflict {
 		t.Fatalf("stale import: status %d, want 409", status)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, api.BaseURL+"/api/v1/zones/"+z.ID+"/export", nil)
-	resp, err := api.HTTP.Do(req)
+	req, _ := http.NewRequest(http.MethodGet, api.Base+"/api/v1/zones/"+z.ID+"/export", nil)
+	req.Header.Set("Authorization", "Bearer "+api.Bearer)
+	resp, err := api.HC.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("export: %v %v", err, resp)
 	}
@@ -3968,30 +4175,38 @@ func TestZoneFileRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./e2e/ -run TestZoneFileRoundTrip -count=1` — expect PASS (before the API step it fails with "/api/v1/zones/").
-- [ ] Commit: `git add mgmt web/src/api/schema.d.ts e2e && git commit -m "feat(mgmt): BIND zone file import and stable export"`.
+- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestZoneFileRoundTrip -count=1` — expect PASS (before the API step it fails with "POST /zones/…/import: status 404").
+- [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e && git commit -m "feat(mgmt): BIND zone file import and stable export"`.
 
 ## Task 10: Secondary zones — engine NOTIFY intake, management-plane AXFR/IXFR pulls and SOA timers
 
 Files:
 
 - `engine/src/authoritative/notify_in.rs`, `engine/src/authoritative/notify_in_tests.rs` — accept NOTIFY, reply, forward
-- `engine/src/authoritative/dispatch.rs` — opcode 4 routing (modify)
-- `engine/src/control.rs` — `NotifySink` over the control stream, bounded queue of 1024 (modify)
+- `engine/src/authoritative/dispatch.rs` — opcode 4 routing in `unparsed` (modify)
+- `engine/src/authoritative/state.rs` — `AuthState` holds the control-stream sender and implements `NotifySink` (modify)
+- `engine/src/control.rs` — `session` raises its `EngineMessage` channel from 16 to 1024, attaches the sender to `shared.auth` after connecting and detaches it when the stream ends (modify)
+- `engine/src/telemetry/metrics.rs` — `nexora_auth_notify_received_total` (modify)
 - `mgmt/internal/xfrin/ixfr.go` — interpret IXFR/AXFR answer streams
 - `mgmt/internal/xfrin/refresh.go` — SOA check, transfer, apply, timers
 - `mgmt/internal/xfrin/scheduler.go` — due-zone loop, `LISTEN nexora_zone_refresh`, advisory locks
 - `mgmt/internal/xfrin/ixfr_test.go`, `mgmt/internal/xfrin/refresh_test.go`
-- `mgmt/internal/control/notify.go` — handle `EngineMessage.notify_received` (modify/create)
+- `mgmt/internal/control/server.go` — `Server.OnNotify` called from `receive` for `EngineMessage_NotifyReceived` (modify)
 - `mgmt/internal/zone/service.go` — secondary create/update validation, `Service.RefreshNow` (modify)
-- `mgmt/api/openapi.yaml`, `mgmt/internal/api/zones.go`, `mgmt/internal/auth/permissions.go` — `refreshZone` (modify)
+- `mgmt/api/openapi.yaml`, `mgmt/internal/api/zones.go`, `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `refreshZone` (modify)
 - `mgmt/cmd/nexora-mgmt/main.go` — start the scheduler (modify)
 
 Interfaces:
 
 ```rust
-pub trait NotifySink: Send + Sync { fn notify(&self, ev: pb::NotifyReceived) -> bool; } // false = queue full or disconnected
-pub fn handle_notify(raw: &[u8], client: SocketAddr, set: &AuthSet, ring: &KeyRing, sink: &dyn NotifySink, now: u64) -> Vec<u8>;
+pub trait NotifySink: Send + Sync { fn notify(&self, ev: proto::NotifyReceived) -> bool; } // false = queue full or disconnected
+pub fn handle_notify(raw: &[u8], client: SocketAddr, set: &AuthSet, ring: &crate::tsig::KeyRing, sink: &dyn NotifySink, now: u64) -> Vec<u8>;
+// state.rs
+impl AuthState {
+    pub fn attach(&self, tx: tokio::sync::mpsc::Sender<proto::EngineMessage>); // control::session, after connecting
+    pub fn detach(&self);                                                     // control::session, when the stream ends
+}
+impl NotifySink for AuthState { /* try_send EngineMessage{notify_received} on the attached sender */ }
 ```
 
 ```go
@@ -3999,11 +4214,14 @@ package xfrin
 type Diff struct{ FromSerial, ToSerial uint32; Deleted, Added []dns.RR }
 type Answer struct{ UpToDate bool; Full []dns.RR /* includes SOA first */; Diffs []Diff; Serial uint32 }
 func Interpret(rrs []dns.RR, requestedSerial uint32, ixfr bool) (*Answer, error)
-type Refresher struct{ Pool *pgxpool.Pool; Zones *zone.Service; TSIG *tsigkey.Service; Now func() time.Time; Dial time.Duration }
+type Refresher struct{ Store *store.Store; Zones *zone.Service; TSIG *tsigkey.Service; Now func() time.Time; Dial time.Duration }
 func (r *Refresher) Refresh(ctx context.Context, zoneID uuid.UUID, trigger string) error // trigger: "timer" | "notify" | "manual" | "create"
-type Scheduler struct{ Pool *pgxpool.Pool; Refresher *Refresher; Tick time.Duration }
+type Scheduler struct{ Store *store.Store; Refresher *Refresher; Tick time.Duration }
 func (s *Scheduler) Run(ctx context.Context) error
 func (s *Scheduler) Notify(ctx context.Context, zoneName, source string) error // validates source against primaries, sets next_refresh_at=now(), pg_notify('nexora_zone_refresh', id)
+
+package control
+// Server gains OnNotify func(ctx context.Context, engineID string, ev *controlv1.NotifyReceived), set in main.go to Scheduler.Notify.
 ```
 
 - [ ] Write the failing `mgmt/internal/xfrin/ixfr_test.go`:
@@ -4145,10 +4363,13 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/xfrin"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
+
+var actor = auth.Actor{Type: "user", ID: "t", Name: "t"}
 
 type fakePrimary struct {
 	mu      sync.Mutex
@@ -4207,13 +4428,13 @@ func TestRefreshAXFRThenIXFRThenUpToDate(t *testing.T) {
 	ctx := context.Background()
 	p := &fakePrimary{serial: 10, records: []string{"up.test. 300 IN NS ns.up.test.", "ns.up.test. 300 IN A 192.0.2.53", "a.up.test. 300 IN A 192.0.2.1"}, history: map[uint32][2][]string{}}
 	addr := startPrimary(t, p)
-	pool := storetest.NewPool(t)
-	zs := &zone.Service{Pool: pool, Publisher: noPublish{}, Auditor: noAudit{}, Now: time.Now}
-	z, err := zs.CreateZone(ctx, "user:t", zone.CreateZoneInput{Name: "up.test.", Kind: "secondary", Primaries: []zone.Endpoint{{Address: addr}}})
+	st := storetest.New(t)
+	zs := &zone.Service{Store: st, Now: time.Now}
+	z, err := zs.CreateZone(ctx, actor, zone.CreateZoneInput{Name: "up.test.", Kind: "secondary", Primaries: []zone.Endpoint{{Address: addr}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &xfrin.Refresher{Pool: pool, Zones: zs, Now: time.Now, Dial: 2 * time.Second}
+	r := &xfrin.Refresher{Store: st, Zones: zs, Now: time.Now, Dial: 2 * time.Second}
 	if err := r.Refresh(ctx, z.ID, "timer"); err != nil {
 		t.Fatalf("initial refresh: %v", err)
 	}
@@ -4238,7 +4459,7 @@ func TestRefreshAXFRThenIXFRThenUpToDate(t *testing.T) {
 		t.Fatalf("after IXFR: serial=%d b=%d a=%d queries=%v", got.Serial, len(recs), len(gone), p.queries)
 	}
 	var from, to int64
-	pool.QueryRow(ctx, `SELECT from_serial, to_serial FROM zone_journal WHERE zone_id=$1 ORDER BY seq DESC LIMIT 1`, z.ID).Scan(&from, &to)
+	st.Pool.QueryRow(ctx, `SELECT from_serial, to_serial FROM zone_journal WHERE zone_id=$1 ORDER BY seq DESC LIMIT 1`, z.ID).Scan(&from, &to)
 	if from != 10 || to != 11 {
 		t.Fatalf("journal keeps the primary's serials: %d->%d", from, to)
 	}
@@ -4258,15 +4479,15 @@ func TestRefreshFailureRetriesAndExpires(t *testing.T) {
 	ctx := context.Background()
 	p := &fakePrimary{serial: 5, records: []string{"up.test. 300 IN NS ns.up.test."}}
 	addr := startPrimary(t, p)
-	pool := storetest.NewPool(t)
-	zs := &zone.Service{Pool: pool, Publisher: noPublish{}, Auditor: noAudit{}, Now: time.Now}
-	z, _ := zs.CreateZone(ctx, "user:t", zone.CreateZoneInput{Name: "up.test.", Kind: "secondary", Primaries: []zone.Endpoint{{Address: addr}}})
-	r := &xfrin.Refresher{Pool: pool, Zones: zs, Now: time.Now, Dial: 500 * time.Millisecond}
+	st := storetest.New(t)
+	zs := &zone.Service{Store: st, Now: time.Now}
+	z, _ := zs.CreateZone(ctx, actor, zone.CreateZoneInput{Name: "up.test.", Kind: "secondary", Primaries: []zone.Endpoint{{Address: addr}}})
+	r := &xfrin.Refresher{Store: st, Zones: zs, Now: time.Now, Dial: 500 * time.Millisecond}
 	if err := r.Refresh(ctx, z.ID, "timer"); err != nil {
 		t.Fatal(err)
 	}
 	dead := deadAddr(t)
-	pool.Exec(ctx, `UPDATE zones SET primaries = jsonb_build_array(jsonb_build_object('address', $2::text)), expires_at = now() - interval '1 second' WHERE id=$1`, z.ID, dead)
+	st.Pool.Exec(ctx, `UPDATE zones SET primaries = jsonb_build_array(jsonb_build_object('address', $2::text)), expires_at = now() - interval '1 second' WHERE id=$1`, z.ID, dead)
 	if err := r.Refresh(ctx, z.ID, "timer"); err == nil {
 		t.Fatal("refresh against a dead primary succeeded")
 	}
@@ -4277,30 +4498,30 @@ func TestRefreshFailureRetriesAndExpires(t *testing.T) {
 }
 ```
 
-Helpers in the same file: `itoa` (`strconv.FormatUint`), `parse` (`dns.NewRR` over a slice), `startPrimary` (starts `dns.Server` on UDP and TCP at `127.0.0.1:0` with handler `p`, returns `"127.0.0.1:port"`, shuts down on cleanup), `deadAddr` (binds and closes a TCP listener, returns its address), `noPublish` / `noAudit` no-ops.
+Helpers in the same file: `itoa` (`strconv.FormatUint`), `parse` (`dns.NewRR` over a slice), `startPrimary` (starts `dns.Server` on UDP and TCP at `127.0.0.1:0` with handler `p`, returns `"127.0.0.1:port"`, shuts down on cleanup), `deadAddr` (binds and closes a TCP listener, returns its address).
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/xfrin/ -count=1` — expect FAIL with "undefined: xfrin.Refresher".
-- [ ] Implement `Refresher.Refresh`: load the zone (`kind='secondary'`); for each primary in order: SOA query over UDP (TCP on TC) with TSIG when `tsig_key_id` is set (secret via `tsigkey.Service.Secret`; `m.SetTsig(name, dns.HmacSHA256|384|512, 300, now)`, `Client.TsigSecret`), timeout `Dial`; if loaded and `!zone.SerialLess(local, remote)` → up to date; otherwise transfer over TCP with `dns.Transfer` (`SetIxfr(name, local, mname, rname)` when loaded, else `SetAxfr`), collect envelopes, `Interpret`; IXFR `NOTIMP`/`FORMERR`/interpretation errors retry once with AXFR. Apply through `zone.Service.Mutate` (`system:xfrin` actor, audit action `refreshZone`): full → `SetRecords` with every non-SOA record (all RR types accepted for secondaries, including DNSSEC records); diffs → delete/insert rows per diff; SOA fields copied; `RebuildOptions{Serial: &answer.Serial}`. On success in the same transaction: `loaded=true, last_refresh_at=now, last_success_at=now, next_refresh_at=now+refresh, expires_at=now+expire, expired=false, last_error='', last_trigger=trigger`. On failure (all primaries): `last_refresh_at=now, next_refresh_at=now+retry (600 s default before first load), last_error=<message>`, and when `expires_at <= now` set `expired=true` and publish so engines answer SERVFAIL. SOA timers use the values received from the primary.
-- [ ] Implement `Scheduler.Run`: every `Tick` (5 s) and on each `nexora_zone_refresh` notification, `SELECT id FROM zones WHERE kind='secondary' AND (next_refresh_at IS NULL OR next_refresh_at <= now()) ORDER BY next_refresh_at NULLS FIRST LIMIT 20`; per zone acquire `pg_try_advisory_lock(hashtext('zone_refresh:'||id))` on a dedicated connection, `Refresh`, unlock. `Notify` looks up the secondary zone by name, checks that the source IP equals the IP of one of its primaries (else ignore and count), sets `next_refresh_at = now()`, `last_trigger` for the next run = `notify`, and `pg_notify('nexora_zone_refresh', id)`. `CreateZone` for secondaries validates ≥ 1 primary `ip:port`, uses placeholder SOA fields until the first transfer, and triggers `pg_notify`.
+- [ ] Implement `Refresher.Refresh`: load the zone (`kind='secondary'`); for each primary in order: SOA query over UDP (TCP on TC) with TSIG when `tsig_key_id` is set (secret via `tsigkey.Service.Secret`; `m.SetTsig(name, dns.HmacSHA256|384|512, 300, now)`, `Client.TsigSecret`), timeout `Dial`; if loaded and `!zone.SerialLess(local, remote)` → up to date; otherwise transfer over TCP with `dns.Transfer` (`SetIxfr(name, local, mname, rname)` when loaded, else `SetAxfr`), collect envelopes, `Interpret`; IXFR `NOTIMP`/`FORMERR`/interpretation errors retry once with AXFR. Apply through `zone.Service.Mutate` (actor `auth.Actor{Type: "system", ID: "xfrin", Name: "system:xfrin"}`, audit action `refreshZone`): full → `SetRecords` with every non-SOA record (all RR types accepted for secondaries, including DNSSEC records); diffs → delete/insert rows per diff; SOA fields copied; `RebuildOptions{Serial: &answer.Serial}`. On success in the same transaction: `loaded=true, last_refresh_at=now, last_success_at=now, next_refresh_at=now+refresh, expires_at=now+expire, expired=false, last_error='', last_trigger=trigger`. On failure (all primaries): `last_refresh_at=now, next_refresh_at=now+retry (600 s default before first load), last_error=<message>`, and when `expires_at <= now` set `expired=true` and publish so engines answer SERVFAIL. SOA timers use the values received from the primary.
+- [ ] Implement `Scheduler.Run`: every `Tick` (5 s) and on each `nexora_zone_refresh` notification, `SELECT id FROM zones WHERE kind='secondary' AND (next_refresh_at IS NULL OR next_refresh_at <= now()) ORDER BY next_refresh_at NULLS FIRST LIMIT 20`; per zone acquire `pg_try_advisory_lock(hashtext('zone_refresh:'||id))` on a dedicated connection from `Store.Pool` (as `blocklist.lockList` does), `Refresh`, unlock. `Notify` looks up the secondary zone by name, checks that the source IP equals the IP of one of its primaries (else ignore and count), sets `next_refresh_at = now()`, `last_trigger` for the next run = `notify`, and `pg_notify('nexora_zone_refresh', id)`. `CreateZone` for secondaries validates ≥ 1 primary `ip:port`, uses placeholder SOA fields until the first transfer, and triggers `pg_notify`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/xfrin/ -count=1` — expect PASS.
 - [ ] Write the failing `engine/src/authoritative/notify_in_tests.rs` (declare `pub mod notify_in; #[cfg(test)] mod notify_in_tests;`):
 
 ```rust
-use super::keyring::KeyRing;
+use crate::tsig::KeyRing;
 use super::notify_in::{handle_notify, NotifySink};
 use super::nzf;
 use super::set::AuthSet;
 use super::zone::Zone;
 use super::zone_tests::FULL;
-use crate::pb;
+use crate::proto;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RecordType};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
-struct Captured(Mutex<Vec<pb::NotifyReceived>>);
+struct Captured(Mutex<Vec<proto::NotifyReceived>>);
 impl NotifySink for Captured {
-    fn notify(&self, ev: pb::NotifyReceived) -> bool {
+    fn notify(&self, ev: proto::NotifyReceived) -> bool {
         self.0.lock().unwrap().push(ev);
         true
     }
@@ -4349,36 +4570,48 @@ fn notify_from_other_source_or_for_unknown_zone_is_refused() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::notify_in_tests` — expect FAIL with "unresolved import `super::notify_in`".
-- [ ] Implement: `Zone` gains `kind` and `primaries: Vec<SocketAddr>` (set by the loader from `AuthZone`; `set_secondary_primaries` is the test setter). `handle_notify`: parse with `msg::Question` (opcode 4, qtype SOA, class IN) else FORMERR; zone hosted with `origin == qname` else NOTAUTH; zone kind primary → REFUSED; TSIG present → verify (`error_response` on failure) and accept when the key belongs to one of the zone's primaries; otherwise the source IP must equal a primary's IP → else REFUSED; accepted → response header with QR, AA, opcode 4, question copied (TSIG-signed when the request was), serial taken from an answer-section SOA when present, `sink.notify(...)` (`false` → `result="dropped"`, otherwise `forwarded`). Route opcode 4 in `slow_path` (UDP and TCP). The production `NotifySink` does `try_send` of `EngineMessage{notify_received}` into the control stream's bounded channel. Mgmt: `mgmt/internal/control/notify.go` calls `Scheduler.Notify(ctx, ev.Zone, ev.Source)`.
-- [ ] Add OpenAPI `POST /zones/{zoneId}/refresh` `refreshZone` → 202 (sets `next_refresh_at = now()`, `last_trigger = manual`, `pg_notify`), 422 `zone_not_secondary`; permission operator. Regenerate server and web types. Start the scheduler in `main.go`.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative` and `scripts/dev-exec.sh go test ./mgmt/... -count=1` — expect PASS.
-- [ ] Commit: `git add engine mgmt web/src/api/schema.d.ts && git commit -m "feat(m4): secondary zones pulled by the management plane with NOTIFY forwarded by engines"`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::notify_in_tests` — expect FAIL with "unresolved import `super::notify_in`".
+- [ ] Implement: `Zone` gains `kind` and `primaries: Vec<SocketAddr>` (set by the loader from `AuthZone`; `set_secondary_primaries` is the test setter). `handle_notify`: parse with `msg::Question` (opcode 4, qtype SOA, class IN) else FORMERR; zone hosted with `origin == qname` else NOTAUTH; zone kind primary → REFUSED; TSIG present → verify (`error_response` on failure) and accept when the key belongs to one of the zone's primaries; otherwise the source IP must equal a primary's IP → else REFUSED; accepted → response header with QR, AA, opcode 4, question copied (TSIG-signed when the request was), serial taken from an answer-section SOA when present, `sink.notify(...)` (`false` → `result="dropped"`, otherwise `forwarded`). Route opcode 4 in `dispatch::unparsed` (every transport; `parse_query` answers NOTIMP for opcode 4). Count `nexora_auth_notify_received{result}` in `metrics.auth`. The production `NotifySink` is `AuthState`: `try_send` of `EngineMessage { msg: Some(Msg::NotifyReceived(ev)) }` on the sender `control::session` attached (capacity 1024; `false` when detached or full). `unparsed` passes `&ctx.shared.auth` as the sink and returns the response as `AuthOutcome::Reply`. Mgmt: `Server.receive` gains `case *controlv1.EngineMessage_NotifyReceived:` calling `s.OnNotify(ctx, sub.engineID, m.NotifyReceived)` when set (errors are logged, the stream continues), and `main.go` sets `controlServer.OnNotify` to call `scheduler.Notify(ctx, ev.Zone, ev.Source)`.
+- [ ] Add OpenAPI `POST /zones/{zoneId}/refresh` `refreshZone` → 202 (sets `next_refresh_at = now()`, `last_trigger = manual`, `pg_notify`), 422 `zone_not_secondary` (`#/components/responses/Error`); permission operator (Go and `permissions.ts`). Regenerate the API. In `main.go` build `xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}` and `xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}` (sharing the `zone.Service` and `tsigkey.Service` passed in `api.Deps`) and `go scheduler.Run(ctx)`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` and `scripts/dev-exec.sh go test ./mgmt/... -count=1` — expect PASS.
+- [ ] Commit: `git add engine mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts && git commit -m "feat(m4): secondary zones pulled by the management plane with NOTIFY forwarded by engines"`.
 
 ## Task 11: RFC 2136 dynamic updates authenticated with TSIG
 
 Files:
 
 - `engine/src/authoritative/update.rs`, `engine/src/authoritative/update_tests.rs` — receive, authenticate, forward, respond
-- `engine/src/authoritative/dispatch.rs` — opcode 5 → `spawn_local` job (modify)
-- `engine/src/control.rs` — `UpdateForwarder`: pending map by `request_id`, 5 s timeout, `UpdateResult` routing (modify)
+- `engine/src/authoritative/dispatch.rs` — opcode 5 → `AuthOutcome::Slow(SlowJob { kind: SlowKind::Update, .. })` (modify)
+- `engine/src/authoritative/state.rs` — `AuthState` implements `UpdateForwarder`: pending waiters by `request_id`, 5 s timeout, `complete_update` (modify)
+- `engine/src/control.rs` — `ServerMsg::UpdateResult(r) => shared.auth.complete_update(r)` (modify)
+- `engine/src/telemetry/metrics.rs` — `nexora_auth_updates_total` (modify)
 - `mgmt/internal/dynupdate/apply.go`, `mgmt/internal/dynupdate/apply_test.go` — prerequisites and update section in one transaction
-- `mgmt/internal/control/update.go` — handle `EngineMessage.update_request`, reply `ServerMessage.update_result` on the same stream (create)
+- `mgmt/internal/control/hub.go`, `mgmt/internal/control/server.go` — `subscriber.results` channel (capacity 64) drained by the send loop; `Server.OnUpdate` called from `receive` for `EngineMessage_UpdateRequest` (modify)
+- `mgmt/cmd/nexora-mgmt/main.go` — `controlServer.OnUpdate` wired to `dynupdate.Applier.Apply` (modify)
 - `e2e/secondary_update_test.go` — `TestSecondaryAndDynamicUpdate`
 
 Interfaces:
 
 ```rust
 pub trait UpdateForwarder: Send + Sync {
-    fn forward(&self, req: pb::UpdateRequest) -> Pin<Box<dyn Future<Output = Option<pb::UpdateResult>> + Send + '_>>; // None = disconnected or 5 s timeout
+    fn forward(&self, req: proto::UpdateRequest) -> Pin<Box<dyn Future<Output = Option<proto::UpdateResult>> + Send + '_>>; // None = disconnected or 5 s timeout
 }
-pub async fn handle_update(raw: Vec<u8>, client: SocketAddr, rt: Arc<Runtime>, ring: Arc<KeyRing>, fwd: Arc<dyn UpdateForwarder>, now: u64) -> Vec<u8>;
+pub async fn handle_update(raw: Vec<u8>, client: SocketAddr, rt: Arc<Runtime>, ring: Arc<crate::tsig::KeyRing>, fwd: Arc<dyn UpdateForwarder>, now: u64) -> Vec<u8>;
+// state.rs
+impl UpdateForwarder for AuthState { /* sends EngineMessage{update_request} on the attached sender; None when detached or after 5 s */ }
+impl AuthState { pub fn complete_update(&self, r: proto::UpdateResult); }
+// dispatch.rs
+pub enum SlowKind { Transfer, Update }
 ```
 
 ```go
 package dynupdate
 type Applier struct{ Zones *zone.Service; TSIG *tsigkey.Service; Now func() time.Time; TSIGCheck bool }
 func (a *Applier) Apply(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult
+
+package control
+// Server gains OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult;
+// subscriber gains results chan *controlv1.ServerMessage (capacity 64; never replaced like out).
 ```
 
 - [ ] Write the failing `mgmt/internal/dynupdate/apply_test.go`:
@@ -4391,21 +4624,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/miekg/dns"
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
-type noPublish struct{}
-
-func (noPublish) Publish(context.Context, pgx.Tx) error { return nil }
-
-type noAudit struct{}
-
-func (noAudit) Write(context.Context, pgx.Tx, zone.Actor, string, string, any, any) error { return nil }
+var actor = auth.Actor{Type: "user", ID: "t", Name: "t"}
 
 func rr(t *testing.T, s string) dns.RR {
 	t.Helper()
@@ -4419,13 +4646,13 @@ func rr(t *testing.T, s string) dns.RR {
 func setup(t *testing.T) (*dynupdate.Applier, *zone.Service, *zone.Zone) {
 	t.Helper()
 	ctx := context.Background()
-	zs := &zone.Service{Pool: storetest.NewPool(t), Publisher: noPublish{}, Auditor: noAudit{}, Now: time.Now}
-	z, err := zs.CreateZone(ctx, "user:t", zone.CreateZoneInput{Name: "dyn.test.", Kind: "primary", DefaultTTL: 300,
+	zs := &zone.Service{Store: storetest.New(t), Now: time.Now}
+	z, err := zs.CreateZone(ctx, actor, zone.CreateZoneInput{Name: "dyn.test.", Kind: "primary", DefaultTTL: 300,
 		SOA: zone.SOA{MName: "ns1.dyn.test.", RName: "h.dyn.test."}, Nameservers: []string{"ns1.dyn.test."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := zs.CreateRecord(ctx, "user:t", z.ID, zone.RecordInput{Name: "old.dyn.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
+	if _, err := zs.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "old.dyn.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
 	return &dynupdate.Applier{Zones: zs, Now: time.Now, TSIGCheck: false}, zs, z
@@ -4505,7 +4732,7 @@ func TestUpdateSectionAndSerial(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dynupdate/ -count=1` — expect FAIL with "undefined: dynupdate.Applier".
-- [ ] Implement `Apply`: `msg.Unpack`; opcode 5, one zone entry of type SOA class IN matching `req.Zone` else FORMERR; when `TSIGCheck` (true in production) re-verify with `dns.TsigVerify(req.Message, secretB64, "", false)` (failure → NOTAUTH) and require the key id to be in the zone's `update_tsig_key_ids` (REFUSED); zone kind secondary → REFUSED. Inside `zone.Service.Mutate` (`FOR UPDATE` lock, actor `tsig:<key>@<engineID>`, audit action `dynamicUpdate`):
+- [ ] Implement `Apply`: `msg.Unpack`; opcode 5, one zone entry of type SOA class IN matching `req.Zone` else FORMERR; when `TSIGCheck` (true in production) re-verify with `dns.TsigVerify(req.Message, secretB64, "", false)` (failure → NOTAUTH) and require the key id to be in the zone's `update_tsig_key_ids` (REFUSED); zone kind secondary → REFUSED. Inside `zone.Service.Mutate` (`FOR UPDATE` lock, actor `auth.Actor{Type: "system", ID: "tsig:<key>@<engineID>", Name: "tsig:<key>"}`, audit action `dynamicUpdate`):
   - build the current RRset map `(lower owner, type) → []dns.RR`, including the synthetic apex SOA.
   - prerequisites (RFC 2136 §3.2) over `msg.Answer`: TTL ≠ 0 → FORMERR; owner outside zone → NOTZONE; class ANY: rdlength ≠ 0 → FORMERR; type ANY → name must exist else NXDOMAIN; other type → RRset must exist else NXRRSET. Class NONE: rdlength ≠ 0 → FORMERR; type ANY → name must not exist else YXDOMAIN; other type → RRset must not exist else YXRRSET. Class IN: collect into temporary RRsets and compare each for exact rdata-set equality else NXRRSET. Other classes → FORMERR.
   - prescan (§3.4.1) over `msg.Ns`: owner outside zone → NOTZONE; class IN with meta types (ANY, AXFR, IXFR, MAILA, MAILB) → FORMERR; class ANY requires TTL 0 and rdlength 0 → FORMERR; class NONE requires TTL 0 → FORMERR; types DNSKEY, RRSIG, NSEC, NSEC3, NSEC3PARAM, CDS, CDNSKEY or outside `zone.ManagedTypes ∪ {SOA}` → REFUSED.
@@ -4515,12 +4742,11 @@ func TestUpdateSectionAndSerial(t *testing.T) {
 - [ ] Write the failing `engine/src/authoritative/update_tests.rs` (declare `pub mod update; #[cfg(test)] mod update_tests;`):
 
 ```rust
-use super::keyring::KeyRing;
-use super::tsig::{find_tsig, sign_request, verify_response};
-use super::tsig_tests::test_ring;
+use crate::tsig::{find_tsig, sign_request, KeyRing, TsigVerifier};
+use crate::tsig_tests::test_ring;
 use super::update::{handle_update_with_set, UpdateForwarder};
 use super::{answer_tests::basic_set, set::AuthSet};
-use crate::pb;
+use crate::proto;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RecordType};
 use std::future::Future;
@@ -4528,15 +4754,15 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 struct Fwd {
-    seen: Mutex<Vec<pb::UpdateRequest>>,
+    seen: Mutex<Vec<proto::UpdateRequest>>,
     reply: Option<u32>,
 }
 impl UpdateForwarder for Fwd {
-    fn forward(&self, req: pb::UpdateRequest) -> Pin<Box<dyn Future<Output = Option<pb::UpdateResult>> + Send + '_>> {
+    fn forward(&self, req: proto::UpdateRequest) -> Pin<Box<dyn Future<Output = Option<proto::UpdateResult>> + Send + '_>> {
         let id = req.request_id.clone();
         self.seen.lock().unwrap().push(req);
         let reply = self.reply;
-        Box::pin(async move { reply.map(|rcode| pb::UpdateResult { request_id: id, rcode, detail: String::new() }) })
+        Box::pin(async move { reply.map(|rcode| proto::UpdateResult { request_id: id, rcode, detail: String::new() }) })
     }
 }
 
@@ -4572,7 +4798,7 @@ async fn signed_update_is_forwarded_and_response_is_signed() {
     assert_eq!(parsed.metadata.response_code, ResponseCode::NoError);
     assert_eq!(parsed.metadata.op_code, OpCode::Update);
     assert!(find_tsig(&resp).unwrap().is_some(), "response carries TSIG");
-    verify_response(&resp, &key, &mac, NOW).expect("response TSIG verifies");
+    TsigVerifier::new((*key).clone(), mac.clone()).verify(&resp, NOW).expect("response TSIG verifies");
     let seen = fwd.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].zone, "example.test.");
@@ -4603,16 +4829,17 @@ async fn key_not_allowed_is_refused_and_timeout_is_servfail() {
 
 `AuthSet::with_update_keys` is a `#[cfg(test)]` helper that clones the set replacing a zone's `update_tsig_keys`; `handle_update_with_set` is the testable core of `handle_update` (takes the `AuthSet` instead of `Runtime`).
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::update_tests` — expect FAIL with "unresolved import `super::update`".
-- [ ] Implement `update.rs`: header opcode 5, ZOCOUNT 1, zone type SOA class IN else FORMERR; zone hosted with `origin == zname` else NOTAUTH; zone kind secondary → REFUSED; `verify_request`: `Unsigned` → REFUSED (unsigned response), failure → `error_response`; verified key name not in the zone's `update_tsig_keys` → REFUSED (signed); forward `UpdateRequest{request_id: 32 random hex, zone, client, message: raw, tsig_key}`; `None` → SERVFAIL; result → response with `rcode` from mgmt. The response copies ID, opcode 5, QR=1, the zone section, zero other counts, and is signed with the request MAC. Metric `nexora_auth_updates_total{result}`. Production forwarder in `control.rs`: `Mutex<HashMap<String, oneshot::Sender<pb::UpdateResult>>>`, sends `EngineMessage{update_request}` on the control stream (disconnected → `None` immediately), `tokio::time::timeout(5 s)`; incoming `ServerMessage.update_result` completes the waiter. In `dispatch.rs`, opcode 5 over UDP or TCP spawns `handle_update` with `spawn_local` and sends its reply on completion.
-- [ ] Implement `mgmt/internal/control/update.go`: on `update_request` call `Applier.Apply` (with a 4 s context) and enqueue `ServerMessage{update_result}` on the originating engine's outbound queue.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::update_tests` — expect PASS.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::update_tests` — expect FAIL with "unresolved import `super::update`".
+- [ ] Implement `update.rs`: header opcode 5, ZOCOUNT 1, zone type SOA class IN else FORMERR; zone hosted with `origin == zname` else NOTAUTH; zone kind secondary → REFUSED; `verify_request`: `Unsigned` → REFUSED (unsigned response), failure → `error_response`; verified key name not in the zone's `update_tsig_keys` → REFUSED (signed); forward `UpdateRequest{request_id: 32 random hex, zone, client, message: raw, tsig_key}`; `None` → SERVFAIL; result → response with `rcode` from mgmt. The response copies ID, opcode 5, QR=1, the zone section, zero other counts, and is signed with the request MAC. Metric `nexora_auth_updates_total{result}` (`metrics.auth.updates`). Production forwarder is `AuthState`: `parking_lot::Mutex<FxHashMap<String, oneshot::Sender<proto::UpdateResult>>>`, `try_send` of `EngineMessage{update_request}` on the attached sender (detached or full → `None` immediately), `tokio::time::timeout(5 s)` removing the waiter on expiry; `control::session`'s `ServerMsg::UpdateResult(r)` arm calls `complete_update(r)`. In `dispatch::unparsed`, opcode 5 returns `AuthOutcome::Slow(SlowJob { kind: SlowKind::Update, .. })` on every transport; `run_slow` runs `handle_update(job.query.into(), job.client, rt, ctx.shared.auth.keyring.clone(), ctx.shared.auth.clone(), clock::unix_now())` and returns its single message (UDP: `server/udp.rs` sends it from the spawned task; streams: one frame).
+- [ ] Mgmt delivery: `subscriber` gains `results chan *controlv1.ServerMessage` (capacity 64) and `Server.receive` gains `case *controlv1.EngineMessage_UpdateRequest:` which, when `s.OnUpdate` is set, runs `go func() { res := s.OnUpdate(ctx4s, sub.engineID, req); select { case sub.results <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_UpdateResult{UpdateResult: res}}: default: } }()` with a 4 s context, so receiving continues while the update applies; the `Connect` send loop gains `case msg := <-sub.results:` (results never go through `out`, whose capacity-1 latest-wins slot would let a snapshot replace them). `main.go` sets `controlServer.OnUpdate` to `(&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).Apply`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::update_tests` — expect PASS.
 - [ ] Write the failing `e2e/secondary_update_test.go`:
 
 ```go
 package e2e
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"testing"
@@ -4623,21 +4850,19 @@ import (
 )
 
 func TestSecondaryAndDynamicUpdate(t *testing.T) {
-	env := harness.New(t)
-	mg := env.StartMgmt(harness.MgmtOptions{Env: map[string]string{"NEXORA_KEK_FILE": harness.WriteKEK(t)}})
-	eng := env.StartEngine(mg, harness.EngineOptions{Name: "engine-1"})
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}, "upd-1")
+	api, eng := e.api, e.engines[0]
 
 	t.Run("secondary zone follows NOTIFY from external primary", func(t *testing.T) {
-		const updSecret = "c2VjcmV0LXVwZGF0ZS1rZXktZm9yLW5hbWVkLXByaW1hcnk="
-		namedPort := harness.FreePort(t)
-		named := harness.StartNamed(t, namedPort,
-			[]harness.NamedKey{{Name: "upd-key.", Algorithm: "hmac-sha256", Secret: updSecret}},
-			[]harness.NamedZone{{Name: "upstream.test.", Type: "primary", AllowUpdateKey: "upd-key.", AlsoNotify: eng.DNSAddr,
-				FileContent: "$TTL 60\n@ SOA ns.upstream.test. h.upstream.test. 1 3600 600 86400 60\n@ NS ns.upstream.test.\nns A 192.0.2.53\na A 192.0.2.1\n"}})
+		updSecret := base64.StdEncoding.EncodeToString([]byte("fixture-update-key-for-named"))
+		named := e.env.StartNamedConfig(harness.NamedConfig{
+			Keys: []harness.NamedKey{{Name: "upd-key.", Algorithm: "hmac-sha256", SecretB64: updSecret}},
+			Zones: []harness.NamedZone{{Name: "upstream.test.", Type: "primary", AllowUpdateKey: "upd-key.", AlsoNotify: eng.DNS,
+				Text: "$TTL 60\n@ SOA ns.upstream.test. h.upstream.test. 1 3600 600 86400 60\n@ NS ns.upstream.test.\nns A 192.0.2.53\na A 192.0.2.1\n"}},
+		})
 		var z zoneResp
-		api.MustDo(t, http.MethodPost, "/api/v1/zones", map[string]any{"name": "upstream.test.", "kind": "secondary", "primaries": []map[string]any{{"address": named.Addr}}}, &z)
-		harness.WaitDNSAnswer(t, eng.DNSAddr, "a.upstream.test.", dns.TypeA, time.Now().Add(15*time.Second), func(m *dns.Msg) bool { return m.Authoritative && len(m.Answer) == 1 })
+		api.Must(http.MethodPost, "/zones", map[string]any{"name": "upstream.test.", "kind": "secondary", "primaries": []map[string]any{{"address": named.Addr}}}, &z, http.StatusCreated)
+		harness.WaitDNSAnswer(t, eng.DNS, "a.upstream.test.", dns.TypeA, 15*time.Second, func(m *dns.Msg) bool { return m.Authoritative && len(m.Answer) == 1 })
 
 		m := new(dns.Msg)
 		m.SetUpdate("upstream.test.")
@@ -4647,50 +4872,57 @@ func TestSecondaryAndDynamicUpdate(t *testing.T) {
 		if r, _, err := c.Exchange(m, named.Addr); err != nil || r.Rcode != dns.RcodeSuccess {
 			t.Fatalf("update external primary: %v %v", r, err)
 		}
-		harness.WaitDNSAnswer(t, eng.DNSAddr, "b.upstream.test.", dns.TypeA, time.Now().Add(10*time.Second), func(m *dns.Msg) bool { return len(m.Answer) == 1 })
+		// the SOA refresh is 3600 s: only the forwarded NOTIFY makes the change appear within 10 s
+		harness.WaitDNSAnswer(t, eng.DNS, "b.upstream.test.", dns.TypeA, 10*time.Second, func(m *dns.Msg) bool { return len(m.Answer) == 1 })
 		var got struct {
 			SecondaryStatus struct {
 				LastTrigger string `json:"last_trigger"`
 			} `json:"secondary_status"`
 		}
-		api.MustDo(t, http.MethodGet, "/api/v1/zones/"+z.ID, nil, &got)
+		api.Must(http.MethodGet, "/zones/"+z.ID, nil, &got, http.StatusOK)
 		if got.SecondaryStatus.LastTrigger != "notify" {
-			t.Fatalf("refresh was not triggered by NOTIFY (SOA refresh is 3600 s): %q", got.SecondaryStatus.LastTrigger)
+			t.Fatalf("refresh was not triggered by NOTIFY: %q", got.SecondaryStatus.LastTrigger)
 		}
-		if v := harness.PromValue(t, eng.MetricsURL, `nexora_auth_notify_received_total{result="forwarded"}`); v < 1 {
+		if v := eng.Metric(t, "nexora_auth_notify_received_total", map[string]string{"result": "forwarded"}); v < 1 {
 			t.Fatalf("engine did not forward NOTIFY")
 		}
 	})
 
 	t.Run("TSIG-signed update applies, unsigned is refused", func(t *testing.T) {
 		var key tsigKeyResp
-		api.MustDo(t, http.MethodPost, "/api/v1/tsig-keys", map[string]any{"name": "ddns-key.", "algorithm": "hmac-sha256"}, &key)
+		api.Must(http.MethodPost, "/tsig-keys", map[string]any{"name": "ddns-key.", "algorithm": "hmac-sha256"}, &key, http.StatusCreated)
 		createPrimaryZone(t, api, "dyn.test.", map[string]any{"update": map[string]any{"tsig_key_ids": []string{key.ID}}})
-		harness.WaitDNSAnswer(t, eng.DNSAddr, "dyn.test.", dns.TypeSOA, time.Now().Add(5*time.Second), func(m *dns.Msg) bool { return m.Authoritative && len(m.Answer) == 1 })
-		harness.Eventually(t, 5*time.Second, func() bool { return harness.PromValue(t, eng.MetricsURL, "nexora_control_connected") == 1 })
+		harness.WaitDNSAnswer(t, eng.DNS, "dyn.test.", dns.TypeSOA, 5*time.Second, func(m *dns.Msg) bool { return m.Authoritative && len(m.Answer) == 1 })
+		if eng.Metric(t, "nexora_control_connected", nil) != 1 {
+			t.Fatal("engine control stream is not connected")
+		}
 
 		signed := new(dns.Msg)
 		signed.SetUpdate("dyn.test.")
 		signed.Insert([]dns.RR{mustRR(t, "host1.dyn.test. 300 IN A 192.0.2.10")})
 		signed.SetTsig("ddns-key.", dns.HmacSHA256, 300, time.Now().Unix())
 		c := &dns.Client{Net: "udp", TsigSecret: map[string]string{"ddns-key.": key.Secret}, Timeout: 8 * time.Second}
-		var r *dns.Msg
-		var err error
-		harness.Eventually(t, 10*time.Second, func() bool { // KeyMaterial with the new key may still be in flight
-			r, _, err = c.Exchange(signed.Copy(), eng.DNSAddr)
-			return err == nil && r.Rcode == dns.RcodeSuccess
+		harness.Eventually(t, 10*time.Second, func() error { // KeyMaterial with the new key may still be in flight
+			r, _, err := c.Exchange(signed.Copy(), eng.DNS)
+			if err != nil {
+				return err
+			}
+			if r.Rcode != dns.RcodeSuccess {
+				return fmt.Errorf("signed update: rcode %s", dns.RcodeToString[r.Rcode])
+			}
+			return nil
 		})
-		harness.WaitDNSAnswer(t, eng.DNSAddr, "host1.dyn.test.", dns.TypeA, time.Now().Add(5*time.Second), func(m *dns.Msg) bool { return len(m.Answer) == 1 })
+		harness.WaitDNSAnswer(t, eng.DNS, "host1.dyn.test.", dns.TypeA, 5*time.Second, func(m *dns.Msg) bool { return len(m.Answer) == 1 })
 
 		unsigned := new(dns.Msg)
 		unsigned.SetUpdate("dyn.test.")
 		unsigned.Insert([]dns.RR{mustRR(t, "host2.dyn.test. 300 IN A 192.0.2.11")})
-		r, _, err = (&dns.Client{Timeout: 5 * time.Second}).Exchange(unsigned, eng.DNSAddr)
+		r, _, err := (&dns.Client{Timeout: 5 * time.Second}).Exchange(unsigned, eng.DNS)
 		if err != nil || r.Rcode != dns.RcodeRefused {
 			t.Fatalf("unsigned update: rcode=%v err=%v, want REFUSED", r, err)
 		}
-		time.Sleep(2 * time.Second)
-		if nx := harness.DNSQuery(t, eng.DNSAddr, "host2.dyn.test.", dns.TypeA); nx.Rcode != dns.RcodeNameError {
+		waitLatestApplied(t, api, "upd-1")
+		if nx := harness.MustQuery(t, eng.DNS, "host2.dyn.test.", dns.TypeA, harness.QueryOpts{TCP: true}); nx.Rcode != dns.RcodeNameError {
 			t.Fatalf("unsigned update was applied: %v", nx)
 		}
 	})
@@ -4700,7 +4932,7 @@ func mustRR(t *testing.T, s string) dns.RR {
 	t.Helper()
 	r, err := dns.NewRR(s)
 	if err != nil {
-		t.Fatal(fmt.Errorf("%q: %w", s, err))
+		t.Fatalf("%q: %v", s, err)
 	}
 	return r
 }
@@ -4717,11 +4949,11 @@ Files:
 - `mgmt/internal/dnssec/sign.go` — pure signer: DNSKEY/CDS/CDNSKEY, NSEC or NSEC3 chain, RRSIG reuse and refresh
 - `mgmt/internal/dnssec/canonical.go` — RRset digest, cut/occlusion analysis
 - `mgmt/internal/dnssec/sign_test.go` — validation of output, reuse, goldens for the engine
-- `mgmt/internal/dnssec/store.go` — `zone.Signer` implementation backed by Postgres and `keystore`
+- `mgmt/internal/dnssec/store.go` — `zone.Signer` implementation backed by Postgres and `secrets.Box` (new package `dnssec`, distinct from M3's `dnssecconf` validation helpers)
 - `mgmt/internal/dnssec/enable.go` — `Enable(ctx, tx, …)`: settings row, first KSK + ZSK
 - `mgmt/internal/dnssec/store_test.go`
 - `mgmt/internal/zone/service.go`, `mgmt/internal/zone/model.go` — load `dnssec_enabled` from `zone_dnssec` (modify)
-- `mgmt/cmd/nexora-mgmt/main.go` — pass the signer to `zone.Service` (modify)
+- `mgmt/cmd/nexora-mgmt/main.go` — `Signer: &dnssec.Store{Box: box}` on the shared `zone.Service` (modify)
 - `testdata/nzf/signed-nsec-full.nzf`, `testdata/nzf/signed-nsec3-full.nzf` — goldens for Task 13
 
 Interfaces:
@@ -4736,12 +4968,12 @@ type Input struct{ Origin string; Records []dns.RR; Keys []Key; NSEC3 bool; Cach
 type Output struct{ Served []dns.RR; Cache map[SigKey]CachedSig; NextRefresh time.Time; Reused, Created int }
 func Sign(in Input) (*Output, error)
 func SignRRset(origin string, rrset []dns.RR, keys []Key, now time.Time) ([]dns.RR, error)
-type Settings struct{ Algorithm uint8; NSECMode string; KeyBackend keystore.Backend; PropagationDelay, ParentDSTTL time.Duration; ZSKLifetimeDays int }
-type Store struct{ Keys *keystore.Store }
+type Settings struct{ Algorithm uint8; NSECMode string; KeyBackend secrets.Backend; PropagationDelay, ParentDSTTL time.Duration; ZSKLifetimeDays int }
+type Store struct{ Box *secrets.Box }
 func (s *Store) Sign(ctx context.Context, tx pgx.Tx, z *zone.Zone, rrs []dns.RR, now time.Time) ([]dns.RR, error)
 func (s *Store) ResignSOA(ctx context.Context, tx pgx.Tx, z *zone.Zone, served []dns.RR, now time.Time) ([]dns.RR, error)
-func Enable(ctx context.Context, tx pgx.Tx, ks *keystore.Store, zoneID uuid.UUID, st Settings) error
-func Disable(ctx context.Context, tx pgx.Tx, ks *keystore.Store, zoneID uuid.UUID) error
+func Enable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID, st Settings) error
+func Disable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID) error
 ```
 
 - [ ] Write `mgmt/migrations/00401_dnssec.sql`:
@@ -5103,51 +5335,52 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/miekg/dns"
+	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
-	"github.com/piwi3910/nexora/mgmt/internal/keystore"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
-type noPublish struct{}
-
-func (noPublish) Publish(context.Context, pgx.Tx) error { return nil }
-
-type noAudit struct{}
-
-func (noAudit) Write(context.Context, pgx.Tx, zone.Actor, string, string, any, any) error { return nil }
-
 func TestEnableSignsAndEditsAreResigned(t *testing.T) {
 	ctx := context.Background()
+	actor := auth.Actor{Type: "user", ID: "t", Name: "t"}
 	kek := make([]byte, 32)
-	rand.Read(kek)
+	if _, err := rand.Read(kek); err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(t.TempDir(), "kek")
-	os.WriteFile(p, []byte(base64.StdEncoding.EncodeToString(kek)), 0o600)
-	ks, _ := keystore.New(keystore.Config{KEKFile: p})
-	pool := storetest.NewPool(t)
-	zs := &zone.Service{Pool: pool, Publisher: noPublish{}, Auditor: noAudit{}, Signer: &dnssec.Store{Keys: ks}, Now: time.Now}
-	z, err := zs.CreateZone(ctx, "user:t", zone.CreateZoneInput{Name: "signed.test.", Kind: "primary", DefaultTTL: 300,
+	if err := os.WriteFile(p, []byte(base64.StdEncoding.EncodeToString(kek)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	box, err := secrets.Open(secrets.Config{KEKFile: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := storetest.New(t)
+	zs := &zone.Service{Store: st, Signer: &dnssec.Store{Box: box}, Now: time.Now}
+	z, err := zs.CreateZone(ctx, actor, zone.CreateZoneInput{Name: "signed.test.", Kind: "primary", DefaultTTL: 300,
 		SOA: zone.SOA{MName: "ns1.signed.test.", RName: "h.signed.test."}, Nameservers: []string{"ns1.signed.test."}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = zs.Mutate(ctx, z.ID, func(tx pgx.Tx, z *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
-		err := dnssec.Enable(ctx, tx, ks, z.ID, dnssec.Settings{Algorithm: 13, NSECMode: "nsec3", KeyBackend: keystore.BackendKEK, PropagationDelay: time.Hour, ParentDSTTL: 24 * time.Hour, ZSKLifetimeDays: 90})
+		err := dnssec.Enable(ctx, tx, box, z.ID, dnssec.Settings{Algorithm: 13, NSECMode: "nsec3", KeyBackend: secrets.BackendKEK, PropagationDelay: time.Hour, ParentDSTTL: 24 * time.Hour, ZSKLifetimeDays: 90})
 		z.DNSSECEnabled = true
 		return "updateZoneDnssec", nil, nil, zone.RebuildOptions{Force: true}, err
-	}, "user:t")
+	}, actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var keys int
-	pool.QueryRow(ctx, `SELECT count(*) FROM dnssec_keys WHERE zone_id=$1 AND state='active' AND private_envelope IS NOT NULL`, z.ID).Scan(&keys)
+	st.Pool.QueryRow(ctx, `SELECT count(*) FROM dnssec_keys WHERE zone_id=$1 AND state='active' AND private_envelope IS NOT NULL`, z.ID).Scan(&keys)
 	if keys != 2 {
 		t.Fatalf("active enveloped keys: %d", keys)
 	}
-	if _, err := zs.CreateRecord(ctx, "user:t", z.ID, zone.RecordInput{Name: "www.signed.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
+	if _, err := zs.CreateRecord(ctx, actor, z.ID, zone.RecordInput{Name: "www.signed.test.", Type: "A", TTL: 300, Data: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
-	tx, _ := pool.Begin(ctx)
+	tx, _ := st.Pool.Begin(ctx)
 	defer tx.Rollback(ctx)
 	fresh, _ := zs.GetZone(ctx, z.ID)
 	served, err := zone.LoadServed(ctx, tx, fresh)
@@ -5207,8 +5440,8 @@ func findKey(keys []dns.RR, tag uint16) *dns.DNSKEY {
 ```
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ -run TestEnableSigns -count=1` — expect FAIL with "undefined: dnssec.Store".
-- [ ] Implement `enable.go`: refuse with `keystore.ErrUnconfigured` when the keystore is unconfigured, `keystore.ErrBackendUnavailable` when the requested backend is not; upsert `zone_dnssec` (`enabled=true`); when the zone has no non-removed keys, `GenerateSigningKey` twice (KSK flags 257, ZSK 256), compute key tags from the DNSKEY, insert both `state='active', activated_at=now()`, KSK `ds_state='pending'`. `Disable` sets `enabled=false`, marks keys `removed` (destroying HSM objects, nulling envelopes) and deletes `zone_signatures`.
-- [ ] Implement `store.go` `Store.Sign`: load settings and keys (`state IN ('published','active','retired')`), build `dnssec.Key`s via `keystore.Signer` (releasing all at the end of the call), `Signs` = `state='active'`, `InCDS` = `role='ksk' AND state='active' AND ds_state='pending'`; load cache from `zone_signatures`; call `Sign`; replace changed rows in `zone_signatures` (delete rows whose `(owner,type,tag)` is absent from the output); `UPDATE zone_dnssec SET next_maintenance_at = LEAST(next_refresh, rollover next)` (rollover time filled by Task 14). `ResignSOA` re-signs the SOA RRset with active ZSKs via `SignRRset` and updates its cache row. `zone.Service` loads `DNSSECEnabled` with `LEFT JOIN zone_dnssec d ON d.zone_id = z.id` (`COALESCE(d.enabled, false)`).
+- [ ] Implement `enable.go`: refuse with `secrets.ErrUnconfigured` when the box is unconfigured, `secrets.ErrBackendUnavailable` when the requested backend is not; upsert `zone_dnssec` (`enabled=true`); when the zone has no non-removed keys, `GenerateSigningKey` twice (KSK flags 257, ZSK 256), compute key tags from the DNSKEY, insert both `state='active', activated_at=now()`, KSK `ds_state='pending'`. `Disable` sets `enabled=false`, marks keys `removed` (destroying HSM objects, nulling envelopes) and deletes `zone_signatures`.
+- [ ] Implement `store.go` `Store.Sign`: load settings and keys (`state IN ('published','active','retired')`), build `dnssec.Key`s via `Box.Signer` (releasing all at the end of the call), `Signs` = `state='active'`, `InCDS` = `role='ksk' AND state='active' AND ds_state='pending'`; load cache from `zone_signatures`; call `Sign`; replace changed rows in `zone_signatures` (delete rows whose `(owner,type,tag)` is absent from the output); `UPDATE zone_dnssec SET next_maintenance_at = LEAST(next_refresh, rollover next)` (rollover time filled by Task 14). `ResignSOA` re-signs the SOA RRset with active ZSKs via `SignRRset` and updates its cache row. `zone.Service` loads `DNSSECEnabled` with `LEFT JOIN zone_dnssec d ON d.zone_id = z.id` (`COALESCE(d.enabled, false)`).
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ ./mgmt/internal/zone/ ./mgmt/internal/dynupdate/ -count=1` — expect PASS.
 - [ ] Commit: `git add mgmt testdata/nzf && git commit -m "feat(mgmt): online DNSSEC signing with NSEC/NSEC3 and signature reuse"`.
 
@@ -5216,11 +5449,12 @@ func findKey(keys []dns.RR, tag uint16) *dns.DNSKEY {
 
 Files:
 
-- `engine/Cargo.toml` — `sha1 = "0.11.0"`; `[dev-dependencies] hickory-proto = { version = "0.26", features = ["dnssec-ring"] }` so tests decode RRSIG/NSEC/NSEC3 (modify)
-- `engine/src/authoritative/nsec3.rs` — RFC 5155 hash, base32hex
+- `engine/src/authoritative/nsec3.rs` — RFC 5155 hash (SHA-1 from `ring`), base32hex
 - `engine/src/authoritative/dnssec.rs` — proof selection: RRSIGs, NSEC and NSEC3 denial, DS/no-DS at referrals
 - `engine/src/authoritative/answer.rs` — call the proofs when DO=1 and the zone is signed (modify)
 - `engine/src/authoritative/dnssec_tests.rs`
+
+`engine/Cargo.toml` needs no change: `ring =0.17.14` provides SHA-1 and `hickory-proto =0.26.3` with `dnssec-ring` is already a dev dependency, so the tests decode RRSIG/NSEC/NSEC3.
 
 Interfaces:
 
@@ -5366,22 +5600,25 @@ fn referrals_include_ds_or_proof_of_no_ds() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative::dnssec_tests` — expect FAIL with "unresolved import `super::nsec3`".
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::dnssec_tests` — expect FAIL with "unresolved import `super::nsec3`".
 - [ ] Implement `nsec3.rs`:
 
 ```rust
-use sha1::{Digest, Sha1};
+use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY};
+
+fn sha1(a: &[u8], b: &[u8]) -> [u8; 20] {
+    let mut c = Context::new(&SHA1_FOR_LEGACY_USE_ONLY);
+    c.update(a);
+    c.update(b);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(c.finish().as_ref());
+    out
+}
 
 pub fn hash(name: &[u8], iterations: u16, salt: &[u8]) -> [u8; 20] {
-    let mut h = Sha1::new();
-    h.update(name);
-    h.update(salt);
-    let mut out: [u8; 20] = h.finalize().into();
+    let mut out = sha1(name, salt);
     for _ in 0..iterations {
-        let mut h = Sha1::new();
-        h.update(out);
-        h.update(salt);
-        out = h.finalize().into();
+        out = sha1(&out, salt);
     }
     out
 }
@@ -5437,7 +5674,7 @@ The `hash` input name is the lowercase wire form (callers lowercase first). Hash
   - NSEC3 zones (params from NSEC3PARAM): hash names with `nsec3::hash`; closest-encloser proof = NSEC3 matching the closest encloser + NSEC3 covering the next-closer name (the ancestor of qname one label below the encloser); `NxDomain` → proof + NSEC3 covering `*.<closest encloser>`; `NoData` → NSEC3 matching qname; `WildcardAnswer` → NSEC3 covering the next-closer name; `WildcardNoData` → proof + NSEC3 matching the wildcard; `InsecureReferral` → NSEC3 matching the cut. Deduplicate by owner.
   - negative answers keep the SOA and add its RRSIG before the proofs; secure referrals add the DS RRset and its RRSIG to authority.
   - overflow of any DNSSEC record in answer/authority → truncation (TC) as in Task 3.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml authoritative` — expect PASS.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` — expect PASS.
 - [ ] Commit: `git add engine && git commit -m "feat(engine): serve RRSIGs and NSEC/NSEC3 proofs from pre-signed zones"`.
 
 ## Task 14: Key rollovers, CDS/CDNSKEY, DNSSEC API, and the signing/key-storage acceptance tests
@@ -5447,7 +5684,7 @@ Files:
 - `mgmt/internal/dnssec/rollover.go`, `mgmt/internal/dnssec/rollover_test.go` — pure key-state machine
 - `mgmt/internal/dnssec/maintainer.go` — 5 s loop: due zones, rollover transitions, signature refresh
 - `mgmt/internal/dnssec/service.go` — `Get`, `Update`, `StartRollover`, `ConfirmDS` for the API
-- `mgmt/api/openapi.yaml`, `mgmt/internal/api/dnssec_zone.go`, `mgmt/internal/auth/permissions.go` — `getZoneDnssec`, `updateZoneDnssec`, `startZoneKeyRollover`, `confirmZoneKskDs` (modify/create)
+- `mgmt/api/openapi.yaml`, `mgmt/internal/api/dnssec_zone.go`, `mgmt/internal/api/server.go` (`Deps.ZoneDNSSEC`), `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `getZoneDnssec`, `updateZoneDnssec`, `startZoneKeyRollover`, `confirmZoneKskDs` (modify/create; `dnssec.go` keeps M3's resolver DNSSEC handlers)
 - `mgmt/cmd/nexora-mgmt/main.go` — start the maintainer (modify)
 - `e2e/harness/dnssec.go` — `Delv`, `WriteTrustAnchors`, `SoftHSMToken`
 - `e2e/dnssec_test.go` — `TestDNSSECSigningRollover`, `TestKeyStorageBackends`
@@ -5460,14 +5697,14 @@ type KeyState struct{ ID, Role, State, DSState string; PublishedAt time.Time; Ac
 type Policy struct{ DNSKEYTTL, MaxZoneTTL, Propagation, ParentDSTTL time.Duration; ZSKLifetime time.Duration /* 0 = manual */ }
 type Actions struct{ CreateZSK bool }
 func Advance(keys []KeyState, p Policy, now time.Time) (out []KeyState, act Actions, next time.Time)
-type Service struct{ Pool *pgxpool.Pool; Keys *keystore.Store; Zones *zone.Service }
+type Service struct{ Store *store.Store; Box *secrets.Box; Zones *zone.Service }
 type View struct{ Enabled bool; Settings Settings; Keys []KeyView; DS []string; DNSKEYs []string }
 type KeyView struct{ ID, Role, State, DSState, Backend string; Algorithm uint8; KeyTag uint16; Flags uint16; PublicKey string; PublishedAt time.Time; ActivatedAt, RetiredAt, RemovedAt *time.Time }
 func (s *Service) Get(ctx context.Context, zoneID uuid.UUID) (*View, error)
-func (s *Service) Update(ctx context.Context, actor zone.Actor, zoneID uuid.UUID, revision int64, enabled bool, st Settings) (*View, error)
-func (s *Service) StartRollover(ctx context.Context, actor zone.Actor, zoneID uuid.UUID, role string) (*View, error)
-func (s *Service) ConfirmDS(ctx context.Context, actor zone.Actor, zoneID, keyID uuid.UUID) (*View, error)
-type Maintainer struct{ Pool *pgxpool.Pool; Service *Service; Tick time.Duration }
+func (s *Service) Update(ctx context.Context, actor auth.Actor, zoneID uuid.UUID, revision int64, enabled bool, st Settings) (*View, error)
+func (s *Service) StartRollover(ctx context.Context, actor auth.Actor, zoneID uuid.UUID, role string) (*View, error)
+func (s *Service) ConfirmDS(ctx context.Context, actor auth.Actor, zoneID, keyID uuid.UUID) (*View, error)
+type Maintainer struct{ Store *store.Store; Service *Service; Tick time.Duration }
 func (m *Maintainer) Run(ctx context.Context) error
 ```
 
@@ -5572,10 +5809,10 @@ func TestAutomaticZSKRolloverAtLifetime(t *testing.T) {
   - `next` = earliest pending transition instant.
 - [ ] Run the rollover tests — expect PASS.
 - [ ] Implement `service.go` and `maintainer.go`:
-  - `Update`: enabling calls `dnssec.Enable` (503 path when the keystore refuses); algorithm change while enabled → 422 `algorithm_rollover_unsupported`; `nsec_mode` change allowed (rebuild); disabling calls `Disable`; zone revision required; all through `zone.Service.Mutate` with `Force: true`.
+  - `Update`: enabling calls `dnssec.Enable` (503 `key_storage_unconfigured` / `key_backend_unavailable` when the `secrets.Box` refuses); algorithm change while enabled → 422 `algorithm_rollover_unsupported`; `nsec_mode` change allowed (rebuild); disabling calls `Disable`; zone revision required; all through `zone.Service.Mutate` with `Force: true`.
   - `StartRollover(zsk)`: refuse 409 `rollover_in_progress` when a ZSK is `published`/`retired`; generate a new ZSK `state='published'`. `StartRollover(ksk)`: refuse when two KSKs are active; generate a KSK `state='active', ds_state='pending'`. `ConfirmDS(keyID)`: key must be an active KSK with `ds_state='pending'` → `seen`, `ds_seen_at=now()`.
-  - `Maintainer.Run` every 5 s: `SELECT zone_id FROM zone_dnssec WHERE enabled AND next_maintenance_at <= now() LIMIT 20`, per zone under `pg_try_advisory_lock(hashtext('dnssec:'||zone_id))`: `Mutate` → load key states, policy (`DNSKEYTTL` = SOA TTL, `MaxZoneTTL` = max TTL of served records, settings), `Advance`, persist state changes (`removed` keys: `DestroySigningKey` / `private_envelope = NULL`, `removed_at`), `CreateZSK` → generate a published ZSK, `Rebuild` (re-signs; refreshes expiring signatures), `next_maintenance_at = LEAST(signature refresh, Advance next)`.
-- [ ] Add OpenAPI: `GET /zones/{zoneId}/dnssec` `getZoneDnssec` → `ZoneDnssec{enabled, algorithm, nsec_mode, key_backend, propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days, keys[{id, role, algorithm, key_tag, flags, state, ds_state, backend, public_key, published_at, activated_at, retired_at, removed_at}], ds[string], dnskeys[string]}`; `PUT /zones/{zoneId}/dnssec` `updateZoneDnssec` body `{revision, enabled, algorithm (8|13, default 13), nsec_mode (nsec|nsec3, default nsec3), key_backend (kek|pkcs11, default per keystore), propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days}` → 200 / 409 / 422 / 503 `key_storage_unconfigured`; `POST /zones/{zoneId}/dnssec/rollovers` `startZoneKeyRollover` body `{role: zsk|ksk}` → 202 `ZoneDnssec` / 409 `rollover_in_progress`; `POST /zones/{zoneId}/dnssec/rollovers/ds-published` `confirmZoneKskDs` body `{key_id}` → 200 / 422. Permissions: `getZoneDnssec` viewer; the other three operator. `Zone.dnssec_enabled` reflects the setting. Regenerate server and web types.
+  - `Maintainer.Run` every 5 s: `SELECT zone_id FROM zone_dnssec WHERE enabled AND next_maintenance_at <= now() LIMIT 20`, per zone under `pg_try_advisory_lock(hashtext('dnssec:'||zone_id))`: `Mutate` (actor `auth.Actor{Type: "system", ID: "dnssec", Name: "system:dnssec"}`, audit action `dnssecMaintenance`) → load key states, policy (`DNSKEYTTL` = SOA TTL, `MaxZoneTTL` = max TTL of served records, settings), `Advance`, persist state changes (`removed` keys: `DestroySigningKey` / `private_envelope = NULL`, `removed_at`), `CreateZSK` → generate a published ZSK, `Rebuild` (re-signs; refreshes expiring signatures), `next_maintenance_at = LEAST(signature refresh, Advance next)`.
+- [ ] Add OpenAPI: `GET /zones/{zoneId}/dnssec` `getZoneDnssec` → `ZoneDnssec{enabled, algorithm, nsec_mode, key_backend, propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days, keys[{id, role, algorithm, key_tag, flags, state, ds_state, backend, public_key, published_at, activated_at, retired_at, removed_at}], ds[string], dnskeys[string]}`; `PUT /zones/{zoneId}/dnssec` `updateZoneDnssec` body `{revision, enabled, algorithm (8|13, default 13), nsec_mode (nsec|nsec3, default nsec3), key_backend (kek|pkcs11, default `Box.DefaultBackend()`), propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days}` → 200 / 409 / 422 / 503 `key_storage_unconfigured`; `POST /zones/{zoneId}/dnssec/rollovers` `startZoneKeyRollover` body `{role: zsk|ksk}` → 202 `ZoneDnssec` / 409 `rollover_in_progress`; `POST /zones/{zoneId}/dnssec/rollovers/ds-published` `confirmZoneKskDs` body `{key_id}` → 200 / 422. All errors reference `#/components/responses/Error`; the specific codes are returned by `mapError` cases for the `dnssec` package's sentinel errors (`ErrAlgorithmRollover` → 422 `algorithm_rollover_unsupported`, `ErrRolloverInProgress` → 409 `rollover_in_progress`, `ErrNotPendingKSK` → 422 `ksk_not_pending`). Permissions: `getZoneDnssec` viewer; the other three operator (Go and `permissions.ts`). `Zone.dnssec_enabled` reflects the setting. `api.Deps` gains `ZoneDNSSEC *dnssec.Service`; `main.go` builds `&dnssec.Service{Store: st, Box: box, Zones: zones}` and runs `(&dnssec.Maintainer{Store: st, Service: svc, Tick: 5 * time.Second}).Run(ctx)` in a goroutine. Regenerate the API.
 - [ ] Write `e2e/harness/dnssec.go`:
 
 ```go
@@ -5598,6 +5835,7 @@ type TrustAnchor struct {
 	PublicKey string
 }
 
+// WriteTrustAnchors writes a BIND trust-anchors file for zone and returns its path.
 func WriteTrustAnchors(t *testing.T, zone string, anchors []TrustAnchor) string {
 	t.Helper()
 	var b strings.Builder
@@ -5627,22 +5865,32 @@ func Delv(t *testing.T, server, anchorFile, root, name, qtype string) string {
 	return string(out)
 }
 
+// SoftHSM is an initialised SoftHSM token for NEXORA_PKCS11_* and SOFTHSM2_CONF.
 type SoftHSM struct{ Module, Label, PinFile, Conf string }
 
+// SoftHSMToken initialises a fresh token in a temporary directory; its PINs are derived here, never
+// written into test sources.
 func SoftHSMToken(t *testing.T) SoftHSM {
 	t.Helper()
 	dir := t.TempDir()
 	tokens := filepath.Join(dir, "tokens")
-	os.MkdirAll(tokens, 0o700)
+	if err := os.MkdirAll(tokens, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	conf := filepath.Join(dir, "softhsm2.conf")
-	os.WriteFile(conf, []byte("directories.tokendir = "+tokens+"\nobjectstore.backend = file\nlog.level = ERROR\n"), 0o600)
-	cmd := exec.Command("softhsm2-util", "--init-token", "--free", "--label", "nexora-e2e", "--pin", "1234", "--so-pin", "5678")
+	if err := os.WriteFile(conf, []byte("directories.tokendir = "+tokens+"\nobjectstore.backend = file\nlog.level = ERROR\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userPIN, soPIN := strings.Repeat("5", 6), strings.Repeat("6", 6)
+	cmd := exec.Command("softhsm2-util", "--init-token", "--free", "--label", "nexora-e2e", "--pin", userPIN, "--so-pin", soPIN)
 	cmd.Env = append(os.Environ(), "SOFTHSM2_CONF="+conf)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("softhsm2-util: %v\n%s", err, out)
 	}
 	pin := filepath.Join(dir, "pin")
-	os.WriteFile(pin, []byte("1234\n"), 0o600)
+	if err := os.WriteFile(pin, []byte(userPIN+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return SoftHSM{Module: "/usr/lib/softhsm/libsofthsm2.so", Label: "nexora-e2e", PinFile: pin, Conf: conf}
 }
 ```
@@ -5695,7 +5943,7 @@ type dnssecView struct {
 func dnssecState(t *testing.T, api *harness.API, zoneID string) dnssecView {
 	t.Helper()
 	var v dnssecView
-	api.MustDo(t, http.MethodGet, "/api/v1/zones/"+zoneID+"/dnssec", nil, &v)
+	api.Must(http.MethodGet, "/zones/"+zoneID+"/dnssec", nil, &v, http.StatusOK)
 	return v
 }
 
@@ -5720,19 +5968,19 @@ func anchorsFor(t *testing.T, zone string, keys []dnssecKey) string {
 func createSignedZone(t *testing.T, api *harness.API, name, backend string) (string, dnssecView) {
 	t.Helper()
 	var z zoneResp
-	api.MustDo(t, http.MethodPost, "/api/v1/zones", map[string]any{
+	api.Must(http.MethodPost, "/zones", map[string]any{
 		"name": name, "kind": "primary", "default_ttl": 2,
 		"soa":         map[string]any{"mname": "ns1." + name, "rname": "hostmaster." + name, "ttl": 2, "minimum": 2},
 		"nameservers": []string{"ns1." + name},
-	}, &z)
+	}, &z, http.StatusCreated)
 	for _, r := range [][3]string{{"ns1." + name, "A", "192.0.2.1"}, {"www." + name, "A", "192.0.2.10"}, {"*.wild." + name, "TXT", "\"wild\""}} {
-		api.MustDo(t, http.MethodPost, "/api/v1/zones/"+z.ID+"/records", map[string]any{"name": r[0], "type": r[1], "ttl": 2, "data": r[2]}, nil)
+		api.Must(http.MethodPost, "/zones/"+z.ID+"/records", map[string]any{"name": r[0], "type": r[1], "ttl": 2, "data": r[2]}, nil, http.StatusCreated)
 	}
-	api.MustDo(t, http.MethodGet, "/api/v1/zones/"+z.ID, nil, &z)
-	api.MustDo(t, http.MethodPut, "/api/v1/zones/"+z.ID+"/dnssec", map[string]any{
+	api.Must(http.MethodGet, "/zones/"+z.ID, nil, &z, http.StatusOK)
+	api.Must(http.MethodPut, "/zones/"+z.ID+"/dnssec", map[string]any{
 		"revision": z.Revision, "enabled": true, "algorithm": 13, "nsec_mode": "nsec3", "key_backend": backend,
 		"propagation_delay_seconds": 2, "parent_ds_ttl_seconds": 2, "zsk_lifetime_days": 0,
-	}, nil)
+	}, nil, http.StatusOK)
 	return z.ID, dnssecState(t, api, z.ID)
 }
 
@@ -5751,11 +5999,14 @@ func validates(t *testing.T, server, anchors, zone, stage string) {
 	}
 }
 
+func queryDO(t *testing.T, server, name string, qtype uint16) *dns.Msg {
+	t.Helper()
+	return harness.MustQuery(t, server, name, qtype, harness.QueryOpts{TCP: true, DO: true, EDNSSize: 4096})
+}
+
 func TestDNSSECSigningRollover(t *testing.T) {
-	env := harness.New(t)
-	mg := env.StartMgmt(harness.MgmtOptions{Env: map[string]string{"NEXORA_KEK_FILE": harness.WriteKEK(t)}})
-	eng := env.StartEngine(mg, harness.EngineOptions{Name: "engine-1"})
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}, "sign-1")
+	api, eng := e.api, e.engines[0]
 
 	zoneID, st := createSignedZone(t, api, "signed.test.", "kek")
 	oldKSK := keysWith(st, "ksk", "active")
@@ -5764,18 +6015,18 @@ func TestDNSSECSigningRollover(t *testing.T) {
 		t.Fatalf("initial keys: %+v", st)
 	}
 	anchors := anchorsFor(t, "signed.test.", oldKSK)
-	harness.Eventually(t, 10*time.Second, func() bool {
-		return strings.Contains(harness.Delv(t, eng.DNSAddr, anchors, "signed.test", "www.signed.test.", "A"), "; fully validated")
-	})
-	validates(t, eng.DNSAddr, anchors, "signed.test.", "initial")
+	harness.EventuallyTrue(t, 10*time.Second, func() bool {
+		return strings.Contains(harness.Delv(t, eng.DNS, anchors, "signed.test", "www.signed.test.", "A"), "; fully validated")
+	}, "signed.test validates on the engine")
+	validates(t, eng.DNS, anchors, "signed.test.", "initial")
 
 	// ZSK pre-publish rollover; validation must hold at every intermediate state
-	api.MustDo(t, http.MethodPost, "/api/v1/zones/"+zoneID+"/dnssec/rollovers", map[string]any{"role": "zsk"}, nil)
+	api.Must(http.MethodPost, "/zones/"+zoneID+"/dnssec/rollovers", map[string]any{"role": "zsk"}, nil, http.StatusAccepted)
 	deadline := time.Now().Add(120 * time.Second)
 	var newZSK dnssecKey
 	for {
 		st = dnssecState(t, api, zoneID)
-		validates(t, eng.DNSAddr, anchors, "signed.test.", fmt.Sprintf("zsk rollover %+v", st.Keys))
+		validates(t, eng.DNS, anchors, "signed.test.", fmt.Sprintf("zsk rollover %+v", st.Keys))
 		active := keysWith(st, "zsk", "active")
 		removed := keysWith(st, "zsk", "removed")
 		if len(active) == 1 && active[0].ID != oldZSK[0].ID && len(removed) == 1 && removed[0].ID == oldZSK[0].ID {
@@ -5787,19 +6038,18 @@ func TestDNSSECSigningRollover(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	harness.Eventually(t, 10*time.Second, func() bool {
-		m := harness.DNSQueryDO(t, eng.DNSAddr, "www.signed.test.", dns.TypeA)
-		for _, rr := range m.Answer {
+	harness.EventuallyTrue(t, 10*time.Second, func() bool {
+		for _, rr := range queryDO(t, eng.DNS, "www.signed.test.", dns.TypeA).Answer {
 			if s, ok := rr.(*dns.RRSIG); ok && s.KeyTag == newZSK.KeyTag {
 				return true
 			}
 		}
 		return false
-	})
-	validates(t, eng.DNSAddr, anchors, "signed.test.", "after zsk rollover")
+	}, "www.signed.test. signed by the new ZSK")
+	validates(t, eng.DNS, anchors, "signed.test.", "after zsk rollover")
 
 	// KSK double-signature rollover with CDS publication
-	api.MustDo(t, http.MethodPost, "/api/v1/zones/"+zoneID+"/dnssec/rollovers", map[string]any{"role": "ksk"}, nil)
+	api.Must(http.MethodPost, "/zones/"+zoneID+"/dnssec/rollovers", map[string]any{"role": "ksk"}, nil, http.StatusAccepted)
 	st = dnssecState(t, api, zoneID)
 	var newKSK dnssecKey
 	for _, k := range keysWith(st, "ksk", "active") {
@@ -5807,64 +6057,74 @@ func TestDNSSECSigningRollover(t *testing.T) {
 			newKSK = k
 		}
 	}
-	harness.Eventually(t, 10*time.Second, func() bool {
-		m := harness.DNSQuery(t, eng.DNSAddr, "signed.test.", dns.TypeCDS)
-		return len(m.Answer) == 1 && m.Answer[0].(*dns.CDS).KeyTag == newKSK.KeyTag
-	})
+	harness.EventuallyTrue(t, 10*time.Second, func() bool {
+		m := harness.MustQuery(t, eng.DNS, "signed.test.", dns.TypeCDS, harness.QueryOpts{TCP: true})
+		if len(m.Answer) != 1 {
+			return false
+		}
+		cds, ok := m.Answer[0].(*dns.CDS)
+		return ok && cds.KeyTag == newKSK.KeyTag
+	}, "CDS advertises the new KSK")
 	newAnchors := anchorsFor(t, "signed.test.", []dnssecKey{newKSK})
-	validates(t, eng.DNSAddr, anchors, "signed.test.", "double signature, old anchor")
-	validates(t, eng.DNSAddr, newAnchors, "signed.test.", "double signature, new anchor")
-	api.MustDo(t, http.MethodPost, "/api/v1/zones/"+zoneID+"/dnssec/rollovers/ds-published", map[string]any{"key_id": newKSK.ID}, nil)
-	harness.Eventually(t, 60*time.Second, func() bool {
+	validates(t, eng.DNS, anchors, "signed.test.", "double signature, old anchor")
+	validates(t, eng.DNS, newAnchors, "signed.test.", "double signature, new anchor")
+	api.Must(http.MethodPost, "/zones/"+zoneID+"/dnssec/rollovers/ds-published", map[string]any{"key_id": newKSK.ID}, nil, http.StatusOK)
+	harness.EventuallyTrue(t, 60*time.Second, func() bool {
 		return len(keysWith(dnssecState(t, api, zoneID), "ksk", "removed")) == 1
-	})
-	harness.Eventually(t, 10*time.Second, func() bool {
-		m := harness.DNSQuery(t, eng.DNSAddr, "signed.test.", dns.TypeDNSKEY)
-		return len(m.Answer) == 2
-	})
-	validates(t, eng.DNSAddr, newAnchors, "signed.test.", "after ksk rollover")
+	}, "old KSK removed")
+	harness.EventuallyTrue(t, 10*time.Second, func() bool {
+		return len(harness.MustQuery(t, eng.DNS, "signed.test.", dns.TypeDNSKEY, harness.QueryOpts{TCP: true}).Answer) == 2
+	}, "DNSKEY RRset holds the new KSK and ZSK only")
+	validates(t, eng.DNS, newAnchors, "signed.test.", "after ksk rollover")
 }
 
 func TestKeyStorageBackends(t *testing.T) {
-	env := harness.New(t)
 	kekFile := harness.WriteKEK(t)
 	hsm := harness.SoftHSMToken(t)
-	mg := env.StartMgmt(harness.MgmtOptions{Env: map[string]string{
-		"NEXORA_KEK_FILE":           kekFile,
-		"NEXORA_PKCS11_MODULE":      hsm.Module,
-		"NEXORA_PKCS11_TOKEN_LABEL": hsm.Label,
-		"NEXORA_PKCS11_PIN_FILE":    hsm.PinFile,
-		"SOFTHSM2_CONF":             hsm.Conf,
-	}})
-	eng := env.StartEngine(mg, harness.EngineOptions{Name: "engine-1"})
-	api := mg.AdminAPI(t)
+	e := startAuthEnv(t, []string{
+		"NEXORA_KEK_FILE=" + kekFile,
+		"NEXORA_PKCS11_MODULE=" + hsm.Module,
+		"NEXORA_PKCS11_TOKEN_LABEL=" + hsm.Label,
+		"NEXORA_PKCS11_PIN_FILE=" + hsm.PinFile,
+		"SOFTHSM2_CONF=" + hsm.Conf,
+	}, "keys-1")
+	api, eng := e.api, e.engines[0]
 
 	var key tsigKeyResp
-	api.MustDo(t, http.MethodPost, "/api/v1/tsig-keys", map[string]any{"name": "disk-check.", "algorithm": "hmac-sha256"}, &key)
+	api.Must(http.MethodPost, "/tsig-keys", map[string]any{"name": "disk-check.", "algorithm": "hmac-sha256"}, &key, http.StatusCreated)
 	createPrimaryZone(t, api, "tsig-user.test.", map[string]any{"update": map[string]any{"tsig_key_ids": []string{key.ID}}})
 
 	for _, c := range []struct{ zone, backend string }{{"kek.test.", "kek"}, {"hsm.test.", "pkcs11"}} {
 		_, st := createSignedZone(t, api, c.zone, c.backend)
 		anchors := anchorsFor(t, c.zone, keysWith(st, "ksk", "active"))
-		harness.Eventually(t, 15*time.Second, func() bool {
-			return strings.Contains(harness.Delv(t, eng.DNSAddr, anchors, strings.TrimSuffix(c.zone, "."), "www."+c.zone, "A"), "; fully validated")
-		})
-		validates(t, eng.DNSAddr, anchors, c.zone, c.backend)
+		harness.EventuallyTrue(t, 15*time.Second, func() bool {
+			return strings.Contains(harness.Delv(t, eng.DNS, anchors, strings.TrimSuffix(c.zone, "."), "www."+c.zone, "A"), "; fully validated")
+		}, c.zone+" validates")
+		validates(t, eng.DNS, anchors, c.zone, c.backend)
 	}
 
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, mg.DatabaseURL)
+	conn, err := pgx.Connect(ctx, e.pg.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(ctx)
-	kekRaw, _ := os.ReadFile(kekFile)
-	kek, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(string(kekRaw)))
+	kekRaw, err := os.ReadFile(kekFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kek, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(kekRaw)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var dump string
 	if err := conn.QueryRow(ctx, `SELECT string_agg(k::text, E'\n') FROM dnssec_keys k`).Scan(&dump); err != nil {
 		t.Fatal(err)
 	}
-	rows, _ := conn.Query(ctx, `SELECT k.backend, k.key_ref, k.private_envelope FROM dnssec_keys k JOIN zones z ON z.id = k.zone_id WHERE z.name IN ('kek.test.', 'hsm.test.')`)
+	rows, err := conn.Query(ctx, `SELECT k.backend, k.key_ref, k.private_envelope FROM dnssec_keys k JOIN zones z ON z.id = k.zone_id WHERE z.name IN ('kek.test.', 'hsm.test.')`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var privateScalars [][]byte
 	var kekKeys, hsmKeys int
 	for rows.Next() {
@@ -5890,6 +6150,7 @@ func TestKeyStorageBackends(t *testing.T) {
 			}
 		}
 	}
+	rows.Close()
 	if kekKeys != 2 || hsmKeys != 2 {
 		t.Fatalf("keys per backend: kek=%d pkcs11=%d", kekKeys, hsmKeys)
 	}
@@ -5901,14 +6162,20 @@ func TestKeyStorageBackends(t *testing.T) {
 		}
 	}
 
-	tsigSecret, _ := base64.StdEncoding.DecodeString(key.Secret)
+	tsigSecret, err := base64.StdEncoding.DecodeString(key.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
 	forbidden := append([][]byte{tsigSecret, []byte(key.Secret), []byte(hex.EncodeToString(tsigSecret))}, privateScalars...)
 	sawSnapshot := false
-	filepath.WalkDir(eng.StateDir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(eng.StateDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		data, _ := os.ReadFile(path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
 		if strings.HasSuffix(path, "snapshot.binpb") {
 			sawSnapshot = bytes.Contains(data, []byte("tsig-user"))
 		}
@@ -5919,22 +6186,23 @@ func TestKeyStorageBackends(t *testing.T) {
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !sawSnapshot {
 		t.Fatal("engine snapshot with the zones was not found on disk (positive check)")
 	}
 
 	t.Run("refuses secrets without key storage", func(t *testing.T) {
-		bare := harness.New(t).StartMgmt(harness.MgmtOptions{})
-		bareAPI := bare.AdminAPI(t)
-		var errBody struct {
-			Code string `json:"code"`
+		bare := startAuthEnv(t, nil)
+		status, err := bare.api.Do(http.MethodPost, "/tsig-keys", map[string]any{"name": "k.", "algorithm": "hmac-sha256"}, nil)
+		if status != http.StatusServiceUnavailable || err == nil || !strings.Contains(err.Error(), "key_storage_unconfigured") {
+			t.Fatalf("tsig key without key storage: %d %v", status, err)
 		}
-		if status := bareAPI.Do(t, http.MethodPost, "/api/v1/tsig-keys", map[string]any{"name": "k.", "algorithm": "hmac-sha256"}, &errBody); status != http.StatusServiceUnavailable || errBody.Code != "key_storage_unconfigured" {
-			t.Fatalf("tsig key without key storage: %d %q", status, errBody.Code)
-		}
-		z := createPrimaryZone(t, bareAPI, "nokeys.test.", nil)
-		if status := bareAPI.Do(t, http.MethodPut, "/api/v1/zones/"+z.ID+"/dnssec", map[string]any{"revision": z.Revision, "enabled": true}, &errBody); status != http.StatusServiceUnavailable || errBody.Code != "key_storage_unconfigured" {
-			t.Fatalf("dnssec without key storage: %d %q", status, errBody.Code)
+		z := createPrimaryZone(t, bare.api, "nokeys.test.", nil)
+		status, err = bare.api.Do(http.MethodPut, "/zones/"+z.ID+"/dnssec", map[string]any{"revision": z.Revision, "enabled": true}, nil)
+		if status != http.StatusServiceUnavailable || err == nil || !strings.Contains(err.Error(), "key_storage_unconfigured") {
+			t.Fatalf("dnssec without key storage: %d %v", status, err)
 		}
 	})
 }
@@ -5945,14 +6213,26 @@ func openNXE1(t *testing.T, kek []byte, purpose string, env []byte) []byte {
 	if len(env) < 101 || string(env[:4]) != "NXE1" || env[4] != 1 {
 		t.Fatalf("not a file-KEK NXE1 envelope")
 	}
-	kb, _ := aes.NewCipher(kek)
-	kg, _ := cipher.NewGCM(kb)
+	kb, err := aes.NewCipher(kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kg, err := cipher.NewGCM(kb)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dek, err := kg.Open(nil, env[13:25], env[25:73], []byte("NXE1-dek"))
 	if err != nil {
 		t.Fatalf("unwrap DEK: %v", err)
 	}
-	db, _ := aes.NewCipher(dek)
-	dg, _ := cipher.NewGCM(db)
+	db, err := aes.NewCipher(dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dg, err := cipher.NewGCM(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	plain, err := dg.Open(nil, env[73:85], env[85:], []byte(purpose))
 	if err != nil {
 		t.Fatalf("open envelope: %v", err)
@@ -5961,448 +6241,360 @@ func openNXE1(t *testing.T, kek []byte, purpose string, env []byte) []byte {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run 'TestDNSSECSigningRollover|TestKeyStorageBackends' -count=1 -timeout 15m` — expect PASS (before the API step they fail with "/dnssec").
-- [ ] Commit: `git add mgmt web/src/api/schema.d.ts e2e && git commit -m "feat(mgmt): ZSK pre-publish and KSK double-signature rollovers with CDS, DNSSEC API"`.
+- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run 'TestDNSSECSigningRollover|TestKeyStorageBackends' -count=1 -timeout 15m` — expect PASS (before the API step they fail with "PUT /zones/…/dnssec: status 404").
+- [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e && git commit -m "feat(mgmt): ZSK pre-publish and KSK double-signature rollovers with CDS, DNSSEC API"`.
 
 ## Task 15: GUI `/zones`
 
+The screens follow the M2/M3 GUI layout (pages in `web/src/pages/`, TanStack Query hooks over `api`/`unwrap` in `web/src/api/`, Radix components from `components/ui`) and are covered by request-based `TestGUICoverage`: every M4 operation must be issued by the browser in `web/e2e/screens/18-zones.spec.ts` or `19-zone-security.spec.ts` (the coverage glob `[01][0-9]-*.spec.ts` stops at 19). The web package has no unit-test runner, so the 409 conflict dialog is tested in Playwright.
+
 Files:
 
-- `web/src/routes/zones/ZonesPage.tsx` — zone list, create primary/secondary dialog
-- `web/src/routes/zones/ZoneDetailPage.tsx` — header (serial, kind, status) and tabs
-- `web/src/routes/zones/RecordsTab.tsx` — record table with type filter and paging
-- `web/src/routes/zones/RecordEditor.tsx` — per-type form, revision conflict dialog
-- `web/src/routes/zones/rdataHints.ts` — placeholder/help text per managed type
-- `web/src/routes/zones/TransfersTab.tsx` — transfer ACL + TSIG, notify targets, update keys, primaries and refresh status for secondaries
-- `web/src/routes/zones/DnssecTab.tsx` — enable form, keys table, DS records, rollover and DS-confirmation actions
-- `web/src/routes/zones/ImportExportTab.tsx` — file upload/paste import with line errors, export download
-- `web/src/routes/zones/TsigKeysPage.tsx` — list, create (secret shown once with copy), delete
-- `web/src/routes/zones/api.ts` — TanStack Query hooks over the generated openapi-fetch client
-- `web/src/routes/zones/RecordEditor.test.tsx` — Vitest component test for the 409 path
-- `web/src/router.tsx`, `web/src/components/nav.tsx` — routes `/zones`, `/zones/tsig-keys`, `/zones/:zoneId` and nav entry "Zones" (modify)
-- `web/e2e/zones.spec.ts` — Playwright coverage of every M4 operation
+- `web/src/api/zones.ts` — hooks for zones, records, import/export, refresh, zone DNSSEC and TSIG keys
+- `web/src/lib/zoneRdataHints.ts` — placeholder/help text per managed type
+- `web/src/pages/ZonesPage.tsx` — zone list, "New zone" dialog (primary/secondary)
+- `web/src/pages/ZoneDetailPage.tsx` — header (serial, kind, status), tabs, "Delete zone"
+- `web/src/pages/ZoneRecordsTab.tsx` — record table with type filter and "Load more"
+- `web/src/pages/ZoneRecordEditor.tsx` — per-type form, revision conflict dialog
+- `web/src/pages/ZoneTransfersTab.tsx` — transfer ACL + TSIG, notify targets, update keys, primaries and refresh status for secondaries
+- `web/src/pages/ZoneDnssecTab.tsx` — enable form, keys table, DS records, rollover and DS-confirmation actions
+- `web/src/pages/ZoneImportExportTab.tsx` — file/paste import with line errors, export download
+- `web/src/pages/TsigKeysPage.tsx` — list, create (secret shown once with copy), delete
+- `web/src/app/router.tsx` — routes `zones`, `zones/tsig-keys`, `zones/:zoneId` (modify)
+- `web/src/components/layout/AppShell.tsx` — nav item `{ route: "zones", path: "/zones", label: "Zones", icon: Globe, op: "listZones" }` after "DNSSEC" (modify)
+- `web/e2e/screens/18-zones.spec.ts`, `web/e2e/screens/19-zone-security.spec.ts`
+- `web/e2e/screens/15-rpz.spec.ts` — the TSIG transfer zone now saves (modify)
+- `e2e/gui_test.go` — `TestGUICoverage`'s management plane gets `NEXORA_KEK_FILE` (modify)
 
 Interfaces:
 
 ```ts
-// api.ts
-export function useZones(): UseQueryResult<components["schemas"]["Zone"][]>;
-export function useZone(
-  zoneId: string,
-): UseQueryResult<components["schemas"]["Zone"]>;
+// web/src/api/zones.ts
+export function useZones(): UseQueryResult<Schemas["Zone"][]>;
+export function useZone(zoneId: string): UseQueryResult<Schemas["Zone"]>;
 export function useRecords(
   zoneId: string,
   filter: { name?: string; type?: string; cursor?: string },
-): UseQueryResult<components["schemas"]["RecordPage"]>;
+): UseQueryResult<Schemas["RecordPage"]>;
 export function useSaveRecord(
   zoneId: string,
 ): UseMutationResult<
-  components["schemas"]["Record"],
+  Schemas["Record"],
   ApiError,
-  {
-    id?: string;
-    revision?: number;
-    input: components["schemas"]["RecordInput"];
-  }
+  { id?: string; revision?: number; input: Schemas["RecordInput"] }
 >;
 export function useZoneDnssec(
   zoneId: string,
-): UseQueryResult<components["schemas"]["ZoneDnssec"]>;
-export class ApiError extends Error {
-  status: number;
-  code: string;
-  details?: { line: number; message: string }[];
-}
-// RecordEditor.tsx
-export function RecordEditor(props: {
+): UseQueryResult<Schemas["ZoneDnssec"]>;
+export function useTsigKeys(): UseQueryResult<Schemas["TsigKey"][]>;
+// ApiError (web/src/api/client.ts) gains `details?: { line: number; message: string }[]`, filled by `unwrap` from the Error body.
+// web/src/pages/ZoneRecordEditor.tsx
+export function ZoneRecordEditor(props: {
   zoneId: string;
   zoneName: string;
-  record?: components["schemas"]["Record"];
+  record?: Schemas["Record"];
   onClose(): void;
 }): JSX.Element;
 ```
 
-- [ ] Write the failing `web/src/routes/zones/RecordEditor.test.tsx`:
-
-```tsx
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
-import { setupServer } from "msw/node";
-import { afterAll, beforeAll, expect, test } from "vitest";
-import { RecordEditor } from "./RecordEditor";
-
-const record = {
-  id: "r1",
-  name: "www.example.test.",
-  type: "A",
-  ttl: 300,
-  data: "192.0.2.1",
-  revision: 3,
-};
-const server = setupServer(
-  http.put("/api/v1/zones/z1/records/r1", () =>
-    HttpResponse.json(
-      { code: "conflict", message: "record was changed" },
-      { status: 409 },
-    ),
-  ),
-  http.get("/api/v1/zones/z1/records", () =>
-    HttpResponse.json({
-      items: [{ ...record, data: "192.0.2.99", revision: 4 }],
-      next_cursor: null,
-    }),
-  ),
-);
-beforeAll(() => server.listen());
-afterAll(() => server.close());
-
-test("a stale revision shows the conflict dialog with the current value", async () => {
-  const qc = new QueryClient();
-  render(
-    <QueryClientProvider client={qc}>
-      <RecordEditor
-        zoneId="z1"
-        zoneName="example.test."
-        record={record}
-        onClose={() => {}}
-      />
-    </QueryClientProvider>,
-  );
-  const data = screen.getByLabelText("Data");
-  await userEvent.clear(data);
-  await userEvent.type(data, "192.0.2.2");
-  await userEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() =>
-    expect(screen.getByRole("alertdialog")).toBeInTheDocument(),
-  );
-  expect(screen.getByText(/changed by someone else/i)).toBeInTheDocument();
-  expect(screen.getByText("192.0.2.99")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
-});
-```
-
-(If M1's web test setup does not include `msw`, add `msw` as a dev dependency in `web/package.json` in this step.)
-
-- [ ] Run `scripts/dev-exec.sh pnpm --dir web exec vitest run src/routes/zones` — expect FAIL with "Failed to resolve import \"./RecordEditor\"".
-- [ ] Implement the pages:
-  - `ZonesPage`: table (name, kind, serial, DNSSEC badge, secondary status: last success / expired), "New zone" dialog (primary: name, default TTL, SOA mname/rname, nameservers; secondary: name, primaries `ip:port` + optional TSIG key), link to "TSIG keys".
-  - `RecordsTab`: names shown relative to the zone (`@` for apex), type filter, "Load more" by cursor; secondary zones read-only.
-  - `RecordEditor`: fields Name (relative input, sent absolute), Type (17 managed types), TTL, Data (placeholder from `rdataHints`); 422 shows `message` under Data; 409 opens an `alertdialog` "This record was changed by someone else" showing the current server value (refetched by name and type) with buttons Reload (replaces form values and revision) and Cancel.
-  - `TransfersTab`: allow CIDRs (chips), transfer TSIG key select, notify targets list, update TSIG keys multi-select; secondaries: primaries list, status fields and "Refresh now" (`refreshZone`); saving sends the zone `revision` and handles 409 with a reload banner.
-  - `DnssecTab`: enable form (algorithm 13 default / 8, NSEC3 default / NSEC, key backend, propagation delay, parent DS TTL, ZSK lifetime days); 503 `key_storage_unconfigured` shows "Key storage is not configured on the management plane (NEXORA_KEK_FILE or NEXORA_PKCS11_*)"; keys table (role, algorithm, tag, state, DS state, backend); DS records with copy buttons; "Roll ZSK", "Roll KSK" (confirmation), "Parent DS published" on KSKs with `ds_state=pending`.
-  - `ImportExportTab`: textarea + file picker, Import (sends zone revision; 422 lists `details` as "line N: message"), Export link fetching `exportZoneFile` and saving via a Blob URL.
-  - `TsigKeysPage`: list, create dialog (name, algorithm, optional secret), the returned secret shown once with copy button and a BIND `key {}` snippet, delete with revision.
-- [ ] Run `scripts/dev-exec.sh pnpm --dir web exec vitest run src/routes/zones` — expect PASS.
-- [ ] Write `web/e2e/zones.spec.ts`:
+- [ ] Make `TestGUICoverage` start its management plane with key storage — in `e2e/gui_test.go`: `env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}})` — and update M3's `web/e2e/screens/15-rpz.spec.ts`: in the transfer-zone dialog, replace
 
 ```ts
-import { expect, test } from "@playwright/test";
-
-const op = (...ids: string[]) => ({
-  annotation: ids.map((description) => ({ type: "operation", description })),
-});
-
-test.describe.configure({ mode: "serial" });
-
-test(
-  "create a zone, edit records, hit a revision conflict",
-  op(
-    "listZones",
-    "createZone",
-    "getZone",
-    "listZoneRecords",
-    "createZoneRecord",
-    "updateZoneRecord",
-    "deleteZoneRecord",
-  ),
-  async ({ page, request }) => {
-    await page.goto("/zones");
-    await page.getByRole("button", { name: "New zone" }).click();
-    await page.getByLabel("Zone name").fill("gui.test.");
-    await page.getByLabel("Primary name server").fill("ns1.gui.test.");
-    await page.getByLabel("Responsible mailbox").fill("hostmaster.gui.test.");
-    await page.getByLabel("Name servers").fill("ns1.gui.test.");
-    await page.getByRole("button", { name: "Create" }).click();
-    await expect(
-      page.getByRole("heading", { name: "gui.test." }),
-    ).toBeVisible();
-
-    await page.getByRole("button", { name: "Add record" }).click();
-    await page.getByLabel("Name").fill("www");
-    await page.getByLabel("Type").selectOption("A");
-    await page.getByLabel("Data").fill("192.0.2.10");
-    await page.getByRole("button", { name: "Save" }).click();
-    const row = page.getByRole("row", { name: /www.*192\.0\.2\.10/ });
-    await expect(row).toBeVisible();
-
-    await row.getByRole("button", { name: "Edit" }).click();
-    const zoneId = page.url().split("/zones/")[1];
-    const list = await (
-      await request.get(
-        `/api/v1/zones/${zoneId}/records?name=www.gui.test.&type=A`,
-      )
-    ).json();
-    const rec = list.items[0];
-    const bump = await request.put(
-      `/api/v1/zones/${zoneId}/records/${rec.id}`,
-      {
-        data: {
-          name: rec.name,
-          type: "A",
-          ttl: 300,
-          data: "192.0.2.99",
-          revision: rec.revision,
-        },
-      },
-    );
-    expect(bump.status()).toBe(200);
-    await page.getByLabel("Data").fill("192.0.2.11");
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("alertdialog")).toContainText(
-      "changed by someone else",
-    );
-    await page.getByRole("button", { name: "Reload" }).click();
-    await page.getByLabel("Data").fill("192.0.2.11");
-    await page.getByRole("button", { name: "Save" }).click();
-    await expect(
-      page.getByRole("row", { name: /www.*192\.0\.2\.11/ }),
-    ).toBeVisible();
-
-    await page
-      .getByRole("row", { name: /www.*192\.0\.2\.11/ })
-      .getByRole("button", { name: "Delete" })
-      .click();
-    await page.getByRole("button", { name: "Confirm" }).click();
-    await expect(page.getByRole("row", { name: /www/ })).toHaveCount(0);
-  },
+await dialog.getByRole("button", { name: "Save" }).click();
+// TestGUICoverage's management plane runs without NEXORA_KEK_FILE.
+await expect(dialog.getByRole("alert")).toContainText(
+  "Key storage is not configured on the management plane (NEXORA_KEK_FILE)",
 );
-
-test(
-  "zone settings, import and export",
-  op("updateZone", "importZoneFile", "exportZoneFile"),
-  async ({ page }) => {
-    await page.goto("/zones");
-    await page.getByRole("link", { name: "gui.test." }).click();
-    await page.getByRole("tab", { name: "Transfers" }).click();
-    await page.getByLabel("Allowed transfer networks").fill("192.0.2.0/24");
-    await page.getByRole("button", { name: "Save settings" }).click();
-    await expect(page.getByText("Settings saved")).toBeVisible();
-
-    await page.getByRole("tab", { name: "Import/Export" }).click();
-    await page
-      .getByLabel("Zone file")
-      .fill(
-        "$ORIGIN gui.test.\n$TTL 300\n@ SOA ns1 hostmaster 5 7200 3600 1209600 300\n@ NS ns1\nns1 A 192.0.2.1\nbad A 999.0.0.1\n",
-      );
-    await page.getByRole("button", { name: "Import" }).click();
-    await expect(page.getByText(/line 6:/)).toBeVisible();
-    await page
-      .getByLabel("Zone file")
-      .fill(
-        "$ORIGIN gui.test.\n$TTL 300\n@ SOA ns1 hostmaster 5 7200 3600 1209600 300\n@ NS ns1\nns1 A 192.0.2.1\nimported A 192.0.2.50\n",
-      );
-    await page.getByRole("button", { name: "Import" }).click();
-    await expect(page.getByText("Imported 3 records")).toBeVisible();
-    const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export" }).click();
-    expect((await download).suggestedFilename()).toBe("gui.test.zone");
-  },
-);
-
-test(
-  "TSIG keys and DNSSEC tab",
-  op(
-    "listTsigKeys",
-    "createTsigKey",
-    "deleteTsigKey",
-    "getZoneDnssec",
-    "updateZoneDnssec",
-    "startZoneKeyRollover",
-    "confirmZoneKskDs",
-  ),
-  async ({ page }) => {
-    await page.goto("/zones/tsig-keys");
-    await page.getByRole("button", { name: "New TSIG key" }).click();
-    await page.getByLabel("Key name").fill("gui-key.");
-    await page.getByRole("button", { name: "Create" }).click();
-    await expect(page.getByText("This secret is shown once")).toBeVisible();
-    await page.getByRole("button", { name: "Done" }).click();
-    await page
-      .getByRole("row", { name: /gui-key\./ })
-      .getByRole("button", { name: "Delete" })
-      .click();
-    await page.getByRole("button", { name: "Confirm" }).click();
-    await expect(page.getByRole("row", { name: /gui-key\./ })).toHaveCount(0);
-
-    await page.goto("/zones");
-    await page.getByRole("link", { name: "gui.test." }).click();
-    await page.getByRole("tab", { name: "DNSSEC" }).click();
-    await page.getByRole("button", { name: "Enable signing" }).click();
-    await expect(
-      page.getByRole("table", { name: "Signing keys" }),
-    ).toContainText("ksk");
-    await expect(page.getByText(/IN DS \d+ 13 2/)).toBeVisible();
-    await page.getByRole("button", { name: "Roll ZSK" }).click();
-    await expect(
-      page.getByRole("table", { name: "Signing keys" }),
-    ).toContainText("published");
-    await page
-      .getByRole("button", { name: "Parent DS published" })
-      .first()
-      .click();
-    await expect(
-      page.getByRole("table", { name: "Signing keys" }),
-    ).toContainText("seen");
-    await page.getByRole("button", { name: "Roll KSK" }).click();
-    await page.getByRole("button", { name: "Confirm" }).click();
-    await expect(
-      page.getByRole("table", { name: "Signing keys" }),
-    ).toContainText("pending");
-  },
-);
-
-test(
-  "secondary zone refresh and zone deletion",
-  op("refreshZone", "deleteZone"),
-  async ({ page }) => {
-    await page.goto("/zones");
-    await page.getByRole("button", { name: "New zone" }).click();
-    await page.getByLabel("Kind").selectOption("secondary");
-    await page.getByLabel("Zone name").fill("pulled.test.");
-    await page.getByLabel("Primaries").fill("127.0.0.1:1");
-    await page.getByRole("button", { name: "Create" }).click();
-    await page.getByRole("tab", { name: "Transfers" }).click();
-    await page.getByRole("button", { name: "Refresh now" }).click();
-    await expect(page.getByText("Refresh requested")).toBeVisible();
-    await page.getByRole("button", { name: "Delete zone" }).click();
-    await page.getByRole("button", { name: "Confirm" }).click();
-    await expect(page).toHaveURL(/\/zones$/);
-    await expect(page.getByRole("link", { name: "pulled.test." })).toHaveCount(
-      0,
-    );
-  },
-);
+await dialog.getByLabel("TSIG algorithm").click();
+await page.getByRole("option", { name: "None", exact: true }).click();
 ```
 
-The GUI test mgmt instance must have key storage (the DNSSEC and TSIG steps need it): the M1 Playwright wrapper's mgmt gets `NEXORA_KEK_FILE` from `harness.WriteKEK(t)` — add that env entry where M1's `TestGUICoverage` starts its management plane.
+with
 
-- [ ] Run `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect PASS with no uncovered M4 operation.
-- [ ] Commit: `git add web e2e && git commit -m "feat(web): zones, records, transfers, DNSSEC, import/export and TSIG key screens"`.
+```ts
+// TestGUICoverage's management plane has key storage since M4, so the TSIG secret is sealed and
+// saved; the 503 path without NEXORA_KEK_FILE stays covered by mgmt/internal/api/resolution_test.go.
+```
 
-## Task 16: kw deployment, Helm/compose key storage, smoke subtests
+so the following `Policy override` selection and `Save` store the transfer zone with `hmac-sha256`, `rpz-key.` and the derived secret (the row assertions after it stay).
+
+- [ ] Write the failing `web/e2e/screens/18-zones.spec.ts`:
+
+```ts
+import { test, expect, env, login } from "../fixtures";
+
+const rowName = (text: string) => new RegExp(text.replaceAll(".", "\\."));
+
+test("operator creates a zone, edits records, resolves a revision conflict, imports and exports", async ({
+  page,
+}) => {
+  // TestGUICoverage counts the browser requests below: listZones, createZone, getZone, listZoneRecords,
+  // createZoneRecord, updateZoneRecord, deleteZoneRecord, updateZone, importZoneFile, exportZoneFile.
+  await login(
+    page,
+    env("NEXORA_E2E_OPERATOR_USER"),
+    env("NEXORA_E2E_OPERATOR_PASSWORD"),
+  );
+  const zone = `gui-${Date.now()}.test.`;
+  await page.getByTestId("nav-zones").click();
+  await expect(page.getByRole("heading", { name: "Zones" })).toBeVisible();
+
+  await page.getByRole("button", { name: "New zone" }).click();
+  const create = page.getByRole("dialog", { name: "New zone" });
+  await create.getByLabel("Zone name").fill(zone);
+  await create.getByLabel("Primary name server").fill(`ns1.${zone}`);
+  await create.getByLabel("Responsible mailbox").fill(`hostmaster.${zone}`);
+  await create.getByLabel("Name servers").fill(`ns1.${zone}`);
+  await create.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("heading", { name: zone })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add record" }).click();
+  let editor = page.getByRole("dialog", { name: "Record" });
+  await editor.getByLabel("Name").fill("www");
+  await editor.getByLabel("Type").click();
+  await page.getByRole("option", { name: "A", exact: true }).click();
+  await editor.getByLabel("Data").fill("192.0.2.10");
+  await editor.getByRole("button", { name: "Save" }).click();
+  await expect(
+    page.getByRole("row", { name: /www.*192\.0\.2\.10/ }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("row", { name: /www.*192\.0\.2\.10/ })
+    .getByRole("button", { name: "Edit" })
+    .click();
+  editor = page.getByRole("dialog", { name: "Record" });
+  // another writer changes the record behind the open editor (page.request shares the session cookie)
+  const zoneId = page.url().split("/zones/")[1];
+  const list = await (
+    await page.request.get(
+      `/api/v1/zones/${zoneId}/records?name=www.${zone}&type=A`,
+    )
+  ).json();
+  const rec = list.items[0];
+  const bump = await page.request.put(
+    `/api/v1/zones/${zoneId}/records/${rec.id}`,
+    {
+      data: {
+        name: rec.name,
+        type: "A",
+        ttl: 300,
+        data: "192.0.2.99",
+        revision: rec.revision,
+      },
+    },
+  );
+  expect(bump.status()).toBe(200);
+  await editor.getByLabel("Data").fill("192.0.2.11");
+  await editor.getByRole("button", { name: "Save" }).click();
+  const conflict = page.getByRole("alertdialog");
+  await expect(conflict).toContainText("changed by someone else");
+  await expect(conflict).toContainText("192.0.2.99");
+  await conflict.getByRole("button", { name: "Reload" }).click();
+  await editor.getByLabel("Data").fill("192.0.2.11");
+  await editor.getByRole("button", { name: "Save" }).click();
+  const www = page.getByRole("row", { name: /www.*192\.0\.2\.11/ });
+  await expect(www).toBeVisible();
+  await www.getByRole("button", { name: "Delete" }).click();
+  await page.getByTestId("confirm-delete").click();
+  await expect(page.getByRole("row", { name: /www/ })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Transfers" }).click();
+  await page.getByLabel("Allowed transfer networks").fill("192.0.2.0/24");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByText("Settings saved")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Import/Export" }).click();
+  const origin = `$ORIGIN ${zone}\n$TTL 300\n@ SOA ns1 hostmaster 5 7200 3600 1209600 300\n@ NS ns1\nns1 A 192.0.2.1\n`;
+  await page.getByLabel("Zone file").fill(`${origin}bad A 999.0.0.1\n`);
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByRole("alert")).toContainText("line 6:");
+  await page.getByLabel("Zone file").fill(`${origin}imported A 192.0.2.50\n`);
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByText("Imported 3 records")).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export" }).click();
+  expect((await download).suggestedFilename()).toBe(`${zone}zone`);
+
+  await page.getByTestId("nav-zones").click();
+  await expect(page.getByRole("row", { name: rowName(zone) })).toBeVisible();
+});
+
+test("viewer sees zones read-only", async ({ page }) => {
+  await login(
+    page,
+    env("NEXORA_E2E_VIEWER_USER"),
+    env("NEXORA_E2E_VIEWER_PASSWORD"),
+  );
+  await page.getByTestId("nav-zones").click();
+  await expect(page.getByRole("heading", { name: "Zones" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New zone" })).toHaveCount(0);
+});
+```
+
+- [ ] Write the failing `web/e2e/screens/19-zone-security.spec.ts`:
+
+```ts
+import { test, expect, env, login } from "../fixtures";
+
+test("admin manages TSIG keys, zone signing, rollovers, a secondary refresh and zone deletion", async ({
+  page,
+}) => {
+  // TestGUICoverage counts: listTsigKeys, createTsigKey, deleteTsigKey, getZoneDnssec, updateZoneDnssec,
+  // startZoneKeyRollover, confirmZoneKskDs, refreshZone, deleteZone.
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
+  const suffix = Date.now();
+  const keyName = `gui-key-${suffix}.`;
+  await page.getByTestId("nav-zones").click();
+  await page.getByRole("link", { name: "TSIG keys" }).click();
+  await page.getByRole("button", { name: "New TSIG key" }).click();
+  const newKey = page.getByRole("dialog", { name: "New TSIG key" });
+  await newKey.getByLabel("Key name").fill(keyName);
+  await newKey.getByRole("button", { name: "Create" }).click();
+  await expect(newKey).toContainText("This secret is shown once");
+  await newKey.getByRole("button", { name: "Done" }).click();
+  const keyRow = page.getByRole("row", {
+    name: new RegExp(keyName.replaceAll(".", "\\.")),
+  });
+  await keyRow.getByRole("button", { name: "Delete" }).click();
+  await page.getByTestId("confirm-delete").click();
+  await expect(keyRow).toHaveCount(0);
+
+  const signed = `signed-${suffix}.test.`;
+  await page.getByTestId("nav-zones").click();
+  await page.getByRole("button", { name: "New zone" }).click();
+  let create = page.getByRole("dialog", { name: "New zone" });
+  await create.getByLabel("Zone name").fill(signed);
+  await create.getByLabel("Primary name server").fill(`ns1.${signed}`);
+  await create.getByLabel("Responsible mailbox").fill(`hostmaster.${signed}`);
+  await create.getByLabel("Name servers").fill(`ns1.${signed}`);
+  await create.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("heading", { name: signed })).toBeVisible();
+
+  await page.getByRole("tab", { name: "DNSSEC" }).click();
+  await page.getByRole("button", { name: "Enable signing" }).click();
+  const keys = page.getByRole("table", { name: "Signing keys" });
+  await expect(keys).toContainText("ksk");
+  await expect(page.getByText(/IN DS \d+ 13 2/)).toBeVisible();
+  await page.getByRole("button", { name: "Roll ZSK" }).click();
+  await expect(keys).toContainText("published");
+  await page
+    .getByRole("button", { name: "Parent DS published" })
+    .first()
+    .click();
+  await expect(keys).toContainText("seen");
+  await page.getByRole("button", { name: "Roll KSK" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Confirm" })
+    .click();
+  await expect(keys).toContainText("pending");
+
+  const pulled = `pulled-${suffix}.test.`;
+  await page.getByTestId("nav-zones").click();
+  await page.getByRole("button", { name: "New zone" }).click();
+  create = page.getByRole("dialog", { name: "New zone" });
+  await create.getByLabel("Kind").click();
+  await page.getByRole("option", { name: "Secondary", exact: true }).click();
+  await create.getByLabel("Zone name").fill(pulled);
+  await create.getByLabel("Primaries").fill("127.0.0.1:1");
+  await create.getByRole("button", { name: "Create" }).click();
+  await page.getByRole("tab", { name: "Transfers" }).click();
+  await page.getByRole("button", { name: "Refresh now" }).click();
+  await expect(page.getByText("Refresh requested")).toBeVisible();
+  await page.getByRole("button", { name: "Delete zone" }).click();
+  await page.getByTestId("confirm-delete").click();
+  await expect(page).toHaveURL(/\/zones$/);
+  await expect(page.getByRole("link", { name: pulled })).toHaveCount(0);
+});
+```
+
+- [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect FAIL: Playwright times out on `getByTestId("nav-zones")` and the coverage report lists the M4 operations (e.g. "listZones (GET /zones)") as uncovered.
+- [ ] Implement `web/src/api/zones.ts` in the style of `resolution.ts` (`useQuery`/`useMutation` over `api.GET/POST/PUT/PATCH/DELETE` with `unwrap`, query keys `["zones"]`, `["zones", id]`, `["zones", id, "records", filter]`, `["zones", id, "dnssec"]`, `["tsig-keys"]`, invalidation on success), and extend `ApiError`/`unwrap` in `client.ts` with `details`. Export downloads fetch `/api/v1/zones/{id}/export` with `credentials: "same-origin"` and save through a Blob URL on an `<a download="<zone>zone">`.
+- [ ] Implement the pages:
+  - `ZonesPage`: heading "Zones", table (name link, kind, serial, DNSSEC badge, secondary status: last success / expired), link "TSIG keys", "New zone" dialog (title "New zone"; Kind select Primary/Secondary; primary: Zone name, Default TTL, Primary name server, Responsible mailbox, Name servers; secondary: Zone name, Primaries `ip:port` + optional TSIG key), buttons hidden unless `createZone` is permitted (`permissions.ts`).
+  - `ZoneDetailPage` (`/zones/:zoneId`): heading = zone name, serial and kind, Radix `Tabs` Records / Transfers / DNSSEC / Import/Export, "Delete zone" with the shared destructive confirm (`data-testid="confirm-delete"`), navigating to `/zones` afterwards.
+  - `ZoneRecordsTab`: names shown relative to the zone (`@` for apex), type filter, "Load more" by cursor, "Add record", per-row "Edit"/"Delete"; secondary zones read-only.
+  - `ZoneRecordEditor` (dialog title "Record"): fields Name (relative input, sent absolute), Type (Radix select of the 17 managed types), TTL, Data (placeholder from `zoneRdataHints`); 422 shows `message` under Data; 409 opens an `alertdialog` "This record was changed by someone else" showing the current server value (refetched with `listZoneRecords` by name and type) with buttons Reload (replaces form values and revision) and Cancel.
+  - `ZoneTransfersTab`: Allowed transfer networks (comma-separated input), transfer TSIG key select, notify targets list, update TSIG keys multi-select; secondaries: primaries list, status fields and "Refresh now" (`refreshZone`, then "Refresh requested"); "Save settings" sends `updateZone` with the zone `revision`, shows "Settings saved", and a 409 shows a reload banner.
+  - `ZoneDnssecTab`: enable form (algorithm 13 default / 8, NSEC3 default / NSEC, key backend, propagation delay, parent DS TTL, ZSK lifetime days) with "Enable signing"; a 503 shows the server `message` (M3's "Key storage is not configured on the management plane (NEXORA_KEK_FILE)"); keys table with accessible name "Signing keys" (role, algorithm, tag, state, DS state, backend); DS records (`<zone> IN DS …`) with copy buttons; "Roll ZSK", "Roll KSK" (confirmation `alertdialog` with "Confirm"), "Parent DS published" on KSKs with `ds_state=pending`.
+  - `ZoneImportExportTab`: textarea labelled "Zone file" + file picker, "Import" (sends the zone revision; 422 renders `details` as "line N: message" in a `role="alert"` list; success shows "Imported N records"), "Export" button.
+  - `TsigKeysPage` (`/zones/tsig-keys`): table, "New TSIG key" dialog (Key name, algorithm select, optional secret) whose success view shows "This secret is shown once", the secret with a copy button, a BIND `key {}` snippet and "Done"; per-row "Delete" with the destructive confirm (sends `revision`).
+- [ ] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, lint including `check-permissions.mjs`, build); then `scripts/dev-exec.sh make e2e-build` and `scripts/dev-exec.sh go test ./e2e/ -run TestGUICoverage -count=1` — expect PASS with no uncovered operation.
+- [ ] Commit: `git add web e2e/gui_test.go && git commit -m "feat(web): zones, records, transfers, DNSSEC, import/export and TSIG key screens"`.
+
+## Task 16: kw deployment key storage and smoke subtests
+
+kw today (M2 Task 13): `nexora-engine` is a DaemonSet whose DNS LoadBalancer `nexora-dns` (192.168.10.136) already exposes `dns-udp` and `dns-tcp` on 53 with `externalTrafficPolicy: Local` (engines see real client addresses, so transfer ACLs and NOTIFY sources work); `nexora-mgmt` serves the GUI/API only at `https://nexora.kw.local` (Secure cookies) and gRPC on 192.168.10.135:9443; images are built and applied by `scripts/kw-deploy.sh`, which also creates the secrets `nexora-ca` and `nexora-dns-tls` when absent. The repository has no Helm chart or compose file, so M4 changes only the kw manifests and the deploy script.
 
 Files:
 
-- `deploy/kw/mgmt.yaml` — mount secret `nexora-kek` at `/etc/nexora/kek/kek`, env `NEXORA_KEK_FILE=/etc/nexora/kek/kek` (modify)
-- `deploy/kw/engine.yaml` — DNS LoadBalancer Service exposes TCP 53 alongside UDP 53 (AXFR/IXFR, large answers) (modify)
-- `deploy/helm/nexora/values.yaml`, `deploy/helm/nexora/templates/mgmt-deployment.yaml` — `mgmt.keyStorage.kekSecretName`, `mgmt.keyStorage.pkcs11.{module,tokenLabel,pinSecretName}` (modify)
-- `deploy/compose/docker-compose.yml` — `kek` secret file and `NEXORA_KEK_FILE` for `nexora-mgmt` (modify)
-- `e2e/kwsmoke/m4_smoke_test.go` — subtests `zones`, `axfr`, `dnssec` run against kw
+- `deploy/kw/mgmt.yaml` — volume `kek` from secret `nexora-kek` (`defaultMode: 0440`) mounted read-only at `/etc/nexora/kek`, env `NEXORA_KEK_FILE=/etc/nexora/kek/kek` (modify)
+- `scripts/kw-deploy.sh` — create `nexora-kek` once, like `nexora-ca` (modify)
+- `deploy/kw/README.md` — the `nexora-kek` secret under "Secrets" and the `TestKwSmokeM4` command (modify)
+- `e2e/kw_smoke_m4_test.go` — `TestKwSmokeM4` with subtests `zones`, `axfr`, `dnssec` (package `e2e`, skipped unless the kw variables are set, like `TestKwSmoke`)
 
 Interfaces:
 
 ```go
-// e2e/kwsmoke (build tag kwsmoke); env: NEXORA_SMOKE_URL (https://nexora.kw.local), NEXORA_SMOKE_TOKEN (nxt_… admin API token), NEXORA_SMOKE_DNS (engine LoadBalancer "ip:53")
-func TestKWSmokeM4(t *testing.T)
+// package e2e; environment as for TestKwSmoke (printed by scripts/kw-deploy.sh): NEXORA_KW_DNS_ADDR (192.168.10.136:53),
+// NEXORA_KW_API_URL (https://nexora.kw.local), NEXORA_KW_API_CA_FILE, NEXORA_KW_ADMIN_PASSWORD_FILE, NEXORA_KW_ENGINES, ...
+func TestKwSmokeM4(t *testing.T)
 ```
 
-- [ ] Write the failing `e2e/kwsmoke/m4_smoke_test.go`:
+- [ ] Write the failing `e2e/kw_smoke_m4_test.go`:
 
 ```go
-//go:build kwsmoke
-
-package kwsmoke
+package e2e
 
 import (
-	"bytes"
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/piwi3910/nexora/e2e/harness"
 )
 
-type client struct {
-	base, token string
-	http        *http.Client
-}
-
-func (c *client) do(t *testing.T, method, path string, body, out any) int {
-	t.Helper()
-	var buf bytes.Buffer
-	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
-	}
-	req, _ := http.NewRequest(method, c.base+path, &buf)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
-	}
-	defer resp.Body.Close()
-	if out != nil {
-		json.NewDecoder(resp.Body).Decode(out)
-	}
-	return resp.StatusCode
-}
-
-func env(t *testing.T, k string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		t.Skipf("%s not set", k)
-	}
-	return v
-}
-
-func TestKWSmokeM4(t *testing.T) {
-	c := &client{base: env(t, "NEXORA_SMOKE_URL"), token: env(t, "NEXORA_SMOKE_TOKEN"),
-		http: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}}
-	dnsAddr := env(t, "NEXORA_SMOKE_DNS")
-	name := fmt.Sprintf("smoke-%d.test.", time.Now().Unix())
-	var zone struct {
-		ID       string `json:"id"`
-		Revision int64  `json:"revision"`
-	}
-	if s := c.do(t, http.MethodPost, "/api/v1/zones", map[string]any{"name": name, "kind": "primary", "default_ttl": 60,
-		"soa": map[string]any{"mname": "ns1." + name, "rname": "hostmaster." + name}, "nameservers": []string{"ns1." + name},
-		"transfer": map[string]any{"allow_cidrs": []string{"0.0.0.0/0"}}}, &zone); s != http.StatusCreated {
-		t.Fatalf("create zone: %d", s)
-	}
+// TestKwSmokeM4 checks authoritative serving, AXFR over the TCP LoadBalancer and online signing on
+// the kw deployment. It deletes its zone when it ends.
+func TestKwSmokeM4(t *testing.T) {
+	env := loadKwEnv(t)
+	api := kwLogin(t, env)
+	name := fmt.Sprintf("smoke-%d.nexora-smoke.test.", time.Now().Unix())
+	var zone zoneResp
+	api.Must(http.MethodPost, "/zones", map[string]any{
+		"name": name, "kind": "primary", "default_ttl": 60,
+		"soa":         map[string]any{"mname": "ns1." + name, "rname": "hostmaster." + name},
+		"nameservers": []string{"ns1." + name},
+		"transfer":    map[string]any{"allow_cidrs": []string{"0.0.0.0/0"}},
+	}, &zone, http.StatusCreated)
 	t.Cleanup(func() {
-		var z struct{ Revision int64 `json:"revision"` }
-		c.do(t, http.MethodGet, "/api/v1/zones/"+zone.ID, nil, &z)
-		c.do(t, http.MethodDelete, fmt.Sprintf("/api/v1/zones/%s?revision=%d", zone.ID, z.Revision), nil, nil)
+		var z zoneResp
+		api.Must(http.MethodGet, "/zones/"+zone.ID, nil, &z, http.StatusOK)
+		api.Must(http.MethodDelete, fmt.Sprintf("/zones/%s?revision=%d", zone.ID, z.Revision), nil, nil, http.StatusNoContent)
 	})
-	c.do(t, http.MethodPost, "/api/v1/zones/"+zone.ID+"/records", map[string]any{"name": "www." + name, "type": "A", "ttl": 60, "data": "192.0.2.10"}, nil)
+	api.Must(http.MethodPost, "/zones/"+zone.ID+"/records", map[string]any{"name": "www." + name, "type": "A", "ttl": 60, "data": "192.0.2.10"}, nil, http.StatusCreated)
+	kwWaitApplied(t, api, env.engines)
 
 	t.Run("zones", func(t *testing.T) {
-		deadline := time.Now().Add(15 * time.Second)
-		for {
-			m := new(dns.Msg)
-			m.SetQuestion("www."+name, dns.TypeA)
-			r, _, err := (&dns.Client{Timeout: time.Second}).Exchange(m, dnsAddr)
-			if err == nil && r.Authoritative && len(r.Answer) == 1 {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("no authoritative answer from %s: %v %v", dnsAddr, r, err)
-			}
-			time.Sleep(500 * time.Millisecond)
+		r := harness.WaitDNSAnswer(t, env.dnsAddr, "www."+name, dns.TypeA, 15*time.Second, func(m *dns.Msg) bool {
+			return m.Authoritative && len(m.Answer) == 1
+		})
+		if a, ok := r.Answer[0].(*dns.A); !ok || a.A.String() != "192.0.2.10" {
+			t.Fatalf("answer: %v", r.Answer)
 		}
 	})
 
 	t.Run("axfr", func(t *testing.T) {
 		m := new(dns.Msg)
 		m.SetAxfr(name)
-		ch, err := (&dns.Transfer{}).In(m, dnsAddr)
+		ch, err := (&dns.Transfer{DialTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}).In(m, env.dnsAddr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -6419,31 +6611,30 @@ func TestKWSmokeM4(t *testing.T) {
 	})
 
 	t.Run("dnssec", func(t *testing.T) {
-		c.do(t, http.MethodGet, "/api/v1/zones/"+zone.ID, nil, &zone)
-		if s := c.do(t, http.MethodPut, "/api/v1/zones/"+zone.ID+"/dnssec", map[string]any{"revision": zone.Revision, "enabled": true}, nil); s != http.StatusOK {
-			t.Fatalf("enable DNSSEC on kw (KEK secret mounted?): %d", s)
+		var z zoneResp
+		api.Must(http.MethodGet, "/zones/"+zone.ID, nil, &z, http.StatusOK)
+		if status, err := api.Do(http.MethodPut, "/zones/"+zone.ID+"/dnssec", map[string]any{"revision": z.Revision, "enabled": true}, nil); status != http.StatusOK {
+			t.Fatalf("enable DNSSEC on kw (is the nexora-kek secret mounted?): %d %v", status, err)
 		}
-		deadline := time.Now().Add(30 * time.Second)
-		for {
-			m := new(dns.Msg)
-			m.SetQuestion("www."+name, dns.TypeA)
-			m.SetEdns0(4096, true)
-			r, _, err := (&dns.Client{Net: "tcp", Timeout: 2 * time.Second}).Exchange(m, dnsAddr)
-			if err == nil && strings.Contains(fmt.Sprint(r.Answer), "RRSIG") {
-				return
+		kwWaitApplied(t, api, env.engines)
+		harness.Eventually(t, 30*time.Second, func() error {
+			r, _, err := harness.Query(t, env.dnsAddr, "www."+name, dns.TypeA, harness.QueryOpts{TCP: true, DO: true, EDNSSize: 4096})
+			if err != nil {
+				return err
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("no RRSIG served: %v %v", r, err)
+			for _, rr := range r.Answer {
+				if _, ok := rr.(*dns.RRSIG); ok {
+					return nil
+				}
 			}
-			time.Sleep(time.Second)
-		}
+			return fmt.Errorf("no RRSIG in %v", r.Answer)
+		})
 	})
 }
 ```
 
-- [ ] Run `NEXORA_SMOKE_URL=https://nexora.kw.local NEXORA_SMOKE_TOKEN=$(cat ~/.nexora-kw-token) NEXORA_SMOKE_DNS=<engine LB ip>:53 go test -tags kwsmoke ./e2e/kwsmoke/ -run TestKWSmokeM4 -count=1` against the current deployment — expect FAIL with "create zone: 404".
-- [ ] Create the KEK secret once (never committed): `kubectl --context kw -n nexora create secret generic nexora-kek --from-literal=kek="$(openssl rand -base64 32)"`.
-- [ ] Update `deploy/kw/mgmt.yaml` (volume `kek` from secret `nexora-kek`, `defaultMode: 0400`, mount `/etc/nexora/kek` read-only, env `NEXORA_KEK_FILE`), `deploy/kw/engine.yaml` (Service ports `dns-udp 53/UDP` and `dns-tcp 53/TCP`, `externalTrafficPolicy: Local` so NOTIFY/transfer ACLs see client addresses), Helm values/templates (`mgmt.keyStorage.kekSecretName: ""` → mounts and sets `NEXORA_KEK_FILE` when non-empty; `mgmt.keyStorage.pkcs11.module/tokenLabel/pinSecretName` → `NEXORA_PKCS11_*`), and compose (`secrets: kek: file: ./kek.b64`, `NEXORA_KEK_FILE=/run/secrets/kek`); lint with `scripts/dev-exec.sh helm lint deploy/helm/nexora`.
-- [ ] Build and push images: `scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine` and `scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt`; set the printed tags in `deploy/kw/*.yaml`; apply with `kubectl --context kw -n nexora apply -f deploy/kw/`; wait with `kubectl --context kw -n nexora rollout status deploy/nexora-mgmt deploy/nexora-engine`.
-- [ ] Re-run the smoke command — expect PASS for `zones`, `axfr`, `dnssec`.
-- [ ] Commit: `git add deploy e2e/kwsmoke && git commit -m "deploy(kw): key storage secret, TCP DNS service and M4 smoke subtests"`.
+- [ ] Run the smoke test against the current (M3) deployment, from the dev pod with the environment of `deploy/kw/README.md`: `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=https://nexora.kw.local NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES=8 NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password go test -count=1 -v -run TestKwSmokeM4 ./e2e/` — expect FAIL with "POST /zones: status 404".
+- [ ] In `scripts/kw-deploy.sh`, next to the `nexora-ca` block, create the key-encryption key once without printing it: `if ! k get secret nexora-kek >/dev/null 2>&1; then openssl rand -base64 32 | k create secret generic nexora-kek --from-file=kek=/dev/stdin; fi`. In `deploy/kw/mgmt.yaml` add `- { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }` to the env list, `- { name: kek, mountPath: /etc/nexora/kek, readOnly: true }` to `volumeMounts` and `- name: kek` / `secret: { secretName: nexora-kek, defaultMode: 0440 }` to `volumes` (the pod runs as 65532 with `fsGroup: 65532`, as the `ca` volume). Document `nexora-kek` in `deploy/kw/README.md` under "Secrets" (never in git; losing it makes RPZ TSIG secrets, TSIG keys and KEK-backed DNSSEC keys unreadable) and add the `TestKwSmokeM4` command above to the smoke-test section.
+- [ ] Deploy: `scripts/kw-deploy.sh` (builds and pushes both images tagged `sha-<7>`, creates `nexora-kek`, applies `deploy/kw/*.yaml`, runs the idempotent `bootstrap.sh`, waits for `rollout status deployment/nexora-mgmt` and `daemonset/nexora-engine`) — expect both rollouts to complete and the final `NEXORA_KW_DNS_ADDR=192.168.10.136:53` line; migrations `00400`/`00401` run at `nexora-mgmt serve` start.
+- [ ] Re-run the smoke command — expect PASS for `TestKwSmokeM4/zones`, `/axfr`, `/dnssec`; then run `-run 'TestKwSmoke$'` with the same environment — expect PASS (M1/M2 behaviour unchanged).
+- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh e2e/kw_smoke_m4_test.go && git commit -m "deploy(kw): key-encryption key secret and M4 smoke subtests"`.
