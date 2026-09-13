@@ -5,5 +5,5 @@ P=/Users/pascal/.claude/plugins/cache/procoder/procoder/3.6.0/hooks/launcher.sh
 for f in "$@"; do
 	abs=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
 	out=$("$P" format "$abs") || continue
-	case "$out" in "== "*) printf '%s\n' "$out" | tail -n +2 >"$abs.fmt" && mv "$abs.fmt" "$abs" ;; esac
+	case "$out" in "== "*"formatted result"*) printf '%s\n' "$out" | tail -n +2 >"$abs.fmt" && mv "$abs.fmt" "$abs" ;; esac
 done
