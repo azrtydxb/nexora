@@ -86,7 +86,8 @@ func (e *Env) FreePort() int {
 }
 
 // Bin returns the path of a built binary, looking in NEXORA_E2E_BIN_DIR, <repo>/bin,
-// <repo>/target/release and $CARGO_TARGET_DIR/release.
+// <repo>/target/release, $CARGO_TARGET_DIR/release and finally $PATH (for tools such as
+// otelcol-contrib).
 func (e *Env) Bin(name string) string {
 	e.T.Helper()
 	var dirs []string
@@ -104,7 +105,10 @@ func (e *Env) Bin(name string) string {
 			return p
 		}
 	}
-	e.T.Fatalf("binary %s not found in %s (run make e2e-build)", name, strings.Join(dirs, ", "))
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	e.T.Fatalf("binary %s not found in %s or $PATH (run make e2e-build)", name, strings.Join(dirs, ", "))
 	return ""
 }
 

@@ -8,7 +8,10 @@ import (
 	"syscall"
 )
 
-const usage = "usage: nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F"
+const usage = `usage:
+  nexora-fixture dns --udp ADDR --tcp ADDR --dot ADDR --doh ADDR --control ADDR --cert-dir DIR
+  nexora-fixture http --listen ADDR
+  nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -18,6 +21,10 @@ func main() {
 	var stop func()
 	var err error
 	switch os.Args[1] {
+	case "dns":
+		stop, err = runDNS(os.Args[2:])
+	case "http":
+		stop, err = runHTTP(os.Args[2:])
 	case "oidc":
 		stop, err = runOIDC(os.Args[2:])
 	default:
