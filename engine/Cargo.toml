@@ -1,0 +1,57 @@
+[package]
+name = "nexora-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "nexora-engine"
+path = "src/main.rs"
+
+[dependencies]
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+tokio = { version = "=1.53", features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "io-util", "signal", "fs"] }
+socket2 = { version = "0.6", features = ["all"] }
+tonic = { version = "=0.14.6", features = ["tls-ring"] }
+tonic-prost = "0.14"
+prost = "=0.14.4"
+rustls = { version = "=0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2"] }
+opentelemetry-proto = { version = "0.32", features = ["gen-tonic", "logs", "trace", "metrics"] }
+prometheus-client = "=0.25.1"
+arc-swap = "1.9"
+quick_cache = "0.7"
+rustc-hash = "2.1"
+bytes = "1.12"
+libc = "=0.2.189"
+nix = { version = "0.31", features = ["socket", "uio", "net", "signal"] }
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "1.1"
+siphasher = "1.0"
+zstd = "0.14"
+crossbeam-queue = "0.3"
+crossbeam-utils = "0.8"
+rand = "0.10"
+parking_lot = "0.12"
+webpki-roots = "1.0"
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
+hyper = { version = "1.11", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio"] }
+clap = { version = "4.6", features = ["derive"] }
+ipnet = "2.12"
+sha2 = "0.11"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"

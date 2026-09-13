@@ -1,0 +1,174 @@
+syntax = "proto3";
+
+package nexora.control.v1;
+
+option go_package = "github.com/piwi3910/nexora/gen/go/nexora/control/v1;controlv1";
+
+// EngineControl is served by every management plane instance on NEXORA_GRPC_LISTEN.
+// Enroll uses server-auth TLS (engine pins the CA fingerprint from the join token);
+// Connect and GetBlob require the engine's client certificate (CN = engine UUID).
+service EngineControl {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc Connect(stream EngineMessage) returns (stream ServerMessage);
+  rpc GetBlob(GetBlobRequest) returns (stream BlobChunk);
+}
+
+message EnrollRequest {
+  string join_secret = 1;     // base32 secret part of nxj1.<secret>.<ca sha256>
+  string node_name = 2;       // [a-z0-9-]{1,63}
+  bytes csr_der = 3;          // PKCS#10, ECDSA P-256
+  string engine_version = 4;
+}
+
+message EnrollResponse {
+  string engine_id = 1;       // UUID, also the certificate CN
+  bytes certificate_der = 2;
+  bytes ca_certificate_der = 3;
+}
+
+message EngineMessage {
+  oneof msg {
+    Hello hello = 1;
+    Applied applied = 2;
+    Rejected rejected = 3;
+    Stats stats = 4;
+  }
+}
+
+message Hello {
+  string engine_id = 1;
+  string node_name = 2;
+  uint64 applied_version = 3; // 0 when nothing applied
+  string engine_version = 4;
+}
+
+message Applied {
+  uint64 version = 1;
+  string persist_error = 2;   // non-empty when snapshot.binpb could not be written
+}
+
+message Rejected {
+  uint64 version = 1;
+  string reason = 2;
+}
+
+message ServerMessage {
+  oneof msg {
+    ConfigSnapshot snapshot = 1;
+    VersionAhead version_ahead = 2;
+  }
+}
+
+// Sent when the engine reports a version newer than the database (restored backup).
+message VersionAhead {
+  uint64 server_version = 1;
+}
+
+message ConfigSnapshot {
+  uint64 version = 1;
+  int64 created_unix_ms = 2;
+  ResolverConfig resolver = 3;
+  CacheConfig cache = 4;
+  repeated Upstream upstreams = 5;
+  repeated string acl_allow_cidrs = 6;
+  FilterConfig filter = 7;
+  TelemetryConfig telemetry = 8;
+}
+
+enum UpstreamStrategy {
+  UPSTREAM_STRATEGY_UNSPECIFIED = 0;
+  UPSTREAM_STRATEGY_ORDERED = 1;
+  UPSTREAM_STRATEGY_FASTEST = 2;
+}
+
+message ResolverConfig {
+  UpstreamStrategy strategy = 1;
+}
+
+message CacheConfig {
+  uint64 max_bytes = 1;         // >= 1048576
+  uint32 min_ttl = 2;
+  uint32 max_ttl = 3;
+  uint32 negative_max_ttl = 4;
+  uint32 stale_window = 5;
+}
+
+enum UpstreamProtocol {
+  UPSTREAM_PROTOCOL_UNSPECIFIED = 0;
+  UPSTREAM_PROTOCOL_UDP = 1;
+  UPSTREAM_PROTOCOL_TCP = 2;
+  UPSTREAM_PROTOCOL_DOT = 3;
+  UPSTREAM_PROTOCOL_DOH = 4;
+}
+
+message Upstream {
+  string id = 1;
+  string name = 2;
+  UpstreamProtocol protocol = 3;
+  string address = 4;           // ip:port for UDP/TCP/DoT; empty for DoH
+  string tls_server_name = 5;   // DoT SNI and certificate name
+  string doh_url = 6;           // https URL for DoH
+  uint32 timeout_ms = 7;        // 50..=5000
+  string ca_certificate_pem = 8; // extra trust anchor for DoT/DoH; empty = webpki roots
+}
+
+enum BlockMode {
+  BLOCK_MODE_UNSPECIFIED = 0;
+  BLOCK_MODE_NULL_IP = 1;
+  BLOCK_MODE_NXDOMAIN = 2;
+  BLOCK_MODE_REFUSED = 3;
+}
+
+message BlobRef {
+  string sha256 = 1;            // 64 lowercase hex of the zstd bytes
+  uint64 size = 2;              // compressed size in bytes
+  string name = 3;
+}
+
+message FilterConfig {
+  repeated BlobRef blocklists = 1;
+  repeated BlobRef allowlists = 2;
+  BlockMode block_mode = 3;
+  uint32 block_ttl = 4;
+}
+
+message TelemetryConfig {
+  string otlp_endpoint = 1;          // gRPC OTLP endpoint for traces/metrics (and logs unless querylog_to_management)
+  uint32 trace_sample_one_in = 2;    // 0 = head sampling off
+  uint32 trace_slow_threshold_us = 3;
+  bool querylog_to_management = 4;   // send OTLP logs to the connected management instance (builtin backend)
+}
+
+message GetBlobRequest {
+  string sha256 = 1;
+}
+
+message BlobChunk {
+  bytes data = 1;                    // <= 1 MiB
+}
+
+message UpstreamStatus {
+  string id = 1;
+  string name = 2;
+  bool up = 3;
+  uint32 rtt_us = 4;
+  uint64 queries_total = 5;
+  uint64 failures_total = 6;
+}
+
+message Stats {
+  int64 unix_ms = 1;
+  uint64 queries_total = 2;
+  uint64 cache_hits_total = 3;
+  uint64 cache_misses_total = 4;
+  uint64 cache_stale_served_total = 5;
+  uint64 filter_blocked_total = 6;
+  uint64 servfail_total = 7;
+  repeated uint64 duration_bucket_bounds_us = 8;
+  repeated uint64 duration_bucket_counts = 9;   // cumulative, same length as bounds
+  uint64 duration_sum_us = 10;
+  repeated UpstreamStatus upstreams = 11;
+  map<string, uint64> export_dropped_total = 12; // keyed by signal: logs, traces, metrics
+  uint64 cache_entries = 13;
+  uint64 cache_bytes = 14;
+}

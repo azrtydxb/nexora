@@ -250,9 +250,9 @@ Files:
 - `go.mod`, `go.sum` (create) — module `github.com/piwi3910/nexora`
 - `Cargo.toml` (create) — workspace `members = ["engine"]`, `exclude = ["engine/fuzz"]`
 - `Cargo.lock` (create, generated)
-- `rust-toolchain.toml` (create) — channel `1.97`
+- `rust-toolchain.toml` (create) — channel `1.97.1` (the exact toolchain in the dev image; a bare `1.97` makes rustup download a second copy into the pod)
 - `engine/Cargo.toml` (create) — crate `nexora-engine`, all engine dependencies pinned
-- `engine/build.rs` (create) — tonic-prost codegen from `proto/`
+- `engine/build.rs` (create) — tonic-prost codegen from `proto/`, `build_transport(false)`
 - `engine/src/lib.rs` (create) — module declarations only
 - `engine/src/proto.rs` (create) — `tonic::include_proto!("nexora.control.v1")`
 - `engine/src/main.rs` (create) — CLI entry stub (`--config`), filled in Task 9
@@ -264,11 +264,12 @@ Files:
 Interfaces:
 
 - Proto package `nexora.control.v1`, Go import `controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"`, Rust path `nexora_engine::proto`.
+- Rust client: `proto::engine_control_client::EngineControlClient::new(channel)` — codegen runs with `build_transport(false)` because the rpc `Connect` collides with tonic's `EngineControlClient::connect(dst)` constructor (E0592); `client.connect(stream)` is the Connect rpc.
 - Service `EngineControl { rpc Enroll(EnrollRequest) returns (EnrollResponse); rpc Connect(stream EngineMessage) returns (stream ServerMessage); rpc GetBlob(GetBlobRequest) returns (stream BlobChunk); }`.
 - Messages produced here and consumed by Tasks 7, 8, 9, 10, 13, 16, 18: `ConfigSnapshot`, `ResolverConfig`, `CacheConfig`, `Upstream`, `FilterConfig`, `BlobRef`, `TelemetryConfig`, `Hello`, `Applied`, `Rejected`, `Stats`, `UpstreamStatus`, `VersionAhead`, enums `UpstreamStrategy`, `UpstreamProtocol`, `BlockMode`.
 - `engine/src/lib.rs` declares: `pub mod proto; pub mod bootstrap; pub mod wire; pub mod edns; pub mod clock; pub mod cache; pub mod acl; pub mod filter; pub mod upstream; pub mod inflight; pub mod runtime; pub mod server; pub mod control; pub mod snapshot; pub mod telemetry;` — each later task creates its module file; until then the declaration list contains only the modules that exist (this task: `pub mod proto;`).
 
-- [ ] Write the failing Go test `gen/go/nexora/control/v1/roundtrip_test.go`:
+- [x] Write the failing Go test `gen/go/nexora/control/v1/roundtrip_test.go`:
 
 ```go
 package controlv1_test
@@ -311,7 +312,7 @@ func TestConfigSnapshotRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] Write the failing Rust test `engine/tests/proto_roundtrip.rs`:
+- [x] Write the failing Rust test `engine/tests/proto_roundtrip.rs`:
 
 ```rust
 use nexora_engine::proto::{ConfigSnapshot, Upstream, UpstreamProtocol};
@@ -338,8 +339,8 @@ fn config_snapshot_round_trips() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./gen/...` — expect FAIL with `go: cannot find main module` (no go.mod yet).
-- [ ] Write `proto/nexora/control/v1/control.proto`:
+- [x] Run `scripts/dev-exec.sh go test ./gen/...` — expect FAIL with `pattern ./gen/...: directory prefix gen does not contain main module` (no go.mod yet); likewise `scripts/dev-exec.sh cargo test -p nexora-engine --test proto_roundtrip` fails with ``could not find `Cargo.toml` ``.
+- [x] Write `proto/nexora/control/v1/control.proto`:
 
 ```proto
 syntax = "proto3";
@@ -518,7 +519,7 @@ message Stats {
 }
 ```
 
-- [ ] Write `go.mod`:
+- [x] Write `go.mod` as `module github.com/piwi3910/nexora` / `go 1.27`; `go mod tidy` in the generation step below fills in the requirements the code imports. After this task it is:
 
 ```
 module github.com/piwi3910/nexora
@@ -526,25 +527,22 @@ module github.com/piwi3910/nexora
 go 1.27
 
 require (
-	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-chi/chi/v5 v5.3.2
-	github.com/jackc/pgx/v5 v5.11.0
-	github.com/klauspost/compress v1.20.0
-	github.com/miekg/dns v1.1.73
-	github.com/oapi-codegen/runtime v1.7.0
-	github.com/opensearch-project/opensearch-go/v4 v4.7.3
-	github.com/pressly/goose/v3 v3.28.0
-	github.com/prometheus/client_golang v1.24.1
-	go.opentelemetry.io/otel v1.46.0
-	go.opentelemetry.io/proto/otlp v1.11.0
-	golang.org/x/crypto v0.57.0
-	golang.org/x/oauth2 v0.37.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 )
+
+require (
+	go.opentelemetry.io/otel v1.46.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
+)
 ```
 
-- [ ] Write root `Cargo.toml` and `rust-toolchain.toml`:
+Every other pinned Go module (pgx, chi, oapi-codegen runtime, goose, go-oidc, x/oauth2, x/crypto, miekg/dns, opensearch-go, otel, otlp proto, klauspost/compress, client_golang) is added at its pinned version with `go get <module>@<version>` by the task that first imports it — `go mod tidy` drops requirements nothing imports.
+
+- [x] Write root `Cargo.toml` and `rust-toolchain.toml`:
 
 ```toml
 # Cargo.toml
@@ -563,11 +561,11 @@ debug = "line-tables-only"
 ```toml
 # rust-toolchain.toml
 [toolchain]
-channel = "1.97"
+channel = "1.97.1"
 components = ["clippy", "rustfmt"]
 ```
 
-- [ ] Write `engine/Cargo.toml`:
+- [x] Write `engine/Cargo.toml`:
 
 ```toml
 [package]
@@ -629,23 +627,27 @@ hickory-proto = { version = "=0.26.3", default-features = false, features = ["st
 tonic-prost-build = "0.14"
 ```
 
-- [ ] Write `engine/build.rs`:
+- [x] Write `engine/build.rs`:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../proto/nexora/control/v1/control.proto");
+    // build_transport(false): the rpc `Connect` would otherwise collide with the
+    // generated `EngineControlClient::connect(dst)` constructor; clients are built
+    // with `EngineControlClient::new(channel)`.
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
+        .build_transport(false)
         .compile_protos(&["../proto/nexora/control/v1/control.proto"], &["../proto"])?;
     Ok(())
 }
 ```
 
-- [ ] Write `engine/src/proto.rs` as `tonic::include_proto!("nexora.control.v1");`, `engine/src/lib.rs` as `pub mod proto;`, and `engine/src/main.rs` as a clap stub: `#[derive(clap::Parser)] struct Args { #[arg(long, default_value = "/etc/nexora/engine.toml")] config: std::path::PathBuf }` with `fn main() { let _args = <Args as clap::Parser>::parse(); }`.
-- [ ] Generate Go code and lock files: `scripts/dev-exec.sh bash -c 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto && go mod tidy && cargo generate-lockfile'`, then copy the generated files back: `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - go.sum Cargo.lock gen/go | tar -xf -` (the full `make proto` target also runs oapi-codegen and openapi-typescript, whose inputs arrive in Tasks 15 and 19; this step runs protoc directly).
-- [ ] Run `scripts/dev-exec.sh go test ./gen/... && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test proto_roundtrip` — expect PASS: `ok github.com/piwi3910/nexora/gen/go/nexora/control/v1` and `test config_snapshot_round_trips ... ok`.
-- [ ] Commit: `git add go.mod go.sum Cargo.toml Cargo.lock rust-toolchain.toml engine proto gen && git commit -m "proto: EngineControl contract, Go/Rust codegen and repository skeleton"`.
+- [x] Write `engine/src/proto.rs` as `tonic::include_proto!("nexora.control.v1");`, `engine/src/lib.rs` as `pub mod proto;`, and `engine/src/main.rs` as a clap stub: `#[derive(clap::Parser)] struct Args { #[arg(long, default_value = "/etc/nexora/engine.toml")] config: std::path::PathBuf }` with `fn main() { let _args = <Args as clap::Parser>::parse(); }`.
+- [x] Generate Go code and lock files in one pod command (a later sync deletes pod-only files, so generate and copy back together): `scripts/dev-exec.sh 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto && go mod tidy && cargo generate-lockfile'`, then copy the results back: `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - go.mod go.sum Cargo.lock gen/go | tar -xf -`. The pod's plugins are the pinned ones (headers read `protoc-gen-go v1.36.12`, `protoc-gen-go-grpc v1.6.2`, `protoc v3.21.12`). The Nexus Go proxy's certificate is not trusted in the pod, so the default `GOPROXY` is used. (The full `make proto` target also runs oapi-codegen and openapi-typescript, whose inputs arrive in Tasks 15 and 19; this step runs protoc directly.)
+- [x] Run `scripts/dev-exec.sh go test ./gen/... && scripts/dev-exec.sh cargo test --locked -p nexora-engine` — expect PASS: `ok github.com/piwi3910/nexora/gen/go/nexora/control/v1`, `test config_snapshot_round_trips ... ok`, and the `src/main.rs` unit-test binary `ok. 0 passed`. Then `scripts/dev-exec.sh 'cargo fmt --all -- --check && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings && go vet ./gen/...'` — expect no findings.
+- [x] Commit: `git add go.mod go.sum Cargo.toml Cargo.lock rust-toolchain.toml engine proto gen .procoder/plans/nexora-v1-m1.md && git commit -m "M1 Task 2: EngineControl contract, Go/Rust codegen and repository skeleton"`.
 
 ## Task 3: Zero-copy query parser, EDNS/cookies, and the fuzz workflow
 

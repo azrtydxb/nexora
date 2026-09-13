@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["engine"]
+exclude = ["engine/fuzz"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
