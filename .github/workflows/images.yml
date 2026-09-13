@@ -124,5 +124,12 @@ jobs:
         run: |
           refs=()
           for d in *; do refs+=("$IMAGE@sha256:$d"); done
-          docker buildx imagetools create -t "$IMAGE:$VERSION" "${refs[@]}"
-          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          test "${#refs[@]}" -eq 2 || { echo "expected 2 digests, got ${#refs[@]}"; exit 1; }
+          tags=(-t "$IMAGE:$VERSION")
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$IMAGE:main"); fi
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+          # A manifest list missing an architecture would pull the wrong (or no) image on that node.
+          manifest=$(docker buildx imagetools inspect --raw "$IMAGE:$VERSION")
+          echo "$manifest"
+          grep -q '"arm64"' <<<"$manifest"
+          grep -q '"amd64"' <<<"$manifest"

@@ -1,0 +1,220 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["image", "mgmt", "database", "engine"],
+  "definitions": {
+    "duration": { "type": "string", "pattern": "^([0-9]+(ms|h|m|s))+$" },
+    "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "requiredPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+  },
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["registry"],
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "mgmt": {
+      "type": "object",
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "publicURL": { "type": "string" },
+        "secureCookies": { "type": "boolean" },
+        "engineCertTTL": { "$ref": "#/definitions/duration" },
+        "rolloutTick": { "$ref": "#/definitions/duration" },
+        "grpcServerNames": { "type": "array", "items": { "type": "string" } },
+        "otlpEndpoint": { "type": "string" },
+        "ca": {
+          "type": "object",
+          "properties": { "existingSecret": { "type": "string" } }
+        },
+        "kek": {
+          "type": "object",
+          "properties": { "existingSecret": { "type": "string" } }
+        },
+        "dnsTLS": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "reloadInterval": { "$ref": "#/definitions/duration" }
+          }
+        },
+        "querylog": {
+          "type": "object",
+          "properties": {
+            "backend": { "enum": ["builtin", "opensearch"] },
+            "builtinCapacity": { "type": "integer", "minimum": 1 },
+            "opensearch": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "index": { "type": "string" }
+              }
+            }
+          }
+        },
+        "extraEnv": { "type": "array" },
+        "extraVolumes": { "type": "array" },
+        "extraVolumeMounts": { "type": "array" },
+        "resources": { "type": "object" },
+        "grpcLoadBalancer": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "loadBalancerIP": { "type": "string" }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string" },
+            "className": { "type": "string" },
+            "host": { "type": "string" },
+            "clusterIssuer": { "type": "string" },
+            "tlsSecretName": { "type": "string" }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "properties": {
+            "minAvailable": { "type": ["integer", "string"] }
+          }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["cnpg", "external"] },
+        "external": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "key": { "type": "string", "minLength": 1 }
+          }
+        },
+        "cnpg": {
+          "type": "object",
+          "properties": {
+            "clusterName": { "type": "string", "minLength": 1 },
+            "instances": { "type": "integer", "minimum": 1 },
+            "imageName": { "type": "string", "minLength": 1 },
+            "storageClass": { "type": "string" },
+            "size": { "type": "string", "minLength": 1 }
+          }
+        }
+      },
+      "if": { "properties": { "mode": { "const": "external" } } },
+      "then": {
+        "required": ["external"],
+        "properties": {
+          "external": {
+            "required": ["existingSecret"],
+            "properties": {
+              "existingSecret": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "kind": { "enum": ["DaemonSet", "Deployment"] },
+        "managementURL": { "type": "string" },
+        "workers": { "type": "integer", "minimum": 0 },
+        "initImage": { "type": "string", "minLength": 1 },
+        "hostNetwork": { "type": "boolean" },
+        "ports": {
+          "type": "object",
+          "properties": {
+            "dns": { "$ref": "#/definitions/requiredPort" },
+            "metrics": { "$ref": "#/definitions/requiredPort" },
+            "dot": { "$ref": "#/definitions/port" },
+            "doh": { "$ref": "#/definitions/port" },
+            "doq": { "$ref": "#/definitions/port" }
+          }
+        },
+        "dohPath": { "type": "string", "pattern": "^/" },
+        "stateDir": {
+          "type": "object",
+          "properties": {
+            "type": { "enum": ["hostPath", "emptyDir"] },
+            "hostPathPrefix": { "type": "string", "pattern": "^/" }
+          }
+        },
+        "tolerations": { "type": "array" },
+        "resources": { "type": "object" },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+              },
+              "workloadName": { "type": "string" },
+              "nodeNamePrefix": { "type": "string" },
+              "replicas": { "type": "integer", "minimum": 0 },
+              "nodeAffinity": { "type": "object" },
+              "joinTokenSecret": { "type": "string" },
+              "joinTokenKey": { "type": "string" },
+              "service": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+                  "loadBalancerIP": { "type": "string" },
+                  "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "otelCollector": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" },
+        "config": { "type": "string", "minLength": 1 }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": { "type": "string" },
+            "labels": { "type": "object" },
+            "interval": { "$ref": "#/definitions/duration" }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespace": { "type": "string" },
+            "labels": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}

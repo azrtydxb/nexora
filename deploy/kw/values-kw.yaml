@@ -1,0 +1,102 @@
+# kw release (scripts/kw-deploy.sh): helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
+image:
+  registry: 192.168.10.131/azrtydxb
+  pullPolicy: Always # kw tags are rebuilt in place
+mgmt:
+  replicas: 2
+  publicURL: https://nexora.kw.local
+  secureCookies: true
+  grpcServerNames: [nexora-mgmt-grpc.nexora.svc]
+  otlpEndpoint: http://nexora-otelcol.nexora.svc.cluster.local:4317
+  ca: { existingSecret: nexora-ca }
+  kek: { existingSecret: nexora-kek }
+  dnsTLS: { existingSecret: nexora-dns-tls, reloadInterval: 30s }
+  querylog:
+    backend: opensearch
+    opensearch:
+      {
+        url: "http://opensearch.nexora.svc.cluster.local:9200",
+        index: "nexora-querylog-*",
+      }
+  grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
+  ingress:
+    enabled: true
+    name: nexora
+    className: nginx
+    host: nexora.kw.local
+    clusterIssuer: cluster-ca
+    tlsSecretName: nexora-ingress-tls
+database:
+  mode: external
+  external: { existingSecret: nexora-db-app, key: uri }
+engine:
+  kind: DaemonSet
+  workers: 2
+  initImage: 192.168.10.131/library/busybox:1.37
+  ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
+  stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
+  # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
+  # node must run a default-group engine.
+  tolerations:
+    - {
+        key: node-role.kubernetes.io/control-plane,
+        operator: Exists,
+        effect: NoSchedule,
+      }
+    - {
+        key: node-role.kubernetes.io/master,
+        operator: Exists,
+        effect: NoSchedule,
+      }
+  groups:
+    - name: default
+      workloadName: nexora-engine
+      nodeNamePrefix: ""
+      joinTokenSecret: nexora-join-token
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - {
+                    key: nexora.io/engine-group,
+                    operator: NotIn,
+                    values: [edge-b],
+                  }
+      service:
+        {
+          name: nexora-dns,
+          type: LoadBalancer,
+          loadBalancerIP: 192.168.10.136,
+          externalTrafficPolicy: Local,
+        }
+    - name: edge-b
+      workloadName: nexora-engine-edge-b
+      nodeNamePrefix: edge-b-
+      joinTokenSecret: nexora-join-token-edge-b
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - {
+                    key: nexora.io/engine-group,
+                    operator: In,
+                    values: [edge-b],
+                  }
+      # The kube-vip node runs no edge-b engine, so Local would drop external traffic to .137.
+      service:
+        {
+          name: nexora-dns-edge-b,
+          type: LoadBalancer,
+          loadBalancerIP: 192.168.10.137,
+          externalTrafficPolicy: Cluster,
+        }
+metrics:
+  serviceMonitor:
+    {
+      enabled: true,
+      namespace: monitoring,
+      labels: { release: kps },
+      interval: 30s,
+    }
+  prometheusRule:
+    { enabled: true, namespace: monitoring, labels: { release: kps } }

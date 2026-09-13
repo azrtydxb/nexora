@@ -1,0 +1,132 @@
+{{- if and (eq .Values.database.mode "cnpg") (not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1")) }}
+{{- fail "database.mode=cnpg needs the CloudNativePG operator (API postgresql.cnpg.io/v1); install it or set database.mode=external" }}
+{{- end }}
+{{- $prefix := include "nexora.prefix" . }}
+{{- $m := .Values.mgmt }}
+{{- $otlp := include "nexora.otlpEndpoint" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $prefix }}-mgmt
+  labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-mgmt") | nindent 4 }}
+spec:
+  replicas: {{ $m.replicas }}
+  selector:
+    matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "name" "nexora-mgmt") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-mgmt") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # runAsGroup and fsGroup make the 0440 secret volumes (CA, KEK, DNS TLS) readable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "name" "nexora-mgmt") | nindent 20 }}
+      initContainers:
+        - name: migrate
+          image: {{ include "nexora.image" (dict "root" . "name" "nexora-mgmt") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          env: {{- include "nexora.databaseEnv" . | nindent 12 }}
+          securityContext: {{- include "nexora.containerSecurity" . | nindent 12 }}
+      containers:
+        - name: mgmt
+          image: {{ include "nexora.image" (dict "root" . "name" "nexora-mgmt") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: grpc, containerPort: 9443 }
+          env:
+            - { name: NEXORA_HTTP_LISTEN, value: ":8080" }
+            - { name: NEXORA_GRPC_LISTEN, value: ":9443" }
+            {{- include "nexora.databaseEnv" . | nindent 12 }}
+            - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
+            - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
+            - name: NEXORA_GRPC_SERVER_NAMES
+              value: {{ include "nexora.grpcServerNames" . | quote }}
+            - name: NEXORA_PUBLIC_URL
+              value: {{ $m.publicURL | quote }}
+            - name: NEXORA_SECURE_COOKIES
+              value: {{ $m.secureCookies | quote }}
+            - name: NEXORA_ENGINE_CERT_TTL
+              value: {{ $m.engineCertTTL | quote }}
+            - name: NEXORA_ROLLOUT_TICK
+              value: {{ $m.rolloutTick | quote }}
+            - name: NEXORA_QUERYLOG_BACKEND
+              value: {{ $m.querylog.backend | quote }}
+            - name: NEXORA_QUERYLOG_BUILTIN_CAPACITY
+              value: {{ $m.querylog.builtinCapacity | quote }}
+            {{- if eq $m.querylog.backend "opensearch" }}
+            - name: NEXORA_OPENSEARCH_URL
+              value: {{ required "mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch" $m.querylog.opensearch.url | quote }}
+            - name: NEXORA_OPENSEARCH_INDEX
+              value: {{ $m.querylog.opensearch.index | quote }}
+            {{- end }}
+            {{- with $otlp }}
+            - name: NEXORA_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $m.kek.existingSecret }}
+            # 32 random bytes (base64) sealing stored secrets such as TSIG keys.
+            - { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }
+            {{- end }}
+            {{- if $m.dnsTLS.existingSecret }}
+            # The kubelet updates Secret volumes in place, so rotating the Secret rotates the DNS
+            # serving certificate without restarts.
+            - { name: NEXORA_DNS_TLS_CERT_FILE, value: /etc/nexora/dns-tls/tls.crt }
+            - { name: NEXORA_DNS_TLS_KEY_FILE, value: /etc/nexora/dns-tls/tls.key }
+            - name: NEXORA_DNS_TLS_RELOAD_INTERVAL
+              value: {{ $m.dnsTLS.reloadInterval | quote }}
+            {{- end }}
+            {{- with $m.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: grpc }
+            periodSeconds: 10
+          resources: {{- toYaml $m.resources | nindent 12 }}
+          securityContext: {{- include "nexora.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: ca, mountPath: /etc/nexora/ca, readOnly: true }
+            {{- if $m.kek.existingSecret }}
+            - { name: kek, mountPath: /etc/nexora/kek, readOnly: true }
+            {{- end }}
+            {{- if $m.dnsTLS.existingSecret }}
+            - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
+            {{- end }}
+            {{- with $m.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: ca
+          secret:
+            secretName: {{ required "mgmt.ca.existingSecret is required (create it with nexora-mgmt ca init)" $m.ca.existingSecret }}
+            defaultMode: 0440
+        {{- with $m.kek.existingSecret }}
+        - name: kek
+          secret: { secretName: {{ . }}, defaultMode: 0440 }
+        {{- end }}
+        {{- with $m.dnsTLS.existingSecret }}
+        - name: dns-tls
+          secret: { secretName: {{ . }}, defaultMode: 0440 }
+        {{- end }}
+        {{- with $m.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

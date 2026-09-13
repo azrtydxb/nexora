@@ -1,0 +1,63 @@
+{{- with .Values.otelCollector }}
+{{- if .enabled }}
+{{- $name := printf "%s-otelcol" (include "nexora.prefix" $) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-otelcol") | nindent 4 }}
+data:
+  config.yaml: |
+    {{- .config | toString | trim | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-otelcol") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-otelcol") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-otelcol") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .config | toString | sha256sum }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: otelcol
+          image: {{ .image }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["--config=/conf/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+          readinessProbe:
+            tcpSocket: { port: otlp-grpc }
+            periodSeconds: 5
+          resources: {{- toYaml .resources | nindent 12 }}
+          securityContext: {{- include "nexora.containerSecurity" $ | nindent 12 }}
+          volumeMounts:
+            - { name: conf, mountPath: /conf, readOnly: true }
+      volumes:
+        - name: conf
+          configMap: { name: {{ $name }} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-otelcol") | nindent 4 }}
+spec:
+  selector: {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-otelcol") | nindent 4 }}
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+{{- end }}
+{{- end }}

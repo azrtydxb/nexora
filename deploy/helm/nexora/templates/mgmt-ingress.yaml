@@ -1,0 +1,35 @@
+{{- with .Values.mgmt.ingress }}
+{{- if .enabled }}
+{{- $prefix := include "nexora.prefix" $ }}
+{{- $host := required "mgmt.ingress.host is required" .host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .name | default (printf "%s-mgmt" $prefix) }}
+  labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-mgmt") | nindent 4 }}
+  annotations:
+    {{- with .clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ . }}
+    {{- end }}
+    # Plain HTTP redirects to HTTPS; session cookies are Secure.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  {{- with .className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ .tlsSecretName | default (printf "%s-mgmt-tls" $prefix) }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $prefix }}-mgmt
+                port: { name: http }
+{{- end }}
+{{- end }}

@@ -1,0 +1,119 @@
+# Nexora example: PostgreSQL, one management plane, one engine and an optional OpenTelemetry
+# Collector. See "Install with Docker Compose" in docs/operations.md. The database password lives
+# only in secrets/postgres-password and secrets/pgpass, which the operator generates.
+name: nexora
+
+secrets:
+  postgres-password: { file: ./secrets/postgres-password }
+  pgpass: { file: ./secrets/pgpass }
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexora
+      POSTGRES_DB: nexora
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets: [postgres-password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nexora", "-d", "nexora"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # The CA volume must belong to the management plane's non-root user before ca-init writes to it.
+  volume-init:
+    image: busybox:1.37
+    command:
+      [
+        "sh",
+        "-c",
+        "chown 65532:65532 /var/lib/nexora-ca && chmod 0700 /var/lib/nexora-ca",
+      ]
+    volumes:
+      - ca:/var/lib/nexora-ca
+    restart: "no"
+
+  ca-init:
+    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    command: ["ca", "init", "--out", "/var/lib/nexora-ca", "--if-missing"]
+    user: "65532:65532"
+    volumes:
+      - ca:/var/lib/nexora-ca
+    depends_on:
+      volume-init: { condition: service_completed_successfully }
+    restart: "no"
+
+  migrate:
+    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    command: ["migrate"]
+    environment:
+      NEXORA_DATABASE_URL: postgres://nexora@postgres:5432/nexora?sslmode=disable&passfile=/run/secrets/pgpass
+    secrets: [pgpass]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  mgmt:
+    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    command: ["serve"]
+    user: "65532:65532"
+    restart: unless-stopped
+    environment:
+      NEXORA_DATABASE_URL: postgres://nexora@postgres:5432/nexora?sslmode=disable&passfile=/run/secrets/pgpass
+      NEXORA_CA_CERT_FILE: /var/lib/nexora-ca/ca.crt
+      NEXORA_CA_KEY_FILE: /var/lib/nexora-ca/ca.key
+      NEXORA_GRPC_SERVER_NAMES: mgmt,localhost,${NEXORA_PUBLIC_HOST:-localhost}
+      NEXORA_PUBLIC_URL: ${NEXORA_PUBLIC_URL:-http://localhost:8080}
+      NEXORA_SECURE_COOKIES: ${NEXORA_SECURE_COOKIES:-false}
+      NEXORA_QUERYLOG_BACKEND: builtin
+      NEXORA_OTLP_ENDPOINT: ${NEXORA_OTLP_ENDPOINT:-}
+    secrets: [pgpass]
+    ports:
+      - "${NEXORA_HTTP_PORT:-8080}:8080"
+      - "${NEXORA_GRPC_PORT:-9443}:9443"
+    volumes:
+      - ca:/var/lib/nexora-ca:ro
+    depends_on:
+      ca-init: { condition: service_completed_successfully }
+      migrate: { condition: service_completed_successfully }
+
+  engine:
+    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-engine:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    profiles: ["engine"]
+    restart: unless-stopped
+    command: ["--config", "/etc/nexora/engine.toml"]
+    environment:
+      NEXORA_ENGINE_NODE_NAME: ${NEXORA_ENGINE_NODE_NAME:-compose-engine-1}
+    read_only: true
+    cap_drop: [ALL]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    ports:
+      - "${NEXORA_DNS_PORT:-53}:53/udp"
+      - "${NEXORA_DNS_PORT:-53}:53/tcp"
+      - "${NEXORA_METRICS_PORT:-9153}:9153"
+    volumes:
+      - ./engine.toml:/etc/nexora/engine.toml:ro
+      - ./secrets/join-token:/etc/nexora/join-token:ro
+      - enginestate:/var/lib/nexora
+    depends_on:
+      mgmt: { condition: service_started }
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: ["otel"]
+    restart: unless-stopped
+    command: ["--config", "/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+
+volumes:
+  pgdata: {}
+  ca: {}
+  enginestate: {}

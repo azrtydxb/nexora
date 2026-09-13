@@ -1,0 +1,9 @@
+mgmt:
+  ca: { existingSecret: nexora-ca }
+database:
+  mode: external
+  external: { existingSecret: nexora-db, key: uri }
+engine:
+  groups:
+    - name: default
+      joinTokenSecret: nexora-join-default

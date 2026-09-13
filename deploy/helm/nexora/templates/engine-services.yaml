@@ -1,0 +1,52 @@
+{{- if .Values.engine.enabled }}
+{{- $prefix := include "nexora.prefix" . }}
+{{- $p := .Values.engine.ports }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $prefix }}-engine-metrics
+  labels:
+    {{- include "nexora.labels" (dict "root" . "name" "nexora-engine") | nindent 4 }}
+    nexora.io/metrics: "true"
+spec:
+  selector: {{- include "nexora.selectorLabels" (dict "root" . "name" "nexora-engine") | nindent 4 }}
+  ports:
+    - { name: metrics, port: {{ $p.metrics }}, targetPort: metrics }
+{{- range $g := .Values.engine.groups }}
+{{- $svc := $g.service | default dict }}
+{{- $type := $svc.type | default "LoadBalancer" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name | default (printf "%s-dns-%s" $prefix $g.name) }}
+  labels:
+    {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
+    nexora.io/engine-group: {{ $g.name }}
+spec:
+  type: {{ $type }}
+  {{- with $svc.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- if ne $type "ClusterIP" }}
+  # Local keeps client source addresses (per-client policy, query log); the node announcing a
+  # LoadBalancer address must then run an engine of this group.
+  externalTrafficPolicy: {{ $svc.externalTrafficPolicy | default "Local" }}
+  {{- end }}
+  selector:
+    {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
+    nexora.io/engine-group: {{ $g.name }}
+  ports:
+    - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
+    {{- if $p.dot }}
+    - { name: dot, port: 853, targetPort: dot, protocol: TCP }
+    {{- end }}
+    {{- if $p.doq }}
+    - { name: doq, port: 853, targetPort: doq, protocol: UDP }
+    {{- end }}
+    {{- if $p.doh }}
+    - { name: doh, port: 443, targetPort: doh, protocol: TCP }
+    {{- end }}
+{{- end }}
+{{- end }}

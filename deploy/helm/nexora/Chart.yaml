@@ -1,0 +1,9 @@
+apiVersion: v2
+name: nexora
+description: Nexora DNS management plane and engine fleet
+type: application
+version: 1.0.0
+appVersion: "main"
+kubeVersion: ">=1.28.0-0"
+annotations:
+  nexora.io/requires: "CloudNativePG operator (postgresql.cnpg.io/v1) when database.mode=cnpg; Prometheus Operator CRDs when metrics are enabled"

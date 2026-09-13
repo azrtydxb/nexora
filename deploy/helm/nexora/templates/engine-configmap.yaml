@@ -1,0 +1,15 @@
+{{- if .Values.engine.enabled }}
+{{- range $g := .Values.engine.groups }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nexora.engineWorkload" (dict "root" $ "group" $g) }}
+  labels:
+    {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
+    nexora.io/engine-group: {{ $g.name }}
+data:
+  engine.toml: |
+    {{- include "nexora.engineToml" (dict "root" $ "group" $g) | nindent 4 }}
+{{- end }}
+{{- end }}

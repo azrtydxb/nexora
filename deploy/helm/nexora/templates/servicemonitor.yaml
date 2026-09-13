@@ -1,0 +1,27 @@
+{{- with .Values.metrics.serviceMonitor }}
+{{- if .enabled }}
+{{- if not ($.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- fail "metrics.serviceMonitor.enabled needs the Prometheus Operator CRDs (API monitoring.coreos.com/v1)" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nexora.prefix" $ }}
+  namespace: {{ .namespace | default $.Release.Namespace }}
+  labels:
+    {{- include "nexora.labels" (dict "root" $ "name" "nexora") | nindent 4 }}
+    {{- with .labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ $.Release.Namespace }}]
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      nexora.io/metrics: "true"
+  endpoints:
+    - { port: http, path: /metrics, interval: {{ .interval }} }
+    - { port: metrics, path: /metrics, interval: {{ .interval }} }
+{{- end }}
+{{- end }}

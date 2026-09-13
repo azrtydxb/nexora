@@ -1,0 +1,119 @@
+image:
+  registry: 192.168.10.131/azrtydxb
+  tag: "" # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+mgmt:
+  replicas: 2
+  publicURL: ""
+  secureCookies: true
+  engineCertTTL: 2160h
+  rolloutTick: 1s
+  grpcServerNames: [] # extra SANs; the gRPC Service names and the load balancer IP are always included
+  otlpEndpoint: "" # default: the bundled collector when otelCollector.enabled
+  ca:
+    existingSecret: "" # required: secret with ca.crt and ca.key (nexora-mgmt ca init)
+  kek:
+    existingSecret: "" # optional: secret with key "kek" (32 random bytes, base64)
+  dnsTLS:
+    existingSecret: "" # optional: kubernetes.io/tls secret for DoT/DoH/DoQ, pushed to engines
+    reloadInterval: 30s
+  querylog:
+    backend: builtin # builtin | opensearch
+    builtinCapacity: 200000
+    opensearch:
+      url: ""
+      index: nexora-querylog-*
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  grpcLoadBalancer:
+    enabled: false
+    loadBalancerIP: ""
+  ingress:
+    enabled: false
+    name: "" # default <prefix>-mgmt
+    className: nginx
+    host: ""
+    clusterIssuer: ""
+    tlsSecretName: ""
+  pdb:
+    minAvailable: 1
+
+database:
+  mode: cnpg # cnpg | external
+  external:
+    existingSecret: "" # secret holding a PostgreSQL connection URI
+    key: uri
+  cnpg:
+    clusterName: nexora-db
+    instances: 2
+    imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+    storageClass: ""
+    size: 10Gi
+
+engine:
+  enabled: true
+  kind: DaemonSet # DaemonSet | Deployment
+  managementURL: "" # default https://<prefix>-mgmt-grpc.<namespace>.svc.cluster.local:9443
+  workers: 2
+  initImage: busybox:1.37
+  # hostNetwork binds the engine ports on the node itself. The pod then cannot set the namespaced
+  # sysctl net.ipv4.ip_unprivileged_port_start, so the node's value must be at or below the lowest
+  # engine port (the engine runs as uid 10001), and engine groups must not share a node.
+  hostNetwork: false
+  ports: { dns: 53, metrics: 9153, dot: 0, doh: 0, doq: 0 } # 0 disables an encrypted listener
+  dohPath: /dns-query
+  stateDir:
+    type: hostPath # hostPath | emptyDir (emptyDir enrolls again after every pod restart)
+    hostPathPrefix: /var/lib/nexora
+  tolerations: []
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
+  groups:
+    - name: default
+      workloadName: "" # default <prefix>-engine-<name>
+      nodeNamePrefix: "" # NEXORA_ENGINE_NODE_NAME = <nodeNamePrefix><Kubernetes node name>
+      replicas: 1 # Deployment only
+      nodeAffinity: {}
+      joinTokenSecret: ""
+      joinTokenKey: join-token
+      service:
+        name: "" # default <prefix>-dns-<name>
+        type: LoadBalancer
+        loadBalancerIP: ""
+        externalTrafficPolicy: Local
+
+# An OpenTelemetry Collector for engine query logs, traces and metrics. Off by default; when on and
+# mgmt.otlpEndpoint is empty, mgmt (and through it the engines) sends OTLP to it.
+otelCollector:
+  enabled: false
+  image: otel/opentelemetry-collector-contrib:0.160.0
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  # Collector configuration; the receiver must listen on 0.0.0.0:4317.
+  config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: "0.0.0.0:4317" }
+    processors:
+      memory_limiter: { check_interval: 1s, limit_mib: 400 }
+      batch: {}
+    exporters:
+      debug: { verbosity: basic }
+    service:
+      pipelines:
+        logs: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
+        traces: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
+        metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
+
+metrics:
+  serviceMonitor: { enabled: false, namespace: "", labels: {}, interval: 30s }
+  prometheusRule: { enabled: false, namespace: "", labels: {} }

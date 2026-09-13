@@ -1,0 +1,11 @@
+{{- if gt (int .Values.mgmt.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "nexora.prefix" . }}-mgmt
+  labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-mgmt") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.mgmt.pdb.minAvailable }}
+  selector:
+    matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "name" "nexora-mgmt") | nindent 6 }}
+{{- end }}

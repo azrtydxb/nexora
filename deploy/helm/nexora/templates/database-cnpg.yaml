@@ -1,0 +1,21 @@
+{{- if eq .Values.database.mode "cnpg" }}
+{{- $c := .Values.database.cnpg }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $c.clusterName }}
+  labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-db") | nindent 4 }}
+spec:
+  instances: {{ $c.instances }}
+  imageName: {{ $c.imageName }}
+  # CNPG writes the connection URI to the Secret <clusterName>-app, key uri.
+  bootstrap:
+    initdb:
+      database: nexora
+      owner: nexora
+  storage:
+    size: {{ $c.size }}
+    {{- with $c.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+{{- end }}

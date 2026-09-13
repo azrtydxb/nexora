@@ -2,7 +2,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 BIN := $(CURDIR)/bin
-GO_PKGS := $(foreach d,mgmt gen bench,$(if $(wildcard $(d)),./$(d)/...))
+GO_PKGS := $(foreach d,mgmt gen bench deploy,$(if $(wildcard $(d)),./$(d)/...))
 
 .PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench images
 

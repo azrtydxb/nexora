@@ -1,0 +1,21 @@
+{{- $prefix := include "nexora.prefix" . -}}
+Nexora is installed with the name prefix {{ $prefix }} in namespace {{ .Release.Namespace }}.
+
+First administrator: nexora-mgmt logs a one-time setup token on first start.
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ $prefix }}-mgmt -c mgmt | grep "setup token"
+{{- if .Values.mgmt.publicURL }}
+Open {{ .Values.mgmt.publicURL }}/setup and enter it.
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $prefix }}-mgmt 8080:8080
+Open http://localhost:8080/setup and enter it.
+{{- end }}
+
+{{- if .Values.engine.enabled }}
+
+Each engine group needs a join token Secret before its engines can enroll. NEXORA_DATABASE_URL and
+NEXORA_CA_CERT_FILE are already set in the mgmt container:
+{{- range .Values.engine.groups }}
+  kubectl -n {{ $.Release.Namespace }} exec deploy/{{ $prefix }}-mgmt -c mgmt -- /nexora-mgmt join-token create --engine-group {{ .name }} --ttl 24h
+  kubectl -n {{ $.Release.Namespace }} create secret generic {{ .joinTokenSecret }} --from-literal={{ .joinTokenKey | default "join-token" }}=<token>
+{{- end }}
+{{- end }}

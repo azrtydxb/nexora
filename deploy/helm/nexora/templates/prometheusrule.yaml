@@ -1,0 +1,36 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+{{- if not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- fail "metrics.prometheusRule.enabled needs the Prometheus Operator CRDs (API monitoring.coreos.com/v1)" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "nexora.prefix" . }}
+  namespace: {{ default .Release.Namespace .Values.metrics.prometheusRule.namespace }}
+  labels:
+    {{- include "nexora.labels" (dict "root" . "name" "nexora") | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: nexora-fleet
+      rules:
+        - alert: NexoraEngineDisconnected
+          expr: max(nexora_mgmt_engines_disconnected{namespace="{{ .Release.Namespace }}"}) > 0
+          for: 2m
+          labels: { severity: warning }
+          annotations:
+            summary: "{{ `{{ $value }}` }} Nexora engine(s) without a control stream for more than 60 seconds"
+        - alert: NexoraRolloutHalted
+          expr: max(nexora_mgmt_rollouts{state="halted",namespace="{{ .Release.Namespace }}"}) > 0
+          labels: { severity: warning }
+          annotations:
+            summary: A Nexora configuration rollout halted on its health gate; roll back or fix forward
+        - alert: NexoraManagementPlaneDown
+          expr: absent(up{namespace="{{ .Release.Namespace }}",service="{{ include "nexora.prefix" . }}-mgmt"} == 1)
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: No Nexora management plane instance is being scraped
+{{- end }}

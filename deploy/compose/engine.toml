@@ -1,0 +1,9 @@
+# Engine bootstrap for the compose example; configuration arrives from mgmt.
+node_name = "compose-engine-1"            # overridden by NEXORA_ENGINE_NODE_NAME
+state_dir = "/var/lib/nexora"
+management_urls = ["https://mgmt:9443"]
+join_token_file = "/etc/nexora/join-token"
+listen_udp = ["0.0.0.0:53"]
+listen_tcp = ["0.0.0.0:53"]
+metrics_listen = "0.0.0.0:9153"
+workers = 0
