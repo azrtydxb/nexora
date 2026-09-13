@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy Nexora to kw (namespace nexora): build and push the images, apply deploy/kw, create the CA
-# and DNS TLS secrets, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
+# Deploy Nexora to kw (namespace nexora): build and push the images, apply deploy/kw, create the CA,
+# key-encryption key and DNS TLS secrets, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
 # Ends by printing the environment TestKwSmoke needs (see deploy/kw/README.md).
 #   scripts/kw-deploy.sh [--tag TAG] [--skip-build]
 set -euo pipefail
@@ -44,6 +44,11 @@ if ! k get secret nexora-ca >/dev/null 2>&1; then
 	(cd "$root" && go run ./mgmt/cmd/nexora-mgmt ca init --out "$tmp/ca")
 	k create secret generic nexora-ca --from-file=ca.crt="$tmp/ca/ca.crt" --from-file=ca.key="$tmp/ca/ca.key"
 	rm -rf "$tmp/ca"
+fi
+
+# The key-encryption key sealing RPZ TSIG secrets (M4: TSIG keys and DNSSEC keys too); never printed.
+if ! k get secret nexora-kek >/dev/null 2>&1; then
+	openssl rand -base64 32 | k create secret generic nexora-kek --from-file=kek=/dev/stdin
 fi
 
 # The DNS serving certificate for DoT/DoH/DoQ; its key only exists in the temporary directory and the Secret.

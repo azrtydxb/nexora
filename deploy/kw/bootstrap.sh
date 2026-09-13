@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap a running nexora-mgmt on kw through its API: the first admin, upstream forwarders,
-# the smoke-test block list and the engines' join token. Idempotent; run by scripts/kw-deploy.sh.
+# the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone and the
+# engines' join token. Idempotent; run by scripts/kw-deploy.sh.
 #
 # The admin credentials live only in the Secret nexora-admin (keys username, password), created
 # here with a random password on the first run. Read the password with:
@@ -70,6 +71,33 @@ call -X POST "$api/api/v1/filter-lists/$list_id/refresh" | jq -e '.entry_count >
 		echo "filter list kw-smoke did not refresh" >&2
 		exit 1
 	}
+
+# Resolution: forward mode with DNSSEC validation of the forwarded answers. kw's network transparently
+# redirects every outbound UDP/TCP 53 query to a local resolver (even 192.0.2.1 and the root servers
+# answer recursively), so recursion from the real root servers cannot work there.
+res=$(call "$api/api/v1/resolution")
+if [ "$(jq -r .mode <<<"$res")" != forward ]; then
+	jq '.mode = "forward"' <<<"$res" | call -X PUT -d @- "$api/api/v1/resolution" >/dev/null
+	echo "resolution mode set to forward"
+fi
+ds=$(call "$api/api/v1/dnssec/settings")
+if [ "$(jq -r '.validation and .validate_forwarded' <<<"$ds")" != true ]; then
+	jq '.validation = true | .validate_forwarded = true' <<<"$ds" | call -X PUT -d @- "$api/api/v1/dnssec/settings" >/dev/null
+	echo "DNSSEC validation (including forwarded answers) enabled"
+fi
+
+# The smoke test's RPZ file zone: example.net answers NXDOMAIN.
+rpz=$(call "$api/api/v1/rpz-zones" | jq -c '.[] | select(.name=="rpz.kw.nexora.")')
+if [ -z "$rpz" ]; then
+	rpz=$(call -d '{"name":"rpz.kw.nexora.","source_type":"file","policy_override":"given","min_refresh_seconds":300}' "$api/api/v1/rpz-zones")
+	echo "RPZ zone rpz.kw.nexora. created"
+fi
+if [ "$(jq -r .file_records <<<"$rpz")" = null ]; then
+	zone=$'$TTL 60\n@ SOA ns.rpz.kw.nexora. hostmaster.rpz.kw.nexora. 1 300 60 86400 60\n@ NS ns.rpz.kw.nexora.\nexample.net CNAME .\n'
+	jq -n --arg c "$zone" --argjson r "$(jq .revision <<<"$rpz")" '{content:$c, revision:$r}' |
+		call -X PUT -d @- "$api/api/v1/rpz-zones/$(jq -r .id <<<"$rpz")/file" >/dev/null
+	echo "RPZ zone rpz.kw.nexora. uploaded"
+fi
 
 if ! k get secret nexora-join-token >/dev/null 2>&1; then
 	call -d '{"name":"kw-engines","ttl_seconds":31536000}' "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token"

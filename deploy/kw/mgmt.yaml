@@ -1,7 +1,7 @@
 # nexora-mgmt on kw: 2 replicas, GUI/API only over HTTPS on ingress https://nexora.kw.local (plain HTTP
 # redirects), gRPC 9443 for engines on the LoadBalancer IP 192.168.10.135 (no HTTP port there, so no
 # cleartext cookie login). NEXORA_TAG is substituted by scripts/kw-deploy.sh. Needs the secrets
-# nexora-db-app (CNPG), nexora-ca and nexora-dns-tls (see README.md).
+# nexora-db-app (CNPG), nexora-ca, nexora-kek and nexora-dns-tls (see README.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,6 +42,8 @@ spec:
             - { name: NEXORA_GRPC_LISTEN, value: ":9443" }
             - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
             - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
+            # 32 random bytes (base64) sealing RPZ TSIG secrets; the Secret nexora-kek is never in git.
+            - { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }
             - name: NEXORA_GRPC_SERVER_NAMES
               value: "nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,192.168.10.135"
             - { name: NEXORA_PUBLIC_URL, value: "https://nexora.kw.local" }
@@ -87,10 +89,13 @@ spec:
             }
           volumeMounts:
             - { name: ca, mountPath: /etc/nexora/ca, readOnly: true }
+            - { name: kek, mountPath: /etc/nexora/kek, readOnly: true }
             - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
       volumes:
         - name: ca
           secret: { secretName: nexora-ca, defaultMode: 0440 }
+        - name: kek
+          secret: { secretName: nexora-kek, defaultMode: 0440 }
         - name: dns-tls
           secret: { secretName: nexora-dns-tls, defaultMode: 0440 }
 ---

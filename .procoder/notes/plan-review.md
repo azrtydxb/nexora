@@ -36,3 +36,8 @@
 
 - REJECTED design change #2 ("global forwarding not DNSSEC-validated"): spec S-7 requires validation of recursive AND forwarded answers. Binding correction for M3 build: add global setting `dnssec_validate_forwarded` (settings table + snapshot field in the M3 100-199 range + API/GUI Settings toggle), default `true` for new installs and the kw deployment. Forward-mode validation fetches DS/DNSKEY through the forwarder up to the root trust anchor. e2e harness snapshots/settings for tests whose fixtures cannot serve a chain of trust set it `false` explicitly; `TestDNSSECValidation` must include a forward-mode subtest (validating forwarder over the private signed hierarchy) proving AD=1 / bogus->SERVFAIL in forward mode too.
 - Accepted: secrets helper pulled forward from M4, TSIG secrets only over control stream; resolution/DNSSEC/RPZ snapshot-wide (not per group); RPZ file zones as blobs; kw state emptyDir until M5; NetworkPolicy dropped.
+
+## After M3 kw deployment (2026-09-13)
+
+- kw network redirects all outbound UDP/TCP 53 to another resolver (non-recursive queries to root IPs get recursive answers), so real-root recursion cannot work on kw; kw runs forward mode + forwarded DNSSEC validation. Report to user; recursion is verified in the private hierarchy e2e tests only.
+- BUG: forwarded answers on the CD (pass-through) path keep the upstream's AA bit. A recursive/forwarding server must clear AA on answers it did not serve authoritatively. Fix in engine forward path (all modes), with a unit test and an e2e assertion; do it in the M4 engine track (authoritative stage owns AA semantics).
