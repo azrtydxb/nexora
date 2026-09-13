@@ -1,10 +1,24 @@
 //! Authoritative service for zones hosted in Nexora: the NZF1 zone format and the in-memory zone
 //! model (M4). Answering and runtime wiring build on these modules.
 
+pub mod answer;
+pub mod dispatch;
+pub mod loader;
+pub mod lookup;
+pub mod msg;
 pub mod name;
 pub mod nzf;
+pub mod set;
+pub mod state;
+pub mod writer;
 pub mod zone;
 
+pub use state::after_apply;
+
+#[cfg(test)]
+mod answer_tests;
+#[cfg(test)]
+mod loader_tests;
 #[cfg(test)]
 mod zone_tests;
 

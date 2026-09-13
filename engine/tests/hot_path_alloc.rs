@@ -1,18 +1,17 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-// Only allocations made by a thread that armed itself count: libtest's main thread
-// and any other thread allocate concurrently and must not fail the guard.
+// Only allocations made by a thread that armed itself count, on that thread: libtest's main
+// thread and the other tests allocate concurrently and must not fail (or reset) the guard.
 struct Counting;
-static ALLOCS: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(false) };
+    static ALLOCS: Cell<u64> = const { Cell::new(0) };
 }
 fn record() {
     // try_with: the allocator runs during thread teardown, after TLS is destroyed.
     if ARMED.try_with(Cell::get).unwrap_or(false) {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
     }
 }
 unsafe impl GlobalAlloc for Counting {
@@ -171,7 +170,7 @@ fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
             FastOutcome::Reply(_)
         ));
     }
-    ALLOCS.store(0, Ordering::Relaxed);
+    ALLOCS.with(|c| c.set(0));
     ARMED.with(|a| a.set(true));
     for _ in 0..50_000 {
         let rt = shared.runtime.load();
@@ -182,11 +181,110 @@ fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
     }
     ARMED.with(|a| a.set(false));
     assert_eq!(
-        ALLOCS.load(Ordering::Relaxed),
+        ALLOCS.with(Cell::get),
         0,
         "cache-hit path allocated (resolution mode {:?})",
         shared.runtime.load().resolution.mode
     );
     assert!(shared.metrics.sum_cache_hits() >= before_hits + 50_000);
     assert!(!shared.querylog.is_empty(), "query records were pushed");
+}
+
+#[test]
+fn authoritative_answer_path_does_not_allocate() {
+    use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RecordType};
+    use hickory_proto::serialize::binary::BinEncodable;
+    use nexora_engine::edns::Transport;
+    use nexora_engine::proto::*;
+    use nexora_engine::server::{FastOutcome, Shared, WorkerCtx, handle_packet};
+    use nexora_engine::snapshot::{ApplyOutcome, DirBlobs, apply};
+    use sha2::Digest;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let z = zstd::encode_all(&include_bytes!("../../testdata/nzf/basic-full.nzf")[..], 3).unwrap();
+    let sha = hex::encode(sha2::Sha256::digest(&z));
+    std::fs::write(tmp.path().join(&sha), &z).unwrap();
+    let shared = Shared::new(1);
+    let snap = ConfigSnapshot {
+        version: 1,
+        cache: Some(CacheConfig {
+            max_bytes: 8 << 20,
+            max_ttl: 86400,
+            negative_max_ttl: 3600,
+            ..Default::default()
+        }),
+        acl_allow_cidrs: vec!["127.0.0.0/8".into()],
+        filter: Some(FilterConfig::default()),
+        telemetry: Some(TelemetryConfig::default()),
+        resolver: Some(ResolverConfig::default()),
+        auth_zones: vec![AuthZone {
+            name: "example.test.".into(),
+            kind: AuthZoneKind::Primary as i32,
+            serial: 2026091301,
+            image: Some(BlobRef {
+                sha256: sha,
+                size: z.len() as u64,
+                name: String::new(),
+            }),
+            image_serial: 2026091301,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(matches!(
+        apply(
+            &shared.runtime,
+            snap,
+            &DirBlobs {
+                dir: tmp.path().into()
+            },
+            None
+        ),
+        ApplyOutcome::Applied { .. }
+    ));
+    let client: std::net::SocketAddr = "192.0.2.9:5353".parse().unwrap();
+    let ctx = WorkerCtx::new(0, shared.clone());
+    // An answer through a CNAME, a referral with glue, a wildcard and an NXDOMAIN.
+    let queries: Vec<Vec<u8>> = [
+        ("Alias.Example.Test.", RecordType::A),
+        ("host.sub.example.test.", RecordType::A),
+        ("x.wild.example.test.", RecordType::TXT),
+        ("nope.example.test.", RecordType::AAAA),
+    ]
+    .iter()
+    .map(|(name, t)| {
+        let mut m = Message::new(7, MessageType::Query, OpCode::Query);
+        m.add_query(Query::query(Name::from_ascii(name).unwrap(), *t));
+        let mut e = Edns::new();
+        e.set_max_payload(1232);
+        m.set_edns(e);
+        m.to_bytes().unwrap()
+    })
+    .collect();
+    let mut out = [0u8; 1232];
+    for q in &queries {
+        let rt = shared.runtime.load();
+        assert!(matches!(
+            handle_packet(&ctx, &rt, q, client, Transport::Udp, &mut out),
+            FastOutcome::Reply(_)
+        ));
+    }
+    ARMED.with(|a| a.set(true));
+    ALLOCS.with(|c| c.set(0));
+    for _ in 0..10_000 {
+        for q in &queries {
+            let rt = shared.runtime.load();
+            match handle_packet(&ctx, &rt, q, client, Transport::Udp, &mut out) {
+                FastOutcome::Reply(n) => assert!(n > 40),
+                _ => panic!("expected an authoritative reply"),
+            }
+        }
+    }
+    ARMED.with(|a| a.set(false));
+    assert_eq!(
+        ALLOCS.with(Cell::get),
+        0,
+        "authoritative answer path allocated"
+    );
 }

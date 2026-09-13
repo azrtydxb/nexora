@@ -1,3 +1,4 @@
+use nexora_engine::authoritative;
 use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
 use nexora_engine::recursor::{self, RecursorState};
@@ -49,6 +50,7 @@ fn main() -> ExitCode {
                 };
                 if report(&shared, snapshot::apply(&shared.runtime, s, &blobs, None)) {
                     shared.recursor.sync(&shared.runtime.load_full());
+                    authoritative::after_apply(&shared, &shared.runtime.load());
                 }
             }
             Ok(None) => {}
@@ -81,6 +83,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    shared.auth.set_control_runtime(control.handle().clone());
+    authoritative::after_apply(&shared, &shared.runtime.load());
     otlp::spawn_telemetry_thread(shared.clone());
     let metrics_addr = match bind_metrics(&control, boot.metrics_listen) {
         Ok(listener) => {
@@ -192,6 +196,7 @@ fn apply_standalone(shared: &Arc<Shared>, boot: &Bootstrap) -> bool {
     let applied = report(shared, outcome);
     if applied {
         shared.recursor.sync(&shared.runtime.load_full());
+        authoritative::after_apply(shared, &shared.runtime.load());
     }
     applied
 }

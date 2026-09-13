@@ -42,6 +42,41 @@ pub fn canon_key(wire: &[u8], out: &mut Vec<u8>) {
     }
 }
 
+/// Room for the canonical key of any valid name (at most 508 octets) plus a `*` label.
+pub const KEY_BUF: usize = 512;
+
+/// [`canon_key`] into a stack buffer, for the query path; returns the key length. Input longer
+/// than a valid name is cut off where the buffer ends.
+pub fn canon_key_buf(wire: &[u8], out: &mut [u8; KEY_BUF]) -> usize {
+    let mut offs = [0u16; 128];
+    let n = label_offsets(wire, &mut offs);
+    let mut len = 0usize;
+    let mut push = |out: &mut [u8; KEY_BUF], b: u8| {
+        if len < KEY_BUF {
+            out[len] = b;
+            len += 1;
+        }
+    };
+    for k in (0..n).rev() {
+        let o = offs[k] as usize;
+        for &b in &wire[o + 1..o + 1 + wire[o] as usize] {
+            match b.to_ascii_lowercase() {
+                0 => {
+                    push(out, 1);
+                    push(out, 1);
+                }
+                1 => {
+                    push(out, 1);
+                    push(out, 2);
+                }
+                c => push(out, c),
+            }
+        }
+        push(out, 0);
+    }
+    len
+}
+
 /// Whether `child` equals `parent` or lies below it at a label boundary (case-insensitive).
 pub fn is_subdomain(child: &[u8], parent: &[u8]) -> bool {
     if parent.is_empty() || parent.len() > child.len() {

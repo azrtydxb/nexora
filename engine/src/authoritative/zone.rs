@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::sync::Arc;
 
-use super::name::{canon_key, label_offsets};
+use super::name::{KEY_BUF, canon_key, canon_key_buf, label_offsets};
 use super::nzf::{Kind, Parsed, RecordRef};
 use super::{T_DNSKEY, T_NS, T_NSEC, T_NSEC3, T_NSEC3PARAM, T_RRSIG, T_SOA};
 
@@ -424,9 +424,9 @@ impl Zone {
 
     /// Case-insensitive node lookup by wire name.
     pub fn node(&self, wire: &[u8]) -> Option<&Node> {
-        let mut key = Vec::with_capacity(wire.len() + 8);
-        canon_key(wire, &mut key);
-        self.node_by_key(&key)
+        let mut key = [0u8; KEY_BUF];
+        let n = canon_key_buf(wire, &mut key);
+        self.node_by_key(&key[..n])
     }
 
     /// Node lookup by canonical key (`name::canon_key`).

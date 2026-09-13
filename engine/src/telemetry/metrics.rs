@@ -65,6 +65,20 @@ pub struct WorkerCounters {
     pub stale_served: Counter,
     pub filter_blocked: Counter,
     pub mismatched_replies: Arc<Counter>,
+    /// Authoritative answers by `AUTH_ANSWER_RESULTS` slot.
+    pub auth_answers: [Counter; 5],
+}
+
+/// The `result` label per slot of `WorkerCounters::auth_answers`.
+pub const AUTH_ANSWER_RESULTS: [&str; 5] = ["answer", "nodata", "nxdomain", "referral", "servfail"];
+/// The `kind` label per slot of `AuthCounters::loads`.
+pub const AUTH_LOAD_KINDS: [&str; 3] = ["full", "delta", "reused"];
+
+/// Process-wide authoritative counters updated off the query path.
+#[derive(Default)]
+pub struct AuthCounters {
+    /// Zone loads by `AUTH_LOAD_KINDS` slot.
+    pub loads: [AtomicU64; 3],
 }
 
 impl WorkerCounters {
@@ -78,6 +92,7 @@ impl WorkerCounters {
             stale_served: counter(),
             filter_blocked: counter(),
             mismatched_replies: Arc::new(counter()),
+            auth_answers: array::from_fn(|_| counter()),
         }
     }
 
@@ -322,6 +337,7 @@ pub struct Metrics {
     pub export_dropped: [Counter; 3],
     pub config_version: AtomicU64,
     pub control_connected: AtomicBool,
+    pub auth: AuthCounters,
 }
 
 impl Metrics {
@@ -331,6 +347,7 @@ impl Metrics {
             export_dropped: array::from_fn(|_| counter()),
             config_version: AtomicU64::new(0),
             control_connected: AtomicBool::new(false),
+            auth: AuthCounters::default(),
         }
     }
 
@@ -547,12 +564,44 @@ impl Metrics {
         );
 
         ENCRYPTED.register(&mut reg);
+        self.register_auth(&mut reg, rt);
         register_recursor(&mut reg, rt, recursor);
         recursor.rpz.manager.register_metrics(&mut reg);
 
         let mut out = String::with_capacity(4096);
         text::encode(&mut out, &reg).expect("writing to a String cannot fail");
         out
+    }
+
+    /// Hosted-zone families; every label value is created even at zero.
+    fn register_auth(&self, reg: &mut Registry, rt: &Runtime) {
+        reg.register(
+            "nexora_auth_zones",
+            "Hosted zones served authoritatively",
+            ConstGauge::new(rt.auth.zones().count() as i64),
+        );
+        let loads = Family::<Labels, PromCounter>::default();
+        for (kind, c) in AUTH_LOAD_KINDS.iter().zip(&self.auth.loads) {
+            loads
+                .get_or_create(&vec![("kind", (*kind).to_owned())])
+                .inc_by(c.load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_auth_zone_loads",
+            "Hosted zones loaded from a full image, advanced by deltas, or reused",
+            loads,
+        );
+        let answers = Family::<Labels, PromCounter>::default();
+        for (i, result) in AUTH_ANSWER_RESULTS.iter().enumerate() {
+            answers
+                .get_or_create(&vec![("result", (*result).to_owned())])
+                .inc_by(self.sum(|w| w.auth_answers[i].load(Ordering::Relaxed)));
+        }
+        reg.register(
+            "nexora_auth_answers",
+            "Queries answered from hosted zones",
+            answers,
+        );
     }
 
     /// The periodic `Stats` report, from the same sums as `render`.
@@ -884,5 +933,34 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn auth_families_render_every_label_at_zero() {
+        let m = Metrics::new(2);
+        m.workers[1].auth_answers[3].fetch_add(2, Ordering::Relaxed);
+        m.auth.loads[1].fetch_add(1, Ordering::Relaxed);
+        let text = m.render(&Runtime::initial(), &RecursorState::new(None));
+        assert!(text.contains("nexora_auth_zones 0"), "{text}");
+        for kind in AUTH_LOAD_KINDS {
+            assert!(
+                text.contains(&format!("nexora_auth_zone_loads_total{{kind=\"{kind}\"}}")),
+                "{text}"
+            );
+        }
+        for result in AUTH_ANSWER_RESULTS {
+            assert!(
+                text.contains(&format!("nexora_auth_answers_total{{result=\"{result}\"}}")),
+                "{text}"
+            );
+        }
+        assert!(has_positive(
+            &text,
+            "nexora_auth_zone_loads_total{kind=\"delta\"} "
+        ));
+        assert!(has_positive(
+            &text,
+            "nexora_auth_answers_total{result=\"referral\"} "
+        ));
     }
 }

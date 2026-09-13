@@ -1,6 +1,8 @@
 //! The applied configuration workers read once per packet through `ArcSwap`.
 
 use crate::acl::Acl;
+use crate::authoritative::loader::{self, LoadCounts};
+use crate::authoritative::set::AuthSet;
 use crate::cache::{Cache, CacheSettings};
 use crate::filter::{self, BlockMode, FilterSet, ListStats, PolicyTable};
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
@@ -36,6 +38,12 @@ pub struct Runtime {
     pub telemetry: TelemetrySettings,
     /// Resolution mode, forward zones, DNSSEC and RPZ settings (M3).
     pub resolution: Arc<ResolutionRuntime>,
+    /// Hosted zones (M4); unchanged zones share their `Arc<Zone>` with the previous runtime.
+    pub auth: Arc<AuthSet>,
+    /// How the zones of this runtime were loaded, counted once by `authoritative::after_apply`.
+    pub auth_loads: LoadCounts,
+    /// Lowercase wire origin and serial of zones that are new or changed serial in this runtime.
+    pub auth_changed: Vec<(Box<[u8]>, u32)>,
 }
 
 impl Runtime {
@@ -59,6 +67,9 @@ impl Runtime {
             upstreams: Arc::new(UpstreamSet::new(Vec::new(), Strategy::Ordered, None)),
             telemetry: TelemetrySettings::default(),
             resolution: Arc::new(ResolutionRuntime::default()),
+            auth: Arc::new(AuthSet::empty()),
+            auth_loads: LoadCounts::default(),
+            auth_changed: Vec::new(),
         }
     }
 
@@ -144,6 +155,11 @@ impl Runtime {
             cache.clear();
         }
 
+        // Zone data never enters `filter_hashes`: a zone edit does not clear the response cache.
+        let empty = AuthSet::empty();
+        let loaded = loader::load(previous.map_or(&empty, |p| &*p.auth), &s.auth_zones, blobs)
+            .map_err(|e| SnapshotError::Invalid(e.to_string()))?;
+
         let t = s.telemetry.clone().unwrap_or_default();
         Ok(Runtime {
             version: s.version,
@@ -161,6 +177,9 @@ impl Runtime {
                 querylog_to_management: t.querylog_to_management,
             },
             resolution,
+            auth: Arc::new(loaded.set),
+            auth_loads: loaded.counts,
+            auth_changed: loaded.changed,
         })
     }
 }

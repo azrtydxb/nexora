@@ -17,6 +17,8 @@ pub enum CacheOutcome {
     Miss,
     Stale,
     None,
+    /// Answered from a hosted zone.
+    Auth,
 }
 
 impl CacheOutcome {
@@ -26,6 +28,7 @@ impl CacheOutcome {
             CacheOutcome::Miss => "miss",
             CacheOutcome::Stale => "stale",
             CacheOutcome::None => "none",
+            CacheOutcome::Auth => "auth",
         }
     }
 }

@@ -360,6 +360,11 @@ pub async fn fetch_blobs(
             Some(crate::proto::rpz_zone::Source::File(f)) => f.blob.as_ref(),
             _ => None,
         }))
+        .chain(snap.auth_zones.iter().flat_map(|z| {
+            z.image
+                .iter()
+                .chain(z.deltas.iter().filter_map(|d| d.blob.as_ref()))
+        }))
         // Collected so no closure is held across an await (keeps the future `Send`).
         .collect::<Vec<_>>();
     for r in refs {
@@ -554,7 +559,7 @@ async fn session(
             }
             // The secrets are never logged and never persisted.
             Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),
-            // M4 contract (Task 1); handled once the authoritative state is wired (M4 Task 4).
+            // M4 contract (Task 1); TSIG keys arrive with M4 Task 6, update results with Task 11.
             Some(ServerMsg::KeyMaterial(_) | ServerMsg::UpdateResult(_)) => {}
             None => {}
         }
@@ -587,6 +592,7 @@ async fn apply_snapshot(
                 );
                 if matches!(outcome, ApplyOutcome::Applied { .. }) {
                     shared.recursor.sync(&shared.runtime.load_full());
+                    crate::authoritative::after_apply(&shared, &shared.runtime.load());
                 }
                 outcome
             })

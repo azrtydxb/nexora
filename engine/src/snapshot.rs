@@ -119,6 +119,7 @@ pub fn validate(s: &ConfigSnapshot, applied_version: u64) -> Result<(), Snapshot
         }
     }
     crate::snapshot_m3::validate_m3(s).map_err(SnapshotError::Invalid)?;
+    crate::authoritative::loader::validate(&s.auth_zones).map_err(SnapshotError::Invalid)?;
     Ok(())
 }
 

@@ -14,6 +14,8 @@ pub mod testutil;
 pub mod tls;
 pub mod udp;
 
+use crate::authoritative::dispatch::{self as auth_dispatch, AuthOutcome};
+use crate::authoritative::state::AuthState;
 use crate::bootstrap::Bootstrap;
 use crate::cache::{self, CacheKey, CachedResponse, Lookup, ServeMode};
 use crate::clock;
@@ -62,6 +64,8 @@ pub struct Shared {
     pub mgmt_channel: ArcSwapOption<tonic::transport::Channel>,
     /// Recursion, DNSSEC and RPZ state that survives snapshot swaps.
     pub recursor: Arc<RecursorState>,
+    /// Authoritative (M4) state that survives snapshot swaps.
+    pub auth: Arc<AuthState>,
 }
 
 impl Shared {
@@ -83,6 +87,7 @@ impl Shared {
             node_name: ArcSwap::from_pointee(String::new()),
             mgmt_channel: ArcSwapOption::empty(),
             recursor,
+            auth: AuthState::new(),
         })
     }
 }
@@ -130,7 +135,7 @@ impl WorkerCtx {
         }
     }
 
-    fn counters(&self) -> &WorkerCounters {
+    pub fn counters(&self) -> &WorkerCounters {
         &self.shared.metrics.workers[self.index]
     }
 }
@@ -274,6 +279,16 @@ pub fn handle_packet(
         Ok(q) => q,
         Err(ParseError::TooShort | ParseError::IsResponse) => return FastOutcome::Drop,
         Err(e) => {
+            if !rt.auth.is_empty()
+                && let Some(AuthOutcome::Reply(n)) =
+                    auth_dispatch::unparsed(ctx, rt, packet, client, transport, out)
+            {
+                if n < HEADER_LEN {
+                    return FastOutcome::Drop;
+                }
+                scope.finish(scope.record(NameKey::ROOT, 0), &out[..n]);
+                return FastOutcome::Reply(n);
+            }
             let rcode = match e {
                 ParseError::NotImp => wire::RCODE_NOTIMP,
                 _ => wire::RCODE_FORMERR,
@@ -296,10 +311,6 @@ pub fn handle_packet(
     });
     // debt: EDNS versions other than 0 are answered as version 0 instead of
     // BADVERS; revisit when a client that sends EDNS1 shows up.
-    if !rt.acl.allows(client.ip()) {
-        let n = wire::write_rcode_reply(&q, wire::RCODE_REFUSED, &mut out[..limit], opt.as_ref());
-        return reply(&scope, rec, out, n);
-    }
     if q.opt.is_some_and(|o| o.bad_cookie_len) {
         let n = wire::write_rcode_reply(&q, wire::RCODE_FORMERR, &mut out[..limit], opt.as_ref());
         return reply(&scope, rec, out, n);
@@ -314,6 +325,29 @@ pub fn handle_packet(
             clock::now_secs(),
         );
         reply_opt.cookie = Some((client_cookie, server));
+    }
+    // Hosted zones answer every client: the ACL restricts recursion and forwarding only.
+    if !rt.auth.is_empty() {
+        match auth_dispatch::fast(
+            ctx,
+            rt,
+            &q,
+            packet,
+            client,
+            transport,
+            &mut out[..limit],
+            opt.as_ref(),
+        ) {
+            AuthOutcome::NotHosted => {}
+            AuthOutcome::Reply(n) => {
+                rec.cache = CacheOutcome::Auth;
+                return reply(&scope, rec, out, n);
+            }
+        }
+    }
+    if !rt.acl.allows(client.ip()) {
+        let n = wire::write_rcode_reply(&q, wire::RCODE_REFUSED, &mut out[..limit], opt.as_ref());
+        return reply(&scope, rec, out, n);
     }
 
     let (policy, group) = rt.policy.select(client.ip());

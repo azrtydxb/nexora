@@ -5,6 +5,8 @@ use crate::wire::{self, NameKey, QueryView};
 use std::sync::Arc;
 
 const HEADER_LEN: usize = 12;
+/// AA in the first flags byte.
+const FLAG_AA: u8 = 0x04;
 const FLAG_TC: u8 = 0x02;
 const FLAG_RD: u8 = 0x01;
 /// AD in the second flags byte, and in `QueryView::flags`.
@@ -248,7 +250,8 @@ pub fn write_cached(
         (wire.len(), u16::from_be_bytes([wire[10], wire[11]]))
     };
     out[..2].copy_from_slice(&q.id.to_be_bytes());
-    out[2] = (out[2] & !FLAG_RD) | (q.flags >> 8) as u8 & FLAG_RD;
+    // Relayed data is never authoritative: only the authoritative stage sets AA.
+    out[2] = (out[2] & !(FLAG_RD | FLAG_AA)) | (q.flags >> 8) as u8 & FLAG_RD;
     // AD only for clients that set DO or AD (RFC 6840 §5.8)
     if q.flags & FLAG_AD_QUERY == 0 && !q.do_bit() {
         out[3] &= !FLAG_AD;
@@ -351,6 +354,48 @@ mod tests {
                 .metadata
                 .authentic_data
         );
+    }
+
+    #[test]
+    fn upstream_aa_is_cleared_on_every_served_reply() {
+        // A forwarder or recursor is never authoritative for what it relays, CD queries included.
+        let c = Cache::new(settings());
+        let mut cd = Message::from_bytes(&q("auth.example.", 1)).unwrap();
+        cd.metadata.checking_disabled = true;
+        let q1 = cd.to_bytes().unwrap();
+        let v1 = parse_query(&q1).unwrap();
+        let mut m = Message::from_bytes(&answer(&q1, &[300], ResponseCode::NoError)).unwrap();
+        m.metadata.authoritative = true;
+        let upstream = m.to_bytes().unwrap();
+        assert!(
+            Message::from_bytes(&upstream)
+                .unwrap()
+                .metadata
+                .authoritative
+        );
+        let mut out = [0u8; 512];
+        let uncached = prepare_uncached(&upstream, &v1).unwrap();
+        let n = write_cached(&uncached, &v1, 0, ServeMode::Fresh, &mut out, 512, None);
+        let served = Message::from_bytes(&out[..n]).unwrap();
+        assert!(!served.metadata.authoritative, "uncached reply keeps AA");
+        assert_eq!(served.answers.len(), 1);
+        c.insert(CacheKey::from_query(&v1), &upstream, &v1, 10);
+        let Lookup::Fresh(e) = c.lookup(&CacheKey::from_query(&v1), 10) else {
+            panic!("expected fresh")
+        };
+        for (mode, limit) in [
+            (ServeMode::Fresh, 512),
+            (ServeMode::Stale, 512),
+            (ServeMode::Fresh, 20),
+        ] {
+            let n = write_cached(&e, &v1, 10, mode, &mut out, limit, None);
+            assert!(
+                !Message::from_bytes(&out[..n])
+                    .unwrap()
+                    .metadata
+                    .authoritative
+            );
+        }
     }
 
     #[test]
