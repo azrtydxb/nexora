@@ -14,21 +14,26 @@ is committed.
 
 - [ ] Every step of Task 15 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
 - [ ] `TestCanaryRolloutHaltsOnFailure` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestComposeExample` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestComposeExample` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestEngineCertRevocation` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestFleetAPI` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestFleetRolloutAndPartition` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestGUICoverage` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestGUIFleet` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestGroupScopedConfig` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestHelmTemplate` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestImagesWorkflow` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestHelmTemplate` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestImagesWorkflow` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestJoinTokenGroupAndExpiry` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestKwFullProduct` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestMgmtCLIFleet` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] `TestMgmtStatelessHA` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestOperationsDoc` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestOperationsDoc` passes in the dev pod (`scripts/dev-exec.sh`)
 - [ ] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
+- 2026-09-14: `deploy/deploytest/docs_test.go` written; `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -run TestOperationsDoc -count=1'` -> `FAIL ... open ../../docs/operations.md: no such file or directory` (expected).
+- `docs/operations.md` and `README.md` written from code: `mgmt/internal/config/config.go`, `mgmt/cmd/nexora-mgmt/{main,fleet_cli}.go`, `engine/src/bootstrap.rs`, `engine/src/control.rs`, `engine/src/cert_renewal.rs`, `engine/src/telemetry/{metrics,otlp}.rs`, `deploy/helm/nexora/**`, `deploy/compose/**`, `deploy/docker/*.Dockerfile`, `deploy/kw/**`, `mgmt/api/openapi.yaml`, `mgmt/internal/{rollout,secrets,auth,store,snapshot,control}`, `mgmt/migrations`, `.github/workflows/perf-gate.yml`, `docs/architecture.md`, `.procoder/notes/plan-review.md`. Chart names checked with `helm template` in the dev pod.
+- `scripts/pc-format.sh docs/operations.md README.md` applied; `procoder docs`: no findings in either file except missing README badges (no CI remote); the 2 blocking findings are in `.procoder/plans/nexora-v1-m2.md` (pre-existing, not this task).
+- `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -count=1 -v'` -> `--- PASS: TestComposeExample`, `--- PASS: TestOperationsDoc`, `--- PASS: TestHelmTemplate`, `--- PASS: TestImagesWorkflow`, `ok github.com/piwi3910/nexora/deploy/deploytest`.
+- Not run here: the milestone gate and `TestKwFullProduct` (Task 14 not landed); not committed (lead commits).
