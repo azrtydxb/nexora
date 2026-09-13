@@ -27,7 +27,19 @@ scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=h
   NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
   NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES=8 \
   NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
-  go test -count=1 -v -run TestKwSmoke ./e2e/
+  go test -count=1 -v -run 'TestKwSmoke$' ./e2e/
+```
+
+`TestKwSmokeM4` (same environment, `-run TestKwSmokeM4`) creates a primary zone
+`smoke-<unix time>.nexora-smoke.test.`, checks the authoritative answer (AA), an AXFR over the TCP
+LoadBalancer and online signing (RRSIG after `PUT /zones/{id}/dnssec`), and deletes the zone:
+
+```sh
+scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=https://nexora.kw.local \
+  NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
+  NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES=8 \
+  NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
+  go test -count=1 -v -run TestKwSmokeM4 ./e2e/
 ```
 
 The smoke test creates and removes a policy group `kw-smoke-client`, rewrites under
@@ -39,16 +51,17 @@ engine, RPZ (`example.net` NXDOMAIN from `rpz.kw.nexora.`) and the engine M3 met
 Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, EDE 9) and
 `dig @192.168.10.136 +dnssec cloudflare.com` has the `ad` flag.
 
-| File                | Objects                                                                                |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `namespace.yaml`    | Namespace `nexora`                                                                     |
-| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                   |
-| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                       |
-| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`        |
-| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                               |
-| `mgmt.yaml`         | `nexora-mgmt` (2 replicas), Services, gRPC LoadBalancer, TLS Ingress `nexora.kw.local` |
-| `engine.yaml`       | DaemonSet `nexora-engine` (one per node), DNS LoadBalancer (`Local`), metrics Service  |
-| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, join token    |
+| File                | Objects                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| `namespace.yaml`    | Namespace `nexora`                                                                              |
+| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                            |
+| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                                |
+| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`                 |
+| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                                        |
+| `mgmt.yaml`         | `nexora-mgmt` (2 replicas), Services, gRPC LoadBalancer, TLS Ingress `nexora.kw.local`          |
+| `engine.yaml`       | DaemonSet `nexora-engine` (one per node), DNS LoadBalancer (`Local`), metrics Service           |
+| `bind-primary.yaml` | `nexora-bind`: BIND primary of the secondary zone `bind-demo.kw.` (ClusterIP 10.43.200.53:5353) |
+| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, join token |
 
 ## Addresses
 
@@ -79,8 +92,13 @@ No key material or password is in git. The secrets are created imperatively, onc
 
 - `nexora-kek` (`kek`: 32 random bytes, base64), by `scripts/kw-deploy.sh` with
   `openssl rand -base64 32`, mounted into nexora-mgmt as `NEXORA_KEK_FILE=/etc/nexora/kek/kek`. It
-  seals RPZ TSIG secrets (M4: TSIG keys and DNSSEC keys too); losing it makes them unreadable, so
-  back it up outside git.
+  seals RPZ TSIG secrets, TSIG keys and KEK-backed DNSSEC private keys; losing it makes them
+  unreadable, so back it up outside git.
+
+- `nexora-demo-tsig` (`name` = `nexora-demo-xfr.`, `algorithm` = `hmac-sha256`, `secret`, and
+  `named.key` for BIND), by `scripts/kw-deploy.sh` with `openssl rand -base64 32`; `bootstrap.sh`
+  registers the same secret in Nexora. Read it with
+  `kubectl --context kw -n nexora get secret nexora-demo-tsig -o jsonpath='{.data.secret}' | base64 -d`.
 
 - `nexora-admin` (`username`, `password`), by `bootstrap.sh` with a random password, then used for
   first-run setup. Read it with:
@@ -96,6 +114,43 @@ No key material or password is in git. The secrets are created imperatively, onc
 - `nexora-join-token` (`join-token`), by `bootstrap.sh` from `POST /api/v1/join-tokens`
   (valid one year, reusable by every engine replica).
 - `nexora-db-app` is generated by CNPG.
+
+## Key storage and HSMs
+
+kw stores key material under the key-encryption key (`nexora-kek`). The nexora-mgmt image is built
+with cgo on `debian:trixie-slim` (glibc), so it can load a PKCS#11 module, but it ships none. To use
+an HSM, mount the vendor's module (and whatever configuration or client files it needs) into the
+pod, put the user PIN in a Secret, and set all three of `NEXORA_PKCS11_MODULE` (module path),
+`NEXORA_PKCS11_TOKEN_LABEL` and `NEXORA_PKCS11_PIN_FILE`; new DNSSEC keys then default to the
+`pkcs11` backend; keep `NEXORA_KEK_FILE` set so existing KEK envelopes stay readable. The module must be built for
+glibc on the image's architecture. PKCS#11 with SoftHSM2 is exercised by `TestKeyStorageBackends`
+in the dev pod, not on kw.
+
+## Authoritative demo zones
+
+`bootstrap.sh` keeps these (idempotent; records it finds are left alone):
+
+- TSIG key `nexora-demo-xfr.` (hmac-sha256, the secret of `nexora-demo-tsig`).
+- Primary zone `nexora-demo.kw.`: `ns1` A 192.168.10.136, `www` A/AAAA, `mail` A, apex MX and TXT;
+  online DNSSEC signing (ECDSA P-256, NSEC3) with KEK-backed keys; AXFR/IXFR only with the key and
+  from pod addresses (`10.42.0.0/16`); RFC 2136 updates only with the key.
+- Secondary zone `bind-demo.kw.`, transferred with the key from `nexora-bind` (10.43.200.53:5353),
+  served by the engines; transfers out as for `nexora-demo.kw.`.
+
+Manual checks from the dev pod (`kubectl --context kw -n nexora-dev exec -it deploy/toolbox -c toolbox -- bash`,
+with the TSIG secret copied to `/work/kw-demo-tsig` like the admin password):
+
+```sh
+dig @192.168.10.136 nexora-demo.kw. SOA +dnssec        # flags aa, RRSIG SOA present
+# trust anchor from the API: GET /api/v1/zones/{id}/dnssec, the DNSKEY with flags 257, as
+#   trust-anchors { nexora-demo.kw. static-key 257 3 13 "<key>"; };
+delv @192.168.10.136 -a anchor.conf +root=nexora-demo.kw. nexora-demo.kw. SOA   # ; fully validated
+dig @192.168.10.136 nexora-demo.kw. AXFR -y "hmac-sha256:nexora-demo-xfr.:$(cat /work/kw-demo-tsig)"
+dig @192.168.10.136 nexora-demo.kw. AXFR                # Transfer failed (REFUSED/NOTAUTH)
+printf 'server 192.168.10.136\nzone nexora-demo.kw.\nupdate add test.nexora-demo.kw. 60 A 192.0.2.99\nsend\n' |
+  nsupdate -y "hmac-sha256:nexora-demo-xfr.:$(cat /work/kw-demo-tsig)"
+dig @192.168.10.136 www.bind-demo.kw. A                 # aa, 192.0.2.53
+```
 
 ## Resolution settings
 

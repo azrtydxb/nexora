@@ -16,13 +16,23 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY gen gen
 COPY mgmt mgmt
 COPY --from=web /src/web/dist mgmt/internal/webui/dist
+# cgo: PKCS#11 modules (NEXORA_PKCS11_MODULE) are C shared libraries loaded with dlopen, so the binary
+# links glibc dynamically and the runtime image is Debian (same trixie glibc as the build stage).
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /nexora-mgmt ./mgmt/cmd/nexora-mgmt
+    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /nexora-mgmt ./mgmt/cmd/nexora-mgmt \
+ && /nexora-mgmt version
 
-FROM gcr.io/distroless/static-debian13:nonroot
+# No PKCS#11 module is installed: mount the HSM vendor's module (and its configuration) and point
+# NEXORA_PKCS11_MODULE at it; without one, key storage uses the key-encryption key (NEXORA_KEK_FILE).
+FROM debian:trixie-slim
+# uid and gid 65532 as in the former distroless :nonroot image: a pod that sets runAsUser but not
+# runAsGroup gets the gid of this passwd entry, which must match fsGroup to read 0440 secret files.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 65532 nonroot \
+ && useradd --uid 65532 --gid 65532 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin nonroot
 COPY --from=build /nexora-mgmt /nexora-mgmt
-# The distroless :nonroot image already defaults to this user; stated so it cannot silently change.
-USER nonroot:nonroot
+USER 65532:65532
 EXPOSE 8080 9443
 ENTRYPOINT ["/nexora-mgmt"]
 CMD ["serve"]

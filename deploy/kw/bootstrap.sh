@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap a running nexora-mgmt on kw through its API: the first admin, upstream forwarders,
-# the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone and the
+# the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone, the M4
+# authoritative demo (TSIG key, signed primary nexora-demo.kw., secondary bind-demo.kw.) and the
 # engines' join token. Idempotent; run by scripts/kw-deploy.sh.
 #
 # The admin credentials live only in the Secret nexora-admin (keys username, password), created
@@ -97,6 +98,60 @@ if [ "$(jq -r .file_records <<<"$rpz")" = null ]; then
 	jq -n --arg c "$zone" --argjson r "$(jq .revision <<<"$rpz")" '{content:$c, revision:$r}' |
 		call -X PUT -d @- "$api/api/v1/rpz-zones/$(jq -r .id <<<"$rpz")/file" >/dev/null
 	echo "RPZ zone rpz.kw.nexora. uploaded"
+fi
+
+# Authoritative demo (M4). The TSIG key nexora-demo-xfr. comes from the Secret nexora-demo-tsig
+# (scripts/kw-deploy.sh). Transfers need the key and a pod address (10.42.0.0/16: the engines see the
+# real client address); dynamic updates need the key.
+pods=10.42.0.0/16
+tsig_name=$(k get secret nexora-demo-tsig -o jsonpath='{.data.name}' | base64 -d)
+key_id=$(call "$api/api/v1/tsig-keys" | jq -r --arg n "$tsig_name" '.[] | select(.name==$n) | .id')
+if [ -z "$key_id" ]; then
+	(umask 077 && k get secret nexora-demo-tsig -o jsonpath='{.data.secret}' | base64 -d >"$tmp/tsig-secret")
+	key_id=$(jq -n --arg n "$tsig_name" --rawfile s "$tmp/tsig-secret" '{name:$n, algorithm:"hmac-sha256", secret:$s}' |
+		call -d @- "$api/api/v1/tsig-keys" | jq -r .id)
+	rm -f "$tmp/tsig-secret"
+	echo "TSIG key $tsig_name created"
+fi
+zone_json() { call "$api/api/v1/zones" | jq -c --arg n "$1" '.[] | select(.name==$n)'; }
+
+# Primary zone nexora-demo.kw., signed online with KEK-backed keys.
+demo=nexora-demo.kw.
+zone=$(zone_json "$demo")
+if [ -z "$zone" ]; then
+	zone=$(jq -n --arg n "$demo" --arg k "$key_id" --arg c "$pods" '{name:$n, kind:"primary", default_ttl:300,
+		soa:{mname:("ns1."+$n), rname:("hostmaster."+$n)}, nameservers:["ns1."+$n],
+		transfer:{allow_cidrs:[$c], tsig_key_id:$k}, update:{tsig_key_ids:[$k]}}' | call -d @- "$api/api/v1/zones")
+	echo "zone $demo created"
+fi
+zid=$(jq -r .id <<<"$zone")
+jq -c --arg n "$demo" '[
+	{name:("ns1."+$n), type:"A", data:"192.168.10.136"},
+	{name:("www."+$n), type:"A", data:"192.0.2.80"},
+	{name:("www."+$n), type:"AAAA", data:"2001:db8::80"},
+	{name:("mail."+$n), type:"A", data:"192.0.2.25"},
+	{name:$n, type:"MX", data:("10 mail."+$n)},
+	{name:$n, type:"TXT", data:"\"nexora authoritative demo\""}
+][] | .ttl = 300' <<<'null' | while read -r rec; do
+	have=$(call -G "$api/api/v1/zones/$zid/records" --data-urlencode "name=$(jq -r .name <<<"$rec")" \
+		--data-urlencode "type=$(jq -r .type <<<"$rec")" | jq --arg d "$(jq -r .data <<<"$rec")" '[.items[] | select(.data==$d)] | length')
+	if [ "$have" = 0 ]; then
+		call -d "$rec" "$api/api/v1/zones/$zid/records" >/dev/null
+		echo "record $(jq -r '.name+" "+.type+" "+.data' <<<"$rec") created"
+	fi
+done
+if [ "$(call "$api/api/v1/zones/$zid/dnssec" | jq -r .enabled)" != true ]; then
+	jq -n --argjson r "$(call "$api/api/v1/zones/$zid" | jq .revision)" '{revision:$r, enabled:true, key_backend:"kek"}' |
+		call -X PUT -d @- "$api/api/v1/zones/$zid/dnssec" >/dev/null
+	echo "DNSSEC signing of $demo enabled (KEK backend)"
+fi
+
+# Secondary zone bind-demo.kw., transferred from the in-cluster BIND primary (deploy/kw/bind-primary.yaml).
+if [ -z "$(zone_json bind-demo.kw.)" ]; then
+	jq -n --arg k "$key_id" --arg c "$pods" '{name:"bind-demo.kw.", kind:"secondary",
+		primaries:[{address:"10.43.200.53:5353", tsig_key_id:$k}], transfer:{allow_cidrs:[$c], tsig_key_id:$k}}' |
+		call -d @- "$api/api/v1/zones" >/dev/null
+	echo "secondary zone bind-demo.kw. created"
 fi
 
 if ! k get secret nexora-join-token >/dev/null 2>&1; then

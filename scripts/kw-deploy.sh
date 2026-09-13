@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy Nexora to kw (namespace nexora): build and push the images, apply deploy/kw, create the CA,
-# key-encryption key and DNS TLS secrets, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
+# key-encryption key, demo TSIG key and DNS TLS secrets, run the BIND primary of the demo secondary
+# zone, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
 # Ends by printing the environment TestKwSmoke needs (see deploy/kw/README.md).
 #   scripts/kw-deploy.sh [--tag TAG] [--skip-build]
 set -euo pipefail
@@ -50,6 +51,21 @@ fi
 if ! k get secret nexora-kek >/dev/null 2>&1; then
 	openssl rand -base64 32 | k create secret generic nexora-kek --from-file=kek=/dev/stdin
 fi
+
+# The demo zones' TSIG key (transfers, dynamic updates, and the BIND primary of bind-demo.kw.); bootstrap.sh
+# registers the same secret in Nexora. Never printed; read it as described in deploy/kw/README.md.
+if ! k get secret nexora-demo-tsig >/dev/null 2>&1; then
+	(
+		umask 077
+		openssl rand -base64 32 | tr -d '\n' >"$tmp/tsig-secret"
+		printf 'key "nexora-demo-xfr." {\n\talgorithm hmac-sha256;\n\tsecret "%s";\n};\n' "$(cat "$tmp/tsig-secret")" >"$tmp/named.key"
+		k create secret generic nexora-demo-tsig --from-literal=name=nexora-demo-xfr. --from-literal=algorithm=hmac-sha256 \
+			--from-file=secret="$tmp/tsig-secret" --from-file=named.key="$tmp/named.key"
+	)
+	rm -f "$tmp/tsig-secret" "$tmp/named.key"
+fi
+k apply -f "$kw/bind-primary.yaml"
+k rollout status deployment/nexora-bind --timeout=5m
 
 # The DNS serving certificate for DoT/DoH/DoQ; its key only exists in the temporary directory and the Secret.
 if ! k get secret nexora-dns-tls >/dev/null 2>&1; then
