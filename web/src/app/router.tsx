@@ -6,12 +6,14 @@ import { AccessControlPage } from "@/pages/AccessControlPage";
 import { ApiTokensPage } from "@/pages/ApiTokensPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { DnssecPage } from "@/pages/DnssecPage";
 import { EnginesPage } from "@/pages/EnginesPage";
 import { FilteringPage } from "@/pages/FilteringPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { QueryLogPage } from "@/pages/QueryLogPage";
 import { RewritesPage } from "@/pages/RewritesPage";
+import { RpzPage } from "@/pages/RpzPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SetupPage } from "@/pages/SetupPage";
 import { UpstreamsPage } from "@/pages/UpstreamsPage";
@@ -35,6 +37,8 @@ export const router = createBrowserRouter([
       { path: "filtering", element: <FilteringPage /> },
       { path: "policies", element: <PoliciesPage /> },
       { path: "rewrites", element: <RewritesPage /> },
+      { path: "rpz", element: <RpzPage /> },
+      { path: "dnssec", element: <DnssecPage /> },
       { path: "engines", element: <EnginesPage /> },
       { path: "users", element: <UsersPage /> },
       { path: "api-tokens", element: <ApiTokensPage /> },

@@ -35,6 +35,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ForwardZonesSection } from "@/pages/ForwardZonesSection";
+import { ResolutionSection } from "@/pages/ResolutionSection";
 
 type Upstream = Schemas["Upstream"];
 type Protocol = Upstream["protocol"];
@@ -73,19 +75,25 @@ export function UpstreamsPage() {
     <>
       <PageHeader
         title="Upstreams"
-        description="Resolvers the engines forward to, tried in the order listed."
-        actions={
-          canCreate && (
-            <Button
-              data-testid="upstream-add"
-              onClick={() => setEditing("new")}
-            >
-              <Plus className="mr-1.5 h-4 w-4" />
-              Add upstream
-            </Button>
-          )
-        }
+        description="How engines resolve names: the resolution mode, forward zones, and the global upstreams used in forward mode."
       />
+      <ResolutionSection />
+      <ForwardZonesSection />
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="mb-1 text-sm font-semibold">Global upstreams</h2>
+          <p className="text-muted-foreground max-w-prose text-sm">
+            Resolvers the engines forward to in forward mode, tried in the order
+            listed.
+          </p>
+        </div>
+        {canCreate && (
+          <Button data-testid="upstream-add" onClick={() => setEditing("new")}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add upstream
+          </Button>
+        )}
+      </div>
       {list.error && (
         <Alert variant="destructive" className="mb-4">
           <AlertDescription>

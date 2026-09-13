@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router";
 import {
   ArrowLeftRight,
+  BadgeCheck,
   ChevronDown,
   Cpu,
   Funnel,
@@ -19,6 +20,7 @@ import {
   ScrollText,
   Server,
   Settings,
+  ShieldBan,
   ShieldCheck,
   ShieldHalf,
   Sun,
@@ -92,6 +94,20 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Rewrites",
         icon: ArrowLeftRight,
         op: "listRewrites",
+      },
+      {
+        route: "rpz",
+        path: "/rpz",
+        label: "RPZ",
+        icon: ShieldBan,
+        op: "listRpzZones",
+      },
+      {
+        route: "dnssec",
+        path: "/dnssec",
+        label: "DNSSEC",
+        icon: BadgeCheck,
+        op: "getDnssecSettings",
       },
       {
         route: "access-control",
