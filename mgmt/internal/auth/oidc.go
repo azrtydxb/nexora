@@ -85,6 +85,28 @@ func (o *OIDC) oauth(ctx context.Context) (*oidc.Provider, *oauth2.Config, error
 	}, nil
 }
 
+// probe checks that the provider answers its discovery document now. A provider discovered earlier
+// may since have gone down; failing here lets the GUI report the outage instead of sending the
+// browser to an unreachable identity provider. Logins are rare, so the extra request is cheap.
+func (o *OIDC) probe(ctx context.Context) error {
+	pctx, cancel := context.WithTimeout(ctx, oidcDiscoveryTimeout)
+	defer cancel()
+	wellKnown := strings.TrimSuffix(o.cfg.Issuer, "/") + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet, wellKnown, nil)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOIDCUnavailable, err)
+	}
+	resp, err := (&http.Client{Timeout: oidcDiscoveryTimeout}).Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOIDCUnavailable, err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: discovery returned %s", ErrOIDCUnavailable, resp.Status)
+	}
+	return nil
+}
+
 // SafeReturnTo returns p when it is a local absolute path, otherwise "/".
 func SafeReturnTo(p string) string {
 	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsAny(p, "\\\r\n") {
@@ -97,6 +119,9 @@ func SafeReturnTo(p string) string {
 func (o *OIDC) Start(ctx context.Context, returnTo string) (string, error) {
 	_, oc, err := o.oauth(ctx)
 	if err != nil {
+		return "", err
+	}
+	if err := o.probe(ctx); err != nil {
 		return "", err
 	}
 	state, err := randomToken(32)

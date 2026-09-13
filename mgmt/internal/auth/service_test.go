@@ -170,6 +170,11 @@ func TestOIDCLoginAndProviderDown(t *testing.T) {
 		return err
 	})
 	fx.Proc.Kill()
+	// The instance that already discovered the provider must notice the outage too, instead of
+	// redirecting browsers to an unreachable identity provider.
+	if _, err := o.Start(ctx, "/"); !errors.Is(err, auth.ErrOIDCUnavailable) {
+		t.Fatalf("provider down after discovery -> %v", err)
+	}
 	o2 := auth.NewOIDC(cfg, "http://nexora.test", st)
 	if _, err := o2.Start(ctx, "/"); !errors.Is(err, auth.ErrOIDCUnavailable) {
 		t.Fatalf("provider down -> %v", err)

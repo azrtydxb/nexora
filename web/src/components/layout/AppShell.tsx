@@ -1,0 +1,320 @@
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { useQuery } from "@tanstack/react-query";
+import { NavLink, Outlet } from "react-router";
+import {
+  ChevronDown,
+  LogOut,
+  Moon,
+  ScrollText,
+  Server,
+  Sun,
+  type LucideIcon,
+} from "lucide-react";
+
+import { api } from "@/api/client";
+import { useCan, useCurrentUser, useLogout } from "@/auth/AuthProvider";
+import type { OperationId } from "@/auth/permissions";
+import { useTheme } from "@/lib/theme";
+import { cn } from "@/lib/utils";
+
+type NavItem = {
+  route: string;
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  op: OperationId;
+};
+
+// Each screen is listed only once it exists; the item shows when the user may call the screen's
+// list operation.
+const navGroups: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Resolver",
+    items: [
+      {
+        route: "upstreams",
+        path: "/upstreams",
+        label: "Upstreams",
+        icon: Server,
+        op: "listUpstreams",
+      },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      {
+        route: "audit",
+        path: "/audit",
+        label: "Audit log",
+        icon: ScrollText,
+        op: "listAuditEvents",
+      },
+    ],
+  },
+];
+
+export function AppShell() {
+  return (
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="bg-background/85 sticky top-0 z-30 flex h-14 items-center justify-end gap-3 border-b px-4 backdrop-blur md:px-8">
+          <HealthBadge />
+          <UserMenu />
+        </header>
+        <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar() {
+  return (
+    <aside className="bg-sidebar text-sidebar-foreground flex shrink-0 flex-col md:sticky md:top-0 md:h-screen md:w-60">
+      <div className="flex h-14 items-center gap-2.5 px-5">
+        <Wordmark />
+      </div>
+      <nav
+        className="flex gap-4 overflow-x-auto px-3 pb-3 md:flex-col md:gap-5 md:pt-4"
+        aria-label="Main"
+      >
+        {navGroups.map((g) => (
+          <NavGroup key={g.label} label={g.label} items={g.items} />
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
+  return (
+    <div className="flex items-center gap-1 md:flex-col md:items-stretch">
+      <div className="hidden px-2 pb-1 text-xs font-medium text-white/40 md:block">
+        {label}
+      </div>
+      {items.map((item) => (
+        <NavEntry key={item.route} item={item} />
+      ))}
+    </div>
+  );
+}
+
+function NavEntry({ item }: { item: NavItem }) {
+  const allowed = useCan(item.op);
+  if (!allowed) return null;
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.path}
+      data-testid={`nav-${item.route}`}
+      className={({ isActive }) =>
+        cn(
+          "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors",
+          "focus-visible:ring-sidebar-highlight focus-visible:ring-2 focus-visible:outline-none",
+          isActive
+            ? "bg-sidebar-active text-white"
+            : "hover:bg-sidebar-active/60 hover:text-white",
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            aria-hidden
+            className={cn(
+              "bg-sidebar-highlight absolute top-1.5 bottom-1.5 left-0 hidden w-0.5 rounded-full md:block",
+              isActive ? "opacity-100" : "opacity-0",
+            )}
+          />
+          <Icon
+            className={cn(
+              "h-4 w-4",
+              isActive ? "text-sidebar-highlight" : "opacity-70",
+            )}
+          />
+          {item.label}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+/** The Nexora mark: a resolver node fanning out to three upstreams. */
+export function Wordmark({ className }: { className?: string }) {
+  return (
+    <span className={cn("flex items-center gap-2.5 text-white", className)}>
+      <svg
+        viewBox="0 0 24 24"
+        className="text-sidebar-highlight h-6 w-6"
+        fill="none"
+        aria-hidden
+      >
+        <circle cx="5" cy="12" r="2.6" fill="currentColor" />
+        <path
+          d="M7.5 12h4.5M12 12l6-6.5M12 12h7M12 12l6 6.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <circle cx="19" cy="5.5" r="1.6" fill="currentColor" opacity=".55" />
+        <circle cx="20" cy="12" r="1.6" fill="currentColor" opacity=".55" />
+        <circle cx="19" cy="18.5" r="1.6" fill="currentColor" opacity=".55" />
+      </svg>
+      <span className="text-[15px] font-semibold tracking-tight">Nexora</span>
+    </span>
+  );
+}
+
+function HealthBadge() {
+  const q = useQuery({
+    queryKey: ["health"],
+    queryFn: async () => {
+      const r = await api.GET("/health");
+      // 503 carries the same Health body, reporting which dependency is down.
+      return r.data ?? r.error ?? null;
+    },
+    refetchInterval: 15_000,
+    retry: false,
+  });
+  const ok = q.data?.status === "ok";
+  const title = q.data
+    ? `Management API ${q.data.status}, database ${q.data.database}, version ${q.data.version}`
+    : "Management API unreachable";
+  if (q.isPending) return null;
+  return (
+    <span
+      data-testid="health-badge"
+      title={title}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        ok
+          ? "border-success/30 text-success"
+          : "border-warning/40 text-warning",
+      )}
+    >
+      <span
+        className={cn(
+          "h-1.5 w-1.5 rounded-full",
+          ok ? "bg-success" : "bg-warning",
+        )}
+      />
+      {ok ? "ok" : "degraded"}
+    </span>
+  );
+}
+
+function UserMenu() {
+  const { user } = useCurrentUser();
+  const logout = useLogout();
+  const [theme, toggleTheme] = useTheme();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!user) return null;
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        data-testid="user-menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="hover:bg-accent focus-visible:ring-ring flex items-center gap-2 rounded-md py-1 pr-2 pl-1 text-sm focus-visible:ring-2 focus-visible:outline-none"
+      >
+        <span className="bg-primary text-primary-foreground flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold uppercase">
+          {user.username.slice(0, 1)}
+        </span>
+        <span className="font-medium">{user.username}</span>
+        <span className="text-muted-foreground hidden sm:inline">
+          {user.role}
+        </span>
+        <ChevronDown className="text-muted-foreground h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="bg-popover text-popover-foreground absolute right-0 z-40 mt-1.5 w-56 rounded-md border p-1 shadow-lg"
+        >
+          <div className="px-2.5 py-2">
+            <div className="truncate text-sm font-medium">{user.username}</div>
+            <div className="text-muted-foreground truncate text-xs">
+              {user.email}
+            </div>
+          </div>
+          <div className="bg-border -mx-1 my-1 h-px" />
+          <MenuItem onClick={toggleTheme}>
+            {theme === "dark" ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+            {theme === "dark" ? "Light theme" : "Dark theme"}
+          </MenuItem>
+          <MenuItem data-testid="logout" onClick={() => void logout()}>
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </MenuItem>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      {...props}
+      className="hover:bg-accent focus-visible:bg-accent flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm focus-visible:outline-none"
+    />
+  );
+}
+
+/** The title row every screen opens with. */
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        {description && (
+          <p className="text-muted-foreground mt-1 max-w-prose text-sm">
+            {description}
+          </p>
+        )}
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
