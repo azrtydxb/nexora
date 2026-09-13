@@ -564,6 +564,7 @@ async fn session(
             // Hosted-zone TSIG keys: never logged, never persisted.
             Some(ServerMsg::KeyMaterial(km)) => shared.auth.keyring.apply(km),
             Some(ServerMsg::UpdateResult(r)) => shared.auth.complete_update(r),
+            Some(ServerMsg::CertIssued(_)) | Some(ServerMsg::RenewCertificate(_)) => {}
             None => {}
         }
     };

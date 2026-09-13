@@ -93,17 +93,18 @@ Interfaces: produces the names every later task uses — tables `engine_groups`,
     zones in its target snapshot.
   - Host concerns stay in `engine.toml`. `NEXORA_ENGINE_NODE_NAME` overrides
     `node_name`. Per-engine state set through the API is the group and
-    `engines.labels` (string -> string; key
-    `^[a-z0-9]([a-z0-9./-]{0,61}[a-z0-9])?$`, value at most 63 characters, at
-    most 32 labels). `nexora.io/canary=true` makes an engine preferred for canary
+    `engines.labels` (string -> string; key of 1-63 characters from `a-z`,
+    `0-9`, `.`, `/`, `-` that starts and ends with `a-z` or `0-9`; value at most
+    63 characters; at most 32 labels). `nexora.io/canary=true` makes an engine preferred for canary
     selection.
 
   ### Versions and snapshots
 
   - `config_versions.version` stays one global sequence
     (`pg_advisory_xact_lock(hashtext('nexora:config_version'))`). Every publish
-    writes one `group_snapshots(version, engine_group_id, snapshot,
-  content_sha256)` row per engine group; `content_sha256` is the SHA-256 of the
+    writes one
+    `group_snapshots(version, engine_group_id, snapshot, content_sha256)` row per
+    engine group; `content_sha256` is the SHA-256 of the
     deterministic encoding with `version` and `created_unix_ms` zeroed.
     `config_versions.snapshot` is NULL from M5 on; `snapshot.Latest` returns the
     default group's newest group snapshot.
@@ -181,8 +182,8 @@ Interfaces: produces the names every later task uses — tables `engine_groups`,
     1 year), `max_uses` (NULL = unlimited), `uses`, `revoked_at`. Enroll errors
     (`PermissionDenied`): `join token unknown`, `join token expired`,
     `join token exhausted`, `join token revoked`.
-  - `engine_certificates(serial, engine_id, not_before, not_after, issued_at,
-  revoked_at, revoke_reason)`, serial lowercase hex. Lifetime
+  - `engine_certificates` columns: `serial`, `engine_id`, `not_before`,
+    `not_after`, `issued_at`, `revoked_at`, `revoke_reason`; serial lowercase hex. Lifetime
     `NEXORA_ENGINE_CERT_TTL`. `engines.certificate_serial` holds the newest
     issued serial.
   - Every `Connect`, `GetBlob` and builtin `LogsService/Export` call looks up
@@ -362,6 +363,7 @@ Interfaces: `store.DefaultEngineGroupID uuid.UUID`; `store.EngineScopedTables []
   	}
   }
   ```
+- [ ] Add `TestFleetMigrationPopulatedM4Database` to the same file: migrate down to `403`, insert M1–M4 rows (a join token, a live and a soft-deleted engine with an upper-case serial, an upstream, a policy group with a rewrite, a global rewrite, config versions 1 and 2 with snapshots), migrate up, and assert: both engines and the join token are in the default group with default labels/revision and `max_uses` NULL; no scoped row has an engine group; exactly one group snapshot (version 2) with a completed `change`/`all_at_once` rollout and `stable_version` 2; certificates backfilled with lower-case serials, M1 validity (UTC dates) and `revoked` only for the deleted engine; an M4-style upstream insert and a snapshot-less config version still succeed; migrating down to `403` again keeps both engines.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run TestFleetMigration -count=1` and expect FAIL with `undefined: store.DefaultEngineGroupID`.
 - [ ] Create `mgmt/internal/store/fleet.go`:
   ```go
@@ -642,7 +644,7 @@ Interfaces: Go `controlv1.CertificateRequest{CsrDer []byte; Reason controlv1.Cer
     CertificateRequest.Reason reason = 1;
   }
   ```
-- [ ] On the laptop run `make proto` and expect exit 0 with regenerated files under `gen/go/nexora/control/v1/` (the oapi-codegen and `gen:api` steps of the target report no change).
+- [ ] Regenerate the Go code in the dev pod, whose plugins are the pinned ones the committed headers name (protoc 3.21.12, protoc-gen-go v1.36.12, protoc-gen-go-grpc 1.6.2; the laptop has newer ones): run the `protoc` line of `make proto` into a pod temp directory and copy `control.pb.go` and `control_grpc.pb.go` back into `gen/go/nexora/control/v1/` (only `control.pb.go` changes; the OpenAPI steps are untouched because the HTTP API does not change).
 - [ ] In `engine/src/control.rs` `session`, extend the `match msg.msg` with `Some(ServerMsg::CertIssued(_)) | Some(ServerMsg::RenewCertificate(_)) => {}` directly above `None => {}` (Task 9 gives both arms their behaviour), so the match stays exhaustive.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/control/ -run TestM5ContractFieldNumbers -count=1 && cargo check --locked -p nexora-engine'` and expect `ok` and `Finished`.
 - [ ] Commit: `git add proto/nexora/control/v1/control.proto gen/go/nexora/control/v1 mgmt/internal/control/contract_m5_test.go engine/src/control.rs && git commit -m "feat(proto): certificate renewal and rotation messages (fields 500+)"`.

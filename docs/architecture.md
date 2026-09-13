@@ -31,6 +31,7 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/telemetry/{metrics,querylog,otlp}.rs
   src/recursor/…                        (M3) iterative resolver, DNSSEC validation, RPZ
   src/authoritative/…                   (M4) zone serving, transfers, updates, signing
+  src/cert_renewal.rs                   (M5) certificate renewal timing, CSR, atomic identity swap
   fuzz/                                 cargo-fuzz targets
   build.rs                              tonic-prost codegen from proto/
 gen/go/nexora/control/v1/               generated Go protobuf/gRPC (committed)
@@ -49,6 +50,9 @@ mgmt/                                   Go management plane (module root is repo
   internal/blocklist                    list fetcher/parser
   internal/querylog                     query-log backends (builtin OTLP receiver, OpenSearch)
   internal/stats                        engine stats samples
+  internal/rollout                      (M5) staged rollout state machine, creation, controller
+  internal/fleet                        (M5) engine groups, engine views and targets, join tokens,
+                                        certificates, fleet metrics
   internal/webui                        embedded GUI dist
 web/                                    React + Vite GUI
   src/api/schema.d.ts                   generated from mgmt/api/openapi.yaml
@@ -61,6 +65,7 @@ deploy/docker/                          engine.Dockerfile, mgmt.Dockerfile
 deploy/compose/                         docker-compose example
 deploy/helm/nexora/                     Helm chart
 deploy/kw/                              manifests for the kw test deployment
+deploy/deploytest/                      helm/compose/workflow/docs static tests
 deploy/dev/                             dev toolbox image + pod
 .github/workflows/                      ci.yml, fuzz.yml, perf-gate.yml, images.yml
 ```
@@ -295,6 +300,10 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   default `true`; requires `dnssec.validation`) makes the engine validate
   answers from the global upstreams too, fetching DS/DNSKEY through the
   forwarder up to the root trust anchor.
+- M5: `EngineMessage.cert_request` (500), `ServerMessage.cert_issued` (500) and
+  `ServerMessage.renew_certificate` (501) carry certificate renewal and
+  rotation; M5 adds no `ConfigSnapshot` or `Stats` field (fleet health is
+  derived from the M1 `Stats` samples).
 
 ## Management plane
 
@@ -381,10 +390,184 @@ components ported from the first Nexora (`components/ui`), openapi-typescript
 - Every test that asserts "does not happen" first asserts the positive path in
   the same run, so a harness failure cannot pass a negative check.
 
+## Fleet (M5)
+
+### Engine groups and scoping
+
+- `engine_groups` holds the server-side fleet partition. The group `default`
+  (`00000000-0000-0000-0000-000000000001`) always exists and cannot be renamed
+  or deleted. Every engine belongs to one group (`engines.engine_group_id`); a
+  join token names the group an enrolling engine lands in, and
+  `PATCH /api/v1/engines/{id}` moves an engine. Engine groups are unrelated to
+  M2 policy groups (client-side, selected by source CIDR).
+- Scoped tables carry `engine_group_id uuid NULL` (NULL = every group):
+  `upstreams`, `filter_lists`, `policy_groups`, `rewrites` (only global
+  rewrites; a rewrite inside a policy group follows that policy group),
+  `forward_zones`, `zones`, `rpz_zones`. Names stay unique across the fleet.
+- A group's snapshot contains the global rows plus the group's rows. Upstreams
+  follow `engine_groups.upstream_mode`: `inherit` = the group's upstreams
+  first, then the global ones; `override` = only the group's upstreams.
+  `access_control.allow_cidrs` is followed by `engine_groups.extra_acl_cidrs`;
+  a non-empty `engine_groups.otlp_endpoint` replaces the global OTLP endpoint.
+  Resolution, DNSSEC, resolver/cache, block mode, allowlist and global safe
+  search settings are fleet-wide. A policy group may select only filter lists
+  that are global or in its own engine group. RPZ TSIG keys and hosted-zone
+  TSIG keys (`RpzTsigKeys`, `KeyMaterial`) are filtered per engine to the
+  zones in its target snapshot.
+- Host concerns stay in `engine.toml`. `NEXORA_ENGINE_NODE_NAME` overrides
+  `node_name`. Per-engine state set through the API is the group and
+  `engines.labels` (string -> string; key of 1-63 characters from `a-z`,
+  `0-9`, `.`, `/`, `-` that starts and ends with `a-z` or `0-9`; value at most
+  63 characters; at most 32 labels). `nexora.io/canary=true` makes an engine preferred for canary
+  selection.
+
+### Versions and snapshots
+
+- `config_versions.version` stays one global sequence
+  (`pg_advisory_xact_lock(hashtext('nexora:config_version'))`). Every publish
+  writes one
+  `group_snapshots(version, engine_group_id, snapshot, content_sha256)` row per
+  engine group; `content_sha256` is the SHA-256 of the
+  deterministic encoding with `version` and `created_unix_ms` zeroed.
+  `config_versions.snapshot` is NULL from M5 on; `snapshot.Latest` returns the
+  default group's newest group snapshot.
+- `engine_groups.stable_version` is the newest version whose rollout completed
+  for that group. Rollback and republish copy an existing group snapshot into
+  a new version (re-encoded with the new number), because engines apply only a
+  version greater than the one they run.
+
+### Rollouts
+
+- Each group snapshot gets one `rollouts` row. Kinds: `change` (a config
+  mutation), `rollback`, `republish` (engine moved into the group). Group
+  parameters: `rollout_strategy` (`all_at_once` | `canary`), `canary_count`,
+  `canary_percent`, `ack_timeout_seconds` (60), `health_window_seconds` (30),
+  `max_servfail_ratio` (0.05), `min_health_queries` (100), copied into
+  `rollouts.params` at creation.
+- A `change` whose `content_sha256` equals the content of the group's stable
+  version, `rollback`, `republish` and test-only raw publishes are immediate:
+  strategy `all_at_once`, not held by `rollouts_paused`. An `all_at_once`
+  rollout is inserted in `rolling`; a `canary` change is inserted in `pending`.
+- States: `pending` -> `canary` -> `verifying` -> `rolling` -> `completed`;
+  `canary`/`verifying`/`rolling` -> `halted`; `halted` -> `rolled_back`; every
+  non-terminal state -> `superseded`. At most one rollout per group is in
+  `canary`/`verifying`/`rolling`.
+- `pending` waits while the group has `rollouts_paused`, else selects
+  canaries: connected engines, `nexora.io/canary=true` first, then by node
+  name; size max(`canary_count`, ceil(`canary_percent`% of connected)), at
+  least 1, at most connected-1 when two or more are connected.
+- `canary`: a canary rejecting the version -> `halted`; all canaries applied
+  -> `verifying`; `ack_timeout_seconds` elapsed -> `halted`. `verifying`:
+  after `health_window_seconds`, each canary needs at least 2 `engine_stats`
+  samples from the newest sample at most 60 s before the phase start onwards
+  (else `halted`, "stopped reporting"); with at least `min_health_queries`
+  queries a SERVFAIL/queries ratio above `max_servfail_ratio` -> `halted`;
+  otherwise `rolling`. `rolling`: a rejection -> `halted`; every connected
+  engine applied -> `completed` (sets `stable_version`); `ack_timeout_seconds`
+  elapsed -> `halted`. Disconnected engines get the version on reconnect.
+- Creation supersedes the group's open rollouts: a paused, non-immediate
+  `change` supersedes only `pending`; a `rollback` marks `halted` rollouts
+  `rolled_back`, supersedes the rest and sets `rollouts_paused`; anything else
+  supersedes `pending`/`canary`/`verifying`/`rolling`/`halted`.
+  `resume-rollouts` clears `rollouts_paused` and publishes a fresh version.
+- Target version of an engine, given the group's newest non-superseded
+  rollout R: R `rolling`/`completed`/`rolled_back` -> R.version; R
+  `canary`/`verifying` and the engine is a canary -> R.version; R `halted` and
+  the engine applied R.version -> R.version; otherwise `stable_version`. An
+  engine whose applied version is above its target is flagged `version_ahead`
+  and never pushed.
+- Every instance runs `rollout.Controller`: tick `NEXORA_ROLLOUT_TICK` plus
+  LISTEN `nexora_rollout`. Per open rollout: `BEGIN`,
+  `pg_try_advisory_xact_lock(hashtext('nexora:rollout:' || id))` (skip when not
+  acquired), `SELECT ... FOR UPDATE`, `rollout.Step` with `now()` from
+  PostgreSQL, `UPDATE`, `pg_notify('nexora_rollout', engine_group_id)`,
+  `COMMIT`. The hub LISTENs on `nexora_rollout` and pushes to its connected
+  engines of that group whose target is above the version last sent; acks and
+  rejections notify `nexora_rollout` so controllers step at once.
+
+### Fleet health
+
+- Engine `status`: `revoked` (engine revoked), `ahead` (`version_ahead` or
+  applied above target), `disconnected` (no live stream: `connected_instance`
+  NULL or its instance heartbeat older than 15 s), `rejected`
+  (`rejected_version` above applied), `current` (applied equals target),
+  `behind`.
+- Metrics on every instance, read from PostgreSQL at scrape time:
+  `nexora_mgmt_engines{engine_group,status}`,
+  `nexora_mgmt_engines_disconnected` (non-revoked, non-deleted engines without
+  a live stream whose `last_seen_at`, or `enrolled_at` when never seen, is
+  older than 60 s), `nexora_mgmt_rollouts{engine_group,state}` (non-terminal
+  and halted).
+
+### Engine lifecycle
+
+- Join tokens: `name`, `engine_group_id`, `labels`, `expires_at` (TTL 60 s ..
+  1 year), `max_uses` (NULL = unlimited), `uses`, `revoked_at`. Enroll errors
+  (`PermissionDenied`): `join token unknown`, `join token expired`,
+  `join token exhausted`, `join token revoked`.
+- `engine_certificates` columns: `serial`, `engine_id`, `not_before`,
+  `not_after`, `issued_at`, `revoked_at`, `revoke_reason`; serial lowercase hex. Lifetime
+  `NEXORA_ENGINE_CERT_TTL`. `engines.certificate_serial` holds the newest
+  issued serial.
+- Every `Connect`, `GetBlob` and builtin `LogsService/Export` call looks up
+  the caller's certificate serial: unknown engine or deleted engine ->
+  `PermissionDenied` `unknown or deleted engine`; revoked engine, revoked or
+  unknown serial, or a serial of another engine -> `PermissionDenied`
+  `certificate revoked`. A `Connect` with a serial marks the engine's older
+  unrevoked serials `superseded`.
+- Renewal: from 2/3 of the lifetime the engine sends
+  `CertificateRequest{csr_der, reason: RENEWAL}` (CSR CN = engine id, new
+  P-256 key); the instance issues (at most once per engine per 10 s) and
+  answers `CertificateIssued{cert_der, ca_der}`; the engine swaps
+  `state_dir/identity` atomically (`identity.new` -> `identity`) and
+  reconnects.
+- Rotation: `POST /api/v1/engines/{id}/rotate-certificate` sets
+  `cert_rotate_requested_at` and notifies `nexora_engine_rotate`; the instance
+  holding the stream (and every `Connect` while the request is outstanding)
+  sends `RenewCertificate{reason: ROTATE}`; issuing clears it.
+- Revocation: `POST /api/v1/engines/{id}/revoke` sets `engines.revoked_at`,
+  revokes every certificate (`revoked`) and notifies `nexora_engine_revoked`;
+  instances end that engine's streams with `PermissionDenied`
+  `certificate revoked`. A revoked engine keeps serving its last snapshot,
+  sets `nexora_control_revoked 1` and retries every 300 s (±10%); joining
+  again needs `state_dir/identity` removed and a new join token.
+  `DELETE /api/v1/engines/{id}` revokes and sets `deleted_at`.
+
+### Distribution
+
+- `.github/workflows/images.yml` builds `nexora-engine` and `nexora-mgmt`
+  natively on `arc-azrtydxb-publish` (arm64) and `arc-azrtydxb-amd64-publish`
+  (amd64), pushes by digest to `192.168.10.131:5000/azrtydxb`, and merges
+  digests into `:sha-<7>` (`:v*` on tags) plus `:main` on main.
+- `deploy/compose/` runs PostgreSQL, one mgmt, one engine (profile `engine`)
+  and an optional OpenTelemetry Collector (profile `otel`).
+- `deploy/helm/nexora`: mgmt Deployment (`migrate` init container), one
+  engine workload per engine group (`DaemonSet` or `Deployment`, node
+  selector, hostPath state), per-group DNS Service, CNPG `Cluster` or an
+  external database secret, optional collector, ServiceMonitor,
+  PrometheusRule, `values.schema.json`. Static checks live in
+  `deploy/deploytest`.
+- CLI: `nexora-mgmt engine-group create`, `nexora-mgmt join-token create`,
+  `nexora-mgmt ca init --if-missing`.
+
 ## Deployment on kw
 
-Namespace `nexora`: CNPG cluster `nexora-db`, `nexora-mgmt` Deployment (2
-replicas) behind ingress `nexora.kw.local` via ingress-nginx and a
-LoadBalancer for gRPC 9443, `nexora-engine` Deployment (3 replicas, one per
-node) with LoadBalancer services for DNS, OpenTelemetry Collector sending
-traces to Jaeger in `observability`, OpenSearch single node for the query log.
+Namespace `nexora`. `scripts/kw-deploy.sh` applies `deploy/kw/namespace.yaml`,
+`opensearch.yaml`, `cnpg-cluster.yaml` (CNPG `nexora-db`, 2 instances),
+`otelcol.yaml` (traces to `jaeger.observability.svc:4317`, query logs to
+OpenSearch) and `blocklist.yaml`, then installs `deploy/helm/nexora` with
+`deploy/kw/values-kw.yaml`: `nexora-mgmt` Deployment (2 replicas) behind ingress
+`nexora.kw.local` (class `nginx`, ClusterIssuer `cluster-ca`, HTTPS only) and a
+gRPC LoadBalancer `192.168.10.135:9443`; engine DaemonSets per engine group,
+selected by node label `nexora.io/engine-group`: `nexora-engine` (group
+`default`, every node without the label, DNS/DoT/DoH/DoQ LoadBalancer
+`nexora-dns` `192.168.10.136`, `externalTrafficPolicy: Local`) and
+`nexora-engine-edge-b` (group `edge-b`, nodes labelled `edge-b`: `worker-24`,
+`worker-25`; LoadBalancer `nexora-dns-edge-b` `192.168.10.137`,
+`externalTrafficPolicy: Cluster`); engine state on hostPath
+`/var/lib/nexora/<workload>`; ServiceMonitor and PrometheusRule in `monitoring`
+with label `release: kps`. `deploy/kw/bootstrap.sh` configures the API (admin,
+upstreams, block list, RPZ, engine group `edge-b`, join token secrets
+`nexora-join-token` and `nexora-join-token-edge-b`). Acceptance:
+`scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`)
+and `TestKwFullProduct`.

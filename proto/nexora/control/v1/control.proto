@@ -35,6 +35,7 @@ message EngineMessage {
     TlsMaterialResult tls_material_result = 300; // M2
     NotifyReceived notify_received = 200;        // M4
     UpdateRequest update_request = 201;          // M4
+    CertificateRequest cert_request = 500;       // M5
   }
 }
 
@@ -64,6 +65,8 @@ message ServerMessage {
     TlsMaterial tls_material = 300;    // M2: never persisted, never part of ConfigSnapshot
     KeyMaterial key_material = 200;    // M4: never persisted, never part of ConfigSnapshot
     UpdateResult update_result = 201;  // M4: reply to EngineMessage.update_request
+    CertificateIssued cert_issued = 500;       // M5: reply to EngineMessage.cert_request
+    RenewCertificate renew_certificate = 501; // M5: send a CertificateRequest now
   }
 }
 
@@ -476,4 +479,28 @@ message UpdateResult {
   string request_id = 1;
   uint32 rcode = 2;
   string detail = 3;
+}
+
+// ---- M5: engine certificate renewal and rotation ----
+
+// Engine -> server: a PKCS#10 CSR for a new ECDSA P-256 key; the subject CN must be the engine id.
+message CertificateRequest {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_RENEWAL = 1; // 2/3 of the certificate lifetime passed
+    REASON_ROTATE = 2;  // answering RenewCertificate
+  }
+  bytes csr_der = 1;
+  Reason reason = 2;
+}
+
+// Server -> engine: the issued client certificate and the CA that signed it (both DER).
+message CertificateIssued {
+  bytes cert_der = 1;
+  bytes ca_der = 2;
+}
+
+// Server -> engine: an operator requested rotation; send a CertificateRequest.
+message RenewCertificate {
+  CertificateRequest.Reason reason = 1;
 }

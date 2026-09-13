@@ -498,6 +498,55 @@ func (AuthZoneKind) EnumDescriptor() ([]byte, []int) {
 	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{8}
 }
 
+type CertificateRequest_Reason int32
+
+const (
+	CertificateRequest_REASON_UNSPECIFIED CertificateRequest_Reason = 0
+	CertificateRequest_REASON_RENEWAL     CertificateRequest_Reason = 1 // 2/3 of the certificate lifetime passed
+	CertificateRequest_REASON_ROTATE      CertificateRequest_Reason = 2 // answering RenewCertificate
+)
+
+// Enum value maps for CertificateRequest_Reason.
+var (
+	CertificateRequest_Reason_name = map[int32]string{
+		0: "REASON_UNSPECIFIED",
+		1: "REASON_RENEWAL",
+		2: "REASON_ROTATE",
+	}
+	CertificateRequest_Reason_value = map[string]int32{
+		"REASON_UNSPECIFIED": 0,
+		"REASON_RENEWAL":     1,
+		"REASON_ROTATE":      2,
+	}
+)
+
+func (x CertificateRequest_Reason) Enum() *CertificateRequest_Reason {
+	p := new(CertificateRequest_Reason)
+	*p = x
+	return p
+}
+
+func (x CertificateRequest_Reason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CertificateRequest_Reason) Descriptor() protoreflect.EnumDescriptor {
+	return file_nexora_control_v1_control_proto_enumTypes[9].Descriptor()
+}
+
+func (CertificateRequest_Reason) Type() protoreflect.EnumType {
+	return &file_nexora_control_v1_control_proto_enumTypes[9]
+}
+
+func (x CertificateRequest_Reason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CertificateRequest_Reason.Descriptor instead.
+func (CertificateRequest_Reason) EnumDescriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{48, 0}
+}
+
 type EnrollRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	JoinSecret    string                 `protobuf:"bytes,1,opt,name=join_secret,json=joinSecret,proto3" json:"join_secret,omitempty"` // base32 secret part of nxj1.<secret>.<ca sha256>
@@ -637,6 +686,7 @@ type EngineMessage struct {
 	//	*EngineMessage_TlsMaterialResult
 	//	*EngineMessage_NotifyReceived
 	//	*EngineMessage_UpdateRequest
+	//	*EngineMessage_CertRequest
 	Msg           isEngineMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -742,6 +792,15 @@ func (x *EngineMessage) GetUpdateRequest() *UpdateRequest {
 	return nil
 }
 
+func (x *EngineMessage) GetCertRequest() *CertificateRequest {
+	if x != nil {
+		if x, ok := x.Msg.(*EngineMessage_CertRequest); ok {
+			return x.CertRequest
+		}
+	}
+	return nil
+}
+
 type isEngineMessage_Msg interface {
 	isEngineMessage_Msg()
 }
@@ -774,6 +833,10 @@ type EngineMessage_UpdateRequest struct {
 	UpdateRequest *UpdateRequest `protobuf:"bytes,201,opt,name=update_request,json=updateRequest,proto3,oneof"` // M4
 }
 
+type EngineMessage_CertRequest struct {
+	CertRequest *CertificateRequest `protobuf:"bytes,500,opt,name=cert_request,json=certRequest,proto3,oneof"` // M5
+}
+
 func (*EngineMessage_Hello) isEngineMessage_Msg() {}
 
 func (*EngineMessage_Applied) isEngineMessage_Msg() {}
@@ -787,6 +850,8 @@ func (*EngineMessage_TlsMaterialResult) isEngineMessage_Msg() {}
 func (*EngineMessage_NotifyReceived) isEngineMessage_Msg() {}
 
 func (*EngineMessage_UpdateRequest) isEngineMessage_Msg() {}
+
+func (*EngineMessage_CertRequest) isEngineMessage_Msg() {}
 
 type Hello struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
@@ -978,6 +1043,8 @@ type ServerMessage struct {
 	//	*ServerMessage_TlsMaterial
 	//	*ServerMessage_KeyMaterial
 	//	*ServerMessage_UpdateResult
+	//	*ServerMessage_CertIssued
+	//	*ServerMessage_RenewCertificate
 	Msg           isServerMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1074,6 +1141,24 @@ func (x *ServerMessage) GetUpdateResult() *UpdateResult {
 	return nil
 }
 
+func (x *ServerMessage) GetCertIssued() *CertificateIssued {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_CertIssued); ok {
+			return x.CertIssued
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetRenewCertificate() *RenewCertificate {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_RenewCertificate); ok {
+			return x.RenewCertificate
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Msg interface {
 	isServerMessage_Msg()
 }
@@ -1102,6 +1187,14 @@ type ServerMessage_UpdateResult struct {
 	UpdateResult *UpdateResult `protobuf:"bytes,201,opt,name=update_result,json=updateResult,proto3,oneof"` // M4: reply to EngineMessage.update_request
 }
 
+type ServerMessage_CertIssued struct {
+	CertIssued *CertificateIssued `protobuf:"bytes,500,opt,name=cert_issued,json=certIssued,proto3,oneof"` // M5: reply to EngineMessage.cert_request
+}
+
+type ServerMessage_RenewCertificate struct {
+	RenewCertificate *RenewCertificate `protobuf:"bytes,501,opt,name=renew_certificate,json=renewCertificate,proto3,oneof"` // M5: send a CertificateRequest now
+}
+
 func (*ServerMessage_Snapshot) isServerMessage_Msg() {}
 
 func (*ServerMessage_VersionAhead) isServerMessage_Msg() {}
@@ -1113,6 +1206,10 @@ func (*ServerMessage_TlsMaterial) isServerMessage_Msg() {}
 func (*ServerMessage_KeyMaterial) isServerMessage_Msg() {}
 
 func (*ServerMessage_UpdateResult) isServerMessage_Msg() {}
+
+func (*ServerMessage_CertIssued) isServerMessage_Msg() {}
+
+func (*ServerMessage_RenewCertificate) isServerMessage_Msg() {}
 
 // Sent when the engine reports a version newer than the database (restored backup).
 type VersionAhead struct {
@@ -4131,6 +4228,157 @@ func (x *UpdateResult) GetDetail() string {
 	return ""
 }
 
+// Engine -> server: a PKCS#10 CSR for a new ECDSA P-256 key; the subject CN must be the engine id.
+type CertificateRequest struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	CsrDer        []byte                    `protobuf:"bytes,1,opt,name=csr_der,json=csrDer,proto3" json:"csr_der,omitempty"`
+	Reason        CertificateRequest_Reason `protobuf:"varint,2,opt,name=reason,proto3,enum=nexora.control.v1.CertificateRequest_Reason" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CertificateRequest) Reset() {
+	*x = CertificateRequest{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateRequest) ProtoMessage() {}
+
+func (x *CertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateRequest.ProtoReflect.Descriptor instead.
+func (*CertificateRequest) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *CertificateRequest) GetCsrDer() []byte {
+	if x != nil {
+		return x.CsrDer
+	}
+	return nil
+}
+
+func (x *CertificateRequest) GetReason() CertificateRequest_Reason {
+	if x != nil {
+		return x.Reason
+	}
+	return CertificateRequest_REASON_UNSPECIFIED
+}
+
+// Server -> engine: the issued client certificate and the CA that signed it (both DER).
+type CertificateIssued struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CertDer       []byte                 `protobuf:"bytes,1,opt,name=cert_der,json=certDer,proto3" json:"cert_der,omitempty"`
+	CaDer         []byte                 `protobuf:"bytes,2,opt,name=ca_der,json=caDer,proto3" json:"ca_der,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CertificateIssued) Reset() {
+	*x = CertificateIssued{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateIssued) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateIssued) ProtoMessage() {}
+
+func (x *CertificateIssued) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateIssued.ProtoReflect.Descriptor instead.
+func (*CertificateIssued) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *CertificateIssued) GetCertDer() []byte {
+	if x != nil {
+		return x.CertDer
+	}
+	return nil
+}
+
+func (x *CertificateIssued) GetCaDer() []byte {
+	if x != nil {
+		return x.CaDer
+	}
+	return nil
+}
+
+// Server -> engine: an operator requested rotation; send a CertificateRequest.
+type RenewCertificate struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Reason        CertificateRequest_Reason `protobuf:"varint,1,opt,name=reason,proto3,enum=nexora.control.v1.CertificateRequest_Reason" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenewCertificate) Reset() {
+	*x = RenewCertificate{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenewCertificate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenewCertificate) ProtoMessage() {}
+
+func (x *RenewCertificate) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenewCertificate.ProtoReflect.Descriptor instead.
+func (*RenewCertificate) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *RenewCertificate) GetReason() CertificateRequest_Reason {
+	if x != nil {
+		return x.Reason
+	}
+	return CertificateRequest_REASON_UNSPECIFIED
+}
+
 var File_nexora_control_v1_control_proto protoreflect.FileDescriptor
 
 const file_nexora_control_v1_control_proto_rawDesc = "" +
@@ -4145,7 +4393,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x0eEnrollResponse\x12\x1b\n" +
 	"\tengine_id\x18\x01 \x01(\tR\bengineId\x12'\n" +
 	"\x0fcertificate_der\x18\x02 \x01(\fR\x0ecertificateDer\x12,\n" +
-	"\x12ca_certificate_der\x18\x03 \x01(\fR\x10caCertificateDer\"\xe1\x03\n" +
+	"\x12ca_certificate_der\x18\x03 \x01(\fR\x10caCertificateDer\"\xae\x04\n" +
 	"\rEngineMessage\x120\n" +
 	"\x05hello\x18\x01 \x01(\v2\x18.nexora.control.v1.HelloH\x00R\x05hello\x126\n" +
 	"\aapplied\x18\x02 \x01(\v2\x1a.nexora.control.v1.AppliedH\x00R\aapplied\x129\n" +
@@ -4153,7 +4401,8 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x05stats\x18\x04 \x01(\v2\x18.nexora.control.v1.StatsH\x00R\x05stats\x12W\n" +
 	"\x13tls_material_result\x18\xac\x02 \x01(\v2$.nexora.control.v1.TlsMaterialResultH\x00R\x11tlsMaterialResult\x12M\n" +
 	"\x0fnotify_received\x18\xc8\x01 \x01(\v2!.nexora.control.v1.NotifyReceivedH\x00R\x0enotifyReceived\x12J\n" +
-	"\x0eupdate_request\x18\xc9\x01 \x01(\v2 .nexora.control.v1.UpdateRequestH\x00R\rupdateRequestB\x05\n" +
+	"\x0eupdate_request\x18\xc9\x01 \x01(\v2 .nexora.control.v1.UpdateRequestH\x00R\rupdateRequest\x12K\n" +
+	"\fcert_request\x18\xf4\x03 \x01(\v2%.nexora.control.v1.CertificateRequestH\x00R\vcertRequestB\x05\n" +
 	"\x03msg\"\xc8\x01\n" +
 	"\x05Hello\x12\x1b\n" +
 	"\tengine_id\x18\x01 \x01(\tR\bengineId\x12\x1b\n" +
@@ -4166,14 +4415,17 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\rpersist_error\x18\x02 \x01(\tR\fpersistError\"<\n" +
 	"\bRejected\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xba\x03\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd9\x04\n" +
 	"\rServerMessage\x12?\n" +
 	"\bsnapshot\x18\x01 \x01(\v2!.nexora.control.v1.ConfigSnapshotH\x00R\bsnapshot\x12F\n" +
 	"\rversion_ahead\x18\x02 \x01(\v2\x1f.nexora.control.v1.VersionAheadH\x00R\fversionAhead\x12D\n" +
 	"\rrpz_tsig_keys\x18d \x01(\v2\x1e.nexora.control.v1.RpzTsigKeysH\x00R\vrpzTsigKeys\x12D\n" +
 	"\ftls_material\x18\xac\x02 \x01(\v2\x1e.nexora.control.v1.TlsMaterialH\x00R\vtlsMaterial\x12D\n" +
 	"\fkey_material\x18\xc8\x01 \x01(\v2\x1e.nexora.control.v1.KeyMaterialH\x00R\vkeyMaterial\x12G\n" +
-	"\rupdate_result\x18\xc9\x01 \x01(\v2\x1f.nexora.control.v1.UpdateResultH\x00R\fupdateResultB\x05\n" +
+	"\rupdate_result\x18\xc9\x01 \x01(\v2\x1f.nexora.control.v1.UpdateResultH\x00R\fupdateResult\x12H\n" +
+	"\vcert_issued\x18\xf4\x03 \x01(\v2$.nexora.control.v1.CertificateIssuedH\x00R\n" +
+	"certIssued\x12S\n" +
+	"\x11renew_certificate\x18\xf5\x03 \x01(\v2#.nexora.control.v1.RenewCertificateH\x00R\x10renewCertificateB\x05\n" +
 	"\x03msg\"5\n" +
 	"\fVersionAhead\x12%\n" +
 	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\xa2\b\n" +
@@ -4431,7 +4683,19 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x14\n" +
 	"\x05rcode\x18\x02 \x01(\rR\x05rcode\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail*s\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xbc\x01\n" +
+	"\x12CertificateRequest\x12\x17\n" +
+	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\x12D\n" +
+	"\x06reason\x18\x02 \x01(\x0e2,.nexora.control.v1.CertificateRequest.ReasonR\x06reason\"G\n" +
+	"\x06Reason\x12\x16\n" +
+	"\x12REASON_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eREASON_RENEWAL\x10\x01\x12\x11\n" +
+	"\rREASON_ROTATE\x10\x02\"E\n" +
+	"\x11CertificateIssued\x12\x19\n" +
+	"\bcert_der\x18\x01 \x01(\fR\acertDer\x12\x15\n" +
+	"\x06ca_der\x18\x02 \x01(\fR\x05caDer\"X\n" +
+	"\x10RenewCertificate\x12D\n" +
+	"\x06reason\x18\x01 \x01(\x0e2,.nexora.control.v1.CertificateRequest.ReasonR\x06reason*s\n" +
 	"\x10UpstreamStrategy\x12!\n" +
 	"\x1dUPSTREAM_STRATEGY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19UPSTREAM_STRATEGY_ORDERED\x10\x01\x12\x1d\n" +
@@ -4497,139 +4761,148 @@ func file_nexora_control_v1_control_proto_rawDescGZIP() []byte {
 	return file_nexora_control_v1_control_proto_rawDescData
 }
 
-var file_nexora_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
-var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_nexora_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_nexora_control_v1_control_proto_goTypes = []any{
-	(UpstreamStrategy)(0),       // 0: nexora.control.v1.UpstreamStrategy
-	(UpstreamProtocol)(0),       // 1: nexora.control.v1.UpstreamProtocol
-	(BlockMode)(0),              // 2: nexora.control.v1.BlockMode
-	(RewriteType)(0),            // 3: nexora.control.v1.RewriteType
-	(ResolutionMode)(0),         // 4: nexora.control.v1.ResolutionMode
-	(RpzPolicyOverride)(0),      // 5: nexora.control.v1.RpzPolicyOverride
-	(TsigAlgorithm)(0),          // 6: nexora.control.v1.TsigAlgorithm
-	(TrustAnchorState)(0),       // 7: nexora.control.v1.TrustAnchorState
-	(AuthZoneKind)(0),           // 8: nexora.control.v1.AuthZoneKind
-	(*EnrollRequest)(nil),       // 9: nexora.control.v1.EnrollRequest
-	(*EnrollResponse)(nil),      // 10: nexora.control.v1.EnrollResponse
-	(*EngineMessage)(nil),       // 11: nexora.control.v1.EngineMessage
-	(*Hello)(nil),               // 12: nexora.control.v1.Hello
-	(*Applied)(nil),             // 13: nexora.control.v1.Applied
-	(*Rejected)(nil),            // 14: nexora.control.v1.Rejected
-	(*ServerMessage)(nil),       // 15: nexora.control.v1.ServerMessage
-	(*VersionAhead)(nil),        // 16: nexora.control.v1.VersionAhead
-	(*ConfigSnapshot)(nil),      // 17: nexora.control.v1.ConfigSnapshot
-	(*ResolverConfig)(nil),      // 18: nexora.control.v1.ResolverConfig
-	(*CacheConfig)(nil),         // 19: nexora.control.v1.CacheConfig
-	(*Upstream)(nil),            // 20: nexora.control.v1.Upstream
-	(*BlobRef)(nil),             // 21: nexora.control.v1.BlobRef
-	(*FilterConfig)(nil),        // 22: nexora.control.v1.FilterConfig
-	(*TelemetryConfig)(nil),     // 23: nexora.control.v1.TelemetryConfig
-	(*GetBlobRequest)(nil),      // 24: nexora.control.v1.GetBlobRequest
-	(*BlobChunk)(nil),           // 25: nexora.control.v1.BlobChunk
-	(*UpstreamStatus)(nil),      // 26: nexora.control.v1.UpstreamStatus
-	(*Stats)(nil),               // 27: nexora.control.v1.Stats
-	(*PolicyGroup)(nil),         // 28: nexora.control.v1.PolicyGroup
-	(*RewriteRule)(nil),         // 29: nexora.control.v1.RewriteRule
-	(*RewriteSet)(nil),          // 30: nexora.control.v1.RewriteSet
-	(*TlsMaterial)(nil),         // 31: nexora.control.v1.TlsMaterial
-	(*TlsMaterialResult)(nil),   // 32: nexora.control.v1.TlsMaterialResult
-	(*RootHint)(nil),            // 33: nexora.control.v1.RootHint
-	(*RecursionConfig)(nil),     // 34: nexora.control.v1.RecursionConfig
-	(*ForwardZone)(nil),         // 35: nexora.control.v1.ForwardZone
-	(*TrustAnchor)(nil),         // 36: nexora.control.v1.TrustAnchor
-	(*NegativeTrustAnchor)(nil), // 37: nexora.control.v1.NegativeTrustAnchor
-	(*DnssecConfig)(nil),        // 38: nexora.control.v1.DnssecConfig
-	(*RpzFileSource)(nil),       // 39: nexora.control.v1.RpzFileSource
-	(*RpzTransferSource)(nil),   // 40: nexora.control.v1.RpzTransferSource
-	(*RpzZone)(nil),             // 41: nexora.control.v1.RpzZone
-	(*RpzTsigKey)(nil),          // 42: nexora.control.v1.RpzTsigKey
-	(*RpzTsigKeys)(nil),         // 43: nexora.control.v1.RpzTsigKeys
-	(*RecursionStats)(nil),      // 44: nexora.control.v1.RecursionStats
-	(*TrustAnchorStatus)(nil),   // 45: nexora.control.v1.TrustAnchorStatus
-	(*DnssecStats)(nil),         // 46: nexora.control.v1.DnssecStats
-	(*RpzZoneStatus)(nil),       // 47: nexora.control.v1.RpzZoneStatus
-	(*ZoneDelta)(nil),           // 48: nexora.control.v1.ZoneDelta
-	(*TransferPolicy)(nil),      // 49: nexora.control.v1.TransferPolicy
-	(*NotifyTarget)(nil),        // 50: nexora.control.v1.NotifyTarget
-	(*AuthZone)(nil),            // 51: nexora.control.v1.AuthZone
-	(*TsigSecret)(nil),          // 52: nexora.control.v1.TsigSecret
-	(*KeyMaterial)(nil),         // 53: nexora.control.v1.KeyMaterial
-	(*NotifyReceived)(nil),      // 54: nexora.control.v1.NotifyReceived
-	(*UpdateRequest)(nil),       // 55: nexora.control.v1.UpdateRequest
-	(*UpdateResult)(nil),        // 56: nexora.control.v1.UpdateResult
-	nil,                         // 57: nexora.control.v1.Stats.ExportDroppedTotalEntry
+	(UpstreamStrategy)(0),          // 0: nexora.control.v1.UpstreamStrategy
+	(UpstreamProtocol)(0),          // 1: nexora.control.v1.UpstreamProtocol
+	(BlockMode)(0),                 // 2: nexora.control.v1.BlockMode
+	(RewriteType)(0),               // 3: nexora.control.v1.RewriteType
+	(ResolutionMode)(0),            // 4: nexora.control.v1.ResolutionMode
+	(RpzPolicyOverride)(0),         // 5: nexora.control.v1.RpzPolicyOverride
+	(TsigAlgorithm)(0),             // 6: nexora.control.v1.TsigAlgorithm
+	(TrustAnchorState)(0),          // 7: nexora.control.v1.TrustAnchorState
+	(AuthZoneKind)(0),              // 8: nexora.control.v1.AuthZoneKind
+	(CertificateRequest_Reason)(0), // 9: nexora.control.v1.CertificateRequest.Reason
+	(*EnrollRequest)(nil),          // 10: nexora.control.v1.EnrollRequest
+	(*EnrollResponse)(nil),         // 11: nexora.control.v1.EnrollResponse
+	(*EngineMessage)(nil),          // 12: nexora.control.v1.EngineMessage
+	(*Hello)(nil),                  // 13: nexora.control.v1.Hello
+	(*Applied)(nil),                // 14: nexora.control.v1.Applied
+	(*Rejected)(nil),               // 15: nexora.control.v1.Rejected
+	(*ServerMessage)(nil),          // 16: nexora.control.v1.ServerMessage
+	(*VersionAhead)(nil),           // 17: nexora.control.v1.VersionAhead
+	(*ConfigSnapshot)(nil),         // 18: nexora.control.v1.ConfigSnapshot
+	(*ResolverConfig)(nil),         // 19: nexora.control.v1.ResolverConfig
+	(*CacheConfig)(nil),            // 20: nexora.control.v1.CacheConfig
+	(*Upstream)(nil),               // 21: nexora.control.v1.Upstream
+	(*BlobRef)(nil),                // 22: nexora.control.v1.BlobRef
+	(*FilterConfig)(nil),           // 23: nexora.control.v1.FilterConfig
+	(*TelemetryConfig)(nil),        // 24: nexora.control.v1.TelemetryConfig
+	(*GetBlobRequest)(nil),         // 25: nexora.control.v1.GetBlobRequest
+	(*BlobChunk)(nil),              // 26: nexora.control.v1.BlobChunk
+	(*UpstreamStatus)(nil),         // 27: nexora.control.v1.UpstreamStatus
+	(*Stats)(nil),                  // 28: nexora.control.v1.Stats
+	(*PolicyGroup)(nil),            // 29: nexora.control.v1.PolicyGroup
+	(*RewriteRule)(nil),            // 30: nexora.control.v1.RewriteRule
+	(*RewriteSet)(nil),             // 31: nexora.control.v1.RewriteSet
+	(*TlsMaterial)(nil),            // 32: nexora.control.v1.TlsMaterial
+	(*TlsMaterialResult)(nil),      // 33: nexora.control.v1.TlsMaterialResult
+	(*RootHint)(nil),               // 34: nexora.control.v1.RootHint
+	(*RecursionConfig)(nil),        // 35: nexora.control.v1.RecursionConfig
+	(*ForwardZone)(nil),            // 36: nexora.control.v1.ForwardZone
+	(*TrustAnchor)(nil),            // 37: nexora.control.v1.TrustAnchor
+	(*NegativeTrustAnchor)(nil),    // 38: nexora.control.v1.NegativeTrustAnchor
+	(*DnssecConfig)(nil),           // 39: nexora.control.v1.DnssecConfig
+	(*RpzFileSource)(nil),          // 40: nexora.control.v1.RpzFileSource
+	(*RpzTransferSource)(nil),      // 41: nexora.control.v1.RpzTransferSource
+	(*RpzZone)(nil),                // 42: nexora.control.v1.RpzZone
+	(*RpzTsigKey)(nil),             // 43: nexora.control.v1.RpzTsigKey
+	(*RpzTsigKeys)(nil),            // 44: nexora.control.v1.RpzTsigKeys
+	(*RecursionStats)(nil),         // 45: nexora.control.v1.RecursionStats
+	(*TrustAnchorStatus)(nil),      // 46: nexora.control.v1.TrustAnchorStatus
+	(*DnssecStats)(nil),            // 47: nexora.control.v1.DnssecStats
+	(*RpzZoneStatus)(nil),          // 48: nexora.control.v1.RpzZoneStatus
+	(*ZoneDelta)(nil),              // 49: nexora.control.v1.ZoneDelta
+	(*TransferPolicy)(nil),         // 50: nexora.control.v1.TransferPolicy
+	(*NotifyTarget)(nil),           // 51: nexora.control.v1.NotifyTarget
+	(*AuthZone)(nil),               // 52: nexora.control.v1.AuthZone
+	(*TsigSecret)(nil),             // 53: nexora.control.v1.TsigSecret
+	(*KeyMaterial)(nil),            // 54: nexora.control.v1.KeyMaterial
+	(*NotifyReceived)(nil),         // 55: nexora.control.v1.NotifyReceived
+	(*UpdateRequest)(nil),          // 56: nexora.control.v1.UpdateRequest
+	(*UpdateResult)(nil),           // 57: nexora.control.v1.UpdateResult
+	(*CertificateRequest)(nil),     // 58: nexora.control.v1.CertificateRequest
+	(*CertificateIssued)(nil),      // 59: nexora.control.v1.CertificateIssued
+	(*RenewCertificate)(nil),       // 60: nexora.control.v1.RenewCertificate
+	nil,                            // 61: nexora.control.v1.Stats.ExportDroppedTotalEntry
 }
 var file_nexora_control_v1_control_proto_depIdxs = []int32{
-	12, // 0: nexora.control.v1.EngineMessage.hello:type_name -> nexora.control.v1.Hello
-	13, // 1: nexora.control.v1.EngineMessage.applied:type_name -> nexora.control.v1.Applied
-	14, // 2: nexora.control.v1.EngineMessage.rejected:type_name -> nexora.control.v1.Rejected
-	27, // 3: nexora.control.v1.EngineMessage.stats:type_name -> nexora.control.v1.Stats
-	32, // 4: nexora.control.v1.EngineMessage.tls_material_result:type_name -> nexora.control.v1.TlsMaterialResult
-	54, // 5: nexora.control.v1.EngineMessage.notify_received:type_name -> nexora.control.v1.NotifyReceived
-	55, // 6: nexora.control.v1.EngineMessage.update_request:type_name -> nexora.control.v1.UpdateRequest
-	17, // 7: nexora.control.v1.ServerMessage.snapshot:type_name -> nexora.control.v1.ConfigSnapshot
-	16, // 8: nexora.control.v1.ServerMessage.version_ahead:type_name -> nexora.control.v1.VersionAhead
-	43, // 9: nexora.control.v1.ServerMessage.rpz_tsig_keys:type_name -> nexora.control.v1.RpzTsigKeys
-	31, // 10: nexora.control.v1.ServerMessage.tls_material:type_name -> nexora.control.v1.TlsMaterial
-	53, // 11: nexora.control.v1.ServerMessage.key_material:type_name -> nexora.control.v1.KeyMaterial
-	56, // 12: nexora.control.v1.ServerMessage.update_result:type_name -> nexora.control.v1.UpdateResult
-	18, // 13: nexora.control.v1.ConfigSnapshot.resolver:type_name -> nexora.control.v1.ResolverConfig
-	19, // 14: nexora.control.v1.ConfigSnapshot.cache:type_name -> nexora.control.v1.CacheConfig
-	20, // 15: nexora.control.v1.ConfigSnapshot.upstreams:type_name -> nexora.control.v1.Upstream
-	22, // 16: nexora.control.v1.ConfigSnapshot.filter:type_name -> nexora.control.v1.FilterConfig
-	23, // 17: nexora.control.v1.ConfigSnapshot.telemetry:type_name -> nexora.control.v1.TelemetryConfig
-	28, // 18: nexora.control.v1.ConfigSnapshot.policy_groups:type_name -> nexora.control.v1.PolicyGroup
-	30, // 19: nexora.control.v1.ConfigSnapshot.rewrite_sets:type_name -> nexora.control.v1.RewriteSet
-	4,  // 20: nexora.control.v1.ConfigSnapshot.resolution_mode:type_name -> nexora.control.v1.ResolutionMode
-	34, // 21: nexora.control.v1.ConfigSnapshot.recursion:type_name -> nexora.control.v1.RecursionConfig
-	35, // 22: nexora.control.v1.ConfigSnapshot.forward_zones:type_name -> nexora.control.v1.ForwardZone
-	38, // 23: nexora.control.v1.ConfigSnapshot.dnssec:type_name -> nexora.control.v1.DnssecConfig
-	41, // 24: nexora.control.v1.ConfigSnapshot.rpz_zones:type_name -> nexora.control.v1.RpzZone
-	51, // 25: nexora.control.v1.ConfigSnapshot.auth_zones:type_name -> nexora.control.v1.AuthZone
-	0,  // 26: nexora.control.v1.ResolverConfig.strategy:type_name -> nexora.control.v1.UpstreamStrategy
-	1,  // 27: nexora.control.v1.Upstream.protocol:type_name -> nexora.control.v1.UpstreamProtocol
-	21, // 28: nexora.control.v1.FilterConfig.blocklists:type_name -> nexora.control.v1.BlobRef
-	21, // 29: nexora.control.v1.FilterConfig.allowlists:type_name -> nexora.control.v1.BlobRef
-	2,  // 30: nexora.control.v1.FilterConfig.block_mode:type_name -> nexora.control.v1.BlockMode
-	26, // 31: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
-	57, // 32: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
-	44, // 33: nexora.control.v1.Stats.recursion:type_name -> nexora.control.v1.RecursionStats
-	46, // 34: nexora.control.v1.Stats.dnssec:type_name -> nexora.control.v1.DnssecStats
-	47, // 35: nexora.control.v1.Stats.rpz_zones:type_name -> nexora.control.v1.RpzZoneStatus
-	21, // 36: nexora.control.v1.PolicyGroup.blocklists:type_name -> nexora.control.v1.BlobRef
-	3,  // 37: nexora.control.v1.RewriteRule.type:type_name -> nexora.control.v1.RewriteType
-	29, // 38: nexora.control.v1.RewriteSet.rules:type_name -> nexora.control.v1.RewriteRule
-	33, // 39: nexora.control.v1.RecursionConfig.root_hints:type_name -> nexora.control.v1.RootHint
-	36, // 40: nexora.control.v1.DnssecConfig.trust_anchors:type_name -> nexora.control.v1.TrustAnchor
-	37, // 41: nexora.control.v1.DnssecConfig.negative_trust_anchors:type_name -> nexora.control.v1.NegativeTrustAnchor
-	21, // 42: nexora.control.v1.RpzFileSource.blob:type_name -> nexora.control.v1.BlobRef
-	6,  // 43: nexora.control.v1.RpzTransferSource.tsig_algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	39, // 44: nexora.control.v1.RpzZone.file:type_name -> nexora.control.v1.RpzFileSource
-	40, // 45: nexora.control.v1.RpzZone.transfer:type_name -> nexora.control.v1.RpzTransferSource
-	5,  // 46: nexora.control.v1.RpzZone.policy_override:type_name -> nexora.control.v1.RpzPolicyOverride
-	6,  // 47: nexora.control.v1.RpzTsigKey.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	42, // 48: nexora.control.v1.RpzTsigKeys.keys:type_name -> nexora.control.v1.RpzTsigKey
-	7,  // 49: nexora.control.v1.TrustAnchorStatus.state:type_name -> nexora.control.v1.TrustAnchorState
-	45, // 50: nexora.control.v1.DnssecStats.trust_anchors:type_name -> nexora.control.v1.TrustAnchorStatus
-	21, // 51: nexora.control.v1.ZoneDelta.blob:type_name -> nexora.control.v1.BlobRef
-	8,  // 52: nexora.control.v1.AuthZone.kind:type_name -> nexora.control.v1.AuthZoneKind
-	21, // 53: nexora.control.v1.AuthZone.image:type_name -> nexora.control.v1.BlobRef
-	48, // 54: nexora.control.v1.AuthZone.deltas:type_name -> nexora.control.v1.ZoneDelta
-	49, // 55: nexora.control.v1.AuthZone.transfer:type_name -> nexora.control.v1.TransferPolicy
-	50, // 56: nexora.control.v1.AuthZone.notify:type_name -> nexora.control.v1.NotifyTarget
-	6,  // 57: nexora.control.v1.TsigSecret.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	52, // 58: nexora.control.v1.KeyMaterial.tsig_keys:type_name -> nexora.control.v1.TsigSecret
-	9,  // 59: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
-	11, // 60: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
-	24, // 61: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
-	10, // 62: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
-	15, // 63: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
-	25, // 64: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
-	62, // [62:65] is the sub-list for method output_type
-	59, // [59:62] is the sub-list for method input_type
-	59, // [59:59] is the sub-list for extension type_name
-	59, // [59:59] is the sub-list for extension extendee
-	0,  // [0:59] is the sub-list for field type_name
+	13, // 0: nexora.control.v1.EngineMessage.hello:type_name -> nexora.control.v1.Hello
+	14, // 1: nexora.control.v1.EngineMessage.applied:type_name -> nexora.control.v1.Applied
+	15, // 2: nexora.control.v1.EngineMessage.rejected:type_name -> nexora.control.v1.Rejected
+	28, // 3: nexora.control.v1.EngineMessage.stats:type_name -> nexora.control.v1.Stats
+	33, // 4: nexora.control.v1.EngineMessage.tls_material_result:type_name -> nexora.control.v1.TlsMaterialResult
+	55, // 5: nexora.control.v1.EngineMessage.notify_received:type_name -> nexora.control.v1.NotifyReceived
+	56, // 6: nexora.control.v1.EngineMessage.update_request:type_name -> nexora.control.v1.UpdateRequest
+	58, // 7: nexora.control.v1.EngineMessage.cert_request:type_name -> nexora.control.v1.CertificateRequest
+	18, // 8: nexora.control.v1.ServerMessage.snapshot:type_name -> nexora.control.v1.ConfigSnapshot
+	17, // 9: nexora.control.v1.ServerMessage.version_ahead:type_name -> nexora.control.v1.VersionAhead
+	44, // 10: nexora.control.v1.ServerMessage.rpz_tsig_keys:type_name -> nexora.control.v1.RpzTsigKeys
+	32, // 11: nexora.control.v1.ServerMessage.tls_material:type_name -> nexora.control.v1.TlsMaterial
+	54, // 12: nexora.control.v1.ServerMessage.key_material:type_name -> nexora.control.v1.KeyMaterial
+	57, // 13: nexora.control.v1.ServerMessage.update_result:type_name -> nexora.control.v1.UpdateResult
+	59, // 14: nexora.control.v1.ServerMessage.cert_issued:type_name -> nexora.control.v1.CertificateIssued
+	60, // 15: nexora.control.v1.ServerMessage.renew_certificate:type_name -> nexora.control.v1.RenewCertificate
+	19, // 16: nexora.control.v1.ConfigSnapshot.resolver:type_name -> nexora.control.v1.ResolverConfig
+	20, // 17: nexora.control.v1.ConfigSnapshot.cache:type_name -> nexora.control.v1.CacheConfig
+	21, // 18: nexora.control.v1.ConfigSnapshot.upstreams:type_name -> nexora.control.v1.Upstream
+	23, // 19: nexora.control.v1.ConfigSnapshot.filter:type_name -> nexora.control.v1.FilterConfig
+	24, // 20: nexora.control.v1.ConfigSnapshot.telemetry:type_name -> nexora.control.v1.TelemetryConfig
+	29, // 21: nexora.control.v1.ConfigSnapshot.policy_groups:type_name -> nexora.control.v1.PolicyGroup
+	31, // 22: nexora.control.v1.ConfigSnapshot.rewrite_sets:type_name -> nexora.control.v1.RewriteSet
+	4,  // 23: nexora.control.v1.ConfigSnapshot.resolution_mode:type_name -> nexora.control.v1.ResolutionMode
+	35, // 24: nexora.control.v1.ConfigSnapshot.recursion:type_name -> nexora.control.v1.RecursionConfig
+	36, // 25: nexora.control.v1.ConfigSnapshot.forward_zones:type_name -> nexora.control.v1.ForwardZone
+	39, // 26: nexora.control.v1.ConfigSnapshot.dnssec:type_name -> nexora.control.v1.DnssecConfig
+	42, // 27: nexora.control.v1.ConfigSnapshot.rpz_zones:type_name -> nexora.control.v1.RpzZone
+	52, // 28: nexora.control.v1.ConfigSnapshot.auth_zones:type_name -> nexora.control.v1.AuthZone
+	0,  // 29: nexora.control.v1.ResolverConfig.strategy:type_name -> nexora.control.v1.UpstreamStrategy
+	1,  // 30: nexora.control.v1.Upstream.protocol:type_name -> nexora.control.v1.UpstreamProtocol
+	22, // 31: nexora.control.v1.FilterConfig.blocklists:type_name -> nexora.control.v1.BlobRef
+	22, // 32: nexora.control.v1.FilterConfig.allowlists:type_name -> nexora.control.v1.BlobRef
+	2,  // 33: nexora.control.v1.FilterConfig.block_mode:type_name -> nexora.control.v1.BlockMode
+	27, // 34: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
+	61, // 35: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
+	45, // 36: nexora.control.v1.Stats.recursion:type_name -> nexora.control.v1.RecursionStats
+	47, // 37: nexora.control.v1.Stats.dnssec:type_name -> nexora.control.v1.DnssecStats
+	48, // 38: nexora.control.v1.Stats.rpz_zones:type_name -> nexora.control.v1.RpzZoneStatus
+	22, // 39: nexora.control.v1.PolicyGroup.blocklists:type_name -> nexora.control.v1.BlobRef
+	3,  // 40: nexora.control.v1.RewriteRule.type:type_name -> nexora.control.v1.RewriteType
+	30, // 41: nexora.control.v1.RewriteSet.rules:type_name -> nexora.control.v1.RewriteRule
+	34, // 42: nexora.control.v1.RecursionConfig.root_hints:type_name -> nexora.control.v1.RootHint
+	37, // 43: nexora.control.v1.DnssecConfig.trust_anchors:type_name -> nexora.control.v1.TrustAnchor
+	38, // 44: nexora.control.v1.DnssecConfig.negative_trust_anchors:type_name -> nexora.control.v1.NegativeTrustAnchor
+	22, // 45: nexora.control.v1.RpzFileSource.blob:type_name -> nexora.control.v1.BlobRef
+	6,  // 46: nexora.control.v1.RpzTransferSource.tsig_algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	40, // 47: nexora.control.v1.RpzZone.file:type_name -> nexora.control.v1.RpzFileSource
+	41, // 48: nexora.control.v1.RpzZone.transfer:type_name -> nexora.control.v1.RpzTransferSource
+	5,  // 49: nexora.control.v1.RpzZone.policy_override:type_name -> nexora.control.v1.RpzPolicyOverride
+	6,  // 50: nexora.control.v1.RpzTsigKey.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	43, // 51: nexora.control.v1.RpzTsigKeys.keys:type_name -> nexora.control.v1.RpzTsigKey
+	7,  // 52: nexora.control.v1.TrustAnchorStatus.state:type_name -> nexora.control.v1.TrustAnchorState
+	46, // 53: nexora.control.v1.DnssecStats.trust_anchors:type_name -> nexora.control.v1.TrustAnchorStatus
+	22, // 54: nexora.control.v1.ZoneDelta.blob:type_name -> nexora.control.v1.BlobRef
+	8,  // 55: nexora.control.v1.AuthZone.kind:type_name -> nexora.control.v1.AuthZoneKind
+	22, // 56: nexora.control.v1.AuthZone.image:type_name -> nexora.control.v1.BlobRef
+	49, // 57: nexora.control.v1.AuthZone.deltas:type_name -> nexora.control.v1.ZoneDelta
+	50, // 58: nexora.control.v1.AuthZone.transfer:type_name -> nexora.control.v1.TransferPolicy
+	51, // 59: nexora.control.v1.AuthZone.notify:type_name -> nexora.control.v1.NotifyTarget
+	6,  // 60: nexora.control.v1.TsigSecret.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	53, // 61: nexora.control.v1.KeyMaterial.tsig_keys:type_name -> nexora.control.v1.TsigSecret
+	9,  // 62: nexora.control.v1.CertificateRequest.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
+	9,  // 63: nexora.control.v1.RenewCertificate.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
+	10, // 64: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
+	12, // 65: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
+	25, // 66: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
+	11, // 67: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
+	16, // 68: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
+	26, // 69: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
+	67, // [67:70] is the sub-list for method output_type
+	64, // [64:67] is the sub-list for method input_type
+	64, // [64:64] is the sub-list for extension type_name
+	64, // [64:64] is the sub-list for extension extendee
+	0,  // [0:64] is the sub-list for field type_name
 }
 
 func init() { file_nexora_control_v1_control_proto_init() }
@@ -4645,6 +4918,7 @@ func file_nexora_control_v1_control_proto_init() {
 		(*EngineMessage_TlsMaterialResult)(nil),
 		(*EngineMessage_NotifyReceived)(nil),
 		(*EngineMessage_UpdateRequest)(nil),
+		(*EngineMessage_CertRequest)(nil),
 	}
 	file_nexora_control_v1_control_proto_msgTypes[6].OneofWrappers = []any{
 		(*ServerMessage_Snapshot)(nil),
@@ -4653,6 +4927,8 @@ func file_nexora_control_v1_control_proto_init() {
 		(*ServerMessage_TlsMaterial)(nil),
 		(*ServerMessage_KeyMaterial)(nil),
 		(*ServerMessage_UpdateResult)(nil),
+		(*ServerMessage_CertIssued)(nil),
+		(*ServerMessage_RenewCertificate)(nil),
 	}
 	file_nexora_control_v1_control_proto_msgTypes[32].OneofWrappers = []any{
 		(*RpzZone_File)(nil),
@@ -4663,8 +4939,8 @@ func file_nexora_control_v1_control_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nexora_control_v1_control_proto_rawDesc), len(file_nexora_control_v1_control_proto_rawDesc)),
-			NumEnums:      9,
-			NumMessages:   49,
+			NumEnums:      10,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
