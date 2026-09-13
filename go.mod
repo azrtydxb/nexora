@@ -11,6 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.20.0
 	github.com/miekg/dns v1.1.73
+	github.com/miekg/pkcs11 v1.1.2
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/opensearch-project/opensearch-go/v4 v4.7.3
 	github.com/pressly/goose/v3 v3.28.0

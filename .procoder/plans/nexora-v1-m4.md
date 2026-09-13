@@ -2512,10 +2512,12 @@ Files:
 
 - `mgmt/internal/config/config.go`, `mgmt/internal/config/config_test.go` — `PKCS11Module`, `PKCS11TokenLabel`, `PKCS11PinFile` + all-or-none validation (modify)
 - `mgmt/internal/secrets/secrets.go` — `Config`, `Open`, backend selection, wrap byte 2 in `Seal`/`Unseal`, `Close` (modify; `LoadKEKFile(path)` becomes `Open(Config{KEKFile: path})`)
-- `mgmt/internal/secrets/pkcs11.go` — token session pool, key generation, HSM signer, HSM AES wrap key
+- `mgmt/internal/secrets/pkcs11.go` (`//go:build cgo`) — token session pool, key generation, HSM signer, HSM AES wrap key; `mgmt/internal/secrets/pkcs11_nocgo.go` (`//go:build !cgo`) — stub whose `openHSM` refuses, so `CGO_ENABLED=0` builds (the current mgmt image) still compile but cannot use PKCS#11
+- `e2e/harness/softhsm.go` — `harness.InitSoftHSM(t, label) SoftHSM{Module, Label, PinFile, Conf}` and `(SoftHSM).Env()`; `e2e/key_storage_test.go` — `TestTSIGKeysWithPKCS11OnlyKeyStorage` (mgmt process with only a SoftHSM token: wrap key created at startup, TSIG envelope wrap byte 2; mgmt without key storage answers 503)
 - `mgmt/internal/secrets/signing.go` — `StoredKey`, `GenerateSigningKey`, `Signer`, `DestroySigningKey` (KEK backend: enveloped PKCS#8)
 - `mgmt/internal/secrets/signing_test.go`, `mgmt/internal/secrets/pkcs11_test.go`
-- `mgmt/internal/tsigkey/service.go`, `mgmt/internal/tsigkey/service_test.go` — TSIG key CRUD through `snapshot.Mutate`, in-use check
+- `mgmt/internal/tsigkey/service.go`, `mgmt/internal/tsigkey/service_test.go` — TSIG key CRUD through `snapshot.Mutate`, in-use check; `mgmt/internal/zone/service.go` — `checkKeys` locks referenced keys `FOR SHARE` so a concurrent delete cannot miss a new reference (modify)
+- `mgmt/internal/api/tsig_keys_test.go`, `mgmt/internal/api/api_test.go` (`Deps.TSIGKeys` default) — API, RBAC, write-only secret, audit redaction, 503
 - `mgmt/internal/control/tsigkeys.go`, `mgmt/internal/control/tsigkeys_test.go` — `TSIGKeys` loader building `KeyMaterial` (pattern of `rpztsig.go`)
 - `mgmt/internal/control/hub.go`, `mgmt/internal/control/server.go` — `Hub.TSIGKeys`, per-subscriber `keyMaterial` channel with digest, sent before the snapshot on `Connect` and offered on every broadcast (modify)
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/tsig_keys.go`, `mgmt/internal/api/server.go` (`Deps.TSIGKeys`), `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `listTsigKeys`, `createTsigKey`, `deleteTsigKey` (modify/create)
@@ -2547,13 +2549,17 @@ func (b *Box) GenerateSigningKey(ctx context.Context, be Backend, alg uint8) (St
 func (b *Box) Signer(k StoredKey) (crypto.Signer, func(), error)                               // release func zeroes decrypted material
 func (b *Box) DestroySigningKey(k StoredKey) error
 func (b *Box) PKCS11KeyAttributes(keyRef []byte) (extractable, sensitive bool, err error)
-func SigningKeyPurpose(keyRef []byte) string // "nexora/dnssec/v1:<hex key_ref>"
-func TSIGPurpose(name string) string         // "nexora/tsig/v1:<key name>"
+func (b *Box) PKCS11WrapKeyAttributes() (extractable, sensitive bool, err error)
+func SigningKeyPurpose(keyRef []byte) string                  // "nexora/dnssec/v1:<hex key_ref>"
+func TSIGPurpose(id uuid.UUID, name, algorithm string) string // "nexora/tsig/v1:<id>:<name>:<algorithm>" — binds the envelope to its row
+// Open (and LoadKEKFile) refuse a KEK or PIN file with any "other" permission bit, group write, or
+// group read unless the file's group is the process's effective group (Kubernetes fsGroup volumes).
 
 package tsigkey
 type Key struct{ ID uuid.UUID; Name, Algorithm string; Revision int64; CreatedAt time.Time }
 type Created struct{ Key; Secret string } // base64, returned once
 var ErrInUse = errors.New("tsig key is in use")
+var ErrInvalid = errors.New("invalid tsig key") // wrapped with the reason; API 400 invalid_request
 type Service struct{ Store *store.Store; Build snapshot.BuildConfig; Box *secrets.Box }
 func (s *Service) Create(ctx context.Context, actor auth.Actor, name, algorithm, secretB64 string) (*Created, error)
 func (s *Service) List(ctx context.Context) ([]Key, error)
@@ -2590,10 +2596,10 @@ offset  size  field
 25      48    wrapped_dek = AES-256-GCM(KEK, dek_nonce, DEK[32], aad = "NXE1-dek")
 73      12    data_nonce
 85      n+16  ciphertext = AES-256-GCM(DEK, data_nonce, plaintext, aad = purpose)
-purposes: "nexora/rpz-tsig/v1:<zone uuid>" (M3), "nexora/tsig/v1:<key name>", "nexora/dnssec/v1:<hex key_ref>"
+purposes: "nexora/rpz-tsig/v1:<zone uuid>" (M3), "nexora/tsig/v1:<key uuid>:<key name>:<algorithm>", "nexora/dnssec/v1:<hex key_ref>"
 ```
 
-- [ ] Write the failing `mgmt/internal/secrets/signing_test.go` (package `secrets_test`; `writeKEK(t, n)` is M3's helper in `secrets_test.go`):
+- [x] Write the failing `mgmt/internal/secrets/signing_test.go` (package `secrets_test`; `writeKEK(t, n)` is M3's helper in `secrets_test.go`):
 
 ```go
 package secrets_test
@@ -2654,7 +2660,7 @@ func TestKEKSigningKeyIsEnvelopedPKCS8(t *testing.T) {
 
 `verifySignerMatchesDNSKEY` lives in `pkcs11_test.go` (below).
 
-- [ ] Write the failing `mgmt/internal/secrets/pkcs11_test.go` (token PINs are derived at run time):
+- [x] Write the failing `mgmt/internal/secrets/pkcs11_test.go` (token PINs are derived at run time):
 
 ```go
 package secrets_test
@@ -2755,19 +2761,19 @@ func TestPKCS11WrapsEnvelopesWhenNoKEKFile(t *testing.T) {
 	if err := box.EnsureHSMWrapKey(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	env, err := box.Seal(secrets.TSIGPurpose("x."), []byte("hsm-wrapped"))
+	env, err := box.Seal(secrets.TSIGPurpose([16]byte{1}, "x.", "hmac-sha256"), []byte("hsm-wrapped"))
 	if err != nil || env[4] != secrets.WrapPKCS11 {
 		t.Fatalf("seal: %v wrap=%d", err, env[4])
 	}
-	got, err := box.Unseal(secrets.TSIGPurpose("x."), env)
+	got, err := box.Unseal(secrets.TSIGPurpose([16]byte{1}, "x.", "hmac-sha256"), env)
 	if err != nil || string(got) != "hsm-wrapped" {
 		t.Fatalf("unseal: %q %v", got, err)
 	}
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ -count=1` — expect FAIL with "undefined: secrets.Open".
-- [ ] Refactor `secrets.go` onto one sealing path used by both wrappers (M3's layout and tests stay green):
+- [x] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ -count=1` — expect FAIL with "undefined: secrets.Open".
+- [x] Refactor `secrets.go` onto one sealing path used by both wrappers (M3's layout and tests stay green):
 
 ```go
 func sealWith(wrap byte, kekID []byte, wrapDEK func(nonce, dek []byte) ([]byte, error), purpose string, plaintext []byte) ([]byte, error) {
@@ -2801,7 +2807,7 @@ func sealWith(wrap byte, kekID []byte, wrapDEK func(nonce, dek []byte) ([]byte, 
 
 `Unseal` checks magic and length ≥ 101, selects the wrapper by byte 4 (`ErrBackendUnavailable` when that backend is not configured), compares `kek_id` (`ErrKEKMismatch`), unwraps the DEK with aad `NXE1-dek`, opens the ciphertext with aad = purpose, and `clear`s the DEK. `Seal` uses the file KEK when configured, else the HSM wrap key, else `ErrUnconfigured`. `Open` loads the KEK file exactly as `LoadKEKFile` does today, requires the three PKCS#11 settings together (`NEXORA_PKCS11_MODULE, NEXORA_PKCS11_TOKEN_LABEL and NEXORA_PKCS11_PIN_FILE must be set together`) and opens the token; `LoadKEKFile(path)` returns `Open(Config{KEKFile: path})`.
 
-- [ ] Implement `pkcs11.go`:
+- [x] Implement `pkcs11.go`:
 
 ```go
 type HSM struct {
@@ -2959,10 +2965,10 @@ func (s *hsmSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) (sig [
 
 `findOne` runs `FindObjectsInit` on `{CKA_CLASS, CKA_ID}`, `FindObjects(sh, 2)`, `FindObjectsFinal`, and requires exactly one handle. `PKCS11KeyAttributes` reads `CKA_EXTRACTABLE` and `CKA_SENSITIVE` of the private key. `DestroySigningKey` destroys private and public objects with that `CKA_ID`. The HSM wrap key: `EnsureHSMWrapKey` finds `CKO_SECRET_KEY` with `CKA_ID "nexora-kek-v1"` or creates it with `CKM_AES_KEY_GEN` and attributes `CKA_CLASS=CKO_SECRET_KEY, CKA_KEY_TYPE=CKK_AES, CKA_VALUE_LEN=32, CKA_TOKEN=true, CKA_PRIVATE=true, CKA_SENSITIVE=true, CKA_EXTRACTABLE=false, CKA_ENCRYPT=true, CKA_DECRYPT=true, CKA_LABEL="nexora-kek"`; wrapping uses `params := pkcs11.NewGCMParams(dekNonce, []byte("NXE1-dek"), 128)`, `EncryptInit(sh, []*pkcs11.Mechanism{pkcs11.NewMechanism(pkcs11.CKM_AES_GCM, params)}, handle)`, `Encrypt(sh, dek)`, `params.Free()` (unwrap: `DecryptInit`/`Decrypt`). `main.go` calls `EnsureHSMWrapKey` while holding `pg_advisory_lock(hashtext('pkcs11_wrap_key'))` so instances never create two.
 
-- [ ] Implement `signing.go`: `GenerateSigningKey` returns `ErrUnconfigured` for an unconfigured box and `ErrBackendUnavailable` for a backend that is not configured; alg 13 → `ecdsa.GenerateKey(elliptic.P256(), rand.Reader)`, public = `priv.PublicKey.ECDH()` bytes without the leading 0x04; alg 8 → `rsa.GenerateKey(rand.Reader, 2048)`, public = `rsaDNSKEYPublic(big.NewInt(int64(E)).Bytes(), N.Bytes())`; private = `x509.MarshalPKCS8PrivateKey` sealed with `SigningKeyPurpose(key_ref)`, `key_ref` = 16 random bytes; the PKCS#11 backend calls `HSM.generate` with `key_ref` as `CKA_ID`. `Signer` unseals, parses PKCS#8, returns the key and a release func that `clear`s the DER buffer (PKCS#11: an `hsmSigner`, no-op release).
-- [ ] Add the settings to `mgmt/internal/config` (`NEXORA_PKCS11_MODULE`, `NEXORA_PKCS11_TOKEN_LABEL`, `NEXORA_PKCS11_PIN_FILE`; all or none, same message as `secrets.Open`, with a `config_test.go` case). In `main.go` replace `secrets.LoadKEKFile(cfg.KEKFile)` with `secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel, PKCS11PinFile: cfg.PKCS11PinFile})` (exit non-zero on error, `defer box.Close()`), and change the unconfigured log line to `key storage: none configured; RPZ TSIG secrets, TSIG keys and DNSSEC signing are refused`.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ ./mgmt/internal/config/ -count=1` — expect PASS (M3's secrets tests included).
-- [ ] Write the failing `mgmt/internal/tsigkey/service_test.go` and `mgmt/internal/control/tsigkeys_test.go`:
+- [x] Implement `signing.go`: `GenerateSigningKey` returns `ErrUnconfigured` for an unconfigured box and `ErrBackendUnavailable` for a backend that is not configured; alg 13 → `ecdsa.GenerateKey(elliptic.P256(), rand.Reader)`, public = `priv.PublicKey.ECDH()` bytes without the leading 0x04; alg 8 → `rsa.GenerateKey(rand.Reader, 2048)`, public = `rsaDNSKEYPublic(big.NewInt(int64(E)).Bytes(), N.Bytes())`; private = `x509.MarshalPKCS8PrivateKey` sealed with `SigningKeyPurpose(key_ref)`, `key_ref` = 16 random bytes; the PKCS#11 backend calls `HSM.generate` with `key_ref` as `CKA_ID`. `Signer` unseals, parses PKCS#8, returns the key and a release func that `clear`s the DER buffer (PKCS#11: an `hsmSigner`, no-op release).
+- [x] Add the settings to `mgmt/internal/config` (`NEXORA_PKCS11_MODULE`, `NEXORA_PKCS11_TOKEN_LABEL`, `NEXORA_PKCS11_PIN_FILE`; all or none, same message as `secrets.Open`, with a `config_test.go` case). In `main.go` replace `secrets.LoadKEKFile(cfg.KEKFile)` with `secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel, PKCS11PinFile: cfg.PKCS11PinFile})` (exit non-zero on error, `defer box.Close()`), and change the unconfigured log line to `key storage: none configured; RPZ TSIG secrets, TSIG keys and DNSSEC signing are refused`.
+- [x] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ ./mgmt/internal/config/ -count=1` — expect PASS (M3's secrets tests included).
+- [x] Write the failing `mgmt/internal/tsigkey/service_test.go` and `mgmt/internal/control/tsigkeys_test.go`:
 
 ```go
 package tsigkey_test
@@ -3111,11 +3117,11 @@ func TestTSIGKeysLoadUnsealsAndDigestTracksChanges(t *testing.T) {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ -run 'TestCreateStores|TestUnconfiguredKey|TestDeleteInUse|TestTSIGKeysLoad' -count=1` — expect FAIL with "undefined: tsigkey.Service".
-- [ ] Implement `tsigkey.Service`: names lowercased, absolute, `^([a-z0-9_-]{1,63}\.)+$`; algorithms hmac-sha256/384/512; empty secret → 32 random bytes (64 for sha512); a provided secret must decode from base64 to 16..64 bytes; seal with `Box.Seal(secrets.TSIGPurpose(name), secret)` before the transaction (an unconfigured box refuses without writing, as M3's `rpz.go` does); `Create`/`Delete` run in `snapshot.Mutate(ctx, s.Store, s.Build, actor, …)` with `auth.Change{Action: "createTsigKey"|"deleteTsigKey", TargetType: "tsig_key", TargetID: id, After: Key (never the secret)}`, so the new config version's `pg_notify` makes every hub re-offer `KeyMaterial`. `Delete` refuses when referenced by `zones.transfer_tsig_key_id`, `update_tsig_key_ids`, or any `notify_targets` / `primaries` element's `tsig_key_id` (`ErrInUse` → 409 `tsig_key_in_use`); stale revision → `store.ErrConflict`. `Secret` unseals one key for the management plane's own TSIG use (Tasks 10, 11).
-- [ ] Implement `control/tsigkeys.go` like `rpztsig.go`: select every `tsig_keys` row ordered by name, unseal, map the algorithm to `controlv1.TsigAlgorithm`, digest = SHA-256 of the deterministic marshalling (cleared after hashing). In `hub.go` add `TSIGKeys *TSIGKeys`, `loadKeyMaterial` (logs errors, never keys) and `subscriber.offerKeyMaterial(km, digest)` (same replace-pending logic as `offerKeys`); `broadcast` offers it after the RPZ keys. In `server.go` `Connect` offers it before the snapshot (next to the RPZ keys) and the send loop drains `sub.keyMaterial` with the same priority as `sub.keys`, sending `ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}`.
-- [ ] Add OpenAPI: `GET /tsig-keys` `listTsigKeys` → `[TsigKey{id,name,algorithm,revision,created_at}]`; `POST /tsig-keys` `createTsigKey` body `{name, algorithm, secret?}` → 201 `TsigKeyCreated` (TsigKey + `secret`), 400, 503; `DELETE /tsig-keys/{keyId}?revision=` `deleteTsigKey` → 204, 409 (`conflict` or `tsig_key_in_use`); all errors `#/components/responses/Error`. `mapError` gains `errors.Is(err, tsigkey.ErrInUse)` → 409 `tsig_key_in_use`; `secrets.ErrUnconfigured` already maps to 503 `key_storage_unconfigured`, and `secrets.ErrBackendUnavailable` maps to 503 `key_backend_unavailable`. Permissions: `listTsigKeys` viewer, `createTsigKey` and `deleteTsigKey` admin (Go and `permissions.ts`). `api.Deps` gains `TSIGKeys *tsigkey.Service`; `main.go` passes `&tsigkey.Service{Store: st, Build: build, Box: box}` and sets `hub.TSIGKeys = control.NewTSIGKeys(st, box)`. Regenerate the API.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ ./mgmt/internal/api/ -count=1` — expect PASS.
+- [x] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ -run 'TestCreateStores|TestUnconfiguredKey|TestDeleteInUse|TestTSIGKeysLoad' -count=1` — expect FAIL with "undefined: tsigkey.Service".
+- [x] Implement `tsigkey.Service`: names lowercased, absolute, `^([a-z0-9_-]{1,63}\.)+$`; algorithms hmac-sha256/384/512; empty secret → random bytes of the HMAC output size (32/48/64); a provided secret must decode from base64 to 16..64 bytes; seal with `Box.Seal(secrets.TSIGPurpose(id, name, algorithm), secret)` (id generated in Go and inserted explicitly) before the transaction (an unconfigured box refuses without writing, as M3's `rpz.go` does); `Create`/`Delete` run in `snapshot.Mutate(ctx, s.Store, s.Build, actor, …)` with `auth.Change{Action: "createTsigKey"|"deleteTsigKey", TargetType: "tsig_key", TargetID: id, After: Key (never the secret)}`, so the new config version's `pg_notify` makes every hub re-offer `KeyMaterial`. `Delete` refuses when referenced by `zones.transfer_tsig_key_id`, `update_tsig_key_ids`, or any `notify_targets` / `primaries` element's `tsig_key_id` (`ErrInUse` → 409 `tsig_key_in_use`); stale revision → `store.ErrConflict`. `Secret` unseals one key for the management plane's own TSIG use (Tasks 10, 11).
+- [x] Implement `control/tsigkeys.go` like `rpztsig.go`: select every `tsig_keys` row ordered by name, unseal, map the algorithm to `controlv1.TsigAlgorithm`, digest = SHA-256 of the deterministic marshalling (cleared after hashing). In `hub.go` add `TSIGKeys *TSIGKeys`, `loadKeyMaterial` (logs errors, never keys) and `subscriber.offerKeyMaterial(km, digest)` (same replace-pending logic as `offerKeys`); `broadcast` offers it after the RPZ keys. In `server.go` `Connect` offers it before the snapshot (next to the RPZ keys) and the send loop drains `sub.keyMaterial` with the same priority as `sub.keys`, sending `ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}`.
+- [x] Add OpenAPI: `GET /tsig-keys` `listTsigKeys` → `[TsigKey{id,name,algorithm,revision,created_at}]`; `POST /tsig-keys` `createTsigKey` body `{name, algorithm, secret?}` → 201 `TsigKeyCreated` (TsigKey + `secret`), 400, 503; `DELETE /tsig-keys/{keyId}?revision=` `deleteTsigKey` → 204, 409 (`conflict` or `tsig_key_in_use`); all errors `#/components/responses/Error`. `mapError` gains `errors.Is(err, tsigkey.ErrInUse)` → 409 `tsig_key_in_use`; `secrets.ErrUnconfigured` already maps to 503 `key_storage_unconfigured`, and `secrets.ErrBackendUnavailable` maps to 503 `key_backend_unavailable`. Permissions: `listTsigKeys` viewer, `createTsigKey` and `deleteTsigKey` admin (Go and `permissions.ts`). `api.Deps` gains `TSIGKeys *tsigkey.Service`; `main.go` passes `&tsigkey.Service{Store: st, Build: build, Box: box}` and sets `hub.TSIGKeys = control.NewTSIGKeys(st, box)`. Regenerate the API.
+- [x] Run `scripts/dev-exec.sh go test ./mgmt/internal/tsigkey/ ./mgmt/internal/control/ ./mgmt/internal/api/ -count=1` — expect PASS.
 - [ ] Move the engine TSIG module: `git mv engine/src/recursor/rpz/tsig.rs engine/src/tsig.rs`, add `pub mod tsig;` to `engine/src/lib.rs`, and replace `pub mod tsig;` in `engine/src/recursor/rpz/mod.rs` with `pub use crate::tsig;` (M3's `use super::tsig::…` in `manager.rs`, `transfer.rs` and `transfer_tests.rs` keep compiling). Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz` — expect PASS (pure move).
 - [ ] Write the failing `engine/src/tsig_tests.rs` (declare `#[cfg(test)] mod tsig_tests;` in `lib.rs`):
 

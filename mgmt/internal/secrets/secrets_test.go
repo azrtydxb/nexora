@@ -96,3 +96,39 @@ func TestKEKFileValidation(t *testing.T) {
 		t.Fatalf("missing KEK file: %v", err)
 	}
 }
+
+func TestKEKFilePermissions(t *testing.T) {
+	p := writeKEK(t, 32)
+	if _, err := secrets.Open(secrets.Config{KEKFile: p}); err != nil {
+		t.Fatalf("0600 KEK file refused: %v", err)
+	}
+	// Group read is accepted only for the process's own group (Kubernetes fsGroup secret volumes).
+	if err := os.Chmod(p, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(p, -1, os.Getegid()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secrets.Open(secrets.Config{KEKFile: p}); err != nil {
+		t.Fatalf("0640 KEK file owned by the process group refused: %v", err)
+	}
+	for _, mode := range []os.FileMode{0o604, 0o644, 0o660, 0o602} {
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := secrets.Open(secrets.Config{KEKFile: p}); err == nil || !strings.Contains(err.Error(), "NEXORA_KEK_FILE") {
+			t.Fatalf("mode %o KEK file: %v", mode, err)
+		}
+	}
+	if os.Geteuid() == 0 { // only root can hand the file to a foreign group
+		if err := os.Chmod(p, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chown(p, -1, os.Getegid()+1); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := secrets.Open(secrets.Config{KEKFile: p}); err == nil {
+			t.Fatal("KEK file readable by a foreign group accepted")
+		}
+	}
+}

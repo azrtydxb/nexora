@@ -1072,6 +1072,35 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/Record" } }
         next_cursor: { type: [string, "null"] }
+    TsigKeyAlgorithm:
+      type: string
+      enum: [hmac-sha256, hmac-sha384, hmac-sha512]
+    TsigKey:
+      type: object
+      description: A TSIG key. The secret is write-only and returned once, on create.
+      required: [id, name, algorithm, revision, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: "Absolute key name, lowercase (e.g. xfr-key.)." }
+        algorithm: { $ref: "#/components/schemas/TsigKeyAlgorithm" }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    TsigKeyCreate:
+      type: object
+      required: [name, algorithm]
+      properties:
+        name: { type: string }
+        algorithm: { $ref: "#/components/schemas/TsigKeyAlgorithm" }
+        secret:
+          type: string
+          description: Base64 of 16..64 bytes; omitted, a random secret of the HMAC output size is generated.
+    TsigKeyCreated:
+      allOf:
+        - { $ref: "#/components/schemas/TsigKey" }
+        - type: object
+          required: [secret]
+          properties:
+            secret: { type: string, description: "Base64 secret; shown only in this response." }
 paths:
   /health:
     get:
@@ -2648,3 +2677,42 @@ paths:
             text/plain; charset=utf-8:
               schema: { type: string }
         "404": { $ref: "#/components/responses/Error" }
+  /tsig-keys:
+    get:
+      operationId: listTsigKeys
+      tags: [zones]
+      responses:
+        "200":
+          description: TSIG keys ordered by name, without secrets.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TsigKey" } }
+    post:
+      operationId: createTsigKey
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TsigKeyCreate" }
+      responses:
+        "201":
+          description: Created; the only response that carries the secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TsigKeyCreated" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /tsig-keys/{keyId}:
+    parameters:
+      - { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: deleteTsigKey
+      tags: [zones]
+      parameters:
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }

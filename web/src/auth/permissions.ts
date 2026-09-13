@@ -42,6 +42,7 @@ export const permissions = {
   getZone: "viewer",
   listZoneRecords: "viewer",
   exportZoneFile: "viewer",
+  listTsigKeys: "viewer",
 
   createUpstream: "operator",
   updateUpstream: "operator",
@@ -95,6 +96,8 @@ export const permissions = {
   createJoinToken: "admin",
   revokeJoinToken: "admin",
   deleteEngine: "admin",
+  createTsigKey: "admin",
+  deleteTsigKey: "admin",
 } as const satisfies Record<string, Role | "public">;
 
 export type OperationId = keyof typeof permissions;

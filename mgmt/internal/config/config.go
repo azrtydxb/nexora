@@ -24,6 +24,8 @@ type Config struct {
 	DNSTLSReloadInterval          time.Duration
 	// KEKFile holds the base64 32-byte key-encryption key sealing secrets at rest ("" = none).
 	KEKFile string
+	// PKCS#11 token holding DNSSEC keys and the envelope wrap key; all three or none.
+	PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -48,17 +50,20 @@ func Load(getenv func(string) string) (Config, error) {
 		return def
 	}
 	c := Config{
-		DatabaseURL:     getenv("NEXORA_DATABASE_URL"),
-		HTTPListen:      get("NEXORA_HTTP_LISTEN", ":8080"),
-		GRPCListen:      get("NEXORA_GRPC_LISTEN", ":9443"),
-		CACertFile:      getenv("NEXORA_CA_CERT_FILE"),
-		CAKeyFile:       getenv("NEXORA_CA_KEY_FILE"),
-		PublicURL:       getenv("NEXORA_PUBLIC_URL"),
-		QueryLogBackend: get("NEXORA_QUERYLOG_BACKEND", "builtin"),
-		OTLPEndpoint:    getenv("NEXORA_OTLP_ENDPOINT"),
-		DNSTLSCertFile:  getenv("NEXORA_DNS_TLS_CERT_FILE"),
-		DNSTLSKeyFile:   getenv("NEXORA_DNS_TLS_KEY_FILE"),
-		KEKFile:         getenv("NEXORA_KEK_FILE"),
+		DatabaseURL:      getenv("NEXORA_DATABASE_URL"),
+		HTTPListen:       get("NEXORA_HTTP_LISTEN", ":8080"),
+		GRPCListen:       get("NEXORA_GRPC_LISTEN", ":9443"),
+		CACertFile:       getenv("NEXORA_CA_CERT_FILE"),
+		CAKeyFile:        getenv("NEXORA_CA_KEY_FILE"),
+		PublicURL:        getenv("NEXORA_PUBLIC_URL"),
+		QueryLogBackend:  get("NEXORA_QUERYLOG_BACKEND", "builtin"),
+		OTLPEndpoint:     getenv("NEXORA_OTLP_ENDPOINT"),
+		DNSTLSCertFile:   getenv("NEXORA_DNS_TLS_CERT_FILE"),
+		DNSTLSKeyFile:    getenv("NEXORA_DNS_TLS_KEY_FILE"),
+		KEKFile:          getenv("NEXORA_KEK_FILE"),
+		PKCS11Module:     getenv("NEXORA_PKCS11_MODULE"),
+		PKCS11TokenLabel: getenv("NEXORA_PKCS11_TOKEN_LABEL"),
+		PKCS11PinFile:    getenv("NEXORA_PKCS11_PIN_FILE"),
 		OIDC: OIDCConfig{
 			Issuer:           getenv("NEXORA_OIDC_ISSUER"),
 			ClientID:         getenv("NEXORA_OIDC_CLIENT_ID"),
@@ -108,6 +113,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if (c.DNSTLSCertFile == "") != (c.DNSTLSKeyFile == "") {
 		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_CERT_FILE and NEXORA_DNS_TLS_KEY_FILE must be set together")
+	}
+	if (c.PKCS11Module == "") != (c.PKCS11TokenLabel == "") || (c.PKCS11Module == "") != (c.PKCS11PinFile == "") {
+		return Config{}, fmt.Errorf("NEXORA_PKCS11_MODULE, NEXORA_PKCS11_TOKEN_LABEL and NEXORA_PKCS11_PIN_FILE must be set together")
 	}
 	interval, err := time.ParseDuration(get("NEXORA_DNS_TLS_RELOAD_INTERVAL", "30s"))
 	if err != nil || interval < time.Second {

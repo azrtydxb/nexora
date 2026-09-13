@@ -39,6 +39,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
@@ -214,6 +215,29 @@ func caIssueDNS(args []string, stdout io.Writer) error {
 	return nil
 }
 
+// ensureHSMWrapKey creates the PKCS#11 envelope wrap key while holding a cluster-wide advisory
+// lock, so instances starting together never create two (no-op without a token).
+func ensureHSMWrapKey(ctx context.Context, st *store.Store, box *secrets.Box) error {
+	if !box.HasBackend(secrets.BackendPKCS11) {
+		return nil
+	}
+	conn, err := st.Pool.Acquire(ctx)
+	if err != nil {
+		return store.MapError(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "select pg_advisory_lock(hashtext('pkcs11_wrap_key'))"); err != nil {
+		return store.MapError(err)
+	}
+	defer func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "select pg_advisory_unlock(hashtext('pkcs11_wrap_key'))")
+	}()
+	if err := box.EnsureHSMWrapKey(ctx); err != nil {
+		return fmt.Errorf("PKCS#11 wrap key: %w", err)
+	}
+	return nil
+}
+
 func serve(ctx context.Context, stdout io.Writer) error {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -241,15 +265,20 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if _, err := snapshot.EnsureInitial(ctx, st, build); err != nil {
 		return err
 	}
-	box, err := secrets.LoadKEKFile(cfg.KEKFile)
+	box, err := secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel, PKCS11PinFile: cfg.PKCS11PinFile})
 	if err != nil {
 		return err
 	}
+	defer func() { _ = box.Close() }()
 	if !box.Configured() {
-		log.Printf("key storage: none configured; RPZ TSIG secrets are refused")
+		log.Printf("key storage: none configured; RPZ TSIG secrets, TSIG keys and DNSSEC signing are refused")
+	}
+	if err := ensureHSMWrapKey(ctx, st, box); err != nil {
+		return err
 	}
 	hub := control.NewHub(st, instanceID)
 	hub.RPZTsig = control.NewRPZTsig(st, box)
+	hub.TSIGKeys = control.NewTSIGKeys(st, box)
 	go func() { _ = hub.Run(ctx) }()
 	go snapshot.RunNTAExpiry(ctx, st, build)
 
@@ -285,7 +314,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
-			Zones: &zone.Service{Store: st, Build: build, Now: time.Now},
+			Zones: &zone.Service{Store: st, Build: build, Now: time.Now}, TSIGKeys: &tsigkey.Service{Store: st, Build: build, Box: box},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

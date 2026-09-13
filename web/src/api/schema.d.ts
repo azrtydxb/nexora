@@ -895,6 +895,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tsig-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listTsigKeys"];
+        put?: never;
+        post: operations["createTsigKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tsig-keys/{keyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteTsigKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1622,6 +1656,30 @@ export interface components {
         RecordPage: {
             items: components["schemas"]["Record"][];
             next_cursor: string | null;
+        };
+        /** @enum {string} */
+        TsigKeyAlgorithm: "hmac-sha256" | "hmac-sha384" | "hmac-sha512";
+        /** @description A TSIG key. The secret is write-only and returned once, on create. */
+        TsigKey: {
+            /** Format: uuid */
+            id: string;
+            /** @description Absolute key name, lowercase (e.g. xfr-key.). */
+            name: string;
+            algorithm: components["schemas"]["TsigKeyAlgorithm"];
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        TsigKeyCreate: {
+            name: string;
+            algorithm: components["schemas"]["TsigKeyAlgorithm"];
+            /** @description Base64 of 16..64 bytes; omitted, a random secret of the HMAC output size is generated. */
+            secret?: string;
+        };
+        TsigKeyCreated: components["schemas"]["TsigKey"] & {
+            /** @description Base64 secret; shown only in this response. */
+            secret: string;
         };
     };
     responses: {
@@ -3749,6 +3807,77 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+        };
+    };
+    listTsigKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description TSIG keys ordered by name, without secrets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsigKey"][];
+                };
+            };
+        };
+    };
+    createTsigKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TsigKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Created; the only response that carries the secret. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TsigKeyCreated"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deleteTsigKey: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                keyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
 }

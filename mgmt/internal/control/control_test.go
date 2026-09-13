@@ -38,7 +38,10 @@ type fixture struct {
 	ctx  context.Context
 }
 
-func setup(t *testing.T, instances int) *fixture {
+func setup(t *testing.T, instances int) *fixture { return setupHub(t, instances, nil) }
+
+// setupHub is setup with a hook that configures each instance's hub before it runs.
+func setupHub(t *testing.T, instances int, adjust func(*store.Store, *control.Hub)) *fixture {
 	env := harness.New(t)
 	pg := env.StartPostgres()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -64,6 +67,9 @@ func setup(t *testing.T, instances int) *fixture {
 		id := control.NewInstanceID()
 		go control.RunInstanceHeartbeat(ctx, st, id)
 		hub := control.NewHub(st, id)
+		if adjust != nil {
+			adjust(st, hub)
+		}
 		go func() { _ = hub.Run(ctx) }()
 		tlsCfg, err := control.TLSConfig(ca, []string{"127.0.0.1"})
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/protobuf/proto"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
@@ -27,6 +28,8 @@ type Hub struct {
 
 	// RPZTsig, when set, supplies the RPZ TSIG keys pushed with every broadcast (nil: none are sent).
 	RPZTsig *RPZTsig
+	// TSIGKeys, when set, supplies the hosted-zone TSIG keys (KeyMaterial) pushed with every broadcast.
+	TSIGKeys *TSIGKeys
 
 	mu   sync.Mutex
 	subs map[*subscriber]struct{}
@@ -38,15 +41,36 @@ type subscriber struct {
 	engineID string
 	out      chan *controlv1.ServerMessage
 	keys     chan *controlv1.RpzTsigKeys // at most one pending key set; a newer set replaces it
+	// keyMaterial holds at most one pending KeyMaterial, owned by this subscriber: the send loop
+	// clears its secrets once sent and a replaced pending set is cleared at once.
+	keyMaterial chan *controlv1.KeyMaterial
 
-	mu         sync.Mutex
-	version    uint64 // highest version sent, applied or rejected
-	keysDigest string // digest of the last key set queued ("" = none)
+	mu                sync.Mutex
+	version           uint64 // highest version sent, applied or rejected
+	keysDigest        string // digest of the last key set queued ("" = none)
+	keyMaterialDigest string // digest of the last KeyMaterial queued ("" = none)
 }
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
 	return &subscriber{engineID: engineID, version: applied, out: make(chan *controlv1.ServerMessage, 1),
-		keys: make(chan *controlv1.RpzTsigKeys, 1)}
+		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1)}
+}
+
+// offerKeyMaterial queues a private copy of km unless this engine was already given the set with
+// digest. The caller keeps ownership of km.
+func (s *subscriber) offerKeyMaterial(km *controlv1.KeyMaterial, digest string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if digest == s.keyMaterialDigest {
+		return
+	}
+	s.keyMaterialDigest = digest
+	select {
+	case old := <-s.keyMaterial:
+		clearKeyMaterial(old)
+	default:
+	}
+	s.keyMaterial <- proto.Clone(km).(*controlv1.KeyMaterial)
 }
 
 // offerKeys queues k unless this engine was already given the key set with digest.
@@ -191,6 +215,12 @@ func (h *Hub) broadcast(ctx context.Context) {
 			s.offerKeys(keys, digest)
 		}
 	}
+	if km, digest, ok := h.loadKeyMaterial(ctx); ok {
+		for _, s := range subs {
+			s.offerKeyMaterial(km, digest)
+		}
+		clearKeyMaterial(km)
+	}
 }
 
 // loadKeys loads the RPZ TSIG key set; ok is false without a loader or on error (logged, never the keys).
@@ -206,4 +236,20 @@ func (h *Hub) loadKeys(ctx context.Context) (*controlv1.RpzTsigKeys, string, boo
 		return nil, "", false
 	}
 	return keys, digest, true
+}
+
+// loadKeyMaterial loads the hosted-zone TSIG key set; ok is false without a loader or on error
+// (logged, never the keys). The caller clears the returned set.
+func (h *Hub) loadKeyMaterial(ctx context.Context) (*controlv1.KeyMaterial, string, bool) {
+	if h.TSIGKeys == nil {
+		return nil, "", false
+	}
+	km, digest, err := h.TSIGKeys.Load(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("load tsig key material", "err", err)
+		}
+		return nil, "", false
+	}
+	return km, digest, true
 }

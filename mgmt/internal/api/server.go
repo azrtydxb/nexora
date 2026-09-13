@@ -21,6 +21,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
 	"github.com/piwi3910/nexora/mgmt/internal/webui"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
@@ -50,6 +51,7 @@ type Deps struct {
 	DNSTLS            *control.DNSTLSFanout // optional: the DNS serving certificate this instance pushes
 	Secrets           *secrets.Box          // key storage for RPZ TSIG secrets; nil behaves as unconfigured
 	Zones             *zone.Service         // hosted zones and records
+	TSIGKeys          *tsigkey.Service      // TSIG keys of hosted zones
 }
 
 type handlers struct{ d Deps }
@@ -211,6 +213,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeZoneValidation(w, zve)
 	case errors.Is(err, zone.ErrReadOnly):
 		writeError(w, http.StatusUnprocessableEntity, "zone_read_only", zone.ErrReadOnly.Error())
+	case errors.Is(err, tsigkey.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, tsigkey.ErrInUse):
+		writeError(w, http.StatusConflict, "tsig_key_in_use", "the TSIG key is referenced by a zone")
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	case errors.Is(err, store.ErrConflict):
@@ -228,6 +234,9 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_request", querylog.ErrInvalidCursor.Error())
 	case errors.Is(err, secrets.ErrUnconfigured):
 		writeError(w, http.StatusServiceUnavailable, "key_storage_unconfigured", "Key storage is not configured on the management plane (NEXORA_KEK_FILE)")
+	case errors.Is(err, secrets.ErrBackendUnavailable):
+		slog.Warn("key storage", "err", err) // never carries key material
+		writeError(w, http.StatusServiceUnavailable, "key_backend_unavailable", "The requested key storage backend is not configured on this management plane")
 	case errors.Is(err, store.ErrLastRootAnchor):
 		writeError(w, http.StatusConflict, "last_root_anchor", store.ErrLastRootAnchor.Error())
 	case errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "22") || pgErr.Code == "23514" || pgErr.Code == "23502"):

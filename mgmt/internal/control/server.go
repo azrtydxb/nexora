@@ -138,6 +138,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	if keys, digest, ok := s.hub.loadKeys(ctx); ok {
 		sub.offerKeys(keys, digest)
 	}
+	if km, digest, ok := s.hub.loadKeyMaterial(ctx); ok {
+		sub.offerKeyMaterial(km, digest)
+		clearKeyMaterial(km)
+	}
 	// Registered before reading the latest version, so a version published in between is not missed.
 	version, snap, err := snapshot.Latest(ctx, s.st.Pool)
 	switch {
@@ -166,6 +170,11 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 					return
 				}
 				continue
+			case km := <-sub.keyMaterial:
+				if !sendKeyMaterial(stream, km) {
+					return
+				}
+				continue
 			default:
 			}
 			select {
@@ -173,6 +182,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				return
 			case k := <-sub.keys:
 				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}); err != nil {
+					return
+				}
+			case km := <-sub.keyMaterial:
+				if !sendKeyMaterial(stream, km) {
 					return
 				}
 			case msg := <-sub.out:
@@ -190,6 +203,12 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	stopSend()
 	<-sendDone
 	return err
+}
+
+// sendKeyMaterial sends km (Send marshals synchronously) and then clears its secrets.
+func sendKeyMaterial(stream controlv1.EngineControl_ConnectServer, km *controlv1.KeyMaterial) bool {
+	defer clearKeyMaterial(km)
+	return stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}) == nil
 }
 
 func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_ConnectServer, sub *subscriber) error {

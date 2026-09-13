@@ -160,11 +160,17 @@ func checkKeys(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) error {
 	for id := range uniq {
 		list = append(list, id)
 	}
-	var n int
-	if err := tx.QueryRow(ctx, "SELECT count(*) FROM tsig_keys WHERE id = ANY($1)", list).Scan(&n); err != nil {
+	// FOR SHARE: a concurrent tsigkey.Delete (FOR UPDATE, then its in-use check) waits for this
+	// transaction and then sees the reference.
+	rows, err := tx.Query(ctx, "SELECT id FROM tsig_keys WHERE id = ANY($1) FOR SHARE", list)
+	if err != nil {
 		return err
 	}
-	if n != len(list) {
+	found, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	if len(found) != len(list) {
 		return invalid("unknown_tsig_key", "a referenced TSIG key does not exist")
 	}
 	return nil
