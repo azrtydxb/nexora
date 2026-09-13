@@ -1,0 +1,22 @@
+[package]
+name = "nexora-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nexora-engine = { path = ".." }
+
+[[bin]]
+name = "parse_query"
+path = "fuzz_targets/parse_query.rs"
+test = false
+doc = false
+bench = false
+
+# Own workspace: `exclude` in the root manifest does not apply under the `engine` member.
+[workspace]
