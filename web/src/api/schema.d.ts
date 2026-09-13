@@ -788,6 +788,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/zones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listZones"];
+        put?: never;
+        post: operations["createZone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getZone"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteZone"];
+        options?: never;
+        head?: never;
+        patch: operations["updateZone"];
+        trace?: never;
+    };
+    "/zones/{zoneId}/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["listZoneRecords"];
+        put?: never;
+        post: operations["createZoneRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}/records/{recordId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateZoneRecord"];
+        post?: never;
+        delete: operations["deleteZoneRecord"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importZoneFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["exportZoneFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -795,6 +902,11 @@ export interface components {
         Error: {
             code: string;
             message: string;
+            /** @description Per-line problems of submitted zone data. */
+            details?: {
+                line: number;
+                message: string;
+            }[];
         };
         Health: {
             /** @enum {string} */
@@ -1355,6 +1467,161 @@ export interface components {
         };
         RpzZoneOrder: {
             ids: string[];
+        };
+        ZoneEndpoint: {
+            /** @description ip:port */
+            address: string;
+            /** Format: uuid */
+            tsig_key_id?: string | null;
+        };
+        ZoneTransfer: {
+            /** @description Clients allowed to transfer the zone; empty refuses transfers. */
+            allow_cidrs: string[];
+            /** Format: uuid */
+            tsig_key_id?: string | null;
+        };
+        ZoneUpdatePolicy: {
+            /** @description TSIG keys allowed to send dynamic updates; empty refuses updates. */
+            tsig_key_ids: string[];
+        };
+        ZoneSOA: {
+            mname: string;
+            rname: string;
+            /** Format: int64 */
+            refresh: number;
+            /** Format: int64 */
+            retry: number;
+            /** Format: int64 */
+            expire: number;
+            /** Format: int64 */
+            minimum: number;
+            /** Format: int64 */
+            ttl: number;
+        };
+        /** @description Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update. */
+        ZoneSOAInput: {
+            mname: string;
+            rname: string;
+            /** Format: int64 */
+            refresh?: number;
+            /** Format: int64 */
+            retry?: number;
+            /** Format: int64 */
+            expire?: number;
+            /** Format: int64 */
+            minimum?: number;
+            /** Format: int64 */
+            ttl?: number;
+        };
+        ZoneSecondaryStatus: {
+            /** Format: date-time */
+            last_refresh_at: string | null;
+            /** Format: date-time */
+            last_success_at: string | null;
+            /** Format: date-time */
+            next_refresh_at: string | null;
+            /** Format: date-time */
+            expires_at: string | null;
+            expired: boolean;
+            last_error: string;
+            last_trigger: string;
+        };
+        Zone: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            kind: "primary" | "secondary";
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            serial: number;
+            /** Format: int64 */
+            default_ttl: number;
+            soa: components["schemas"]["ZoneSOA"];
+            transfer: components["schemas"]["ZoneTransfer"];
+            notify: components["schemas"]["ZoneEndpoint"][];
+            update: components["schemas"]["ZoneUpdatePolicy"];
+            primaries: components["schemas"]["ZoneEndpoint"][];
+            /** @description Present for secondary zones only. */
+            secondary_status?: components["schemas"]["ZoneSecondaryStatus"];
+            dnssec_enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ZoneCreate: {
+            /** @description Absolute zone name. */
+            name: string;
+            /** @enum {string} */
+            kind: "primary" | "secondary";
+            /** Format: int64 */
+            default_ttl: number;
+            soa: components["schemas"]["ZoneSOAInput"];
+            /** @description Primary zones: at least one apex NS target. */
+            nameservers?: string[];
+            /** @description Secondary zones: at least one primary. */
+            primaries?: components["schemas"]["ZoneEndpoint"][];
+            transfer?: components["schemas"]["ZoneTransfer"];
+            notify?: components["schemas"]["ZoneEndpoint"][];
+            update?: components["schemas"]["ZoneUpdatePolicy"];
+        };
+        ZoneUpdate: {
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            default_ttl?: number;
+            soa?: components["schemas"]["ZoneSOAInput"];
+            primaries?: components["schemas"]["ZoneEndpoint"][];
+            transfer?: components["schemas"]["ZoneTransfer"];
+            notify?: components["schemas"]["ZoneEndpoint"][];
+            update?: components["schemas"]["ZoneUpdatePolicy"];
+        };
+        RecordInput: {
+            /** @description Absolute owner name inside the zone. */
+            name: string;
+            /** @enum {string} */
+            type: "A" | "AAAA" | "CAA" | "CNAME" | "DNAME" | "DS" | "HTTPS" | "LOC" | "MX" | "NAPTR" | "NS" | "PTR" | "SRV" | "SSHFP" | "SVCB" | "TLSA" | "TXT";
+            /** Format: int64 */
+            ttl: number;
+            /** @description RDATA in presentation format. */
+            data: string;
+        };
+        RecordUpdate: {
+            name: string;
+            /** @enum {string} */
+            type: "A" | "AAAA" | "CAA" | "CNAME" | "DNAME" | "DS" | "HTTPS" | "LOC" | "MX" | "NAPTR" | "NS" | "PTR" | "SRV" | "SSHFP" | "SVCB" | "TLSA" | "TXT";
+            /** Format: int64 */
+            ttl: number;
+            data: string;
+            /** Format: int64 */
+            revision: number;
+        };
+        Record: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            type: string;
+            /** Format: int64 */
+            ttl: number;
+            data: string;
+            /** Format: int64 */
+            revision: number;
+        };
+        ZoneImport: {
+            /** Format: int64 */
+            revision: number;
+            /** @description BIND master file; $INCLUDE and $GENERATE are refused. Request bodies may be up to 64 MiB. */
+            content: string;
+        };
+        ZoneImportResult: {
+            zone: components["schemas"]["Zone"];
+            records_imported: number;
+        };
+        RecordPage: {
+            items: components["schemas"]["Record"][];
+            next_cursor: string | null;
         };
     };
     responses: {
@@ -3187,6 +3454,301 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    listZones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hosted zones ordered by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Zone"][];
+                };
+            };
+        };
+    };
+    createZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneCreate"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Zone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The zone. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Zone"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteZone: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    updateZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Zone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listZoneRecords: {
+        parameters: {
+            query?: {
+                name?: string;
+                type?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of records ordered by owner and type. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    createZoneRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Record"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateZoneRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Record"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deleteZoneRecord: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                zoneId: string;
+                recordId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    importZoneFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneImport"];
+            };
+        };
+        responses: {
+            /** @description Every record and the SOA fields replaced by the file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZoneImportResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    exportZoneFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The zone as a BIND master file. */
+            200: {
+                headers: {
+                    "Content-Disposition": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain; charset=utf-8": string;
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
 }

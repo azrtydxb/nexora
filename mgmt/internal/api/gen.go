@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -233,6 +234,132 @@ func (e QueryLogRecordFilter) Valid() bool {
 	case QueryLogRecordFilterNone:
 		return true
 	case QueryLogRecordFilterRewritten:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecordInputType.
+const (
+	RecordInputTypeA     RecordInputType = "A"
+	RecordInputTypeAAAA  RecordInputType = "AAAA"
+	RecordInputTypeCAA   RecordInputType = "CAA"
+	RecordInputTypeCNAME RecordInputType = "CNAME"
+	RecordInputTypeDNAME RecordInputType = "DNAME"
+	RecordInputTypeDS    RecordInputType = "DS"
+	RecordInputTypeHTTPS RecordInputType = "HTTPS"
+	RecordInputTypeLOC   RecordInputType = "LOC"
+	RecordInputTypeMX    RecordInputType = "MX"
+	RecordInputTypeNAPTR RecordInputType = "NAPTR"
+	RecordInputTypeNS    RecordInputType = "NS"
+	RecordInputTypePTR   RecordInputType = "PTR"
+	RecordInputTypeSRV   RecordInputType = "SRV"
+	RecordInputTypeSSHFP RecordInputType = "SSHFP"
+	RecordInputTypeSVCB  RecordInputType = "SVCB"
+	RecordInputTypeTLSA  RecordInputType = "TLSA"
+	RecordInputTypeTXT   RecordInputType = "TXT"
+)
+
+// Valid indicates whether the value is a known member of the RecordInputType enum.
+func (e RecordInputType) Valid() bool {
+	switch e {
+	case RecordInputTypeA:
+		return true
+	case RecordInputTypeAAAA:
+		return true
+	case RecordInputTypeCAA:
+		return true
+	case RecordInputTypeCNAME:
+		return true
+	case RecordInputTypeDNAME:
+		return true
+	case RecordInputTypeDS:
+		return true
+	case RecordInputTypeHTTPS:
+		return true
+	case RecordInputTypeLOC:
+		return true
+	case RecordInputTypeMX:
+		return true
+	case RecordInputTypeNAPTR:
+		return true
+	case RecordInputTypeNS:
+		return true
+	case RecordInputTypePTR:
+		return true
+	case RecordInputTypeSRV:
+		return true
+	case RecordInputTypeSSHFP:
+		return true
+	case RecordInputTypeSVCB:
+		return true
+	case RecordInputTypeTLSA:
+		return true
+	case RecordInputTypeTXT:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RecordUpdateType.
+const (
+	RecordUpdateTypeA     RecordUpdateType = "A"
+	RecordUpdateTypeAAAA  RecordUpdateType = "AAAA"
+	RecordUpdateTypeCAA   RecordUpdateType = "CAA"
+	RecordUpdateTypeCNAME RecordUpdateType = "CNAME"
+	RecordUpdateTypeDNAME RecordUpdateType = "DNAME"
+	RecordUpdateTypeDS    RecordUpdateType = "DS"
+	RecordUpdateTypeHTTPS RecordUpdateType = "HTTPS"
+	RecordUpdateTypeLOC   RecordUpdateType = "LOC"
+	RecordUpdateTypeMX    RecordUpdateType = "MX"
+	RecordUpdateTypeNAPTR RecordUpdateType = "NAPTR"
+	RecordUpdateTypeNS    RecordUpdateType = "NS"
+	RecordUpdateTypePTR   RecordUpdateType = "PTR"
+	RecordUpdateTypeSRV   RecordUpdateType = "SRV"
+	RecordUpdateTypeSSHFP RecordUpdateType = "SSHFP"
+	RecordUpdateTypeSVCB  RecordUpdateType = "SVCB"
+	RecordUpdateTypeTLSA  RecordUpdateType = "TLSA"
+	RecordUpdateTypeTXT   RecordUpdateType = "TXT"
+)
+
+// Valid indicates whether the value is a known member of the RecordUpdateType enum.
+func (e RecordUpdateType) Valid() bool {
+	switch e {
+	case RecordUpdateTypeA:
+		return true
+	case RecordUpdateTypeAAAA:
+		return true
+	case RecordUpdateTypeCAA:
+		return true
+	case RecordUpdateTypeCNAME:
+		return true
+	case RecordUpdateTypeDNAME:
+		return true
+	case RecordUpdateTypeDS:
+		return true
+	case RecordUpdateTypeHTTPS:
+		return true
+	case RecordUpdateTypeLOC:
+		return true
+	case RecordUpdateTypeMX:
+		return true
+	case RecordUpdateTypeNAPTR:
+		return true
+	case RecordUpdateTypeNS:
+		return true
+	case RecordUpdateTypePTR:
+		return true
+	case RecordUpdateTypeSRV:
+		return true
+	case RecordUpdateTypeSSHFP:
+		return true
+	case RecordUpdateTypeSVCB:
+		return true
+	case RecordUpdateTypeTLSA:
+		return true
+	case RecordUpdateTypeTXT:
 		return true
 	default:
 		return false
@@ -629,6 +756,42 @@ func (e UserSource) Valid() bool {
 	}
 }
 
+// Defines values for ZoneKind.
+const (
+	ZoneKindPrimary   ZoneKind = "primary"
+	ZoneKindSecondary ZoneKind = "secondary"
+)
+
+// Valid indicates whether the value is a known member of the ZoneKind enum.
+func (e ZoneKind) Valid() bool {
+	switch e {
+	case ZoneKindPrimary:
+		return true
+	case ZoneKindSecondary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneCreateKind.
+const (
+	ZoneCreateKindPrimary   ZoneCreateKind = "primary"
+	ZoneCreateKindSecondary ZoneCreateKind = "secondary"
+)
+
+// Valid indicates whether the value is a known member of the ZoneCreateKind enum.
+func (e ZoneCreateKind) Valid() bool {
+	switch e {
+	case ZoneCreateKindPrimary:
+		return true
+	case ZoneCreateKindSecondary:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessControl defines model for AccessControl.
 type AccessControl struct {
 	AllowCidrs []string `json:"allow_cidrs"`
@@ -796,7 +959,13 @@ type EngineStatus string
 
 // Error defines model for Error.
 type Error struct {
-	Code    string `json:"code"`
+	Code string `json:"code"`
+
+	// Details Per-line problems of submitted zone data.
+	Details *[]struct {
+		Line    int    `json:"line"`
+		Message string `json:"message"`
+	} `json:"details,omitempty"`
 	Message string `json:"message"`
 }
 
@@ -995,6 +1164,48 @@ type QueryLogRecordCache string
 
 // QueryLogRecordFilter defines model for QueryLogRecord.Filter.
 type QueryLogRecordFilter string
+
+// Record defines model for Record.
+type Record struct {
+	Data     string             `json:"data"`
+	Id       openapi_types.UUID `json:"id"`
+	Name     string             `json:"name"`
+	Revision int64              `json:"revision"`
+	Ttl      int64              `json:"ttl"`
+	Type     string             `json:"type"`
+}
+
+// RecordInput defines model for RecordInput.
+type RecordInput struct {
+	// Data RDATA in presentation format.
+	Data string `json:"data"`
+
+	// Name Absolute owner name inside the zone.
+	Name string          `json:"name"`
+	Ttl  int64           `json:"ttl"`
+	Type RecordInputType `json:"type"`
+}
+
+// RecordInputType defines model for RecordInput.Type.
+type RecordInputType string
+
+// RecordPage defines model for RecordPage.
+type RecordPage struct {
+	Items      []Record `json:"items"`
+	NextCursor *string  `json:"next_cursor"`
+}
+
+// RecordUpdate defines model for RecordUpdate.
+type RecordUpdate struct {
+	Data     string           `json:"data"`
+	Name     string           `json:"name"`
+	Revision int64            `json:"revision"`
+	Ttl      int64            `json:"ttl"`
+	Type     RecordUpdateType `json:"type"`
+}
+
+// RecordUpdateType defines model for RecordUpdate.Type.
+type RecordUpdateType string
 
 // ResolutionSettings defines model for ResolutionSettings.
 type ResolutionSettings struct {
@@ -1283,6 +1494,133 @@ type UserUpdate struct {
 	Role     Role    `json:"role"`
 }
 
+// Zone defines model for Zone.
+type Zone struct {
+	CreatedAt     time.Time          `json:"created_at"`
+	DefaultTtl    int64              `json:"default_ttl"`
+	DnssecEnabled bool               `json:"dnssec_enabled"`
+	Id            openapi_types.UUID `json:"id"`
+	Kind          ZoneKind           `json:"kind"`
+	Name          string             `json:"name"`
+	Notify        []ZoneEndpoint     `json:"notify"`
+	Primaries     []ZoneEndpoint     `json:"primaries"`
+	Revision      int64              `json:"revision"`
+
+	// SecondaryStatus Present for secondary zones only.
+	SecondaryStatus *ZoneSecondaryStatus `json:"secondary_status,omitempty"`
+	Serial          int64                `json:"serial"`
+	Soa             ZoneSOA              `json:"soa"`
+	Transfer        ZoneTransfer         `json:"transfer"`
+	Update          ZoneUpdatePolicy     `json:"update"`
+	UpdatedAt       time.Time            `json:"updated_at"`
+}
+
+// ZoneKind defines model for Zone.Kind.
+type ZoneKind string
+
+// ZoneCreate defines model for ZoneCreate.
+type ZoneCreate struct {
+	DefaultTtl int64          `json:"default_ttl"`
+	Kind       ZoneCreateKind `json:"kind"`
+
+	// Name Absolute zone name.
+	Name string `json:"name"`
+
+	// Nameservers Primary zones: at least one apex NS target.
+	Nameservers *[]string       `json:"nameservers,omitempty"`
+	Notify      *[]ZoneEndpoint `json:"notify,omitempty"`
+
+	// Primaries Secondary zones: at least one primary.
+	Primaries *[]ZoneEndpoint `json:"primaries,omitempty"`
+
+	// Soa Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update.
+	Soa      ZoneSOAInput      `json:"soa"`
+	Transfer *ZoneTransfer     `json:"transfer,omitempty"`
+	Update   *ZoneUpdatePolicy `json:"update,omitempty"`
+}
+
+// ZoneCreateKind defines model for ZoneCreate.Kind.
+type ZoneCreateKind string
+
+// ZoneEndpoint defines model for ZoneEndpoint.
+type ZoneEndpoint struct {
+	// Address ip:port
+	Address   string              `json:"address"`
+	TsigKeyId *openapi_types.UUID `json:"tsig_key_id,omitempty"`
+}
+
+// ZoneImport defines model for ZoneImport.
+type ZoneImport struct {
+	// Content BIND master file; $INCLUDE and $GENERATE are refused. Request bodies may be up to 64 MiB.
+	Content  string `json:"content"`
+	Revision int64  `json:"revision"`
+}
+
+// ZoneImportResult defines model for ZoneImportResult.
+type ZoneImportResult struct {
+	RecordsImported int  `json:"records_imported"`
+	Zone            Zone `json:"zone"`
+}
+
+// ZoneSOA defines model for ZoneSOA.
+type ZoneSOA struct {
+	Expire  int64  `json:"expire"`
+	Minimum int64  `json:"minimum"`
+	Mname   string `json:"mname"`
+	Refresh int64  `json:"refresh"`
+	Retry   int64  `json:"retry"`
+	Rname   string `json:"rname"`
+	Ttl     int64  `json:"ttl"`
+}
+
+// ZoneSOAInput Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update.
+type ZoneSOAInput struct {
+	Expire  *int64 `json:"expire,omitempty"`
+	Minimum *int64 `json:"minimum,omitempty"`
+	Mname   string `json:"mname"`
+	Refresh *int64 `json:"refresh,omitempty"`
+	Retry   *int64 `json:"retry,omitempty"`
+	Rname   string `json:"rname"`
+	Ttl     *int64 `json:"ttl,omitempty"`
+}
+
+// ZoneSecondaryStatus defines model for ZoneSecondaryStatus.
+type ZoneSecondaryStatus struct {
+	Expired       bool       `json:"expired"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	LastError     string     `json:"last_error"`
+	LastRefreshAt *time.Time `json:"last_refresh_at"`
+	LastSuccessAt *time.Time `json:"last_success_at"`
+	LastTrigger   string     `json:"last_trigger"`
+	NextRefreshAt *time.Time `json:"next_refresh_at"`
+}
+
+// ZoneTransfer defines model for ZoneTransfer.
+type ZoneTransfer struct {
+	// AllowCidrs Clients allowed to transfer the zone; empty refuses transfers.
+	AllowCidrs []string            `json:"allow_cidrs"`
+	TsigKeyId  *openapi_types.UUID `json:"tsig_key_id,omitempty"`
+}
+
+// ZoneUpdate defines model for ZoneUpdate.
+type ZoneUpdate struct {
+	DefaultTtl *int64          `json:"default_ttl,omitempty"`
+	Notify     *[]ZoneEndpoint `json:"notify,omitempty"`
+	Primaries  *[]ZoneEndpoint `json:"primaries,omitempty"`
+	Revision   int64           `json:"revision"`
+
+	// Soa Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update.
+	Soa      *ZoneSOAInput     `json:"soa,omitempty"`
+	Transfer *ZoneTransfer     `json:"transfer,omitempty"`
+	Update   *ZoneUpdatePolicy `json:"update,omitempty"`
+}
+
+// ZoneUpdatePolicy defines model for ZoneUpdatePolicy.
+type ZoneUpdatePolicy struct {
+	// TsigKeyIds TSIG keys allowed to send dynamic updates; empty refuses updates.
+	TsigKeyIds []openapi_types.UUID `json:"tsig_key_ids"`
+}
+
 // Id defines model for Id.
 type Id = openapi_types.UUID
 
@@ -1363,6 +1701,24 @@ type DeleteUpstreamParams struct {
 
 // DeleteUserParams defines parameters for DeleteUser.
 type DeleteUserParams struct {
+	Revision Revision `form:"revision" json:"revision"`
+}
+
+// DeleteZoneParams defines parameters for DeleteZone.
+type DeleteZoneParams struct {
+	Revision Revision `form:"revision" json:"revision"`
+}
+
+// ListZoneRecordsParams defines parameters for ListZoneRecords.
+type ListZoneRecordsParams struct {
+	Name   *string `form:"name,omitempty" json:"name,omitempty"`
+	Type   *string `form:"type,omitempty" json:"type,omitempty"`
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// DeleteZoneRecordParams defines parameters for DeleteZoneRecord.
+type DeleteZoneRecordParams struct {
 	Revision Revision `form:"revision" json:"revision"`
 }
 
@@ -1449,6 +1805,21 @@ type CreateUserJSONRequestBody = UserCreate
 
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UserUpdate
+
+// CreateZoneJSONRequestBody defines body for CreateZone for application/json ContentType.
+type CreateZoneJSONRequestBody = ZoneCreate
+
+// UpdateZoneJSONRequestBody defines body for UpdateZone for application/json ContentType.
+type UpdateZoneJSONRequestBody = ZoneUpdate
+
+// ImportZoneFileJSONRequestBody defines body for ImportZoneFile for application/json ContentType.
+type ImportZoneFileJSONRequestBody = ZoneImport
+
+// CreateZoneRecordJSONRequestBody defines body for CreateZoneRecord for application/json ContentType.
+type CreateZoneRecordJSONRequestBody = RecordInput
+
+// UpdateZoneRecordJSONRequestBody defines body for UpdateZoneRecord for application/json ContentType.
+type UpdateZoneRecordJSONRequestBody = RecordUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -1683,6 +2054,39 @@ type ServerInterface interface {
 
 	// (PUT /users/{id})
 	UpdateUser(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /zones)
+	ListZones(w http.ResponseWriter, r *http.Request)
+
+	// (POST /zones)
+	CreateZone(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /zones/{zoneId})
+	DeleteZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params DeleteZoneParams)
+
+	// (GET /zones/{zoneId})
+	GetZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (PATCH /zones/{zoneId})
+	UpdateZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (GET /zones/{zoneId}/export)
+	ExportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (POST /zones/{zoneId}/import)
+	ImportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (GET /zones/{zoneId}/records)
+	ListZoneRecords(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params ListZoneRecordsParams)
+
+	// (POST /zones/{zoneId}/records)
+	CreateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (DELETE /zones/{zoneId}/records/{recordId})
+	DeleteZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID, params DeleteZoneRecordParams)
+
+	// (PUT /zones/{zoneId}/records/{recordId})
+	UpdateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -2071,6 +2475,61 @@ func (_ Unimplemented) DeleteUser(w http.ResponseWriter, r *http.Request, id Id,
 
 // (PUT /users/{id})
 func (_ Unimplemented) UpdateUser(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /zones)
+func (_ Unimplemented) ListZones(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /zones)
+func (_ Unimplemented) CreateZone(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /zones/{zoneId})
+func (_ Unimplemented) DeleteZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params DeleteZoneParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /zones/{zoneId})
+func (_ Unimplemented) GetZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /zones/{zoneId})
+func (_ Unimplemented) UpdateZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /zones/{zoneId}/export)
+func (_ Unimplemented) ExportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /zones/{zoneId}/import)
+func (_ Unimplemented) ImportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /zones/{zoneId}/records)
+func (_ Unimplemented) ListZoneRecords(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params ListZoneRecordsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /zones/{zoneId}/records)
+func (_ Unimplemented) CreateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /zones/{zoneId}/records/{recordId})
+func (_ Unimplemented) DeleteZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID, params DeleteZoneRecordParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /zones/{zoneId}/records/{recordId})
+func (_ Unimplemented) UpdateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3842,6 +4301,373 @@ func (siw *ServerInterfaceWrapper) UpdateUser(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListZones operation middleware
+func (siw *ServerInterfaceWrapper) ListZones(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListZones(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateZone operation middleware
+func (siw *ServerInterfaceWrapper) CreateZone(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateZone(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteZone operation middleware
+func (siw *ServerInterfaceWrapper) DeleteZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteZoneParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteZone(w, r, zoneId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetZone operation middleware
+func (siw *ServerInterfaceWrapper) GetZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetZone(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateZone operation middleware
+func (siw *ServerInterfaceWrapper) UpdateZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateZone(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportZoneFile operation middleware
+func (siw *ServerInterfaceWrapper) ExportZoneFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportZoneFile(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportZoneFile operation middleware
+func (siw *ServerInterfaceWrapper) ImportZoneFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportZoneFile(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListZoneRecords operation middleware
+func (siw *ServerInterfaceWrapper) ListZoneRecords(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListZoneRecordsParams
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "name"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListZoneRecords(w, r, zoneId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateZoneRecord operation middleware
+func (siw *ServerInterfaceWrapper) CreateZoneRecord(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateZoneRecord(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteZoneRecord operation middleware
+func (siw *ServerInterfaceWrapper) DeleteZoneRecord(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "recordId" -------------
+	var recordId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "recordId", chi.URLParam(r, "recordId"), &recordId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "recordId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteZoneRecordParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteZoneRecord(w, r, zoneId, recordId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateZoneRecord operation middleware
+func (siw *ServerInterfaceWrapper) UpdateZoneRecord(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "recordId" -------------
+	var recordId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "recordId", chi.URLParam(r, "recordId"), &recordId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "recordId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateZoneRecord(w, r, zoneId, recordId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -4185,6 +5011,39 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/rpz-zones/{id}/refresh", wrapper.RefreshRpzZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/zones", wrapper.ListZones)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/zones", wrapper.CreateZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/zones/{zoneId}", wrapper.DeleteZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/zones/{zoneId}", wrapper.GetZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/zones/{zoneId}", wrapper.UpdateZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/zones/{zoneId}/records", wrapper.ListZoneRecords)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/zones/{zoneId}/records", wrapper.CreateZoneRecord)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/zones/{zoneId}/records/{recordId}", wrapper.DeleteZoneRecord)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/zones/{zoneId}/records/{recordId}", wrapper.UpdateZoneRecord)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/zones/{zoneId}/import", wrapper.ImportZoneFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/zones/{zoneId}/export", wrapper.ExportZoneFile)
 	})
 
 	return r
@@ -7104,6 +7963,662 @@ func (response UpdateUser409JSONResponse) VisitUpdateUserResponse(w http.Respons
 	return err
 }
 
+type ListZonesRequestObject struct {
+}
+
+type ListZonesResponseObject interface {
+	VisitListZonesResponse(w http.ResponseWriter) error
+}
+
+type ListZones200JSONResponse []Zone
+
+func (response ListZones200JSONResponse) VisitListZonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRequestObject struct {
+	Body *CreateZoneJSONRequestBody
+}
+
+type CreateZoneResponseObject interface {
+	VisitCreateZoneResponse(w http.ResponseWriter) error
+}
+
+type CreateZone201JSONResponse Zone
+
+func (response CreateZone201JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateZone400JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone409JSONResponse Error
+
+func (response CreateZone409JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone422JSONResponse Error
+
+func (response CreateZone422JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZoneRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Params DeleteZoneParams
+}
+
+type DeleteZoneResponseObject interface {
+	VisitDeleteZoneResponse(w http.ResponseWriter) error
+}
+
+type DeleteZone204Response struct {
+}
+
+func (response DeleteZone204Response) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteZone404JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZone409JSONResponse Error
+
+func (response DeleteZone409JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetZoneRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+}
+
+type GetZoneResponseObject interface {
+	VisitGetZoneResponse(w http.ResponseWriter) error
+}
+
+type GetZone200JSONResponse Zone
+
+func (response GetZone200JSONResponse) VisitGetZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetZone404JSONResponse) VisitGetZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *UpdateZoneJSONRequestBody
+}
+
+type UpdateZoneResponseObject interface {
+	VisitUpdateZoneResponse(w http.ResponseWriter) error
+}
+
+type UpdateZone200JSONResponse Zone
+
+func (response UpdateZone200JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateZone400JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone404JSONResponse Error
+
+func (response UpdateZone404JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone409JSONResponse Error
+
+func (response UpdateZone409JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone422JSONResponse Error
+
+func (response UpdateZone422JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportZoneFileRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+}
+
+type ExportZoneFileResponseObject interface {
+	VisitExportZoneFileResponse(w http.ResponseWriter) error
+}
+
+type ExportZoneFile200ResponseHeaders struct {
+	ContentDisposition string
+}
+
+type ExportZoneFile200TextplainCharsetUtf8Response struct {
+	Body          io.Reader
+	Headers       ExportZoneFile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response ExportZoneFile200TextplainCharsetUtf8Response) VisitExportZoneFileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprint(response.Headers.ContentDisposition))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type ExportZoneFile404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ExportZoneFile404JSONResponse) VisitExportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportZoneFileRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *ImportZoneFileJSONRequestBody
+}
+
+type ImportZoneFileResponseObject interface {
+	VisitImportZoneFileResponse(w http.ResponseWriter) error
+}
+
+type ImportZoneFile200JSONResponse ZoneImportResult
+
+func (response ImportZoneFile200JSONResponse) VisitImportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportZoneFile400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ImportZoneFile400JSONResponse) VisitImportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportZoneFile404JSONResponse Error
+
+func (response ImportZoneFile404JSONResponse) VisitImportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportZoneFile409JSONResponse Error
+
+func (response ImportZoneFile409JSONResponse) VisitImportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportZoneFile422JSONResponse Error
+
+func (response ImportZoneFile422JSONResponse) VisitImportZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListZoneRecordsRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Params ListZoneRecordsParams
+}
+
+type ListZoneRecordsResponseObject interface {
+	VisitListZoneRecordsResponse(w http.ResponseWriter) error
+}
+
+type ListZoneRecords200JSONResponse RecordPage
+
+func (response ListZoneRecords200JSONResponse) VisitListZoneRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListZoneRecords400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListZoneRecords400JSONResponse) VisitListZoneRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListZoneRecords404JSONResponse Error
+
+func (response ListZoneRecords404JSONResponse) VisitListZoneRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListZoneRecords422JSONResponse Error
+
+func (response ListZoneRecords422JSONResponse) VisitListZoneRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRecordRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *CreateZoneRecordJSONRequestBody
+}
+
+type CreateZoneRecordResponseObject interface {
+	VisitCreateZoneRecordResponse(w http.ResponseWriter) error
+}
+
+type CreateZoneRecord201JSONResponse Record
+
+func (response CreateZoneRecord201JSONResponse) VisitCreateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRecord400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateZoneRecord400JSONResponse) VisitCreateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRecord404JSONResponse Error
+
+func (response CreateZoneRecord404JSONResponse) VisitCreateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRecord409JSONResponse Error
+
+func (response CreateZoneRecord409JSONResponse) VisitCreateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRecord422JSONResponse Error
+
+func (response CreateZoneRecord422JSONResponse) VisitCreateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZoneRecordRequestObject struct {
+	ZoneId   openapi_types.UUID `json:"zoneId"`
+	RecordId openapi_types.UUID `json:"recordId"`
+	Params   DeleteZoneRecordParams
+}
+
+type DeleteZoneRecordResponseObject interface {
+	VisitDeleteZoneRecordResponse(w http.ResponseWriter) error
+}
+
+type DeleteZoneRecord204Response struct {
+}
+
+func (response DeleteZoneRecord204Response) VisitDeleteZoneRecordResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteZoneRecord404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteZoneRecord404JSONResponse) VisitDeleteZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZoneRecord409JSONResponse Error
+
+func (response DeleteZoneRecord409JSONResponse) VisitDeleteZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZoneRecord422JSONResponse Error
+
+func (response DeleteZoneRecord422JSONResponse) VisitDeleteZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRecordRequestObject struct {
+	ZoneId   openapi_types.UUID `json:"zoneId"`
+	RecordId openapi_types.UUID `json:"recordId"`
+	Body     *UpdateZoneRecordJSONRequestBody
+}
+
+type UpdateZoneRecordResponseObject interface {
+	VisitUpdateZoneRecordResponse(w http.ResponseWriter) error
+}
+
+type UpdateZoneRecord200JSONResponse Record
+
+func (response UpdateZoneRecord200JSONResponse) VisitUpdateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRecord400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateZoneRecord400JSONResponse) VisitUpdateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRecord404JSONResponse Error
+
+func (response UpdateZoneRecord404JSONResponse) VisitUpdateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRecord409JSONResponse Error
+
+func (response UpdateZoneRecord409JSONResponse) VisitUpdateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRecord422JSONResponse Error
+
+func (response UpdateZoneRecord422JSONResponse) VisitUpdateZoneRecordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 
@@ -7337,6 +8852,39 @@ type StrictServerInterface interface {
 
 	// (PUT /users/{id})
 	UpdateUser(ctx context.Context, request UpdateUserRequestObject) (UpdateUserResponseObject, error)
+
+	// (GET /zones)
+	ListZones(ctx context.Context, request ListZonesRequestObject) (ListZonesResponseObject, error)
+
+	// (POST /zones)
+	CreateZone(ctx context.Context, request CreateZoneRequestObject) (CreateZoneResponseObject, error)
+
+	// (DELETE /zones/{zoneId})
+	DeleteZone(ctx context.Context, request DeleteZoneRequestObject) (DeleteZoneResponseObject, error)
+
+	// (GET /zones/{zoneId})
+	GetZone(ctx context.Context, request GetZoneRequestObject) (GetZoneResponseObject, error)
+
+	// (PATCH /zones/{zoneId})
+	UpdateZone(ctx context.Context, request UpdateZoneRequestObject) (UpdateZoneResponseObject, error)
+
+	// (GET /zones/{zoneId}/export)
+	ExportZoneFile(ctx context.Context, request ExportZoneFileRequestObject) (ExportZoneFileResponseObject, error)
+
+	// (POST /zones/{zoneId}/import)
+	ImportZoneFile(ctx context.Context, request ImportZoneFileRequestObject) (ImportZoneFileResponseObject, error)
+
+	// (GET /zones/{zoneId}/records)
+	ListZoneRecords(ctx context.Context, request ListZoneRecordsRequestObject) (ListZoneRecordsResponseObject, error)
+
+	// (POST /zones/{zoneId}/records)
+	CreateZoneRecord(ctx context.Context, request CreateZoneRecordRequestObject) (CreateZoneRecordResponseObject, error)
+
+	// (DELETE /zones/{zoneId}/records/{recordId})
+	DeleteZoneRecord(ctx context.Context, request DeleteZoneRecordRequestObject) (DeleteZoneRecordResponseObject, error)
+
+	// (PUT /zones/{zoneId}/records/{recordId})
+	UpdateZoneRecord(ctx context.Context, request UpdateZoneRecordRequestObject) (UpdateZoneRecordResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -9493,113 +11041,457 @@ func (sh *strictHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id I
 	}
 }
 
+// ListZones operation middleware
+func (sh *strictHandler) ListZones(w http.ResponseWriter, r *http.Request) {
+	var request ListZonesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListZones(ctx, request.(ListZonesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListZones")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListZonesResponseObject); ok {
+		if err := validResponse.VisitListZonesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateZone operation middleware
+func (sh *strictHandler) CreateZone(w http.ResponseWriter, r *http.Request) {
+	var request CreateZoneRequestObject
+
+	var body CreateZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateZone(ctx, request.(CreateZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateZoneResponseObject); ok {
+		if err := validResponse.VisitCreateZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteZone operation middleware
+func (sh *strictHandler) DeleteZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params DeleteZoneParams) {
+	var request DeleteZoneRequestObject
+
+	request.ZoneId = zoneId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteZone(ctx, request.(DeleteZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteZoneResponseObject); ok {
+		if err := validResponse.VisitDeleteZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetZone operation middleware
+func (sh *strictHandler) GetZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request GetZoneRequestObject
+
+	request.ZoneId = zoneId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetZone(ctx, request.(GetZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetZoneResponseObject); ok {
+		if err := validResponse.VisitGetZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateZone operation middleware
+func (sh *strictHandler) UpdateZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request UpdateZoneRequestObject
+
+	request.ZoneId = zoneId
+
+	var body UpdateZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateZone(ctx, request.(UpdateZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateZoneResponseObject); ok {
+		if err := validResponse.VisitUpdateZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportZoneFile operation middleware
+func (sh *strictHandler) ExportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request ExportZoneFileRequestObject
+
+	request.ZoneId = zoneId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportZoneFile(ctx, request.(ExportZoneFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportZoneFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportZoneFileResponseObject); ok {
+		if err := validResponse.VisitExportZoneFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportZoneFile operation middleware
+func (sh *strictHandler) ImportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request ImportZoneFileRequestObject
+
+	request.ZoneId = zoneId
+
+	var body ImportZoneFileJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportZoneFile(ctx, request.(ImportZoneFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportZoneFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportZoneFileResponseObject); ok {
+		if err := validResponse.VisitImportZoneFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListZoneRecords operation middleware
+func (sh *strictHandler) ListZoneRecords(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, params ListZoneRecordsParams) {
+	var request ListZoneRecordsRequestObject
+
+	request.ZoneId = zoneId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListZoneRecords(ctx, request.(ListZoneRecordsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListZoneRecords")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListZoneRecordsResponseObject); ok {
+		if err := validResponse.VisitListZoneRecordsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateZoneRecord operation middleware
+func (sh *strictHandler) CreateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request CreateZoneRecordRequestObject
+
+	request.ZoneId = zoneId
+
+	var body CreateZoneRecordJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateZoneRecord(ctx, request.(CreateZoneRecordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateZoneRecord")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateZoneRecordResponseObject); ok {
+		if err := validResponse.VisitCreateZoneRecordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteZoneRecord operation middleware
+func (sh *strictHandler) DeleteZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID, params DeleteZoneRecordParams) {
+	var request DeleteZoneRecordRequestObject
+
+	request.ZoneId = zoneId
+	request.RecordId = recordId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteZoneRecord(ctx, request.(DeleteZoneRecordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteZoneRecord")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteZoneRecordResponseObject); ok {
+		if err := validResponse.VisitDeleteZoneRecordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateZoneRecord operation middleware
+func (sh *strictHandler) UpdateZoneRecord(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID, recordId openapi_types.UUID) {
+	var request UpdateZoneRecordRequestObject
+
+	request.ZoneId = zoneId
+	request.RecordId = recordId
+
+	var body UpdateZoneRecordJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateZoneRecord(ctx, request.(UpdateZoneRecordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateZoneRecord")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateZoneRecordResponseObject); ok {
+		if err := validResponse.VisitUpdateZoneRecordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"UaSVn1WS7cCPbo9Fh5r/GQA=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

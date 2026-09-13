@@ -39,6 +39,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
 // version is set at build time with -ldflags "-X main.version=<tag>"; main hands it to the API's
@@ -284,6 +285,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
+			Zones: &zone.Service{Store: st, Build: build, Now: time.Now},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

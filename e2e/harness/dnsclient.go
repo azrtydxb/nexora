@@ -15,6 +15,7 @@ type QueryOpts struct {
 	EDNSSize uint16
 	Cookie   []byte
 	Timeout  time.Duration
+	DO       bool // request DNSSEC records (adds EDNS)
 }
 
 // Query sends one recursive query for name/qtype to server and returns the reply and round-trip
@@ -23,12 +24,12 @@ func Query(t *testing.T, server, name string, qtype uint16, o QueryOpts) (*dns.M
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), qtype)
 	m.RecursionDesired = true
-	if o.EDNSSize > 0 || o.Cookie != nil {
+	if o.EDNSSize > 0 || o.Cookie != nil || o.DO {
 		size := o.EDNSSize
 		if size == 0 {
 			size = dns.DefaultMsgSize
 		}
-		m.SetEdns0(size, false)
+		m.SetEdns0(size, o.DO)
 		if o.Cookie != nil {
 			opt := m.IsEdns0()
 			opt.Option = append(opt.Option, &dns.EDNS0_COOKIE{Code: dns.EDNS0COOKIE, Cookie: hex.EncodeToString(o.Cookie)})

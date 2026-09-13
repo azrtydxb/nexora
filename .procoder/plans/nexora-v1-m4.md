@@ -1664,8 +1664,6 @@ CREATE TABLE tsig_keys (
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
->>>>
-
 CREATE TABLE zones (
     id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name                 text NOT NULL UNIQUE CHECK (name ~ '\.$' AND name <> '.'),
@@ -2503,6 +2501,7 @@ func TestAuthoritativeZonePropagation(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestAuthoritativeZonePropagation -count=1` — before the handlers are registered expect FAIL with "POST /zones: status 404"; after the implementation steps above expect PASS.
+      Built (as implemented): (1) `needImage` also requires the deltas since the image to reach `imageMinDeltaBytes` (64 KiB) before the quarter-of-the-image rule applies — without the floor every change to a small zone writes an image and `TestAddAuthZonesListsImageAndContiguousDeltas` (image serial 1 after three deltas) cannot hold. (2) When the zone row's serial differs from the served SOA serial (changed outside `Rebuild`, as `TestSerialWrapsAroundRFC1982` does), the delta's leading deleted SOA carries the row serial and a full image is written as well. (3) Record rules live in exported `zone.ParseRecord` (per record) and `zone.CheckSet` (whole record set, reused by Import); every record mutation checks the resulting set. Extra codes: `invalid_name`, `invalid_ttl`, `invalid_soa`, `invalid_zone`, `invalid_endpoint`, `invalid_cidr`, `unknown_tsig_key`, `dname_conflict`, `invalid_cursor`. `ListRecords` pages by an opaque cursor over `(lower(owner), rtype, id)`. (4) OpenAPI: `secondary_status` is omitted for primary zones instead of `null`; `updateZoneRecord` takes schema `RecordUpdate` (RecordInput fields + revision) instead of an `allOf`; SOA timers are optional in `ZoneSOAInput` (defaults on create, current values on update); 400/404 responses are listed where they occur. (5) Delta `BlobRef.name` is `<zone>@<to_serial>`. (6) `TestAuthoritativeZonePropagation` calls `waitLatestApplied` after the `www` answers and before the NXDOMAIN/referral assertions: `www` can answer from the version before the glue record exists. (7) The API unit-test helper `newAPIWith` sets `Deps.Zones`.
 - [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e && git commit -m "feat(mgmt): zones and records with journaled NZF blobs, snapshot delivery and zone API"`.
 
 ## Task 6: Key storage (secrets: PKCS#11 backend, DNSSEC signing keys), TSIG keys, KeyMaterial delivery
@@ -4184,6 +4183,7 @@ func TestZoneFileRoundTrip(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestZoneFileRoundTrip -count=1` — expect PASS (before the API step it fails with "POST /zones/…/import: status 404").
+      Built (as implemented): (1) the lexer does not split a token at a quote, so `alpn="h2,h3"` stays one field (the plan's flush at `"` turned it into `alpn= "h2,h3"`, which miekg rejects). (2) File-level problems (`no SOA record at Z`, `no NS records at Z`) are `LineError{Line: 0}` and print without a `line N:` prefix. (3) `SetRecords` stores a repeated record once (BIND behaviour) instead of failing on the unique index. (4) The strict server's export type is `ExportZoneFile200TextplainCharsetUtf8Response`; `Content-Disposition` is declared as a response header in `openapi.yaml`. (5) `Service.Import` also refuses SOA timers of 0 (refresh/retry/expire) with `invalid_soa`.
 - [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e && git commit -m "feat(mgmt): BIND zone file import and stable export"`.
 
 ## Task 10: Secondary zones — engine NOTIFY intake, management-plane AXFR/IXFR pulls and SOA timers

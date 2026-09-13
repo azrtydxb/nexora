@@ -22,13 +22,17 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/webui"
+	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
 // Version is the build version reported by getHealth (set by nexora-mgmt from its stamped version).
 var Version = "dev"
 
-// maxBodyBytes bounds every API request body.
-const maxBodyBytes = 4 << 20
+// maxBodyBytes bounds every API request body except zone file imports (maxZoneImportBytes).
+const (
+	maxBodyBytes       = 4 << 20
+	maxZoneImportBytes = 64 << 20
+)
 
 // Deps are the collaborators of the HTTP API.
 type Deps struct {
@@ -45,6 +49,7 @@ type Deps struct {
 	RefreshFilterList func(ctx context.Context, p auth.Principal, id string) error
 	DNSTLS            *control.DNSTLSFanout // optional: the DNS serving certificate this instance pushes
 	Secrets           *secrets.Box          // key storage for RPZ TSIG secrets; nil behaves as unconfigured
+	Zones             *zone.Service         // hosted zones and records
 }
 
 type handlers struct{ d Deps }
@@ -105,7 +110,11 @@ func jsonOnly(next http.Handler) http.Handler {
 				return
 			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		limit := int64(maxBodyBytes)
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/zones/") && strings.HasSuffix(r.URL.Path, "/import") {
+			limit = maxZoneImportBytes
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -161,11 +170,30 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	_ = json.NewEncoder(w).Encode(Error{Code: code, Message: message})
 }
 
+// writeZoneValidation answers 422 with the validation code and its per-line details.
+func writeZoneValidation(w http.ResponseWriter, zve *zone.ValidationError) {
+	body := Error{Code: zve.Code, Message: zve.Message}
+	if len(zve.Details) > 0 {
+		details := make([]struct {
+			Line    int    `json:"line"`
+			Message string `json:"message"`
+		}, len(zve.Details))
+		for i, d := range zve.Details {
+			details[i].Line, details[i].Message = d.Line, d.Message
+		}
+		body.Details = &details
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
 // mapError turns handler errors into JSON error responses.
 func mapError(w http.ResponseWriter, r *http.Request, err error) {
 	var verr validationError
 	var pgErr *pgconn.PgError
 	var maxBytes *http.MaxBytesError
+	var zve *zone.ValidationError
 	switch {
 	case errors.As(err, &verr):
 		writeError(w, http.StatusBadRequest, "invalid_request", verr.msg)
@@ -179,6 +207,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "authentication required")
 	case errors.Is(err, auth.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden", err.Error())
+	case errors.As(err, &zve):
+		writeZoneValidation(w, zve)
+	case errors.Is(err, zone.ErrReadOnly):
+		writeError(w, http.StatusUnprocessableEntity, "zone_read_only", zone.ErrReadOnly.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	case errors.Is(err, store.ErrConflict):

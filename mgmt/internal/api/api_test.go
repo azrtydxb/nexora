@@ -19,6 +19,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
 type apiEnv struct {
@@ -57,7 +58,7 @@ func newAPIWith(t *testing.T, adjust func(*api.Deps)) *apiEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x"}
+	deps := api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x", Zones: &zone.Service{Store: st}}
 	if adjust != nil {
 		adjust(&deps)
 	}

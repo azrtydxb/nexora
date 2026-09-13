@@ -212,6 +212,9 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 		return nil, fmt.Errorf("resolution: %w", err)
 	}
 	ApplyResolution(snap, rows, time.Now())
+	if err := AddAuthZones(ctx, tx, snap); err != nil {
+		return nil, err
+	}
 	return snap, nil
 }
 

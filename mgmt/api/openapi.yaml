@@ -35,7 +35,18 @@ components:
     Error:
       type: object
       required: [code, message]
-      properties: { code: { type: string }, message: { type: string } }
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details:
+          type: array
+          description: Per-line problems of submitted zone data.
+          items:
+            type: object
+            required: [line, message]
+            properties:
+              line: { type: integer }
+              message: { type: string }
     Health:
       type: object
       required: [status, database, version]
@@ -867,6 +878,200 @@ components:
       required: [ids]
       properties:
         ids: { type: array, items: { type: string, format: uuid } }
+    ZoneEndpoint:
+      type: object
+      required: [address]
+      properties:
+        address: { type: string, description: "ip:port" }
+        tsig_key_id: { type: [string, "null"], format: uuid }
+    ZoneTransfer:
+      type: object
+      required: [allow_cidrs]
+      properties:
+        allow_cidrs:
+          {
+            type: array,
+            items: { type: string },
+            description: "Clients allowed to transfer the zone; empty refuses transfers.",
+          }
+        tsig_key_id: { type: [string, "null"], format: uuid }
+    ZoneUpdatePolicy:
+      type: object
+      required: [tsig_key_ids]
+      properties:
+        tsig_key_ids:
+          {
+            type: array,
+            items: { type: string, format: uuid },
+            description: "TSIG keys allowed to send dynamic updates; empty refuses updates.",
+          }
+    ZoneSOA:
+      type: object
+      required: [mname, rname, refresh, retry, expire, minimum, ttl]
+      properties:
+        mname: { type: string }
+        rname: { type: string }
+        refresh: { type: integer, format: int64 }
+        retry: { type: integer, format: int64 }
+        expire: { type: integer, format: int64 }
+        minimum: { type: integer, format: int64 }
+        ttl: { type: integer, format: int64 }
+    ZoneSOAInput:
+      type: object
+      required: [mname, rname]
+      description: Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update.
+      properties:
+        mname: { type: string }
+        rname: { type: string }
+        refresh: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        retry: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        expire: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        minimum: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+    ZoneSecondaryStatus:
+      type: object
+      required:
+        [
+          last_refresh_at,
+          last_success_at,
+          next_refresh_at,
+          expires_at,
+          expired,
+          last_error,
+          last_trigger,
+        ]
+      properties:
+        last_refresh_at: { type: [string, "null"], format: date-time }
+        last_success_at: { type: [string, "null"], format: date-time }
+        next_refresh_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        expired: { type: boolean }
+        last_error: { type: string }
+        last_trigger: { type: string }
+    Zone:
+      type: object
+      required:
+        [
+          id,
+          name,
+          kind,
+          revision,
+          serial,
+          default_ttl,
+          soa,
+          transfer,
+          notify,
+          update,
+          primaries,
+          dnssec_enabled,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [primary, secondary] }
+        revision: { type: integer, format: int64 }
+        serial: { type: integer, format: int64 }
+        default_ttl: { type: integer, format: int64 }
+        soa: { $ref: "#/components/schemas/ZoneSOA" }
+        transfer: { $ref: "#/components/schemas/ZoneTransfer" }
+        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
+        primaries:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        secondary_status:
+          {
+            $ref: "#/components/schemas/ZoneSecondaryStatus",
+            description: "Present for secondary zones only.",
+          }
+        dnssec_enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ZoneCreate:
+      type: object
+      required: [name, kind, default_ttl, soa]
+      properties:
+        name: { type: string, maxLength: 255, description: "Absolute zone name." }
+        kind: { type: string, enum: [primary, secondary] }
+        default_ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        soa: { $ref: "#/components/schemas/ZoneSOAInput" }
+        nameservers:
+          {
+            type: array,
+            items: { type: string },
+            description: "Primary zones: at least one apex NS target.",
+          }
+        primaries:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/ZoneEndpoint" },
+            description: "Secondary zones: at least one primary.",
+          }
+        transfer: { $ref: "#/components/schemas/ZoneTransfer" }
+        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
+    ZoneUpdate:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64 }
+        default_ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        soa: { $ref: "#/components/schemas/ZoneSOAInput" }
+        primaries:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        transfer: { $ref: "#/components/schemas/ZoneTransfer" }
+        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
+    RecordInput:
+      type: object
+      required: [name, type, ttl, data]
+      properties:
+        name: { type: string, maxLength: 255, description: "Absolute owner name inside the zone." }
+        type: { type: string, enum: [A, AAAA, CAA, CNAME, DNAME, DS, HTTPS, LOC, MX, NAPTR, NS, PTR, SRV, SSHFP, SVCB, TLSA, TXT] }
+        ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        data: { type: string, maxLength: 65535, description: "RDATA in presentation format." }
+    RecordUpdate:
+      type: object
+      required: [name, type, ttl, data, revision]
+      properties:
+        name: { type: string, maxLength: 255 }
+        type: { type: string, enum: [A, AAAA, CAA, CNAME, DNAME, DS, HTTPS, LOC, MX, NAPTR, NS, PTR, SRV, SSHFP, SVCB, TLSA, TXT] }
+        ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        data: { type: string, maxLength: 65535 }
+        revision: { type: integer, format: int64 }
+    Record:
+      type: object
+      required: [id, name, type, ttl, data, revision]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string }
+        ttl: { type: integer, format: int64 }
+        data: { type: string }
+        revision: { type: integer, format: int64 }
+    ZoneImport:
+      type: object
+      required: [revision, content]
+      properties:
+        revision: { type: integer, format: int64 }
+        content:
+          {
+            type: string,
+            description: "BIND master file; $INCLUDE and $GENERATE are refused. Request bodies may be up to 64 MiB.",
+          }
+    ZoneImportResult:
+      type: object
+      required: [zone, records_imported]
+      properties:
+        zone: { $ref: "#/components/schemas/Zone" }
+        records_imported: { type: integer }
+    RecordPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Record" } }
+        next_cursor: { type: [string, "null"] }
 paths:
   /health:
     get:
@@ -2266,3 +2471,180 @@ paths:
         "202": { description: Engines refresh the zone now. }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /zones:
+    get:
+      operationId: listZones
+      tags: [zones]
+      responses:
+        "200":
+          description: Hosted zones ordered by name.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Zone" } }
+    post:
+      operationId: createZone
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getZone
+      tags: [zones]
+      responses:
+        "200":
+          description: The zone.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateZone
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteZone
+      tags: [zones]
+      parameters:
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/records:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listZoneRecords
+      tags: [zones]
+      parameters:
+        - { name: name, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 200 },
+          }
+      responses:
+        "200":
+          description: One page of records ordered by owner and type.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecordPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createZoneRecord
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecordInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Record" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/records/{recordId}:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: recordId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      operationId: updateZoneRecord
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecordUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Record" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteZoneRecord
+      tags: [zones]
+      parameters:
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/import:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: importZoneFile
+      tags: [zones]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneImport" }
+      responses:
+        "200":
+          description: Every record and the SOA fields replaced by the file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneImportResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/export:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: exportZoneFile
+      tags: [zones]
+      responses:
+        "200":
+          description: The zone as a BIND master file.
+          headers:
+            Content-Disposition: { schema: { type: string }, required: true }
+          content:
+            text/plain; charset=utf-8:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/Error" }

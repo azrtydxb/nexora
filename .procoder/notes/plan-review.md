@@ -41,3 +41,4 @@
 
 - kw network redirects all outbound UDP/TCP 53 to another resolver (non-recursive queries to root IPs get recursive answers), so real-root recursion cannot work on kw; kw runs forward mode + forwarded DNSSEC validation. Report to user; recursion is verified in the private hierarchy e2e tests only.
 - BUG: forwarded answers on the CD (pass-through) path keep the upstream's AA bit. A recursive/forwarding server must clear AA on answers it did not serve authoritatively. Fix in engine forward path (all modes), with a unit test and an e2e assertion; do it in the M4 engine track (authoritative stage owns AA semantics).
+- toolbox pod lacks env vars declared in deploy/dev/dev-pod.yaml (NEXORA_E2E_OPENSEARCH_URL/JAEGER): re-apply dev-pod.yaml when no agent is running tests.
