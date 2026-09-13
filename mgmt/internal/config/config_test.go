@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 )
@@ -13,7 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HTTPListen != ":8080" || c.GRPCListen != ":9443" || !c.SecureCookies || c.QueryLogBackend != "builtin" || c.QueryLogBuiltinCapacity != 200000 || c.OpenSearch.Index != "nexora-querylog-*" {
+	if c.HTTPListen != ":8080" || c.GRPCListen != ":9443" || !c.SecureCookies || c.QueryLogBackend != "builtin" || c.QueryLogBuiltinCapacity != 200000 || c.OpenSearch.Index != "nexora-querylog-*" || c.DNSTLSReloadInterval != 30*time.Second {
 		t.Fatalf("defaults wrong: %+v", c)
 	}
 	if c.OIDC.Enabled() {
@@ -29,6 +30,9 @@ func TestLoadValidation(t *testing.T) {
 		"opensearch no url": func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "opensearch" },
 		"bad cookies":       func(m map[string]string) { m["NEXORA_SECURE_COOKIES"] = "maybe" },
 		"oidc no client":    func(m map[string]string) { m["NEXORA_OIDC_ISSUER"] = "https://idp" },
+		"dns tls cert only": func(m map[string]string) { m["NEXORA_DNS_TLS_CERT_FILE"] = "/tls.crt" },
+		"dns tls key only":  func(m map[string]string) { m["NEXORA_DNS_TLS_KEY_FILE"] = "/tls.key" },
+		"dns tls interval":  func(m map[string]string) { m["NEXORA_DNS_TLS_RELOAD_INTERVAL"] = "500ms" },
 	} {
 		m := map[string]string{}
 		for k, v := range base {

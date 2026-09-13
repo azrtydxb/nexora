@@ -70,7 +70,7 @@ func setup(t *testing.T, instances int) *fixture {
 			t.Fatal(err)
 		}
 		srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
-		controlv1.RegisterEngineControlServer(srv, control.NewServer(st, ca, hub, id))
+		controlv1.RegisterEngineControlServer(srv, control.NewServer(st, ca, hub, id, control.NewDNSTLSFanout()))
 		l, _ := net.Listen("tcp", "127.0.0.1:0")
 		go func() { _ = srv.Serve(l) }()
 		t.Cleanup(srv.Stop)

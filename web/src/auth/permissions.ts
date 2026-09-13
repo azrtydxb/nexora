@@ -29,6 +29,7 @@ export const permissions = {
   getPolicyGroup: "viewer",
   getGlobalSafeSearch: "viewer",
   listRewrites: "viewer",
+  getDnsTlsStatus: "viewer",
 
   createUpstream: "operator",
   updateUpstream: "operator",

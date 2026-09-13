@@ -536,6 +536,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/dns-tls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDnsTlsStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -904,6 +920,29 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        DnsTlsStatus: {
+            configured: boolean;
+            certificate: {
+                subject: string;
+                dns_names: string[];
+                ip_addresses: string[];
+                /** Format: date-time */
+                not_before: string;
+                /** Format: date-time */
+                not_after: string;
+                fingerprint_sha256: string;
+            } | null;
+            engines: {
+                /** Format: uuid */
+                engine_id: string;
+                node_name: string;
+                fingerprint_sha256: string;
+                applied: boolean;
+                error: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
         };
     };
     responses: {
@@ -2172,6 +2211,26 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    getDnsTlsStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DNS serving certificate loaded by this instance and per-engine acceptance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnsTlsStatus"];
+                };
+            };
         };
     };
 }

@@ -128,3 +128,17 @@ func TestRewriteAPIValidation(t *testing.T) {
 		t.Fatalf("bad scope = %d", code)
 	}
 }
+
+func TestDnsTlsStatusWithoutCertificate(t *testing.T) {
+	_, viewer := roleClients(t)
+	var out map[string]any
+	if code := viewer.do("GET", "/settings/dns-tls", nil, &out); code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if out["configured"] != false || out["certificate"] != nil {
+		t.Fatalf("out = %v", out)
+	}
+	if engines, ok := out["engines"].([]any); !ok || len(engines) != 0 {
+		t.Fatalf("engines = %v", out["engines"])
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -42,7 +43,7 @@ import (
 // version is set at build time with -ldflags "-X main.version=<tag>".
 var version = "dev"
 
-const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> | user create --admin --username U --email E --password-file F"
+const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -62,6 +63,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		err = migrate(ctx, stdout)
 	case len(args) >= 2 && args[0] == "ca" && args[1] == "init":
 		err = caInit(args[2:], stdout)
+	case len(args) >= 2 && args[0] == "ca" && args[1] == "issue-dns":
+		err = caIssueDNS(args[2:], stdout)
 	case len(args) >= 2 && args[0] == "user" && args[1] == "create":
 		err = userCreate(ctx, args[2:], stdout)
 	default:
@@ -161,6 +164,52 @@ func caInit(args []string, stdout io.Writer) error {
 	return nil
 }
 
+func caIssueDNS(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("ca issue-dns", flag.ContinueOnError)
+	caCert := fs.String("ca-cert", "", "CA certificate file")
+	caKey := fs.String("ca-key", "", "CA private key file")
+	namesFlag := fs.String("names", "", "comma-separated DNS names and IP addresses")
+	days := fs.Int("days", 90, "validity in days")
+	out := fs.String("out", "", "directory for tls.crt and tls.key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var names []string
+	for _, n := range strings.Split(*namesFlag, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	if *caCert == "" || *caKey == "" || len(names) == 0 || *days <= 0 || *out == "" || fs.NArg() != 0 {
+		return errors.New("usage: nexora-mgmt ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir>")
+	}
+	ca, err := pki.LoadCA(*caCert, *caKey)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	chain, key, err := ca.IssueDNSServerCert(names, time.Duration(*days)*24*time.Hour, now)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(*out, 0o700); err != nil {
+		return err
+	}
+	certPath, keyPath := filepath.Join(*out, "tls.crt"), filepath.Join(*out, "tls.key")
+	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(certPath, chain, 0o644); err != nil {
+		return err
+	}
+	m, err := pki.LoadDNSTLS(certPath, keyPath, now)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s and %s (fingerprint %s)\n", certPath, keyPath, m.FingerprintSHA256)
+	return nil
+}
+
 func serve(ctx context.Context, stdout io.Writer) error {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -202,7 +251,11 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		stats.NewCollector(st))
+		stats.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter)
+	dnsTLS := control.NewDNSTLSFanout()
+	if cfg.DNSTLSCertFile != "" {
+		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)
+	}
 	var queryLog querylog.Backend
 	var builtinLog *querylog.Builtin
 	if cfg.QueryLogBackend == "opensearch" {
@@ -218,7 +271,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
-			RefreshFilterList: fetcher.RefreshNow,
+			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -234,7 +287,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		// Engines ping every 10 s; the default policy (5 min) would close their connections.
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
 	)
-	controlServer := control.NewServer(st, ca, hub, instanceID)
+	controlServer := control.NewServer(st, ca, hub, instanceID, dnsTLS)
 	controlServer.OnStats = func(ctx context.Context, engineID string, s *controlv1.Stats) {
 		_ = stats.Record(ctx, st, engineID, s)
 	}

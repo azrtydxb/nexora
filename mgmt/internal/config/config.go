@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the management plane configuration (see docs/architecture.md).
@@ -18,6 +19,9 @@ type Config struct {
 	QueryLogBuiltinCapacity                                    int
 	OpenSearch                                                 OpenSearchConfig
 	OTLPEndpoint                                               string
+	// DNS serving certificate (DoT, DoH, DoQ) pushed to engines; both files or neither.
+	DNSTLSCertFile, DNSTLSKeyFile string
+	DNSTLSReloadInterval          time.Duration
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -50,6 +54,8 @@ func Load(getenv func(string) string) (Config, error) {
 		PublicURL:       getenv("NEXORA_PUBLIC_URL"),
 		QueryLogBackend: get("NEXORA_QUERYLOG_BACKEND", "builtin"),
 		OTLPEndpoint:    getenv("NEXORA_OTLP_ENDPOINT"),
+		DNSTLSCertFile:  getenv("NEXORA_DNS_TLS_CERT_FILE"),
+		DNSTLSKeyFile:   getenv("NEXORA_DNS_TLS_KEY_FILE"),
 		OIDC: OIDCConfig{
 			Issuer:           getenv("NEXORA_OIDC_ISSUER"),
 			ClientID:         getenv("NEXORA_OIDC_CLIENT_ID"),
@@ -97,6 +103,14 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("NEXORA_QUERYLOG_BACKEND must be builtin or opensearch, got %q", c.QueryLogBackend)
 	}
+	if (c.DNSTLSCertFile == "") != (c.DNSTLSKeyFile == "") {
+		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_CERT_FILE and NEXORA_DNS_TLS_KEY_FILE must be set together")
+	}
+	interval, err := time.ParseDuration(get("NEXORA_DNS_TLS_RELOAD_INTERVAL", "30s"))
+	if err != nil || interval < time.Second {
+		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_RELOAD_INTERVAL must be a duration of at least 1s")
+	}
+	c.DNSTLSReloadInterval = interval
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {
 			return Config{}, fmt.Errorf("NEXORA_OIDC_CLIENT_ID is required when NEXORA_OIDC_ISSUER is set")

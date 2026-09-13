@@ -553,6 +553,49 @@ components:
         revision: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    DnsTlsStatus:
+      type: object
+      required: [configured, certificate, engines]
+      properties:
+        configured: { type: boolean }
+        certificate:
+          type: ["object", "null"]
+          required:
+            [
+              subject,
+              dns_names,
+              ip_addresses,
+              not_before,
+              not_after,
+              fingerprint_sha256,
+            ]
+          properties:
+            subject: { type: string }
+            dns_names: { type: array, items: { type: string } }
+            ip_addresses: { type: array, items: { type: string } }
+            not_before: { type: string, format: date-time }
+            not_after: { type: string, format: date-time }
+            fingerprint_sha256: { type: string }
+        engines:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                engine_id,
+                node_name,
+                fingerprint_sha256,
+                applied,
+                error,
+                updated_at,
+              ]
+            properties:
+              engine_id: { type: string, format: uuid }
+              node_name: { type: string }
+              fingerprint_sha256: { type: string }
+              applied: { type: boolean }
+              error: { type: string }
+              updated_at: { type: string, format: date-time }
 paths:
   /health:
     get:
@@ -1632,3 +1675,13 @@ paths:
         "204": { description: Deleted. }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /settings/dns-tls:
+    get:
+      operationId: getDnsTlsStatus
+      tags: [settings]
+      responses:
+        "200":
+          description: DNS serving certificate loaded by this instance and per-engine acceptance.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnsTlsStatus" }

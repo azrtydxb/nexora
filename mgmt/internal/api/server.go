@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
@@ -41,6 +42,7 @@ type Deps struct {
 	Metrics           http.Handler
 	HTTPMetrics       *Metrics // optional per-operation request metrics
 	RefreshFilterList func(ctx context.Context, p auth.Principal, id string) error
+	DNSTLS            *control.DNSTLSFanout // optional: the DNS serving certificate this instance pushes
 }
 
 type handlers struct{ d Deps }

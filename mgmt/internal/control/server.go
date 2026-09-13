@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -40,11 +41,12 @@ type Server struct {
 	ca         *pki.CA
 	hub        *Hub
 	instanceID string
+	dnsTLS     *DNSTLSFanout
 }
 
 // NewServer creates the EngineControl server of one instance.
-func NewServer(st *store.Store, ca *pki.CA, hub *Hub, instanceID string) *Server {
-	return &Server{st: st, ca: ca, hub: hub, instanceID: instanceID}
+func NewServer(st *store.Store, ca *pki.CA, hub *Hub, instanceID string, dnsTLS *DNSTLSFanout) *Server {
+	return &Server{st: st, ca: ca, hub: hub, instanceID: instanceID, dnsTLS: dnsTLS}
 }
 
 // Enroll exchanges a join secret and a CSR for an engine identity.
@@ -129,6 +131,8 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 			slog.Warn("clear engine connection", "engine", id, "err", err)
 		}
 	}()
+	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
+	defer s.dnsTLS.Unregister(id)
 
 	// Registered before reading the latest version, so a version published in between is not missed.
 	version, snap, err := snapshot.Latest(ctx, s.st.Pool)
@@ -156,6 +160,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				return
 			case msg := <-sub.out:
 				if err := stream.Send(msg); err != nil {
+					return
+				}
+			case m := <-tlsCh:
+				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}); err != nil {
 					return
 				}
 			}
@@ -193,6 +201,13 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			if s.OnStats != nil {
 				s.OnStats(ctx, sub.engineID, m.Stats)
 			}
+		case *controlv1.EngineMessage_TlsMaterialResult:
+			res := m.TlsMaterialResult
+			s.dnsTLS.Result(sub.engineID, res)
+			slog.Info("dns tls result", "engine", sub.engineID, "fingerprint", res.FingerprintSha256, "applied", res.Applied, "error", res.Error)
+			err = store.UpsertEngineTLSState(ctx, s.st.Pool, store.EngineTLSState{
+				EngineID: uuid.MustParse(sub.engineID), Fingerprint: res.FingerprintSha256, Applied: res.Applied, Error: res.Error,
+			})
 		default:
 			err = status.Error(codes.InvalidArgument, "unexpected message")
 		}

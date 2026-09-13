@@ -61,6 +61,7 @@ var Permissions = map[string]Role{
 	"getPolicyGroup":      RoleViewer,
 	"getGlobalSafeSearch": RoleViewer,
 	"listRewrites":        RoleViewer,
+	"getDnsTlsStatus":     RoleViewer,
 
 	"createUpstream":         RoleOperator,
 	"updateUpstream":         RoleOperator,
