@@ -1,15 +1,37 @@
 # nexora-v1-m5 — implementation plan
 
-Status: draft
+Status: draft (reconciled with the M1–M4 code at HEAD 91cf9a4 plus the uncommitted M4 Tasks 10–11 work)
 Spec: .procoder/specs/nexora-v1.md
 
 ## Goal
 
-Ship S-5 as a product: one stateless management plane drives N engines on different hosts through engine groups, group-scoped configuration, staged (canary) rollouts with an automatic health halt and manual rollback, fleet health and engine lifecycle (join tokens, certificate renewal, rotation and revocation), a fleet GUI, release images, a docker-compose example, a finished Helm chart, and the final kw deployment verified end to end by `TestKwFullProduct`.
+Ship S-5 as a product: one stateless management plane drives N engines on different hosts through engine groups, engine-group-scoped configuration, staged (canary) rollouts with an automatic health halt and manual rollback, fleet health and engine lifecycle (join tokens bound to groups, certificate renewal, rotation and revocation, engine state that survives restarts), a fleet GUI, release images, a docker-compose example, a Helm chart, and the final kw deployment built from that chart and verified end to end by `TestKwFullProduct`.
 
 ## Architecture
 
-The M1 contract already streams versioned snapshots over mTLS and every mgmt instance LISTENs on Postgres; M5 inserts two layers between a config mutation and an engine push. First, every mutation publishes one global version with one snapshot per affected engine group (`group_snapshots`), built from global plus group-scoped config rows. Second, each group snapshot gets a `rollouts` row whose state machine (`mgmt/internal/rollout`, a pure `Step` function) is advanced by any mgmt instance under a Postgres advisory lock; the instance holding an engine's stream pushes whatever `rollout.Target` says that engine should run, and health samples written from engine `Stats` feed the canary gate. Engine lifecycle adds a certificate table checked on every `Connect` (CRL equivalent) and certificate renewal over the existing stream; distribution adds `images.yml`, `deploy/compose/`, `deploy/helm/nexora` and a kw deployment built from that chart.
+M1 already streams versioned snapshots over mTLS, and every mgmt instance LISTENs on PostgreSQL and pushes to the engines connected to it. M5 puts two layers between a config mutation and an engine push. First, `snapshot.Mutate` publishes one global version with one snapshot per engine group (`group_snapshots`), each built from the global rows plus that group's rows (`engine_group_id` on the scoped tables). Second, each group snapshot gets a `rollouts` row whose state machine (`mgmt/internal/rollout`, a pure `Step` function) is advanced by any mgmt instance under a PostgreSQL advisory lock; the hub pushes whatever `fleet.TargetFor` says an engine should run, and the canary health gate reads the `engine_stats` samples M1 already stores. Engine lifecycle adds an `engine_certificates` table checked on every authenticated call and certificate renewal over the existing `Connect` stream; distribution extends `images.yml` and adds `deploy/compose/`, `deploy/helm/nexora` and a kw deployment installed from that chart.
+
+### Reconciled with M1–M4 code
+
+The first draft of this plan was written before any code existed. These design-level changes replace it (each is binding for the tasks below and is written into `docs/architecture.md` by Task 1):
+
+1. **No `FleetHealth` message and no `engine_health_samples` table.** M1's `Stats` already carries `queries_total`, `servfail_total`, cache hit/miss totals and the duration histogram, and `stats.Record` stores every sample as protobuf in `engine_stats` (24 h retention). The canary gate and the per-engine charts decode those samples. The only contract additions are the certificate renewal messages, numbered 500 and up as `.procoder/notes/plan-review.md` requires (`EngineMessage.cert_request = 500`, `ServerMessage.cert_issued = 500`, `ServerMessage.renew_certificate = 501`); M5 adds no `ConfigSnapshot` or `Stats` field.
+2. **"Engine groups" are the server-side fleet and never share a name with M2 policy groups.** Table `engine_groups`, Go type `fleet.EngineGroup`, column `engine_group_id`, API paths `/engine-groups`, JSON field `engine_group_id`, GUI label "Engine group". M2's client-side `policy_groups` and the existing `rewrites.group_id` (a policy group) keep their names. A rewrite inside a policy group follows its policy group's engine group; only global rewrites (`group_id IS NULL`) carry their own `engine_group_id`.
+3. **Scoped tables are the real ones:** `upstreams`, `filter_lists`, `policy_groups`, `rewrites`, `forward_zones`, `zones` (M4) and `rpz_zones` (M3). The singleton settings tables (`resolver_settings`, `access_control`, `allowlist`, `resolution_settings`, `dnssec_settings`, `global_safe_search`) stay fleet-wide; an engine group adds only `extra_acl_cidrs` (appended to `access_control.allow_cidrs`) and `otlp_endpoint` (replaces the global endpoint when non-empty). Resolution mode and DNSSEC settings stay snapshot-wide, as accepted in the M3 review.
+4. **Zones and RPZ zones reuse the M3/M4 structures unchanged.** Zone names stay globally unique (M4's `zones.name UNIQUE`, `zone.Service.GetZoneByName`, NOTIFY intake and `dynupdate` look zones up by name); a zone is served by every group (`engine_group_id IS NULL`) or by exactly one group. RPZ zones keep one global `position` order and a group sees the global zones plus its own in that order. The first draft's "same zone name as primary in one group and secondary in another" is dropped: M4 secondaries are pulled by the management plane (`xfrin`), not by engines.
+5. **Every publish writes a snapshot for every engine group**, not only for "affected" groups. M1–M4 tests and `kwWaitApplied` rely on every engine applying the newest version. A group snapshot whose content digest (snapshot with `version` and `created_unix_ms` zeroed) equals the group's stable content rolls out immediately (`all_at_once`, even when paused); only a real content change goes through the group's strategy. `all_at_once` rollouts are inserted directly in `rolling`, so the hub pushes on the same notification without waiting for a controller tick.
+6. **Connection state is M1's**: an engine is connected while `engines.connected_instance` names an instance whose `instances.heartbeat_at` is younger than 15 s. There is no `NEXORA_INSTANCE_ID`; `control.NewInstanceID()` stays. `config_versions.snapshot` becomes nullable; `snapshot.Latest` reads the default group's newest group snapshot. `pg_notify('nexora_config', version)` stays as an informational event; the hub pushes on `nexora_rollout`.
+7. **Engine records keep M1's shape**: `node_name`, soft delete `deleted_at`, `version_ahead`, `status` (`current` now means "applied version equals the engine's target version"; `revoked` is added). API paths keep `{id}`. Deleting an engine revokes its certificates and sets `deleted_at`.
+8. **Join tokens keep M1's reusable-until-expiry semantics** (accepted in the M1 review for autoscaled engines and used by the kw DaemonSet). M5 adds `engine_group_id` (default group), `labels` and an optional `max_uses` (NULL = unlimited). Enrollment errors stay `PermissionDenied`, now with the messages `join token unknown`, `join token expired`, `join token exhausted`, `join token revoked`.
+9. **Certificates**: M1 issues 365-day engine certificates and stores the serial in `engines.certificate_serial`. The migration backfills `engine_certificates` from that column with M1's exact validity (`enrolled_at - 1 hour` .. `enrolled_at + 365 days`), so no "record on first use" path is needed. New certificates use `NEXORA_ENGINE_CERT_TTL` (default `2160h`). Revocation is checked on `Connect`, `GetBlob` and the builtin OTLP `LogsService` through the per-call database lookup M1's `Server.engine` already does (no cache).
+10. **Engine state on kw moves from `emptyDir` to `hostPath`** (as the M1 and M3 reviews required) and the engine name comes from `NEXORA_ENGINE_NODE_NAME` (Kubernetes node name plus group), so a restarted pod keeps its engine id.
+11. **kw engines are DaemonSets (one engine per node per group), not "3 engines on distinct nodes".** Two groups are assigned by node label `nexora.io/engine-group`: `scripts/kw-deploy.sh` labels `worker-24` and `worker-25` with `edge-b`; the `default` DaemonSet runs on every other node (`master-11..13`, `worker-21..23`, 6 engines) and the `edge-b` DaemonSet on the two labelled workers. LoadBalancer layout: `192.168.10.135` mgmt gRPC (unchanged); `192.168.10.136` stays the `default` group's DNS/DoT/DoH/DoQ address with `externalTrafficPolicy: Local` (kube-vip holds VIPs on a control-plane node, which runs a `default` engine); `192.168.10.137` is new for `edge-b` with `externalTrafficPolicy: Cluster`, because the VIP node runs no `edge-b` engine (so `edge-b` sees node addresses, not client addresses, on `.137`; per-client policy is exercised on `.136`). `NEXORA_KW_ENGINES` stays the total (8). `.138` and `.139` stay unassigned.
+12. **kw from the chart, not a rewrite of kw**: the chart installs `nexora-mgmt`, the per-group engine DaemonSets, their Services, the ServiceMonitor and the PrometheusRule. The existing CNPG cluster `nexora-db` (external database mode, secret `nexora-db-app` key `uri`), `opensearch.yaml`, `otelcol.yaml`, `blocklist.yaml`, `namespace.yaml` and `bootstrap.sh` stay, as do the secrets `nexora-ca`, `nexora-kek`, `nexora-dns-tls`, `nexora-admin` and `nexora-join-token`. Resource names stay those `TestKwSmoke` and `bootstrap.sh` use (`nexora-mgmt`, `nexora-mgmt-grpc`, `nexora-mgmt-lb`, `nexora-dns`, `nexora-engine`, `nexora-engine-metrics`, ingress TLS secret `nexora-ingress-tls`).
+13. **`images.yml` already exists** (per-arch runners, push by digest, merge): M5 extends it with the `:main` tag and a multi-arch manifest check, and `deploy/deploytest` guards it. It is not recreated.
+14. **The e2e harness is extended, not replaced**: fleet helpers are methods on M1's `*harness.API` (`a.Must(method, path, body, out, want)`), engines start with `StartManagedEngineWith` (new `EngineOptions.ExtraEnv`), and `(*Env).RestartEngine` restarts an engine on its state directory. `harness.PublishRawSnapshot` writes group snapshots and rollouts.
+15. **GUI**: pages live in `web/src/pages/` with `data-testid` hooks like M1–M4; there is no vitest, so component behaviour is covered by Playwright screens `web/e2e/screens/20-fleet.spec.ts` and `21-engine-group-scope.spec.ts` (M4 Task 15 takes 18–19) and `TestGUICoverage`'s glob widens from `[01][0-9]` to `[012][0-9]`.
+16. **CLI**: `nexora-mgmt engine-group create`, `nexora-mgmt join-token create` and `nexora-mgmt ca init --if-missing` are added for Helm and compose installs; the kw deployment keeps bootstrapping through the HTTPS API (`bootstrap.sh`). There is no `api-token create` CLI; the kw acceptance test logs in with the admin password like `TestKwSmoke` (`kwLogin`).
+17. **Health and readiness path is `/api/v1/health`**, advisory locks follow M1's `hashtext('nexora:...')` naming (`nexora:config_version` stays the version lock), and M5's migration is `00500_fleet.sql`, after every M4 migration (`00400`, `00401`, and M4 Tasks 12–14's `004xx` files).
 
 ## Constraints
 
@@ -18,216 +40,222 @@ Copied from the spec and docs/architecture.md (binding):
 - "Management plane is stateless: all state in PostgreSQL, any number of instances behind a load balancer, engines may connect to any instance."
 - "Deployment: multi-node from v1 — one management plane controls N engines across hosts; single-host deployment is the N=1 case of the same model."
 - "Distribution: multi-arch (amd64, arm64) OCI container images for engine and management plane, a docker-compose example, and a Helm chart."
-- "The query path never logs synchronously, never touches a database, and never performs per-packet heap allocation on the cache-hit path." Nothing in M5 touches the engine worker threads; health counters are read from the existing per-worker atomics on the control runtime.
+- "The query path never logs synchronously, never touches a database, and never performs per-packet heap allocation on the cache-hit path." Nothing in M5 touches engine worker threads; certificate renewal runs on the `nexora-control` runtime.
 - "Engines persist their last applied snapshot locally and keep serving on it when the management plane is unreachable." This holds for revoked engines too.
-- "Stale engine: an engine reconnecting with an old snapshot version is brought to current; an engine reporting a newer version than the database (restored backup) is flagged, not silently downgraded."
-- "Concurrent edits: two operators editing the same zone or policy get optimistic-concurrency conflicts, not lost writes." Engine groups and engines carry `revision`; stale revision -> 409 `conflict`.
+- "Stale engine: an engine reconnecting with an old snapshot version is brought to current; an engine reporting a newer version than the database (restored backup) is flagged, not silently downgraded." M1's `version_ahead` flag and `VersionAhead` message stay, compared against the engine's target version.
+- "Concurrent edits: two operators editing the same zone or policy get optimistic-concurrency conflicts, not lost writes." Engine groups and engines carry `revision`; a stale revision returns 409 `conflict`.
 - Out of scope: "Kubernetes operator / CRDs (Helm chart only)", "Management-plane-managed PostgreSQL HA (operator's responsibility)".
 - "Every test that asserts 'does not happen' first asserts the positive path in the same run, so a harness failure cannot pass a negative check."
-- Every build/test command runs in the kw dev pod through `scripts/dev-exec.sh <cmd>` (it syncs first). Images build with `scripts/build-image.sh` and are pulled as `192.168.10.131/azrtydxb/<name>:<tag>`. Commits run on the laptop with `git`.
-- Go module `github.com/piwi3910/nexora`; uuid type `github.com/google/uuid`; DNS client in Go tests `github.com/miekg/dns`.
-- M5 migrations are numbered `00500`..`00509` in `mgmt/migrations/`; M5 proto fields use numbers `>= 100` so they never collide with M1–M4 fields.
-- Fixed identifiers: default group id `00000000-0000-0000-0000-000000000001`, name `default`; canary label key `nexora.io/canary`; NOTIFY channels `nexora_rollout` (payload group id; instances re-push), `nexora_rollout_tick` (payload group id; wakes controllers only), `nexora_engine_updated`, `nexora_engine_revoked`, `nexora_engine_rotate` (payload engine id); advisory locks `hashtext('rollout:' || id)`, `hashtext('publish')`, `hashtext('fleet:prune')`.
-- New management-plane environment: `NEXORA_INSTANCE_ID` (default `os.Hostname()`), `NEXORA_ENGINE_CERT_TTL` (Go duration, default `2160h`, minimum `30s`), `NEXORA_ROLLOUT_TICK` (default `1s`). New engine environment: `NEXORA_ENGINE_NODE_NAME` (overrides `node_name`).
-- New metrics: `nexora_mgmt_engines_disconnected` (gauge), `nexora_mgmt_engines{group,state}`, `nexora_mgmt_engine_drift{group,drift}`, `nexora_mgmt_rollouts{state}`; engine `nexora_control_revoked` (gauge 0/1).
-- kw facts: arm64 k3s (nodes master-11..13, worker-21..25), storage classes `longhorn` (default) / `longhorn-single`, ingress class `nginx`, ClusterIssuer `cluster-ca`, CNPG operator already installed in `cnpg-system`, Jaeger at `jaeger.observability:4317` (query `jaeger.observability:16686`), Prometheus `kps-prometheus.monitoring:9090`, dev pod namespace `nexora-dev`. LoadBalancer IPs used by other workloads: 120–131, 133, 134. M5 takes: `192.168.10.135` mgmt gRPC 9443, `192.168.10.136` engine group `edge-a` DNS, `192.168.10.137` engine group `edge-b` DNS; `.138` and `.139` stay unassigned.
-- Consumed M1–M4 identifiers (verified in Task 1, step 1): tables `engines`, `join_tokens`, `config_versions(version, snapshot)`, `upstreams`, `acl_entries`, `filter_lists`, `client_policies`, `rewrites`, `zones`, `rpz_zones`, `telemetry_settings`; proto messages `Hello`, `Stats`, `ConfigSnapshot` (field `uint64 version`), `EngineMessage` and `ServerMessage` each with `oneof msg`; Go `snapshot.Publish`, `storetest.NewDB(t) *pgxpool.Pool`, `auth.Audit`; harness `StartPostgres`, `StartMgmt`, `StartEngine`, `StartFixtureUpstream`, `RunPlaywright`; engine identity files `state_dir/identity/{cert.pem,key.pem,ca.pem}`. Where Task 1 finds a different M1–M4 spelling, that spelling replaces the one written here everywhere in this plan; behaviour does not change.
+- Builds and tests run in the kw dev pod through `scripts/dev-exec.sh <cmd>` (it syncs first). Generated sources (`gen/go/`, `mgmt/internal/api/gen.go`, `web/src/api/schema.d.ts`) are generated on the laptop with `make proto`, never in the pod. Images build with `scripts/build-image.sh` and are pulled as `192.168.10.131/azrtydxb/<name>:<tag>`. Commits run on the laptop with `git`.
+- Go module `github.com/piwi3910/nexora`; uuid `github.com/google/uuid`; Go DNS client `github.com/miekg/dns`; YAML in Go tests `go.yaml.in/yaml/v3` (already in `go.mod`).
+- Proto field numbers: M5 fields in existing messages use 500 and up (M2 300–399, M3 100–199, M4 200–299).
+- Fixed identifiers: default engine group id `00000000-0000-0000-0000-000000000001`, name `default`; canary label key `nexora.io/canary`; NOTIFY channels `nexora_rollout` (payload engine group id; instances re-push, controllers step), `nexora_engine_updated`, `nexora_engine_revoked`, `nexora_engine_rotate` (payload engine id); advisory locks `hashtext('nexora:rollout:' || id)`.
+- New management-plane environment: `NEXORA_ENGINE_CERT_TTL` (Go duration, default `2160h`, minimum `30s`), `NEXORA_ROLLOUT_TICK` (default `1s`, `100ms`..`1m`). New engine environment: `NEXORA_ENGINE_NODE_NAME` (overrides `node_name`).
+- New metrics: management `nexora_mgmt_engines{engine_group,status}`, `nexora_mgmt_engines_disconnected`, `nexora_mgmt_rollouts{engine_group,state}`; engine `nexora_control_revoked` (gauge 0/1), `nexora_control_cert_renewals_total`.
+- kw facts: arm64 k3s, nodes `master-11..13` (control plane, tainted, kube-vip ARP holds LoadBalancer VIPs there) and `worker-21..25`; storage classes `longhorn` (default) and `longhorn-single`; ingress class `nginx`; ClusterIssuer `cluster-ca`; CNPG operator in `cnpg-system`; Jaeger `jaeger.observability:4317` (query `jaeger.observability:16686`); Prometheus `kps-prometheus.monitoring:9090` (kube-prometheus-stack, label `release: kps`); dev pod namespace `nexora-dev`. kw's network redirects every outbound DNS query, so kw runs forward mode with forwarded DNSSEC validation (recursion is tested only in the private hierarchy). LoadBalancer IPs used by other workloads: 120–131, 133, 134; Nexora: `.135` mgmt gRPC, `.136` DNS group `default`, `.137` DNS group `edge-b`.
+- Consumed M1–M4 identifiers (verified by Task 1): tables `engines(id, node_name, join_token_id, certificate_serial, engine_version, enrolled_at, last_seen_at, connected_instance, applied_version, rejected_version, rejected_reason, persist_error, version_ahead, deleted_at)`, `join_tokens(id, name, secret_hash, created_by, created_at, expires_at, revoked_at, uses)`, `instances`, `engine_stats(engine_id, at, stats)`, `config_versions(version, created_at, created_by, summary, snapshot)`, `upstreams`, `filter_lists`, `policy_groups`, `rewrites(group_id)`, `forward_zones`, `zones`, `rpz_zones`, `access_control`, `resolver_settings`; Go `snapshot.Mutate`, `snapshot.EnsureInitial`, `snapshot.PublishRaw`, `snapshot.Latest`, `snapshot.Build`, `snapshot.AddAuthZones`, `store.LoadResolution`, `store.PolicyQuerier`, `storetest.New(t) *store.Store`, `(*store.Store).Migrate`, `auth.WriteAudit`, `(*pki.CA).SignEngineCSR`, `control.CreateJoinToken`, `control.NewInstanceID`, `control.EngineID`; harness `(*Env).StartMgmt`, `(*Env).StartManagedEngineWith`, `EngineOptions`, `Bootstrap`, `(*API).Must`, `(*API).WaitEngine`, `(*API).CreateJoinToken`, `(*API).LatestVersion`, `PublishRawSnapshot`, `RunPlaywright`, `EventuallyTrue`, `Eventually`; e2e helpers `waitLatestApplied`, `loadKwEnv`, `kwLogin`, `kwEngine`, `kwWaitApplied`, `aValues`; engine identity files `state_dir/identity/{cert.pem,key.pem,ca.pem,engine_id}`; web `web/src/pages/EnginesPage.tsx`, `web/src/app/router.tsx`, `web/e2e/fixtures.ts` (`login`, `env`), `web/src/auth/permissions.ts` mirrored by `web/scripts/check-permissions.mjs`.
 
 ## Task 1: Settle the fleet design in docs/architecture.md
 
 Files: `docs/architecture.md` (the binding how; changed before any code, per its own rule)
-Interfaces: produces the names every later task uses — tables `engine_groups`, `group_snapshots`, `rollouts`, `engine_health_samples`, `engine_certificates`; package `mgmt/internal/rollout`; package `mgmt/internal/fleet`; routes `/engines`, `/engines/:engineId`, `/engines/groups/:groupId`, `/engines/rollouts/:rolloutId`.
+Interfaces: produces the names every later task uses — tables `engine_groups`, `group_snapshots`, `rollouts`, `engine_certificates`; columns `engine_group_id`, `engines.labels`, `engines.revoked_at`, `engines.cert_rotate_requested_at`, `engines.revision`; packages `mgmt/internal/rollout`, `mgmt/internal/fleet`; API paths `/engine-groups`, `/rollouts`, `/fleet/summary`, `/engines/{id}/stats|revoke|rotate-certificate`; GUI routes `/engines`, `/engines/groups/:id`, `/engines/nodes/:id`, `/engines/rollouts/:id`.
 
 - [ ] Verify the M1–M4 identifiers this plan consumes. Run:
   ```
-  scripts/dev-exec.sh 'ls mgmt/migrations | sort | tail -1; grep -hoE "CREATE TABLE (engines|join_tokens|config_versions|upstreams|acl_entries|filter_lists|client_policies|rewrites|zones|rpz_zones|telemetry_settings) " mgmt/migrations/*.sql | sort -u | wc -l; grep -c "snapshot bytea" mgmt/migrations/*.sql | grep -v ":0" | wc -l; grep -nE "^message (Hello|Stats|ConfigSnapshot|EngineMessage|ServerMessage) " proto/nexora/control/v1/control.proto | wc -l; grep -c "oneof msg" proto/nexora/control/v1/control.proto; grep -rhoE "func (StartPostgres|StartMgmt|StartEngine|StartFixtureUpstream|RunPlaywright)\(" e2e/harness | sort -u | wc -l; grep -rhoE "func (NewDB|Publish|Audit)\(" mgmt/internal/store/storetest mgmt/internal/snapshot mgmt/internal/auth | sort -u | wc -l'
+  scripts/dev-exec.sh 'ls mgmt/migrations/*.sql | sort | tail -1; grep -hoiE "create table (engines|join_tokens|instances|engine_stats|config_versions|upstreams|filter_lists|policy_groups|rewrites|forward_zones|zones|rpz_zones|access_control|resolver_settings) " mgmt/migrations/*.sql | tr A-Z a-z | sort -u | wc -l; grep -cE "^message (Hello|Stats|ConfigSnapshot|EngineMessage|ServerMessage) " proto/nexora/control/v1/control.proto; grep -cE "= 5[0-9][0-9];" proto/nexora/control/v1/control.proto; grep -rhoE "func (Mutate|EnsureInitial|PublishRaw|Latest|Build|AddAuthZones|LoadResolution|New|WriteAudit|CreateJoinToken|NewInstanceID|EngineID)\(" mgmt/internal/snapshot mgmt/internal/store mgmt/internal/auth mgmt/internal/control | sort -u | wc -l; grep -rhoE "func (\(e \*Env\) StartMgmt|\(e \*Env\) StartManagedEngineWith|Bootstrap|\(a \*API\) WaitEngine|\(a \*API\) CreateJoinToken|PublishRawSnapshot|RunPlaywright|EventuallyTrue)\(" e2e/harness | sort -u | wc -l; grep -c "\"cert.pem\", \"key.pem\", \"ca.pem\", \"engine_id\"" engine/src/control.rs; grep -hoE "func (waitLatestApplied|loadKwEnv|kwLogin|kwWaitApplied|aValues)\(" e2e/*_test.go | sort -u | wc -l'
   ```
-  expect, line by line: a file name whose numeric prefix is below `00500`; `11`; `1`; `5`; `2`; `5`; `3`. For every count that differs, find the M1–M4 spelling (`grep -rn` for the concept) and record it in the "M1–M4 names" table added in the next step; later tasks use the recorded spelling.
-- [ ] Add a section `## Fleet (M5)` to `docs/architecture.md` directly before `## Deployment on kw`, with exactly this content (plus the "M1–M4 names" table from the previous step when it is non-empty):
+  expect, line by line: a migration whose numeric prefix is below `00500`; `14`; `5`; `0`; `12`; `8`; `1`; `5`. For every count that differs, find the current spelling with `grep -rn` for the concept, add it to the "M1–M4 names" table the next step appends, and use that spelling wherever this plan writes the name; behaviour does not change.
+- [ ] Add a section `## Fleet (M5)` to `docs/architecture.md` directly before `## Deployment on kw`, with exactly this content (plus a table "M1–M4 names" when the previous step recorded any difference):
   ```markdown
   ## Fleet (M5)
 
   ### Engine groups and scoping
 
-  - `engine_groups` holds groups. The group `default`
+  - `engine_groups` holds the server-side fleet partition. The group `default`
     (`00000000-0000-0000-0000-000000000001`) always exists and cannot be renamed
-    or deleted. Every engine belongs to exactly one group (`engines.group_id`);
-    a join token names the group the enrolling engine lands in, and
-    `PATCH /api/v1/engines/{engineId}` moves an engine.
-  - Config resource tables `upstreams`, `acl_entries`, `filter_lists`,
-    `client_policies`, `rewrites`, `zones`, `rpz_zones`, `telemetry_settings`
-    carry `group_id uuid NULL`; NULL means global. Resource names stay unique
-    across scopes, except zones: a zone name may exist once per group but never
-    both globally and in a group, so one group can be a secondary for a zone
-    another group serves as primary.
-  - A group's effective configuration: ACL entries, filter lists, policies,
-    rewrites, zones and RPZ zones are global rows followed by the group's rows.
-    Upstreams follow `engine_groups.upstream_mode`: `inherit` = the group's
-    upstreams first, then global ones; `override` = only the group's upstreams
-    (none = full recursion from root hints). Telemetry settings: the group row,
-    when present, replaces the global row as a whole.
-  - Host concerns stay in `engine.toml` (listen addresses, `node_name`,
-    `state_dir`). `NEXORA_ENGINE_NODE_NAME` overrides `node_name`. Per-engine
-    state set through the API is limited to the group and labels
-    (`engines.labels`, string -> string, key `^[a-z0-9]([a-z0-9./-]{0,61}[a-z0-9])?$`,
-    value at most 63 characters, at most 32 labels). `nexora.io/canary=true`
-    makes an engine preferred for canary selection.
+    or deleted. Every engine belongs to one group (`engines.engine_group_id`); a
+    join token names the group an enrolling engine lands in, and
+    `PATCH /api/v1/engines/{id}` moves an engine. Engine groups are unrelated to
+    M2 policy groups (client-side, selected by source CIDR).
+  - Scoped tables carry `engine_group_id uuid NULL` (NULL = every group):
+    `upstreams`, `filter_lists`, `policy_groups`, `rewrites` (only global
+    rewrites; a rewrite inside a policy group follows that policy group),
+    `forward_zones`, `zones`, `rpz_zones`. Names stay unique across the fleet.
+  - A group's snapshot contains the global rows plus the group's rows. Upstreams
+    follow `engine_groups.upstream_mode`: `inherit` = the group's upstreams
+    first, then the global ones; `override` = only the group's upstreams.
+    `access_control.allow_cidrs` is followed by `engine_groups.extra_acl_cidrs`;
+    a non-empty `engine_groups.otlp_endpoint` replaces the global OTLP endpoint.
+    Resolution, DNSSEC, resolver/cache, block mode, allowlist and global safe
+    search settings are fleet-wide. A policy group may select only filter lists
+    that are global or in its own engine group. RPZ TSIG keys and hosted-zone
+    TSIG keys (`RpzTsigKeys`, `KeyMaterial`) are filtered per engine to the
+    zones in its target snapshot.
+  - Host concerns stay in `engine.toml`. `NEXORA_ENGINE_NODE_NAME` overrides
+    `node_name`. Per-engine state set through the API is the group and
+    `engines.labels` (string -> string; key
+    `^[a-z0-9]([a-z0-9./-]{0,61}[a-z0-9])?$`, value at most 63 characters, at
+    most 32 labels). `nexora.io/canary=true` makes an engine preferred for canary
+    selection.
 
   ### Versions and snapshots
 
-  - `config_versions.version` stays one global monotonic sequence. A mutation
-    publishes one version and one `group_snapshots(version, group_id)` row per
-    affected group: a global resource affects every group, a group-scoped
-    resource affects its group, a resource moved between scopes affects the
-    union of old and new scope. `ConfigSnapshot.version` equals the version.
-    Publishing takes `pg_advisory_xact_lock(hashtext('publish'))`.
-  - `engine_groups.stable_version` is the newest version whose rollout
-    completed for that group.
-  - Rollback and republish copy an existing group snapshot into a new version
-    (re-encoded with the new version number), because engines only apply a
+  - `config_versions.version` stays one global sequence
+    (`pg_advisory_xact_lock(hashtext('nexora:config_version'))`). Every publish
+    writes one `group_snapshots(version, engine_group_id, snapshot,
+  content_sha256)` row per engine group; `content_sha256` is the SHA-256 of the
+    deterministic encoding with `version` and `created_unix_ms` zeroed.
+    `config_versions.snapshot` is NULL from M5 on; `snapshot.Latest` returns the
+    default group's newest group snapshot.
+  - `engine_groups.stable_version` is the newest version whose rollout completed
+    for that group. Rollback and republish copy an existing group snapshot into
+    a new version (re-encoded with the new number), because engines apply only a
     version greater than the one they run.
 
   ### Rollouts
 
   - Each group snapshot gets one `rollouts` row. Kinds: `change` (a config
-    mutation; strategy from the group), `rollback` and `republish` (always
-    `all_at_once`). Group rollout parameters: `rollout_strategy`
-    (`all_at_once` | `canary`), `canary_count`, `canary_percent`,
-    `ack_timeout_seconds` (default 60), `health_window_seconds` (default 30),
-    `max_servfail_ratio` (default 0.05), `min_health_queries` (default 100).
-    Parameters are copied into `rollouts.params` when the rollout is created.
+    mutation), `rollback`, `republish` (engine moved into the group). Group
+    parameters: `rollout_strategy` (`all_at_once` | `canary`), `canary_count`,
+    `canary_percent`, `ack_timeout_seconds` (60), `health_window_seconds` (30),
+    `max_servfail_ratio` (0.05), `min_health_queries` (100), copied into
+    `rollouts.params` at creation.
+  - A `change` whose `content_sha256` equals the content of the group's stable
+    version, `rollback`, `republish` and test-only raw publishes are immediate:
+    strategy `all_at_once`, not held by `rollouts_paused`. An `all_at_once`
+    rollout is inserted in `rolling`; a `canary` change is inserted in `pending`.
   - States: `pending` -> `canary` -> `verifying` -> `rolling` -> `completed`;
-    `canary`, `verifying`, `rolling` -> `halted`; `halted` -> `rolled_back`;
-    every non-terminal state -> `superseded`. Terminal: `completed`,
-    `rolled_back`, `superseded`. At most one rollout per group is in
+    `canary`/`verifying`/`rolling` -> `halted`; `halted` -> `rolled_back`; every
+    non-terminal state -> `superseded`. At most one rollout per group is in
     `canary`/`verifying`/`rolling`.
-  - `pending`: waits while the group has `rollouts_paused` and the kind is
-    `change`; otherwise `all_at_once` or non-change kinds go to `rolling`, and
-    `canary` selects canaries and goes to `canary`.
-  - Canary selection: connected engines, `nexora.io/canary=true` first, then by
-    name; size = max(`canary_count`, ceil(`canary_percent`% of connected)),
-    at least 1, at most connected-1 when two or more engines are connected.
-  - `canary`: any canary rejecting the version -> `halted`; all canaries
-    applied -> `verifying`; `ack_timeout_seconds` elapsed -> `halted`.
-  - `verifying`: rejection -> `halted`; after `health_window_seconds`, for each
-    canary: fewer than 2 health samples -> `halted` ("stopped reporting");
-    at least `min_health_queries` queries and SERVFAIL/queries >
-    `max_servfail_ratio` -> `halted`; otherwise -> `rolling`.
-  - `rolling`: rejection by any engine -> `halted`; every connected engine
-    applied -> `completed` (sets `stable_version`); `ack_timeout_seconds`
+  - `pending` waits while the group has `rollouts_paused`, else selects
+    canaries: connected engines, `nexora.io/canary=true` first, then by node
+    name; size max(`canary_count`, ceil(`canary_percent`% of connected)), at
+    least 1, at most connected-1 when two or more are connected.
+  - `canary`: a canary rejecting the version -> `halted`; all canaries applied
+    -> `verifying`; `ack_timeout_seconds` elapsed -> `halted`. `verifying`:
+    after `health_window_seconds`, each canary needs at least 2 `engine_stats`
+    samples from the newest sample at most 60 s before the phase start onwards
+    (else `halted`, "stopped reporting"); with at least `min_health_queries`
+    queries a SERVFAIL/queries ratio above `max_servfail_ratio` -> `halted`;
+    otherwise `rolling`. `rolling`: a rejection -> `halted`; every connected
+    engine applied -> `completed` (sets `stable_version`); `ack_timeout_seconds`
     elapsed -> `halted`. Disconnected engines get the version on reconnect.
-  - A new `change` supersedes the group's `pending` rollouts when the group is
-    paused, and its `pending`/`canary`/`verifying`/`rolling`/`halted` rollouts
-    otherwise. A `rollback` marks the `halted` rollout `rolled_back`,
-    supersedes the rest, and sets `rollouts_paused`. A `republish` (group move)
-    supersedes every non-terminal rollout. `resume-rollouts` clears
-    `rollouts_paused` and publishes a fresh `change` from the current rows.
-  - Target version of an engine, given the group's newest rollout R:
-    R `rolling`/`completed` -> R.version; R `canary`/`verifying` and the engine
-    is a canary -> R.version; R `halted` and the engine applied R.version ->
-    R.version; otherwise `stable_version`. An engine whose applied version is
-    above its target is flagged `ahead` and never pushed.
-  - Every instance runs the controller: tick `NEXORA_ROLLOUT_TICK` plus LISTEN
-    `nexora_rollout`. Per non-terminal rollout: `BEGIN`,
-    `pg_try_advisory_xact_lock(hashtext('rollout:' || id))` (skip when not
-    acquired), `SELECT ... FOR UPDATE`, `rollout.Step` with `now()` read from
-    Postgres, `UPDATE`, `pg_notify('nexora_rollout', group_id)`, `COMMIT`.
-    Instances push on `nexora_rollout` to their connected engines of that group
-    whose target is above the last version sent. The M1 `nexora_config`
-    channel is retired.
+  - Creation supersedes the group's open rollouts: a paused, non-immediate
+    `change` supersedes only `pending`; a `rollback` marks `halted` rollouts
+    `rolled_back`, supersedes the rest and sets `rollouts_paused`; anything else
+    supersedes `pending`/`canary`/`verifying`/`rolling`/`halted`.
+    `resume-rollouts` clears `rollouts_paused` and publishes a fresh version.
+  - Target version of an engine, given the group's newest non-superseded
+    rollout R: R `rolling`/`completed`/`rolled_back` -> R.version; R
+    `canary`/`verifying` and the engine is a canary -> R.version; R `halted` and
+    the engine applied R.version -> R.version; otherwise `stable_version`. An
+    engine whose applied version is above its target is flagged `version_ahead`
+    and never pushed.
+  - Every instance runs `rollout.Controller`: tick `NEXORA_ROLLOUT_TICK` plus
+    LISTEN `nexora_rollout`. Per open rollout: `BEGIN`,
+    `pg_try_advisory_xact_lock(hashtext('nexora:rollout:' || id))` (skip when not
+    acquired), `SELECT ... FOR UPDATE`, `rollout.Step` with `now()` from
+    PostgreSQL, `UPDATE`, `pg_notify('nexora_rollout', engine_group_id)`,
+    `COMMIT`. The hub LISTENs on `nexora_rollout` and pushes to its connected
+    engines of that group whose target is above the version last sent; acks and
+    rejections notify `nexora_rollout` so controllers step at once.
 
   ### Fleet health
 
-  - `Stats` carries `FleetHealth` (cumulative queries, SERVFAIL, cache hits,
-    cache misses; p50/p99 latency of the last interval). The instance holding
-    the stream writes `engine_health_samples` and `engines.last_seen_at` on
-    every `Stats`, `Hello`, `Applied` and `Rejected`. Samples older than 24 h
-    are deleted every 5 min under `pg_try_advisory_xact_lock(hashtext('fleet:prune'))`.
-    Acks and Rejected notify `nexora_rollout_tick` so controllers step at once.
-  - `connection_state`: `revoked` (engine revoked), `connected`
-    (`last_seen_at` within 60 s), `never_connected` (no `last_seen_at`),
-    `disconnected` (otherwise). `drift`: `rejected` (rejected its target),
-    `in_sync`, `behind`, `ahead` (applied vs target), `unknown` (never
-    connected).
-  - Metrics on every instance, refreshed every 15 s from Postgres:
-    `nexora_mgmt_engines_disconnected` (non-revoked engines unseen for more than
-    60 s, including never-connected engines enrolled more than 60 s ago),
-    `nexora_mgmt_engines{group,state}`, `nexora_mgmt_engine_drift{group,drift}`,
-    `nexora_mgmt_rollouts{state}` (non-terminal plus halted).
+  - Engine `status`: `revoked` (engine revoked), `ahead` (`version_ahead` or
+    applied above target), `disconnected` (no live stream: `connected_instance`
+    NULL or its instance heartbeat older than 15 s), `rejected`
+    (`rejected_version` above applied), `current` (applied equals target),
+    `behind`.
+  - Metrics on every instance, read from PostgreSQL at scrape time:
+    `nexora_mgmt_engines{engine_group,status}`,
+    `nexora_mgmt_engines_disconnected` (non-revoked, non-deleted engines without
+    a live stream whose `last_seen_at`, or `enrolled_at` when never seen, is
+    older than 60 s), `nexora_mgmt_rollouts{engine_group,state}` (non-terminal
+    and halted).
 
   ### Engine lifecycle
 
-  - Join tokens carry `group_id`, `labels`, `expires_at` (TTL 60 s .. 30 d,
-    default 24 h), `max_uses` (default 1), `uses`, `revoked_at`. Enroll errors
-    (gRPC `Unauthenticated`): `join token unknown`, `join token expired`,
+  - Join tokens: `name`, `engine_group_id`, `labels`, `expires_at` (TTL 60 s ..
+    1 year), `max_uses` (NULL = unlimited), `uses`, `revoked_at`. Enroll errors
+    (`PermissionDenied`): `join token unknown`, `join token expired`,
     `join token exhausted`, `join token revoked`.
   - `engine_certificates(serial, engine_id, not_before, not_after, issued_at,
-    revoked_at, revoke_reason)`; serial is lowercase hex. Engine certificate
-    lifetime is `NEXORA_ENGINE_CERT_TTL`.
-  - Renewal: from 2/3 of the certificate lifetime the engine sends
-    `CertificateRequest{csr_der, reason: RENEWAL}` on the stream with a new
-    P-256 key; the server issues and answers `CertificateIssued`; the engine
-    swaps `state_dir/identity` atomically (`identity.new` -> rename) and
-    reconnects. On the first `Connect` with a newer serial the server marks the
-    engine's older serials `superseded`.
-  - Rotation: `POST /api/v1/engines/{engineId}/rotate-certificate` sets
-    `cert_rotate_requested_at` and notifies `nexora_engine_rotate`; the
-    instance holding the stream sends `RenewCertificate{reason: ROTATE}` (also
-    sent on `Hello` while a request is outstanding); issuing clears it.
-  - Revocation: `POST /api/v1/engines/{engineId}/revoke` sets
-    `engines.revoked_at`, revokes every certificate (`revoked`), notifies
-    `nexora_engine_revoked`; instances close that engine's streams with
-    `PermissionDenied` `certificate revoked`. `Connect` checks Postgres on
-    every call; `GetBlob` and the OTLP `LogsService` use a 5 s per-instance
-    cache invalidated by the notification. A certificate that chains to the CA
-    but is missing from the table (issued before M5) is recorded on first use.
-    A revoked engine keeps serving its last snapshot, sets
-    `nexora_control_revoked 1` and retries every 300 s (±10% jitter); joining
-    again needs `state_dir/identity` removed and a new join token (new engine
-    id). Engines are never deleted automatically.
+  revoked_at, revoke_reason)`, serial lowercase hex. Lifetime
+    `NEXORA_ENGINE_CERT_TTL`. `engines.certificate_serial` holds the newest
+    issued serial.
+  - Every `Connect`, `GetBlob` and builtin `LogsService/Export` call looks up
+    the caller's certificate serial: unknown engine or deleted engine ->
+    `PermissionDenied` `unknown or deleted engine`; revoked engine, revoked or
+    unknown serial, or a serial of another engine -> `PermissionDenied`
+    `certificate revoked`. A `Connect` with a serial marks the engine's older
+    unrevoked serials `superseded`.
+  - Renewal: from 2/3 of the lifetime the engine sends
+    `CertificateRequest{csr_der, reason: RENEWAL}` (CSR CN = engine id, new
+    P-256 key); the instance issues (at most once per engine per 10 s) and
+    answers `CertificateIssued{cert_der, ca_der}`; the engine swaps
+    `state_dir/identity` atomically (`identity.new` -> `identity`) and
+    reconnects.
+  - Rotation: `POST /api/v1/engines/{id}/rotate-certificate` sets
+    `cert_rotate_requested_at` and notifies `nexora_engine_rotate`; the instance
+    holding the stream (and every `Connect` while the request is outstanding)
+    sends `RenewCertificate{reason: ROTATE}`; issuing clears it.
+  - Revocation: `POST /api/v1/engines/{id}/revoke` sets `engines.revoked_at`,
+    revokes every certificate (`revoked`) and notifies `nexora_engine_revoked`;
+    instances end that engine's streams with `PermissionDenied`
+    `certificate revoked`. A revoked engine keeps serving its last snapshot,
+    sets `nexora_control_revoked 1` and retries every 300 s (±10%); joining
+    again needs `state_dir/identity` removed and a new join token.
+    `DELETE /api/v1/engines/{id}` revokes and sets `deleted_at`.
 
   ### Distribution
 
   - `.github/workflows/images.yml` builds `nexora-engine` and `nexora-mgmt`
-    per architecture on `arc-azrtydxb-publish` (arm64) and
-    `arc-azrtydxb-amd64-publish` (amd64), pushes by digest to
-    `192.168.10.131:5000/azrtydxb`, and merges digests into `:sha-<7>` (and
-    `:main` on main).
-  - `deploy/compose/` runs Postgres, one mgmt, one engine and an optional
-    OpenTelemetry Collector (profile `otel`).
-  - `deploy/helm/nexora`: mgmt Deployment (N replicas, `migrate` init
-    container), engine workloads per group (`Deployment` or `DaemonSet`,
-    optional `hostNetwork`), CNPG `Cluster` or an external database secret,
-    optional OpenTelemetry Collector, ServiceMonitor and PrometheusRule,
-    `values.schema.json`. The CA is always an existing secret created with
-    `nexora-mgmt ca init`. Static checks live in `deploy/deploytest`.
-  - Operational CLI: `nexora-mgmt group create`, `nexora-mgmt join-token
-    create`, `nexora-mgmt api-token create`, `nexora-mgmt ca init --if-missing`.
+    natively on `arc-azrtydxb-publish` (arm64) and `arc-azrtydxb-amd64-publish`
+    (amd64), pushes by digest to `192.168.10.131:5000/azrtydxb`, and merges
+    digests into `:sha-<7>` (`:v*` on tags) plus `:main` on main.
+  - `deploy/compose/` runs PostgreSQL, one mgmt, one engine (profile `engine`)
+    and an optional OpenTelemetry Collector (profile `otel`).
+  - `deploy/helm/nexora`: mgmt Deployment (`migrate` init container), one
+    engine workload per engine group (`DaemonSet` or `Deployment`, node
+    selector, hostPath state), per-group DNS Service, CNPG `Cluster` or an
+    external database secret, optional collector, ServiceMonitor,
+    PrometheusRule, `values.schema.json`. Static checks live in
+    `deploy/deploytest`.
+  - CLI: `nexora-mgmt engine-group create`, `nexora-mgmt join-token create`,
+    `nexora-mgmt ca init --if-missing`.
   ```
 - [ ] Replace the body of `## Deployment on kw` with:
   ```markdown
-  Namespace `nexora`, installed from `deploy/helm/nexora` with
-  `deploy/kw/values-kw.yaml` by `scripts/kw-deploy.sh`: CNPG cluster
-  `nexora-db` (2 instances, `longhorn-single`), `nexora-mgmt` Deployment
-  (2 replicas) behind ingress `nexora.kw.local` (class `nginx`, ClusterIssuer
-  `cluster-ca`) and a LoadBalancer `192.168.10.135:9443` for gRPC; engines in
-  two groups on distinct worker nodes (required pod anti-affinity):
-  `edge-a` (2 replicas, LoadBalancer `192.168.10.136`) and `edge-b`
-  (1 replica, LoadBalancer `192.168.10.137`), state on hostPath
-  `/var/lib/nexora/<release>-<group>`; OpenTelemetry Collector sending traces to
-  `jaeger.observability:4317` and query logs to OpenSearch (`deploy/kw/opensearch.yaml`,
-  single node); ServiceMonitor and PrometheusRule in namespace `monitoring`
-  with label `release: kps`; `nexora-fixture` for blocklist and primary-zone
-  fixtures. Acceptance: `scripts/kw-acceptance.sh` runs `TestKwFullProduct`.
+  Namespace `nexora`. `scripts/kw-deploy.sh` applies `deploy/kw/namespace.yaml`,
+  `opensearch.yaml`, `cnpg-cluster.yaml` (CNPG `nexora-db`, 2 instances),
+  `otelcol.yaml` (traces to `jaeger.observability.svc:4317`, query logs to
+  OpenSearch) and `blocklist.yaml`, then installs `deploy/helm/nexora` with
+  `deploy/kw/values-kw.yaml`: `nexora-mgmt` Deployment (2 replicas) behind ingress
+  `nexora.kw.local` (class `nginx`, ClusterIssuer `cluster-ca`, HTTPS only) and a
+  gRPC LoadBalancer `192.168.10.135:9443`; engine DaemonSets per engine group,
+  selected by node label `nexora.io/engine-group`: `nexora-engine` (group
+  `default`, every node without the label, DNS/DoT/DoH/DoQ LoadBalancer
+  `nexora-dns` `192.168.10.136`, `externalTrafficPolicy: Local`) and
+  `nexora-engine-edge-b` (group `edge-b`, nodes labelled `edge-b`: `worker-24`,
+  `worker-25`; LoadBalancer `nexora-dns-edge-b` `192.168.10.137`,
+  `externalTrafficPolicy: Cluster`); engine state on hostPath
+  `/var/lib/nexora/<workload>`; ServiceMonitor and PrometheusRule in `monitoring`
+  with label `release: kps`. `deploy/kw/bootstrap.sh` configures the API (admin,
+  upstreams, block list, RPZ, engine group `edge-b`, join token secrets
+  `nexora-join-token` and `nexora-join-token-edge-b`). Acceptance:
+  `scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`)
+  and `TestKwFullProduct`.
   ```
-- [ ] Add to the repository layout block: `mgmt/internal/rollout                    staged rollout state machine + controller`, `mgmt/internal/fleet                      groups, engines, health samples, fleet metrics, join tokens`, `deploy/deploytest/                       helm/compose/workflow static tests`, `deploy/docker/fixture.Dockerfile         fixture image for kw acceptance`, and in the Contract section the line `- M5 adds FleetHealth (Stats field 100), CertificateRequest (EngineMessage 100), CertificateIssued and RenewCertificate (ServerMessage 100, 101).`
-- [ ] Run `grep -c "^## Fleet (M5)" docs/architecture.md` and expect `1`; run `grep -c "192.168.10.13[5-7]" docs/architecture.md` and expect `3`.
+- [ ] Add to the repository layout block: `mgmt/internal/rollout                    staged rollout state machine, creation, controller`, `mgmt/internal/fleet                      engine groups, engine views and targets, join tokens, certificates, fleet metrics`, `deploy/deploytest/                       helm/compose/workflow/docs static tests`, `engine/src/cert_renewal.rs               certificate renewal timing, CSR, atomic identity swap`; and in the Contract section the line `- M5: EngineMessage.cert_request (500), ServerMessage.cert_issued (500) and ServerMessage.renew_certificate (501) carry certificate renewal and rotation; M5 adds no ConfigSnapshot or Stats field (fleet health is derived from the M1 Stats samples).`
+- [ ] Run `grep -c "^## Fleet (M5)" docs/architecture.md` and expect `1`; run `grep -c "192.168.10.13[5-7]" docs/architecture.md` and expect `3`; run `grep -c "3 replicas, one per" docs/architecture.md` and expect `0`.
 - [ ] Commit: `git add docs/architecture.md && git commit -m "docs(architecture): settle M5 fleet design"`.
 
 ## Task 2: Fleet schema migration
 
-Files: `mgmt/migrations/00500_fleet.sql` (all M5 tables and columns), `mgmt/internal/store/fleet.go` (fleet schema constants), `mgmt/internal/store/fleet_migration_test.go` (schema test)
-Interfaces: `store.DefaultGroupID uuid.UUID`; `store.ScopedConfigTables []string`; tables and columns exactly as in the migration below.
+Files: `mgmt/migrations/00500_fleet.sql` (all M5 tables, columns and backfills), `mgmt/internal/store/fleet.go` (fleet constants, down-migration helper), `mgmt/internal/store/fleet_migration_test.go` (schema test)
+Interfaces: `store.DefaultEngineGroupID uuid.UUID`; `store.EngineScopedTables []string`; `func (s *Store) MigrateDownTo(ctx context.Context, version int64) error`; tables and columns exactly as in the migration below.
 
 - [ ] Write the failing test `mgmt/internal/store/fleet_migration_test.go`:
   ```go
@@ -244,86 +272,145 @@ Interfaces: `store.DefaultGroupID uuid.UUID`; `store.ScopedConfigTables []string
 
   func TestFleetMigration(t *testing.T) {
   	ctx := context.Background()
-  	db := storetest.NewDB(t)
+  	st := storetest.New(t)
+  	db := st.Pool
 
   	var name string
-  	if err := db.QueryRow(ctx, `SELECT name FROM engine_groups WHERE id = $1`, store.DefaultGroupID).Scan(&name); err != nil || name != "default" {
-  		t.Fatalf("default group: name=%q err=%v", name, err)
+  	if err := db.QueryRow(ctx, `select name from engine_groups where id = $1`, store.DefaultEngineGroupID).Scan(&name); err != nil || name != "default" {
+  		t.Fatalf("default engine group: name=%q err=%v", name, err)
   	}
-
   	hasColumn := func(table, column string) bool {
   		var n int
-  		err := db.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
-  			WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, table, column).Scan(&n)
+  		err := db.QueryRow(ctx, `select count(*) from information_schema.columns
+  			where table_schema = 'public' and table_name = $1 and column_name = $2`, table, column).Scan(&n)
   		return err == nil && n == 1
   	}
-  	for _, table := range store.ScopedConfigTables {
-  		if !hasColumn(table, "group_id") {
-  			t.Errorf("%s.group_id missing", table)
+  	for _, table := range store.EngineScopedTables {
+  		if !hasColumn(table, "engine_group_id") {
+  			t.Errorf("%s.engine_group_id missing", table)
   		}
   	}
-  	for _, c := range []string{"group_id", "labels", "last_seen_at", "connected_instance", "revoked_at",
-  		"cert_rotate_requested_at", "applied_version", "rejected_version", "rejected_reason", "revision"} {
+  	if !hasColumn("rewrites", "group_id") {
+  		t.Error("rewrites.group_id (the M2 policy group) must stay")
+  	}
+  	for _, c := range []string{"engine_group_id", "labels", "revoked_at", "cert_rotate_requested_at", "revision"} {
   		if !hasColumn("engines", c) {
   			t.Errorf("engines.%s missing", c)
   		}
   	}
-  	for _, c := range []string{"group_id", "expires_at", "max_uses", "uses", "labels", "revoked_at"} {
+  	for _, c := range []string{"engine_group_id", "labels", "max_uses"} {
   		if !hasColumn("join_tokens", c) {
   			t.Errorf("join_tokens.%s missing", c)
   		}
   	}
-  	for _, tbl := range []string{"group_snapshots", "rollouts", "engine_health_samples", "engine_certificates"} {
+  	for _, tbl := range []string{"group_snapshots", "rollouts", "engine_certificates"} {
   		var reg *string
-  		if err := db.QueryRow(ctx, `SELECT to_regclass('public.' || $1)::text`, tbl).Scan(&reg); err != nil || reg == nil {
+  		if err := db.QueryRow(ctx, `select to_regclass('public.' || $1)::text`, tbl).Scan(&reg); err != nil || reg == nil {
   			t.Errorf("table %s missing (err=%v)", tbl, err)
   		}
   	}
-
   	var def string
-  	if err := db.QueryRow(ctx, `SELECT indexdef FROM pg_indexes WHERE indexname = 'rollouts_one_active_per_group'`).Scan(&def); err != nil ||
+  	if err := db.QueryRow(ctx, `select indexdef from pg_indexes where indexname = 'rollouts_one_active_per_group'`).Scan(&def); err != nil ||
   		!strings.Contains(def, "UNIQUE") || !strings.Contains(def, "verifying") {
   		t.Errorf("rollouts_one_active_per_group: %q err=%v", def, err)
   	}
+  	var nullable string
+  	if err := db.QueryRow(ctx, `select is_nullable from information_schema.columns
+  		where table_name = 'config_versions' and column_name = 'snapshot'`).Scan(&nullable); err != nil || nullable != "YES" {
+  		t.Errorf("config_versions.snapshot nullable = %q err=%v", nullable, err)
+  	}
 
   	// Positive path first: a valid canary configuration is accepted.
-  	if _, err := db.Exec(ctx, `UPDATE engine_groups SET rollout_strategy = 'canary', canary_count = 1 WHERE id = $1`, store.DefaultGroupID); err != nil {
-  		t.Fatalf("valid canary rejected: %v", err)
+  	if _, err := db.Exec(ctx, `update engine_groups set rollout_strategy = 'canary', canary_count = 1 where id = $1`, store.DefaultEngineGroupID); err != nil {
+  		t.Fatalf("valid canary configuration rejected: %v", err)
   	}
-  	if _, err := db.Exec(ctx, `UPDATE engine_groups SET canary_count = 0, canary_percent = 0 WHERE id = $1`, store.DefaultGroupID); err == nil {
+  	if _, err := db.Exec(ctx, `update engine_groups set canary_count = 0, canary_percent = 0 where id = $1`, store.DefaultEngineGroupID); err == nil {
   		t.Fatal("canary strategy without a canary size was accepted")
   	}
-  	if _, err := db.Exec(ctx, `INSERT INTO engine_groups (name) VALUES ('Bad_Name')`); err == nil {
-  		t.Fatal("group name outside [a-z0-9-] was accepted")
+  	if _, err := db.Exec(ctx, `insert into engine_groups (name) values ('Bad_Name')`); err == nil {
+  		t.Fatal("engine group name outside [a-z0-9-] was accepted")
+  	}
+  	if _, err := db.Exec(ctx, `insert into policy_groups (name) values ('p1')`); err != nil {
+  		t.Fatal(err)
+  	}
+  	if _, err := db.Exec(ctx, `insert into rewrites (group_id, engine_group_id, name, type, value)
+  		select id, $1, 'a.test', 'A', '192.0.2.1' from policy_groups where name = 'p1'`, store.DefaultEngineGroupID); err == nil {
+  		t.Fatal("a policy group rewrite with its own engine_group_id was accepted")
+  	}
+  }
+
+  func TestFleetMigrationBackfillsCertificatesAndDownUp(t *testing.T) {
+  	ctx := context.Background()
+  	st := storetest.New(t)
+  	if err := st.MigrateDownTo(ctx, 499); err != nil {
+  		t.Fatalf("down to 499: %v", err)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `insert into engines (node_name, certificate_serial, enrolled_at)
+  		values ('old-engine', 'a1b2', '2026-01-01T00:00:00Z')`); err != nil {
+  		t.Fatal(err)
+  	}
+  	if err := st.Migrate(ctx); err != nil {
+  		t.Fatalf("up again: %v", err)
+  	}
+  	var notAfter, group string
+  	if err := st.Pool.QueryRow(ctx, `select c.not_after::date::text, e.engine_group_id::text from engine_certificates c
+  		join engines e on e.id = c.engine_id where c.serial = 'a1b2'`).Scan(&notAfter, &group); err != nil {
+  		t.Fatalf("backfilled certificate: %v", err)
+  	}
+  	if notAfter != "2027-01-01" || group != store.DefaultEngineGroupID.String() {
+  		t.Fatalf("backfill not_after %s group %s", notAfter, group)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run TestFleetMigration -count=1` and expect FAIL with `undefined: store.DefaultGroupID`.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run TestFleetMigration -count=1` and expect FAIL with `undefined: store.DefaultEngineGroupID`.
 - [ ] Create `mgmt/internal/store/fleet.go`:
   ```go
   package store
 
-  import "github.com/google/uuid"
+  import (
+  	"context"
+  	"fmt"
 
-  // DefaultGroupID is the engine group every engine and join token falls back to.
-  var DefaultGroupID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+  	"github.com/google/uuid"
+  	"github.com/jackc/pgx/v5/stdlib"
+  	"github.com/pressly/goose/v3"
 
-  // ScopedConfigTables are the config resource tables that can be global
-  // (group_id IS NULL) or belong to one engine group.
-  var ScopedConfigTables = []string{
-  	"upstreams", "acl_entries", "filter_lists", "client_policies",
-  	"rewrites", "zones", "rpz_zones", "telemetry_settings",
+  	"github.com/piwi3910/nexora/mgmt/migrations"
+  )
+
+  // DefaultEngineGroupID is the engine group every engine and join token falls back to.
+  var DefaultEngineGroupID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+
+  // EngineScopedTables are the configuration tables whose rows apply to every engine group
+  // (engine_group_id IS NULL) or to one engine group.
+  var EngineScopedTables = []string{
+  	"upstreams", "filter_lists", "policy_groups", "rewrites", "forward_zones", "zones", "rpz_zones",
+  }
+
+  // MigrateDownTo rolls the schema back to version (tests and emergency operations only).
+  func (s *Store) MigrateDownTo(ctx context.Context, version int64) error {
+  	db := stdlib.OpenDBFromPool(s.Pool)
+  	defer db.Close()
+  	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+  	if err != nil {
+  		return err
+  	}
+  	if _, err := provider.DownTo(ctx, version); err != nil {
+  		return fmt.Errorf("migrate down to %d: %w", version, MapError(err))
+  	}
+  	return nil
   }
   ```
 - [ ] Create `mgmt/migrations/00500_fleet.sql`:
   ```sql
   -- +goose Up
-  -- +goose StatementBegin
   CREATE TABLE engine_groups (
       id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       name                  text NOT NULL UNIQUE CHECK (name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
       description           text NOT NULL DEFAULT '' CHECK (length(description) <= 1024),
       upstream_mode         text NOT NULL DEFAULT 'inherit' CHECK (upstream_mode IN ('inherit', 'override')),
+      extra_acl_cidrs       cidr[] NOT NULL DEFAULT '{}',
+      otlp_endpoint         text NOT NULL DEFAULT '',
       rollout_strategy      text NOT NULL DEFAULT 'all_at_once' CHECK (rollout_strategy IN ('all_at_once', 'canary')),
       canary_count          integer NOT NULL DEFAULT 0 CHECK (canary_count >= 0),
       canary_percent        integer NOT NULL DEFAULT 0 CHECK (canary_percent BETWEEN 0 AND 100),
@@ -339,71 +426,61 @@ Interfaces: `store.DefaultGroupID uuid.UUID`; `store.ScopedConfigTables []string
       CONSTRAINT engine_groups_canary_size CHECK (rollout_strategy = 'all_at_once' OR canary_count > 0 OR canary_percent > 0)
   );
   INSERT INTO engine_groups (id, name, description)
-  VALUES ('00000000-0000-0000-0000-000000000001', 'default', 'Engines not assigned to another group');
+  VALUES ('00000000-0000-0000-0000-000000000001', 'default', 'Engines not assigned to another engine group');
 
   ALTER TABLE engines
-      ADD COLUMN IF NOT EXISTS group_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
+      ADD COLUMN engine_group_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
           REFERENCES engine_groups (id) ON DELETE RESTRICT,
-      ADD COLUMN IF NOT EXISTS labels jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(labels) = 'object'),
-      ADD COLUMN IF NOT EXISTS last_seen_at timestamptz,
-      ADD COLUMN IF NOT EXISTS connected_instance text,
-      ADD COLUMN IF NOT EXISTS revoked_at timestamptz,
-      ADD COLUMN IF NOT EXISTS cert_rotate_requested_at timestamptz,
-      ADD COLUMN IF NOT EXISTS applied_version bigint NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS rejected_version bigint,
-      ADD COLUMN IF NOT EXISTS rejected_reason text,
-      ADD COLUMN IF NOT EXISTS revision bigint NOT NULL DEFAULT 1,
-      ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
-  CREATE INDEX engines_group_id_idx ON engines (group_id);
+      ADD COLUMN labels jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(labels) = 'object'),
+      ADD COLUMN revoked_at timestamptz,
+      ADD COLUMN cert_rotate_requested_at timestamptz,
+      ADD COLUMN revision bigint NOT NULL DEFAULT 1;
+  CREATE INDEX engines_engine_group ON engines (engine_group_id);
 
-  DO $$
-  DECLARE t text;
-  BEGIN
-      FOREACH t IN ARRAY ARRAY['upstreams', 'acl_entries', 'filter_lists', 'client_policies',
-                               'rewrites', 'zones', 'rpz_zones', 'telemetry_settings'] LOOP
-          IF to_regclass('public.' || t) IS NULL THEN
-              RAISE EXCEPTION 'fleet migration: config table % not found; align 00500_fleet.sql with mgmt/migrations', t;
-          END IF;
-          EXECUTE format('ALTER TABLE %I ADD COLUMN group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT', t);
-          EXECUTE format('CREATE INDEX %I ON %I (group_id)', t || '_group_id_idx', t);
-      END LOOP;
-  END $$;
+  ALTER TABLE join_tokens
+      ADD COLUMN engine_group_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
+          REFERENCES engine_groups (id) ON DELETE CASCADE,
+      ADD COLUMN labels jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(labels) = 'object'),
+      ADD COLUMN max_uses integer CHECK (max_uses IS NULL OR max_uses >= 1);
 
-  -- telemetry_settings was a singleton; it becomes one row per scope.
-  ALTER TABLE telemetry_settings DROP CONSTRAINT IF EXISTS telemetry_settings_pkey;
-  ALTER TABLE telemetry_settings
-      ADD COLUMN scope_key uuid GENERATED ALWAYS AS (coalesce(group_id, '00000000-0000-0000-0000-000000000000'::uuid)) STORED;
-  ALTER TABLE telemetry_settings ADD CONSTRAINT telemetry_settings_pkey PRIMARY KEY (scope_key);
-
-  -- zones: one name per group, never both global and group-scoped (the latter enforced by the API).
-  ALTER TABLE zones DROP CONSTRAINT IF EXISTS zones_name_key;
-  CREATE UNIQUE INDEX zones_name_scope_uq ON zones (lower(name), coalesce(group_id, '00000000-0000-0000-0000-000000000000'::uuid));
+  ALTER TABLE upstreams     ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  ALTER TABLE filter_lists  ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  ALTER TABLE policy_groups ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  ALTER TABLE forward_zones ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  ALTER TABLE zones         ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  ALTER TABLE rpz_zones     ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT;
+  -- Only global rewrites have their own engine group; policy group rewrites follow their policy group.
+  ALTER TABLE rewrites
+      ADD COLUMN engine_group_id uuid REFERENCES engine_groups (id) ON DELETE RESTRICT,
+      ADD CONSTRAINT rewrites_engine_group_global_only CHECK (group_id IS NULL OR engine_group_id IS NULL);
+  CREATE INDEX upstreams_engine_group ON upstreams (engine_group_id);
+  CREATE INDEX filter_lists_engine_group ON filter_lists (engine_group_id);
+  CREATE INDEX policy_groups_engine_group ON policy_groups (engine_group_id);
+  CREATE INDEX rewrites_engine_group ON rewrites (engine_group_id);
+  CREATE INDEX forward_zones_engine_group ON forward_zones (engine_group_id);
+  CREATE INDEX zones_engine_group ON zones (engine_group_id);
+  CREATE INDEX rpz_zones_engine_group ON rpz_zones (engine_group_id);
 
   ALTER TABLE config_versions ALTER COLUMN snapshot DROP NOT NULL;
 
   CREATE TABLE group_snapshots (
-      version    bigint NOT NULL REFERENCES config_versions (version) ON DELETE CASCADE,
-      group_id   uuid NOT NULL REFERENCES engine_groups (id) ON DELETE CASCADE,
-      snapshot   bytea NOT NULL,
-      sha256     text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-      created_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (version, group_id)
+      version         bigint NOT NULL REFERENCES config_versions (version) ON DELETE CASCADE,
+      engine_group_id uuid NOT NULL REFERENCES engine_groups (id) ON DELETE CASCADE,
+      snapshot        bytea NOT NULL,
+      content_sha256  text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+      created_at      timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (version, engine_group_id)
   );
-  CREATE INDEX group_snapshots_group_version_idx ON group_snapshots (group_id, version DESC);
-  INSERT INTO group_snapshots (version, group_id, snapshot, sha256)
-  SELECT version, '00000000-0000-0000-0000-000000000001', snapshot, encode(sha256(snapshot), 'hex')
-  FROM config_versions WHERE snapshot IS NOT NULL ORDER BY version DESC LIMIT 1;
-  UPDATE engine_groups SET stable_version = (SELECT max(version) FROM group_snapshots)
-  WHERE id = '00000000-0000-0000-0000-000000000001';
+  CREATE INDEX group_snapshots_group_version ON group_snapshots (engine_group_id, version DESC);
 
   CREATE TABLE rollouts (
       id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      group_id          uuid NOT NULL REFERENCES engine_groups (id) ON DELETE CASCADE,
+      engine_group_id   uuid NOT NULL REFERENCES engine_groups (id) ON DELETE CASCADE,
       version           bigint NOT NULL,
       from_version      bigint,
       kind              text NOT NULL CHECK (kind IN ('change', 'rollback', 'republish')),
       strategy          text NOT NULL CHECK (strategy IN ('all_at_once', 'canary')),
-      state             text NOT NULL DEFAULT 'pending' CHECK (state IN
+      state             text NOT NULL CHECK (state IN
                           ('pending', 'canary', 'verifying', 'rolling', 'completed', 'halted', 'rolled_back', 'superseded')),
       params            jsonb NOT NULL,
       canary_engine_ids uuid[] NOT NULL DEFAULT '{}',
@@ -413,26 +490,22 @@ Interfaces: `store.DefaultGroupID uuid.UUID`; `store.ScopedConfigTables []string
       created_at        timestamptz NOT NULL DEFAULT now(),
       updated_at        timestamptz NOT NULL DEFAULT now(),
       finished_at       timestamptz,
-      FOREIGN KEY (version, group_id) REFERENCES group_snapshots (version, group_id) ON DELETE CASCADE
+      FOREIGN KEY (version, engine_group_id) REFERENCES group_snapshots (version, engine_group_id) ON DELETE CASCADE
   );
-  CREATE UNIQUE INDEX rollouts_one_active_per_group ON rollouts (group_id)
+  CREATE UNIQUE INDEX rollouts_one_active_per_group ON rollouts (engine_group_id)
       WHERE state IN ('canary', 'verifying', 'rolling');
-  CREATE INDEX rollouts_group_created_idx ON rollouts (group_id, created_at DESC);
-  CREATE INDEX rollouts_open_idx ON rollouts (created_at) WHERE state IN ('pending', 'canary', 'verifying', 'rolling');
+  CREATE INDEX rollouts_group_version ON rollouts (engine_group_id, version DESC);
+  CREATE INDEX rollouts_open ON rollouts (created_at) WHERE state IN ('pending', 'canary', 'verifying', 'rolling');
 
-  CREATE TABLE engine_health_samples (
-      engine_id          uuid NOT NULL REFERENCES engines (id) ON DELETE CASCADE,
-      at                 timestamptz NOT NULL,
-      applied_version    bigint NOT NULL,
-      queries_total      bigint NOT NULL,
-      servfail_total     bigint NOT NULL,
-      cache_hits_total   bigint NOT NULL,
-      cache_misses_total bigint NOT NULL,
-      latency_p50_us     integer NOT NULL,
-      latency_p99_us     integer NOT NULL,
-      PRIMARY KEY (engine_id, at)
-  );
-  CREATE INDEX engine_health_samples_at_idx ON engine_health_samples (at);
+  -- The newest pre-M5 version becomes the default group's completed, stable snapshot.
+  INSERT INTO group_snapshots (version, engine_group_id, snapshot, content_sha256)
+  SELECT version, '00000000-0000-0000-0000-000000000001', snapshot, encode(sha256(snapshot), 'hex')
+  FROM config_versions WHERE snapshot IS NOT NULL ORDER BY version DESC LIMIT 1;
+  INSERT INTO rollouts (engine_group_id, version, kind, strategy, state, params, created_by, phase_started_at, finished_at)
+  SELECT engine_group_id, version, 'change', 'all_at_once', 'completed', '{"strategy":"all_at_once"}'::jsonb, 'migration', now(), now()
+  FROM group_snapshots;
+  UPDATE engine_groups SET stable_version = (SELECT max(version) FROM group_snapshots)
+  WHERE id = '00000000-0000-0000-0000-000000000001';
 
   CREATE TABLE engine_certificates (
       serial        text PRIMARY KEY CHECK (serial ~ '^[0-9a-f]+$'),
@@ -444,83 +517,84 @@ Interfaces: `store.DefaultGroupID uuid.UUID`; `store.ScopedConfigTables []string
       revoke_reason text CHECK (revoke_reason IN ('revoked', 'superseded')),
       CHECK ((revoked_at IS NULL) = (revoke_reason IS NULL))
   );
-  CREATE INDEX engine_certificates_engine_idx ON engine_certificates (engine_id, issued_at DESC);
-
-  ALTER TABLE join_tokens
-      ADD COLUMN IF NOT EXISTS group_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
-          REFERENCES engine_groups (id) ON DELETE CASCADE,
-      ADD COLUMN IF NOT EXISTS expires_at timestamptz NOT NULL DEFAULT now() + interval '24 hours',
-      ADD COLUMN IF NOT EXISTS max_uses integer NOT NULL DEFAULT 1 CHECK (max_uses >= 1),
-      ADD COLUMN IF NOT EXISTS uses integer NOT NULL DEFAULT 0 CHECK (uses >= 0),
-      ADD COLUMN IF NOT EXISTS labels jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(labels) = 'object'),
-      ADD COLUMN IF NOT EXISTS revoked_at timestamptz;
-  -- +goose StatementEnd
+  CREATE INDEX engine_certificates_engine ON engine_certificates (engine_id, issued_at DESC);
+  -- M1 issued every engine certificate with NotBefore now-1h and NotAfter now+365d at enrollment.
+  INSERT INTO engine_certificates (serial, engine_id, not_before, not_after, issued_at, revoked_at, revoke_reason)
+  SELECT lower(certificate_serial), id, enrolled_at - interval '1 hour', enrolled_at + interval '365 days', enrolled_at,
+         deleted_at, CASE WHEN deleted_at IS NOT NULL THEN 'revoked' END
+  FROM engines WHERE certificate_serial ~ '^[0-9a-fA-F]+$'
+  ON CONFLICT (serial) DO NOTHING;
 
   -- +goose Down
-  -- +goose StatementBegin
-  ALTER TABLE join_tokens DROP COLUMN revoked_at, DROP COLUMN labels, DROP COLUMN uses,
-      DROP COLUMN max_uses, DROP COLUMN expires_at, DROP COLUMN group_id;
   DROP TABLE engine_certificates;
-  DROP TABLE engine_health_samples;
   DROP TABLE rollouts;
   DROP TABLE group_snapshots;
-  ALTER TABLE telemetry_settings DROP CONSTRAINT telemetry_settings_pkey;
-  ALTER TABLE telemetry_settings DROP COLUMN scope_key;
-  DROP INDEX zones_name_scope_uq;
-  ALTER TABLE zones ADD CONSTRAINT zones_name_key UNIQUE (name);
-  DO $$
-  DECLARE t text;
-  BEGIN
-      FOREACH t IN ARRAY ARRAY['upstreams', 'acl_entries', 'filter_lists', 'client_policies',
-                               'rewrites', 'zones', 'rpz_zones', 'telemetry_settings'] LOOP
-          EXECUTE format('ALTER TABLE %I DROP COLUMN group_id', t);
-      END LOOP;
-  END $$;
-  ALTER TABLE engines DROP COLUMN group_id, DROP COLUMN labels, DROP COLUMN connected_instance,
-      DROP COLUMN revoked_at, DROP COLUMN cert_rotate_requested_at;
+  DELETE FROM config_versions WHERE snapshot IS NULL;
+  ALTER TABLE config_versions ALTER COLUMN snapshot SET NOT NULL;
+  ALTER TABLE rewrites DROP CONSTRAINT rewrites_engine_group_global_only, DROP COLUMN engine_group_id;
+  ALTER TABLE rpz_zones DROP COLUMN engine_group_id;
+  ALTER TABLE zones DROP COLUMN engine_group_id;
+  ALTER TABLE forward_zones DROP COLUMN engine_group_id;
+  ALTER TABLE policy_groups DROP COLUMN engine_group_id;
+  ALTER TABLE filter_lists DROP COLUMN engine_group_id;
+  ALTER TABLE upstreams DROP COLUMN engine_group_id;
+  ALTER TABLE join_tokens DROP COLUMN max_uses, DROP COLUMN labels, DROP COLUMN engine_group_id;
+  ALTER TABLE engines DROP COLUMN revision, DROP COLUMN cert_rotate_requested_at, DROP COLUMN revoked_at,
+      DROP COLUMN labels, DROP COLUMN engine_group_id;
   DROP TABLE engine_groups;
-  -- +goose StatementEnd
   ```
-  When Task 1 recorded that `telemetry_settings` had its singleton enforced by something other than its primary key (for example a `CHECK (id)` constraint), drop that constraint in the same migration by its name from `\d telemetry_settings`. The Down section keeps M1 columns that existed before (`last_seen_at`, `applied_version`, `rejected_*`, `revision`, `created_at` were added with `IF NOT EXISTS`) and does not drop them.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run TestFleetMigration -count=1` and expect `ok`.
-- [ ] Add the down/up round trip to the same test file and run it:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run 'TestFleetMigration' -count=1` and expect `ok` (both tests).
+- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... -count=1'` and expect every package `ok` (the new columns are nullable or defaulted, so M1–M4 inserts are unchanged).
+- [ ] Commit: `git add mgmt/migrations/00500_fleet.sql mgmt/internal/store/fleet.go mgmt/internal/store/fleet_migration_test.go && git commit -m "feat(store): fleet schema (engine groups, group snapshots, rollouts, certificates)"`.
+
+## Task 3: Contract additions for certificate renewal
+
+Files: `proto/nexora/control/v1/control.proto` (contract), `gen/go/nexora/control/v1/control.pb.go` and `control_grpc.pb.go` (regenerated on the laptop), `mgmt/internal/control/contract_m5_test.go` (field numbers and wire round trip), `engine/src/control.rs` (exhaustive match over the new server messages)
+Interfaces: Go `controlv1.CertificateRequest{CsrDer []byte; Reason controlv1.CertificateRequest_Reason}`, `controlv1.CertificateIssued{CertDer, CaDer []byte}`, `controlv1.RenewCertificate{Reason controlv1.CertificateRequest_Reason}`, oneof wrappers `controlv1.EngineMessage_CertRequest`, `controlv1.ServerMessage_CertIssued`, `controlv1.ServerMessage_RenewCertificate`; Rust `crate::proto::{CertificateRequest, CertificateIssued, RenewCertificate}`, `crate::proto::certificate_request::Reason`, `engine_message::Msg::CertRequest`, `server_message::Msg::{CertIssued, RenewCertificate}`.
+
+- [ ] Write the failing test `mgmt/internal/control/contract_m5_test.go`:
   ```go
-  func TestFleetMigrationDownUp(t *testing.T) {
-  	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	if err := store.MigrateDownTo(ctx, db, 499); err != nil {
-  		t.Fatalf("down to 499: %v", err)
-  	}
-  	var reg *string
-  	if err := db.QueryRow(ctx, `SELECT to_regclass('public.engine_groups')::text`).Scan(&reg); err != nil || reg != nil {
-  		t.Fatalf("engine_groups still present after down: %v %v", reg, err)
-  	}
-  	if err := store.Migrate(ctx, db); err != nil {
-  		t.Fatalf("up again: %v", err)
-  	}
-  }
-  ```
-  `store.MigrateDownTo(ctx, pool, version int64) error` wraps `goose.DownTo` with the embedded migrations FS the M1 `store.Migrate` already uses (add it to `mgmt/internal/store/fleet.go` if M1 has no such helper). Run `scripts/dev-exec.sh go test ./mgmt/internal/store/ -run 'TestFleetMigration' -count=1` and expect `ok`.
-- [ ] Commit (all files of this task): `git add mgmt/migrations/00500_fleet.sql mgmt/internal/store/fleet.go mgmt/internal/store/fleet_migration_test.go && git commit -m "feat(store): fleet schema (groups, rollouts, health, certificates)"`.
-
-## Task 3: Contract additions for fleet health and certificate renewal
-
-Files: `proto/nexora/control/v1/control.proto` (contract), `gen/go/nexora/control/v1/*.pb.go` (regenerated, committed), `gen/go/nexora/control/v1/fleet_contract_test.go` (wire round-trip test)
-Interfaces: Go `controlv1.FleetHealth{QueriesTotal, ServfailTotal, CacheHitsTotal, CacheMissesTotal uint64; LatencyP50Us, LatencyP99Us uint32}`, `controlv1.Stats.Health`, `controlv1.CertificateRequest{CsrDer []byte; Reason CertificateRequest_Reason}`, `controlv1.CertificateIssued{CertDer, CaDer []byte}`, `controlv1.RenewCertificate{Reason CertificateRequest_Reason}`, oneof wrappers `EngineMessage_CertRequest`, `ServerMessage_CertIssued`, `ServerMessage_RenewCertificate`; Rust `pb::FleetHealth`, `pb::CertificateRequest`, `pb::engine_message::Msg::CertRequest`, `pb::server_message::Msg::{CertIssued, RenewCertificate}` (tonic-prost codegen in `engine/build.rs`).
-
-- [ ] Write the failing test `gen/go/nexora/control/v1/fleet_contract_test.go`:
-  ```go
-  package controlv1_test
+  package control_test
 
   import (
   	"testing"
 
   	"google.golang.org/protobuf/proto"
+  	"google.golang.org/protobuf/reflect/protoreflect"
 
   	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
   )
 
-  func TestFleetContractRoundTrip(t *testing.T) {
+  func TestM5ContractFieldNumbers(t *testing.T) {
+  	srv := (&controlv1.ServerMessage{}).ProtoReflect().Descriptor()
+  	eng := (&controlv1.EngineMessage{}).ProtoReflect().Descriptor()
+  	for _, c := range []struct {
+  		msg   protoreflect.MessageDescriptor
+  		field protoreflect.Name
+  		num   protoreflect.FieldNumber
+  	}{
+  		{eng, "cert_request", 500},
+  		{srv, "cert_issued", 500},
+  		{srv, "renew_certificate", 501},
+  	} {
+  		f := c.msg.Fields().ByName(c.field)
+  		if f == nil {
+  			t.Fatalf("%s.%s missing", c.msg.FullName(), c.field)
+  		}
+  		if f.Number() != c.num || f.ContainingOneof() == nil || f.ContainingOneof().Name() != "msg" {
+  			t.Errorf("%s.%s = %d (oneof %v), want %d in oneof msg", c.msg.FullName(), c.field, f.Number(), f.ContainingOneof(), c.num)
+  		}
+  	}
+  	for _, m := range []protoreflect.MessageDescriptor{
+  		(&controlv1.ConfigSnapshot{}).ProtoReflect().Descriptor(), (&controlv1.Stats{}).ProtoReflect().Descriptor(),
+  	} {
+  		for i := 0; i < m.Fields().Len(); i++ {
+  			if n := m.Fields().Get(i).Number(); n >= 500 {
+  				t.Errorf("%s has an M5 field %d; M5 adds none there", m.FullName(), n)
+  			}
+  		}
+  	}
+
   	in := &controlv1.EngineMessage{Msg: &controlv1.EngineMessage_CertRequest{CertRequest: &controlv1.CertificateRequest{
   		CsrDer: []byte{0x30, 0x01}, Reason: controlv1.CertificateRequest_REASON_ROTATE}}}
   	raw, err := proto.Marshal(in)
@@ -528,81 +602,56 @@ Interfaces: Go `controlv1.FleetHealth{QueriesTotal, ServfailTotal, CacheHitsTota
   		t.Fatal(err)
   	}
   	var out controlv1.EngineMessage
-  	if err := proto.Unmarshal(raw, &out); err != nil {
-  		t.Fatal(err)
-  	}
-  	if got := out.GetCertRequest().GetReason(); got != controlv1.CertificateRequest_REASON_ROTATE {
-  		t.Fatalf("reason = %v", got)
-  	}
-
-  	srv := &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RenewCertificate{RenewCertificate: &controlv1.RenewCertificate{
-  		Reason: controlv1.CertificateRequest_REASON_RENEWAL}}}
-  	if _, err := proto.Marshal(srv); err != nil {
-  		t.Fatal(err)
+  	if err := proto.Unmarshal(raw, &out); err != nil || out.GetCertRequest().GetReason() != controlv1.CertificateRequest_REASON_ROTATE {
+  		t.Fatalf("round trip: %v %v", out.GetCertRequest(), err)
   	}
   	issued := &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_CertIssued{CertIssued: &controlv1.CertificateIssued{CertDer: []byte{1}, CaDer: []byte{2}}}}
-  	if _, err := proto.Marshal(issued); err != nil {
-  		t.Fatal(err)
-  	}
-
-  	stats := &controlv1.Stats{Health: &controlv1.FleetHealth{QueriesTotal: 1000, ServfailTotal: 7,
-  		CacheHitsTotal: 900, CacheMissesTotal: 100, LatencyP50Us: 250, LatencyP99Us: 5000}}
-  	raw, _ = proto.Marshal(stats)
-  	var back controlv1.Stats
-  	if err := proto.Unmarshal(raw, &back); err != nil || back.GetHealth().GetServfailTotal() != 7 {
-  		t.Fatalf("stats round trip: %v %v", back.GetHealth(), err)
-  	}
-  	if n := stats.ProtoReflect().Descriptor().Fields().ByName("health").Number(); n != 100 {
-  		t.Fatalf("Stats.health field number = %d, want 100", n)
+  	renew := &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RenewCertificate{RenewCertificate: &controlv1.RenewCertificate{
+  		Reason: controlv1.CertificateRequest_REASON_RENEWAL}}}
+  	for _, m := range []proto.Message{issued, renew} {
+  		if _, err := proto.Marshal(m); err != nil {
+  			t.Fatal(err)
+  		}
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./gen/go/nexora/control/v1/ -run TestFleetContractRoundTrip -count=1` and expect FAIL with `undefined: controlv1.EngineMessage_CertRequest`.
-- [ ] Append to `proto/nexora/control/v1/control.proto`:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestM5ContractFieldNumbers -count=1` and expect FAIL with `undefined: controlv1.EngineMessage_CertRequest`.
+- [ ] Edit `proto/nexora/control/v1/control.proto`: inside `oneof msg` of `message EngineMessage` add `CertificateRequest cert_request = 500; // M5`; inside `oneof msg` of `message ServerMessage` add `CertificateIssued cert_issued = 500;       // M5: reply to EngineMessage.cert_request` and `RenewCertificate renew_certificate = 501; // M5: send a CertificateRequest now`; append:
   ```proto
-  // ---- M5 fleet additions. Field numbers >= 100 are reserved for M5. ----
+  // ---- M5: engine certificate renewal and rotation ----
 
-  // Cumulative counters since engine start plus latency of the last Stats interval.
-  message FleetHealth {
-    uint64 queries_total = 1;
-    uint64 servfail_total = 2;
-    uint64 cache_hits_total = 3;
-    uint64 cache_misses_total = 4;
-    uint32 latency_p50_us = 5;
-    uint32 latency_p99_us = 6;
-  }
-
-  // Engine -> server: a CSR for a new P-256 key. The CSR subject CN must be the engine id.
+  // Engine -> server: a PKCS#10 CSR for a new ECDSA P-256 key; the subject CN must be the engine id.
   message CertificateRequest {
     enum Reason {
       REASON_UNSPECIFIED = 0;
-      REASON_RENEWAL = 1;
-      REASON_ROTATE = 2;
+      REASON_RENEWAL = 1; // 2/3 of the certificate lifetime passed
+      REASON_ROTATE = 2;  // answering RenewCertificate
     }
     bytes csr_der = 1;
     Reason reason = 2;
   }
 
-  // Server -> engine: the issued certificate and the CA that signed it.
+  // Server -> engine: the issued client certificate and the CA that signed it (both DER).
   message CertificateIssued {
     bytes cert_der = 1;
     bytes ca_der = 2;
   }
 
-  // Server -> engine: send a CertificateRequest now.
+  // Server -> engine: an operator requested rotation; send a CertificateRequest.
   message RenewCertificate {
     CertificateRequest.Reason reason = 1;
   }
   ```
-  and add the fields inside the existing messages: in `message Stats` the line `FleetHealth health = 100;`; inside `oneof msg` of `message EngineMessage` the line `CertificateRequest cert_request = 100;`; inside `oneof msg` of `message ServerMessage` the lines `CertificateIssued cert_issued = 100;` and `RenewCertificate renew_certificate = 101;`.
-- [ ] Run `scripts/dev-exec.sh make proto` and expect exit 0 with regenerated files under `gen/go/nexora/control/v1/`; then `scripts/dev-exec.sh buf lint proto` and expect no output.
-- [ ] Run `scripts/dev-exec.sh 'go test ./gen/go/nexora/control/v1/ -run TestFleetContractRoundTrip -count=1 && cargo check --manifest-path engine/Cargo.toml'` and expect `ok` and `Finished`.
-- [ ] Commit: `git add proto/nexora/control/v1/control.proto gen/go/nexora/control/v1 && git commit -m "feat(proto): fleet health and certificate renewal messages"`.
+- [ ] On the laptop run `make proto` and expect exit 0 with regenerated files under `gen/go/nexora/control/v1/` (the oapi-codegen and `gen:api` steps of the target report no change).
+- [ ] In `engine/src/control.rs` `session`, extend the `match msg.msg` with `Some(ServerMsg::CertIssued(_)) | Some(ServerMsg::RenewCertificate(_)) => {}` directly above `None => {}` (Task 9 gives both arms their behaviour), so the match stays exhaustive.
+- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/control/ -run TestM5ContractFieldNumbers -count=1 && cargo check --locked -p nexora-engine'` and expect `ok` and `Finished`.
+- [ ] Commit: `git add proto/nexora/control/v1/control.proto gen/go/nexora/control/v1 mgmt/internal/control/contract_m5_test.go engine/src/control.rs && git commit -m "feat(proto): certificate renewal and rotation messages (fields 500+)"`.
 
 ## Task 4: Rollout state machine
 
 Files: `mgmt/internal/rollout/rollout.go` (pure state machine, canary selection, target version), `mgmt/internal/rollout/rollout_test.go` (table of transitions)
 Interfaces:
+
 ```go
 package rollout
 type State string // Pending, Canary, Verifying, Rolling, Completed, Halted, RolledBack, Superseded
@@ -611,14 +660,16 @@ type Strategy string // AllAtOnce "all_at_once", CanaryStrategy "canary"
 type Kind string     // KindChange "change", KindRollback "rollback", KindRepublish "republish"
 const CanaryLabel = "nexora.io/canary"
 type Params struct { Strategy Strategy; CanaryCount, CanaryPercent, AckTimeoutSeconds, HealthWindowSeconds int; MaxServfailRatio float64; MinHealthQueries uint64 } // JSON tags snake_case
-type Rollout struct { ID, GroupID uuid.UUID; Version int64; Kind Kind; State State; CanaryEngineIDs []uuid.UUID; PhaseStartedAt time.Time; HaltReason string; Params Params }
+type Rollout struct { ID, EngineGroupID uuid.UUID; Version uint64; Kind Kind; State State; CanaryEngineIDs []uuid.UUID; PhaseStartedAt time.Time; HaltReason string; Params Params }
 type Health struct { Samples int; Queries, Servfail uint64 }
-type Engine struct { ID uuid.UUID; Name string; Labels map[string]string; Connected bool; AppliedVersion, RejectedVersion int64; RejectedReason string; Health Health }
+type Engine struct { ID uuid.UUID; Name string; Labels map[string]string; Connected bool; AppliedVersion, RejectedVersion uint64; RejectedReason string; Health Health }
 type Observation struct { Now time.Time; GroupPaused bool; Engines []Engine }
 func Step(r Rollout, obs Observation) (Rollout, bool)
 func SelectCanaries(p Params, engines []Engine) []uuid.UUID
-func Target(e Engine, stable int64, latest *Rollout) int64
+func Target(e Engine, stable uint64, latest *Rollout) uint64
 ```
+
+`Engine.Name` is `engines.node_name`; `Engine.RejectedVersion` is 0 when `engines.rejected_version` is NULL.
 
 - [ ] Write the failing test `mgmt/internal/rollout/rollout_test.go`:
   ```go
@@ -632,9 +683,9 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	"github.com/google/uuid"
   )
 
-  var t0 = time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+  var t0 = time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 
-  func eng(name string, connected bool, applied int64) Engine {
+  func eng(name string, connected bool, applied uint64) Engine {
   	return Engine{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)), Name: name, Connected: connected,
   		AppliedVersion: applied, Labels: map[string]string{}}
   }
@@ -712,7 +763,7 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   }
 
   func TestHaltsWhenCanaryStopsReporting(t *testing.T) {
-  	r, es := verifyingWith(Health{Samples: 1, Queries: 5000, Servfail: 0})
+  	r, es := verifyingWith(Health{Samples: 1, Queries: 5000})
   	if r, _ = Step(r, Observation{Now: t0.Add(31 * time.Second), Engines: es}); r.State != Halted ||
   		!strings.Contains(r.HaltReason, "stopped reporting") {
   		t.Fatalf("state %s reason %q", r.State, r.HaltReason)
@@ -780,8 +831,10 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	if Target(a, 6, halted) != 7 || Target(b, 6, halted) != 6 {
   		t.Fatal("halted: engines already on the version keep it, others stay stable")
   	}
-  	if Target(b, 6, &Rollout{Version: 7, State: Rolling}) != 7 {
-  		t.Fatal("rolling: everyone targets the new version")
+  	for _, s := range []State{Rolling, Completed, RolledBack} {
+  		if Target(b, 6, &Rollout{Version: 7, State: s}) != 7 {
+  			t.Fatalf("%s: everyone targets the version", s)
+  		}
   	}
   	if Target(b, 6, &Rollout{Version: 8, State: Pending}) != 6 || Target(b, 6, nil) != 6 {
   		t.Fatal("pending or no rollout: stable")
@@ -791,9 +844,9 @@ func Target(e Engine, stable int64, latest *Rollout) int64
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/rollout/ -count=1` and expect FAIL with `undefined: Rollout`.
 - [ ] Create `mgmt/internal/rollout/rollout.go`:
   ```go
-  // Package rollout is the staged-rollout state machine. Step is pure: the
-  // controller loads a rollout and an observation of its group under an
-  // advisory lock, calls Step, and persists the result.
+  // Package rollout is the staged-rollout state machine. Step is pure: the controller loads a
+  // rollout and an observation of its engine group under an advisory lock, calls Step, and
+  // persists the result.
   package rollout
 
   import (
@@ -837,6 +890,7 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	KindRepublish Kind = "republish"
   )
 
+  // CanaryLabel on an engine makes it preferred for canary selection.
   const CanaryLabel = "nexora.io/canary"
 
   type Params struct {
@@ -851,8 +905,8 @@ func Target(e Engine, stable int64, latest *Rollout) int64
 
   type Rollout struct {
   	ID              uuid.UUID
-  	GroupID         uuid.UUID
-  	Version         int64
+  	EngineGroupID   uuid.UUID
+  	Version         uint64
   	Kind            Kind
   	State           State
   	CanaryEngineIDs []uuid.UUID
@@ -861,8 +915,8 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	Params          Params
   }
 
-  // Health is measured from the newest sample taken at most 60 s before the
-  // phase start (baseline) to the newest sample; Samples counts both ends.
+  // Health is measured from the newest engine_stats sample taken at most 60 s before the phase
+  // start (the baseline) to the newest sample; Samples counts both ends.
   type Health struct {
   	Samples  int
   	Queries  uint64
@@ -874,8 +928,8 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	Name            string
   	Labels          map[string]string
   	Connected       bool
-  	AppliedVersion  int64
-  	RejectedVersion int64
+  	AppliedVersion  uint64
+  	RejectedVersion uint64
   	RejectedReason  string
   	Health          Health
   }
@@ -883,7 +937,7 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   type Observation struct {
   	Now         time.Time
   	GroupPaused bool
-  	Engines     []Engine // non-revoked engines of the rollout's group
+  	Engines     []Engine // non-revoked, non-deleted engines of the rollout's engine group
   }
 
   func enter(r Rollout, s State, now time.Time) Rollout {
@@ -916,9 +970,8 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	return "", false
   }
 
-  // firstUnapplied returns the first engine that has not applied r.Version.
-  // connectedOnly skips disconnected engines (rolling phase); canaries must
-  // apply even when their stream dropped.
+  // firstUnapplied returns the first engine that has not applied r.Version. connectedOnly skips
+  // disconnected engines (rolling phase); canaries must apply even when their stream dropped.
   func firstUnapplied(r Rollout, es []Engine, connectedOnly bool) (Engine, bool) {
   	for _, e := range es {
   		if connectedOnly && !e.Connected {
@@ -1013,11 +1066,7 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	if n == 0 {
   		return nil
   	}
-  	want := p.CanaryCount
-  	if byPct := int(math.Ceil(float64(n) * float64(p.CanaryPercent) / 100)); byPct > want {
-  		want = byPct
-  	}
-  	want = max(want, 1)
+  	want := max(p.CanaryCount, int(math.Ceil(float64(n)*float64(p.CanaryPercent)/100)), 1)
   	if n >= 2 {
   		want = min(want, n-1)
   	}
@@ -1036,13 +1085,14 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	return ids
   }
 
-  // Target is the version engine e should run; latest is the group's newest rollout.
-  func Target(e Engine, stable int64, latest *Rollout) int64 {
+  // Target is the version engine e should run; latest is its engine group's newest
+  // non-superseded rollout.
+  func Target(e Engine, stable uint64, latest *Rollout) uint64 {
   	if latest == nil {
   		return stable
   	}
   	switch latest.State {
-  	case Rolling, Completed:
+  	case Rolling, Completed, RolledBack:
   		return latest.Version
   	case Canary, Verifying:
   		if slices.Contains(latest.CanaryEngineIDs, e.ID) {
@@ -1056,190 +1106,36 @@ func Target(e Engine, stable int64, latest *Rollout) int64
   	return stable
   }
   ```
+  `fleet.TargetFor` (Task 6) passes the newest non-superseded rollout; a `rolled_back` rollout is always older than the rollback rollout that marked it, so the `RolledBack` case only keeps `Target` total.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/rollout/ -count=1 -race` and expect `ok`.
-- [ ] Mutation check: temporarily change `ratio > r.Params.MaxServfailRatio` to `ratio >= 1` and run the same command; expect FAIL with `--- FAIL: TestHaltsOnServfailRatio`. Restore the line and expect `ok` again.
+- [ ] Mutation check: temporarily change `ratio > r.Params.MaxServfailRatio` to `ratio >= 1` and rerun; expect FAIL with `--- FAIL: TestHaltsOnServfailRatio`. Restore the line and expect `ok` again.
 - [ ] Commit: `git add mgmt/internal/rollout && git commit -m "feat(rollout): staged rollout state machine"`.
 
-## Task 5: Per-group snapshots and publishing
+## Task 5: Per-group snapshots, rollout creation and publishing
 
-Files: `mgmt/internal/snapshot/scope.go` (scope type and merge rules), `mgmt/internal/snapshot/builder.go` (M1 builder becomes per group), `mgmt/internal/snapshot/publish.go` (Publish, Republish), `mgmt/internal/rollout/store.go` (rollout creation and supersede rules), `mgmt/internal/snapshot/scope_test.go`, `mgmt/internal/snapshot/publish_test.go`, every M1–M4 mutation handler under `mgmt/internal/api/` that calls `snapshot.Publish` (pass scopes)
+Files: `mgmt/internal/rollout/create.go` (rollout creation and supersede rules), `mgmt/internal/snapshot/snapshot.go` (publish per engine group, `BuildForGroup`, `Latest`, `PublishRaw`, `Republish`), `mgmt/internal/snapshot/policy.go` (policy groups and rewrites filtered by engine group), `mgmt/internal/snapshot/authzones.go` (`AddAuthZones` takes the engine group), `mgmt/internal/store/resolution.go` (`LoadResolution` takes the engine group), `mgmt/internal/snapshot/authzones_test.go` and `mgmt/internal/snapshot/snapshot_test.go` (call sites), `mgmt/internal/snapshot/publish_m5_test.go` (per-group publish test), `e2e/harness/mgmt.go` (`PublishRawSnapshot` writes group snapshots and rollouts)
 Interfaces:
-```go
-package snapshot
-type Scope struct{ GroupID *uuid.UUID } // nil = global
-func Global() Scope
-func Group(id uuid.UUID) Scope
-func ScopeOf(groupID *uuid.UUID) Scope
-type Scoped interface{ ScopeGroup() *uuid.UUID }
-func ForGroup[T Scoped](rows []T, group uuid.UUID) []T
-func UpstreamsForGroup[T Scoped](rows []T, group uuid.UUID, mode string) []T
-func SettingsForGroup[T Scoped](rows []T, group uuid.UUID) (T, bool)
-func ScopeClause(alias string, param int) string
-func BuildForGroup(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, version int64) (*controlv1.ConfigSnapshot, error)
-func Publish(ctx context.Context, tx pgx.Tx, actor string, scopes ...Scope) (int64, error)
-func Republish(ctx context.Context, tx pgx.Tx, actor string, groupID uuid.UUID, fromVersion int64, kind rollout.Kind) (int64, uuid.UUID, error)
-var ErrUnknownVersion = errors.New("snapshot: version not found for group")
 
+```go
 package rollout
-func Create(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, version int64, kind Kind, fromVersion *int64, actor string) (uuid.UUID, error)
+type CreateParams struct { EngineGroupID uuid.UUID; Version uint64; FromVersion *uint64; Kind Kind; Immediate bool; Actor string }
+func Create(ctx context.Context, tx pgx.Tx, p CreateParams) (uuid.UUID, State, error)
+
+package snapshot
+const NotifyChannel = "nexora_config"   // unchanged: informational, payload version
+func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig, engineGroupID uuid.UUID) (*controlv1.ConfigSnapshot, error)
+func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*controlv1.ConfigSnapshot, error) // BuildForGroup(default)
+func ContentDigest(snap *controlv1.ConfigSnapshot) (string, error)
+func Latest(ctx context.Context, q Querier) (uint64, *controlv1.ConfigSnapshot, error) // default group's newest group snapshot
+func Republish(ctx context.Context, tx pgx.Tx, a auth.Actor, engineGroupID uuid.UUID, fromVersion uint64, kind rollout.Kind) (uint64, uuid.UUID, error)
+func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, engineGroupID uuid.UUID) error
+var ErrUnknownVersion = errors.New("version not found for this engine group")
+
+package store
+func LoadResolution(ctx context.Context, q PolicyQuerier, engineGroupID uuid.UUID) (ResolutionRows, error)
 ```
 
-- [ ] Write the failing pure test `mgmt/internal/snapshot/scope_test.go`:
-  ```go
-  package snapshot
-
-  import (
-  	"slices"
-  	"testing"
-
-  	"github.com/google/uuid"
-  )
-
-  type row struct {
-  	name string
-  	g    *uuid.UUID
-  }
-
-  func (r row) ScopeGroup() *uuid.UUID { return r.g }
-
-  func names(rs []row) []string {
-  	out := []string{}
-  	for _, r := range rs {
-  		out = append(out, r.name)
-  	}
-  	return out
-  }
-
-  func TestScopeMerge(t *testing.T) {
-  	a, b := uuid.New(), uuid.New()
-  	rows := []row{{"g1", nil}, {"a1", &a}, {"b1", &b}, {"g2", nil}}
-
-  	if got := names(ForGroup(rows, a)); !slices.Equal(got, []string{"g1", "g2", "a1"}) {
-  		t.Errorf("ForGroup = %v", got)
-  	}
-  	if got := names(UpstreamsForGroup(rows, a, "inherit")); !slices.Equal(got, []string{"a1", "g1", "g2"}) {
-  		t.Errorf("inherit = %v", got)
-  	}
-  	if got := names(UpstreamsForGroup(rows, a, "override")); !slices.Equal(got, []string{"a1"}) {
-  		t.Errorf("override = %v", got)
-  	}
-  	if got := names(UpstreamsForGroup(rows, uuid.New(), "override")); len(got) != 0 {
-  		t.Errorf("override without group upstreams = %v, want none (recursion)", got)
-  	}
-  	if s, ok := SettingsForGroup([]row{{"global", nil}, {"b", &b}}, b); !ok || s.name != "b" {
-  		t.Errorf("group settings row must replace global, got %v %v", s, ok)
-  	}
-  	if s, ok := SettingsForGroup([]row{{"global", nil}, {"b", &b}}, a); !ok || s.name != "global" {
-  		t.Errorf("group without settings falls back to global, got %v %v", s, ok)
-  	}
-  	if _, ok := SettingsForGroup([]row{}, a); ok {
-  		t.Error("no rows must report !ok")
-  	}
-  	if got := ScopeClause("u", 1); got != "(u.group_id IS NULL OR u.group_id = $1)" {
-  		t.Errorf("ScopeClause = %q", got)
-  	}
-  	all, ids := affected([]Scope{Group(a), Group(a), Group(b)})
-  	if all || len(ids) != 2 {
-  		t.Errorf("affected(groups) = %v %v", all, ids)
-  	}
-  	if all, _ := affected([]Scope{Group(a), Global()}); !all {
-  		t.Error("a global scope must affect every group")
-  	}
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/snapshot/ -run TestScopeMerge -count=1` and expect FAIL with `undefined: ForGroup`.
-- [ ] Create `mgmt/internal/snapshot/scope.go`:
-  ```go
-  package snapshot
-
-  import (
-  	"fmt"
-
-  	"github.com/google/uuid"
-  )
-
-  // Scope names where a changed resource lives: nil GroupID is global.
-  type Scope struct{ GroupID *uuid.UUID }
-
-  func Global() Scope                    { return Scope{} }
-  func Group(id uuid.UUID) Scope         { return Scope{GroupID: &id} }
-  func ScopeOf(groupID *uuid.UUID) Scope { return Scope{GroupID: groupID} }
-
-  type Scoped interface{ ScopeGroup() *uuid.UUID }
-
-  func inGroup[T Scoped](r T, g uuid.UUID) bool { return r.ScopeGroup() != nil && *r.ScopeGroup() == g }
-
-  // ForGroup returns global rows, then the group's rows, each in input order.
-  func ForGroup[T Scoped](rows []T, group uuid.UUID) []T {
-  	out := make([]T, 0, len(rows))
-  	for _, r := range rows {
-  		if r.ScopeGroup() == nil {
-  			out = append(out, r)
-  		}
-  	}
-  	for _, r := range rows {
-  		if inGroup(r, group) {
-  			out = append(out, r)
-  		}
-  	}
-  	return out
-  }
-
-  // UpstreamsForGroup: inherit = group rows then global rows; override = group rows only.
-  func UpstreamsForGroup[T Scoped](rows []T, group uuid.UUID, mode string) []T {
-  	out := make([]T, 0, len(rows))
-  	for _, r := range rows {
-  		if inGroup(r, group) {
-  			out = append(out, r)
-  		}
-  	}
-  	if mode == "override" {
-  		return out
-  	}
-  	for _, r := range rows {
-  		if r.ScopeGroup() == nil {
-  			out = append(out, r)
-  		}
-  	}
-  	return out
-  }
-
-  // SettingsForGroup returns the group's row when present, else the global row.
-  func SettingsForGroup[T Scoped](rows []T, group uuid.UUID) (T, bool) {
-  	var global T
-  	found := false
-  	for _, r := range rows {
-  		if inGroup(r, group) {
-  			return r, true
-  		}
-  		if r.ScopeGroup() == nil {
-  			global, found = r, true
-  		}
-  	}
-  	return global, found
-  }
-
-  // ScopeClause restricts a query on a scoped table to global rows and one group.
-  func ScopeClause(alias string, param int) string {
-  	return fmt.Sprintf("(%s.group_id IS NULL OR %s.group_id = $%d)", alias, alias, param)
-  }
-
-  func affected(scopes []Scope) (all bool, ids []uuid.UUID) {
-  	seen := map[uuid.UUID]bool{}
-  	for _, s := range scopes {
-  		if s.GroupID == nil {
-  			return true, nil
-  		}
-  		if !seen[*s.GroupID] {
-  			seen[*s.GroupID] = true
-  			ids = append(ids, *s.GroupID)
-  		}
-  	}
-  	return false, ids
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/snapshot/ -run TestScopeMerge -count=1` and expect `ok`.
-- [ ] Write the failing database test `mgmt/internal/snapshot/publish_test.go`:
+- [ ] Write the failing database test `mgmt/internal/snapshot/publish_m5_test.go`:
   ```go
   package snapshot_test
 
@@ -1250,137 +1146,170 @@ func Create(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, version int64, ki
   	"testing"
 
   	"github.com/google/uuid"
-  	"github.com/jackc/pgx/v5/pgxpool"
+  	"github.com/jackc/pgx/v5"
   	"google.golang.org/protobuf/proto"
 
   	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+  	"github.com/piwi3910/nexora/mgmt/internal/auth"
   	"github.com/piwi3910/nexora/mgmt/internal/rollout"
   	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
   	"github.com/piwi3910/nexora/mgmt/internal/store"
   	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
   )
 
-  func publish(t *testing.T, db *pgxpool.Pool, scopes ...snapshot.Scope) int64 {
+  var testActor = auth.Actor{Type: "system", ID: "test", Name: "test"}
+
+  func mutateSQL(t *testing.T, st *store.Store, sql string, args ...any) uint64 {
   	t.Helper()
-  	ctx := context.Background()
-  	tx, err := db.Begin(ctx)
+  	v, err := snapshot.Mutate(context.Background(), st, snapshot.BuildConfig{}, testActor, func(tx pgx.Tx) (auth.Change, error) {
+  		_, err := tx.Exec(context.Background(), sql, args...)
+  		return auth.Change{Action: "test", TargetType: "test", TargetID: "1"}, err
+  	})
   	if err != nil {
-  		t.Fatal(err)
-  	}
-  	v, err := snapshot.Publish(ctx, tx, "test", scopes...)
-  	if err != nil {
-  		t.Fatalf("publish: %v", err)
-  	}
-  	if err := tx.Commit(ctx); err != nil {
-  		t.Fatal(err)
+  		t.Fatalf("mutate %q: %v", sql, err)
   	}
   	return v
   }
 
-  func groupsOf(t *testing.T, db *pgxpool.Pool, v int64) []uuid.UUID {
+  func groupSnapshot(t *testing.T, st *store.Store, version uint64, group uuid.UUID) *controlv1.ConfigSnapshot {
   	t.Helper()
-  	rows, err := db.Query(context.Background(), `SELECT group_id FROM group_snapshots WHERE version = $1 ORDER BY group_id`, v)
-  	if err != nil {
+  	var raw []byte
+  	if err := st.Pool.QueryRow(context.Background(), `select snapshot from group_snapshots where version = $1 and engine_group_id = $2`,
+  		int64(version), group).Scan(&raw); err != nil {
+  		t.Fatalf("group snapshot (%d, %s): %v", version, group, err)
+  	}
+  	s := &controlv1.ConfigSnapshot{}
+  	if err := proto.Unmarshal(raw, s); err != nil {
   		t.Fatal(err)
-  	}
-  	var out []uuid.UUID
-  	for rows.Next() {
-  		var id uuid.UUID
-  		if err := rows.Scan(&id); err != nil {
-  			t.Fatal(err)
-  		}
-  		out = append(out, id)
-  	}
-  	return out
-  }
-
-  func stateOf(t *testing.T, db *pgxpool.Pool, group uuid.UUID, v int64) string {
-  	t.Helper()
-  	var s string
-  	if err := db.QueryRow(context.Background(), `SELECT state FROM rollouts WHERE group_id = $1 AND version = $2`, group, v).Scan(&s); err != nil {
-  		t.Fatalf("rollout (%s, %d): %v", group, v, err)
   	}
   	return s
   }
 
-  func TestPublishPerGroup(t *testing.T) {
+  func rolloutState(t *testing.T, st *store.Store, group uuid.UUID, version uint64) string {
+  	t.Helper()
+  	var s string
+  	if err := st.Pool.QueryRow(context.Background(), `select state from rollouts where engine_group_id = $1 and version = $2`,
+  		group, int64(version)).Scan(&s); err != nil {
+  		t.Fatalf("rollout (%s, %d): %v", group, version, err)
+  	}
+  	return s
+  }
+
+  func upstreamNames(s *controlv1.ConfigSnapshot) []string {
+  	out := []string{}
+  	for _, u := range s.Upstreams {
+  		out = append(out, u.Name)
+  	}
+  	return out
+  }
+
+  func TestPublishPerEngineGroup(t *testing.T) {
   	ctx := context.Background()
-  	db := storetest.NewDB(t)
+  	st := storetest.New(t)
+  	if _, err := snapshot.EnsureInitial(ctx, st, snapshot.BuildConfig{}); err != nil {
+  		t.Fatal(err)
+  	}
   	var edge uuid.UUID
-  	if err := db.QueryRow(ctx, `INSERT INTO engine_groups (name) VALUES ('edge') RETURNING id`).Scan(&edge); err != nil {
+  	if err := st.Pool.QueryRow(ctx, `insert into engine_groups (name, rollout_strategy, canary_count, upstream_mode)
+  		values ('edge', 'canary', 1, 'inherit') returning id`).Scan(&edge); err != nil {
   		t.Fatal(err)
   	}
 
-  	vGlobal := publish(t, db, snapshot.Global())
-  	if got := groupsOf(t, db, vGlobal); len(got) != 2 || !slices.Contains(got, edge) || !slices.Contains(got, store.DefaultGroupID) {
-  		t.Fatalf("global publish groups = %v", got)
+  	v1 := mutateSQL(t, st, `insert into upstreams (name, protocol, address, position) values ('global', 'udp', '192.0.2.1:53', 0)`)
+  	v2 := mutateSQL(t, st, `insert into upstreams (name, protocol, address, position, engine_group_id)
+  		values ('edge-only', 'udp', '192.0.2.2:53', 1, $1)`, edge)
+
+  	if got := upstreamNames(groupSnapshot(t, st, v2, store.DefaultEngineGroupID)); !slices.Equal(got, []string{"global"}) {
+  		t.Fatalf("default group upstreams = %v, want [global]", got)
   	}
-  	var raw []byte
-  	if err := db.QueryRow(ctx, `SELECT snapshot FROM group_snapshots WHERE version = $1 AND group_id = $2`, vGlobal, edge).Scan(&raw); err != nil {
+  	edgeSnap := groupSnapshot(t, st, v2, edge)
+  	if got := upstreamNames(edgeSnap); !slices.Equal(got, []string{"edge-only", "global"}) || edgeSnap.Version != v2 {
+  		t.Fatalf("edge upstreams = %v version %d, want [edge-only global] at %d", got, edgeSnap.Version, v2)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update engine_groups set upstream_mode = 'override' where id = $1`, edge); err != nil {
   		t.Fatal(err)
   	}
-  	var snap controlv1.ConfigSnapshot
-  	if err := proto.Unmarshal(raw, &snap); err != nil || int64(snap.GetVersion()) != vGlobal {
-  		t.Fatalf("snapshot version %d, want %d (err %v)", snap.GetVersion(), vGlobal, err)
-  	}
-  	if stateOf(t, db, edge, vGlobal) != "pending" || stateOf(t, db, store.DefaultGroupID, vGlobal) != "pending" {
-  		t.Fatal("each group snapshot needs a pending rollout")
+  	vOverride := mutateSQL(t, st, `update resolver_settings set block_ttl = 61`)
+  	if got := upstreamNames(groupSnapshot(t, st, vOverride, edge)); !slices.Equal(got, []string{"edge-only"}) {
+  		t.Fatalf("override upstreams = %v, want [edge-only]", got)
   	}
 
-  	vEdge := publish(t, db, snapshot.Group(edge))
-  	if got := groupsOf(t, db, vEdge); len(got) != 1 || got[0] != edge || vEdge <= vGlobal {
-  		t.Fatalf("group publish: version %d groups %v", vEdge, got)
+  	// all_at_once starts in rolling; a canary change waits in pending and supersedes the older one.
+  	if s := rolloutState(t, st, store.DefaultEngineGroupID, v2); s != "rolling" && s != "superseded" {
+  		t.Fatalf("default rollout v2 = %s", s)
   	}
-  	if stateOf(t, db, edge, vGlobal) != "superseded" || stateOf(t, db, store.DefaultGroupID, vGlobal) != "pending" {
-  		t.Fatal("a group change supersedes only that group's open rollouts")
+  	if s := rolloutState(t, st, store.DefaultEngineGroupID, vOverride); s != "rolling" {
+  		t.Fatalf("default rollout %d = %s, want rolling", vOverride, s)
   	}
-
-  	// Paused group: a new change leaves the halted rollout alone.
-  	if _, err := db.Exec(ctx, `UPDATE rollouts SET state = 'halted' WHERE group_id = $1 AND version = $2`, edge, vEdge); err != nil {
-  		t.Fatal(err)
+  	if s := rolloutState(t, st, edge, v1); s != "superseded" {
+  		t.Fatalf("edge rollout v1 = %s, want superseded", s)
   	}
-  	if _, err := db.Exec(ctx, `UPDATE engine_groups SET rollouts_paused = true WHERE id = $1`, edge); err != nil {
-  		t.Fatal(err)
-  	}
-  	vPaused := publish(t, db, snapshot.Group(edge))
-  	if stateOf(t, db, edge, vEdge) != "halted" || stateOf(t, db, edge, vPaused) != "pending" {
-  		t.Fatal("paused: halted must stay halted and the new change must wait")
+  	if s := rolloutState(t, st, edge, vOverride); s != "pending" {
+  		t.Fatalf("edge rollout %d = %s, want pending (canary change)", vOverride, s)
   	}
 
-  	tx, _ := db.Begin(ctx)
-  	vRB, rid, err := snapshot.Republish(ctx, tx, "test", edge, vGlobal, rollout.KindRollback)
-  	if err != nil {
-  		t.Fatalf("rollback: %v", err)
-  	}
-  	if err := tx.Commit(ctx); err != nil {
+  	// Content equal to the stable version rolls out at once, even in a canary group.
+  	if _, err := st.Pool.Exec(ctx, `update rollouts set state = 'completed' where engine_group_id = $1 and version = $2`, edge, int64(vOverride)); err != nil {
   		t.Fatal(err)
   	}
-  	if rid == uuid.Nil || vRB <= vPaused {
-  		t.Fatalf("rollback rollout %s version %d", rid, vRB)
+  	if _, err := st.Pool.Exec(ctx, `update engine_groups set stable_version = $1 where id = $2`, int64(vOverride), edge); err != nil {
+  		t.Fatal(err)
   	}
-  	if stateOf(t, db, edge, vEdge) != "rolled_back" || stateOf(t, db, edge, vPaused) != "superseded" || stateOf(t, db, edge, vRB) != "pending" {
-  		t.Fatal("rollback must mark halted rolled_back and supersede the pending change")
+  	vSame := mutateSQL(t, st, `update resolver_settings set block_ttl = 61`)
+  	if s := rolloutState(t, st, edge, vSame); s != "rolling" {
+  		t.Fatalf("unchanged content rollout = %s, want rolling", s)
   	}
-  	var rbRaw []byte
-  	_ = db.QueryRow(ctx, `SELECT snapshot FROM group_snapshots WHERE version = $1 AND group_id = $2`, vRB, edge).Scan(&rbRaw)
-  	var rb controlv1.ConfigSnapshot
-  	if err := proto.Unmarshal(rbRaw, &rb); err != nil || int64(rb.GetVersion()) != vRB {
-  		t.Fatalf("rollback snapshot version %d want %d", rb.GetVersion(), vRB)
+
+  	// Rollback: the halted rollout becomes rolled_back, the group pauses, the copy rolls out at once.
+  	vBad := mutateSQL(t, st, `update upstreams set timeout_ms = 400 where name = 'edge-only'`)
+  	if _, err := st.Pool.Exec(ctx, `update rollouts set state = 'halted' where engine_group_id = $1 and version = $2`, edge, int64(vBad)); err != nil {
+  		t.Fatal(err)
   	}
-  	rb.Version = snap.Version
-  	if !proto.Equal(&rb, &snap) {
+  	var vRB uint64
+  	var rid uuid.UUID
+  	err := st.InTx(ctx, func(tx pgx.Tx) error {
+  		var err error
+  		vRB, rid, err = snapshot.Republish(ctx, tx, testActor, edge, vOverride, rollout.KindRollback)
+  		return err
+  	})
+  	if err != nil || rid == uuid.Nil || vRB <= vBad {
+  		t.Fatalf("rollback: version %d rollout %s err %v", vRB, rid, err)
+  	}
+  	if rolloutState(t, st, edge, vBad) != "rolled_back" || rolloutState(t, st, edge, vRB) != "rolling" {
+  		t.Fatal("rollback must mark the halted rollout rolled_back and start rolling at once")
+  	}
+  	var paused bool
+  	_ = st.Pool.QueryRow(ctx, `select rollouts_paused from engine_groups where id = $1`, edge).Scan(&paused)
+  	if !paused {
+  		t.Fatal("rollback must pause change rollouts")
+  	}
+  	rb, src := groupSnapshot(t, st, vRB, edge), groupSnapshot(t, st, vOverride, edge)
+  	if rb.Version != vRB {
+  		t.Fatalf("rollback snapshot version %d, want %d", rb.Version, vRB)
+  	}
+  	rb.Version, rb.CreatedUnixMs, src.CreatedUnixMs = src.Version, 0, 0
+  	if !proto.Equal(rb, src) {
   		t.Fatal("rollback snapshot must equal the source snapshot apart from its version")
   	}
+  	vHeld := mutateSQL(t, st, `update upstreams set timeout_ms = 450 where name = 'edge-only'`)
+  	if s := rolloutState(t, st, edge, vHeld); s != "pending" {
+  		t.Fatalf("change while paused = %s, want pending", s)
+  	}
 
-  	tx2, _ := db.Begin(ctx)
-  	defer tx2.Rollback(ctx)
-  	if _, _, err := snapshot.Republish(ctx, tx2, "test", edge, 999999, rollout.KindRollback); !errors.Is(err, snapshot.ErrUnknownVersion) {
+  	if _, latest, err := snapshot.Latest(ctx, st.Pool); err != nil || latest.Version != vHeld {
+  		t.Fatalf("Latest = %v err %v, want the default group's version %d", latest.GetVersion(), err, vHeld)
+  	}
+  	err = st.InTx(ctx, func(tx pgx.Tx) error {
+  		_, _, err := snapshot.Republish(ctx, tx, testActor, edge, 999999, rollout.KindRollback)
+  		return err
+  	})
+  	if !errors.Is(err, snapshot.ErrUnknownVersion) {
   		t.Fatalf("unknown version: err = %v", err)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/snapshot/ -run TestPublishPerGroup -count=1` and expect FAIL with `undefined: snapshot.Republish`.
-- [ ] Create `mgmt/internal/rollout/store.go`:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/snapshot/ -run TestPublishPerEngineGroup -count=1` and expect FAIL with `undefined: snapshot.Republish`.
+- [ ] Create `mgmt/internal/rollout/create.go`:
   ```go
   package rollout
 
@@ -1392,192 +1321,135 @@ func Create(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, version int64, ki
   	"github.com/jackc/pgx/v5"
   )
 
-  // Create supersedes the group's open rollouts per kind and inserts a pending rollout.
-  func Create(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, version int64, kind Kind, fromVersion *int64, actor string) (uuid.UUID, error) {
+  // CreateParams describes the rollout of one group snapshot.
+  type CreateParams struct {
+  	EngineGroupID uuid.UUID
+  	Version       uint64
+  	FromVersion   *uint64
+  	Kind          Kind
+  	// Immediate rolls out to every engine at once, ignoring the group's strategy and pause: the
+  	// content equals the group's stable content, or a test published the snapshot raw.
+  	Immediate bool
+  	Actor     string
+  }
+
+  // Create supersedes the engine group's open rollouts, inserts the new rollout (rolling for
+  // all_at_once, pending otherwise) and notifies nexora_rollout inside tx.
+  func Create(ctx context.Context, tx pgx.Tx, p CreateParams) (uuid.UUID, State, error) {
   	var paused bool
-  	if err := tx.QueryRow(ctx, `SELECT rollouts_paused FROM engine_groups WHERE id = $1 FOR UPDATE`, groupID).Scan(&paused); err != nil {
-  		return uuid.Nil, fmt.Errorf("rollout: load group %s: %w", groupID, err)
+  	var groupStrategy string
+  	if err := tx.QueryRow(ctx, `select rollouts_paused, rollout_strategy from engine_groups where id = $1 for update`,
+  		p.EngineGroupID).Scan(&paused, &groupStrategy); err != nil {
+  		return uuid.Nil, "", fmt.Errorf("rollout: engine group %s: %w", p.EngineGroupID, err)
   	}
+  	held := p.Kind == KindChange && !p.Immediate && paused
   	supersede := []string{"pending", "canary", "verifying", "rolling", "halted"}
   	switch {
-  	case kind == KindChange && paused:
+  	case held:
   		supersede = []string{"pending"}
-  	case kind == KindRollback:
-  		if _, err := tx.Exec(ctx, `UPDATE rollouts SET state = 'rolled_back', finished_at = now(), updated_at = now()
-  			WHERE group_id = $1 AND state = 'halted'`, groupID); err != nil {
-  			return uuid.Nil, err
+  	case p.Kind == KindRollback:
+  		if _, err := tx.Exec(ctx, `update rollouts set state = 'rolled_back', finished_at = now(), updated_at = now()
+  			where engine_group_id = $1 and state = 'halted'`, p.EngineGroupID); err != nil {
+  			return uuid.Nil, "", err
   		}
   		supersede = []string{"pending", "canary", "verifying", "rolling"}
-  		if _, err := tx.Exec(ctx, `UPDATE engine_groups SET rollouts_paused = true, updated_at = now() WHERE id = $1`, groupID); err != nil {
-  			return uuid.Nil, err
+  		if _, err := tx.Exec(ctx, `update engine_groups set rollouts_paused = true, updated_at = now() where id = $1`, p.EngineGroupID); err != nil {
+  			return uuid.Nil, "", err
   		}
   	}
-  	if _, err := tx.Exec(ctx, `UPDATE rollouts SET state = 'superseded', finished_at = now(), updated_at = now()
-  		WHERE group_id = $1 AND state = ANY($2)`, groupID, supersede); err != nil {
-  		return uuid.Nil, err
+  	if _, err := tx.Exec(ctx, `update rollouts set state = 'superseded', finished_at = now(), updated_at = now()
+  		where engine_group_id = $1 and state = any($2)`, p.EngineGroupID, supersede); err != nil {
+  		return uuid.Nil, "", err
+  	}
+  	strategy := Strategy(groupStrategy)
+  	if p.Kind != KindChange || p.Immediate {
+  		strategy = AllAtOnce
+  	}
+  	state := Pending
+  	if strategy == AllAtOnce && !held {
+  		state = Rolling
+  	}
+  	var from *int64
+  	if p.FromVersion != nil {
+  		f := int64(*p.FromVersion)
+  		from = &f
   	}
   	var id uuid.UUID
   	err := tx.QueryRow(ctx, `
-  		INSERT INTO rollouts (group_id, version, from_version, kind, strategy, params, created_by)
-  		SELECT g.id, $2, $3, $4,
-  		       CASE WHEN $4 = 'change' THEN g.rollout_strategy ELSE 'all_at_once' END,
-  		       jsonb_build_object(
-  		         'strategy', CASE WHEN $4 = 'change' THEN g.rollout_strategy ELSE 'all_at_once' END,
-  		         'canary_count', g.canary_count, 'canary_percent', g.canary_percent,
+  		insert into rollouts (engine_group_id, version, from_version, kind, strategy, state, params, created_by, phase_started_at)
+  		select g.id, $2, $3, $4, $5, $6,
+  		       jsonb_build_object('strategy', $5::text, 'canary_count', g.canary_count, 'canary_percent', g.canary_percent,
   		         'ack_timeout_seconds', g.ack_timeout_seconds, 'health_window_seconds', g.health_window_seconds,
   		         'max_servfail_ratio', g.max_servfail_ratio, 'min_health_queries', g.min_health_queries),
-  		       $5
-  		FROM engine_groups g WHERE g.id = $1
-  		RETURNING id`, groupID, version, fromVersion, string(kind), actor).Scan(&id)
+  		       $7, case when $6 = 'rolling' then now() end
+  		from engine_groups g where g.id = $1
+  		returning id`, p.EngineGroupID, int64(p.Version), from, string(p.Kind), string(strategy), string(state), p.Actor).Scan(&id)
   	if err != nil {
-  		return uuid.Nil, fmt.Errorf("rollout: insert: %w", err)
+  		return uuid.Nil, "", fmt.Errorf("rollout: insert: %w", err)
   	}
-  	if _, err := tx.Exec(ctx, `SELECT pg_notify('nexora_rollout', $1::text)`, groupID); err != nil {
-  		return uuid.Nil, err
+  	if _, err := tx.Exec(ctx, `select pg_notify('nexora_rollout', $1::text)`, p.EngineGroupID); err != nil {
+  		return uuid.Nil, "", err
   	}
-  	return id, nil
+  	return id, state, nil
   }
   ```
-- [ ] Create `mgmt/internal/snapshot/publish.go`:
-  ```go
-  package snapshot
+- [ ] Change `mgmt/internal/snapshot/snapshot.go`:
+  - `publish(ctx, tx, cfg, a, change)`: after `nextVersion` and `auth.WriteAudit`, insert the `config_versions` row with a NULL snapshot (`insertVersion` takes `raw []byte` that may be nil; it still sends `pg_notify(NotifyChannel, version)`), then for every `select id from engine_groups order by (id <> '00000000-0000-0000-0000-000000000001'), name`: `snap := BuildForGroup(ctx, tx, version, cfg, id)`, `digest := ContentDigest(snap)`, `raw := proto.MarshalOptions{Deterministic: true}.Marshal(snap)`, `insert into group_snapshots (version, engine_group_id, snapshot, content_sha256) values ($1, $2, $3, $4)`, `immediate := digest == (select gs.content_sha256 from engine_groups g join group_snapshots gs on gs.engine_group_id = g.id and gs.version = g.stable_version where g.id = $1)`, then `rollout.Create(ctx, tx, rollout.CreateParams{EngineGroupID: id, Version: version, Kind: rollout.KindChange, Immediate: immediate, Actor: a.Name})`.
+  - `ContentDigest(snap)`: clone, zero `Version` and `CreatedUnixMs`, deterministic marshal, lowercase hex SHA-256.
+  - `Build(ctx, tx, version, cfg)` becomes `BuildForGroup(ctx, tx, version, cfg, store.DefaultEngineGroupID)`. `BuildForGroup` first loads `select upstream_mode, host(c) || '/' || masklen(c) array, otlp_endpoint` from `engine_groups` (`array(select host(c) || '/' || masklen(c) from unnest(extra_acl_cidrs) with ordinality as u(c, n) order by n)`); the ACL is `access_control` CIDRs followed by the group's extra CIDRs; a non-empty group `otlp_endpoint` replaces `resolver_settings.otlp_endpoint` (the `cfg.DefaultOTLPEndpoint` fallback applies only when both are empty).
+  - `buildUpstreams(ctx, tx, snap, groupID, mode)`: `where enabled and (engine_group_id = $1 or ($2 = 'inherit' and engine_group_id is null)) order by (engine_group_id is null), position, name`.
+  - `buildFilterLists(ctx, tx, snap, groupID)`: add `and (f.engine_group_id is null or f.engine_group_id = $1)`.
+  - `PublishRaw(ctx, st, snap, createdBy)`: insert `config_versions` with a NULL snapshot, then for every engine group insert the same raw bytes (with `snap.Version` set) into `group_snapshots` (content digest from `ContentDigest`) and `rollout.Create` with `Immediate: true`.
+  - `Latest(ctx, q)`: `select version, snapshot from group_snapshots where engine_group_id = '00000000-0000-0000-0000-000000000001' order by version desc limit 1`.
+  - `Republish(ctx, tx, a, groupID, fromVersion, kind)`: load `select snapshot from group_snapshots where version = $1 and engine_group_id = $2` (no row -> `ErrUnknownVersion`), `nextVersion`, `auth.WriteAudit(ctx, tx, a, auth.Change{Action: string(kind) + "EngineGroup", TargetType: "engine_group", TargetID: groupID.String(), After: map[string]uint64{"from_version": fromVersion}}, &version)`, insert the `config_versions` row with summary `"<kind> engine group <id> to <fromVersion>"`, re-encode with the new `Version` and `CreatedUnixMs = time.Now().UnixMilli()`, insert the group snapshot and `rollout.Create(ctx, tx, rollout.CreateParams{EngineGroupID: groupID, Version: version, FromVersion: &fromVersion, Kind: kind, Immediate: true, Actor: a.Name})`. Other groups get no row for this version (their target stays unchanged).
+  - `EnsureInitial` is unchanged apart from calling the new `publish`.
+- [ ] Change `mgmt/internal/snapshot/policy.go` `buildPolicy(ctx, tx, snap, groupID)`: policy groups `store.ListPolicyGroups` rows are kept when `EngineGroupID == nil || *EngineGroupID == groupID` (add `EngineGroupID *uuid.UUID` to `store.PolicyGroup` and select `engine_group_id` in `scanPolicyGroup`); rewrites keep those whose policy group was kept, plus global rewrites with `EngineGroupID == nil || *EngineGroupID == groupID` (add `EngineGroupID *uuid.UUID` to `store.Rewrite` and to its select list); the block list map keeps every fetched block list (a policy group may only reference global lists or lists of its engine group, enforced by the API in Task 7).
+- [ ] Change `store.LoadResolution(ctx, q, groupID)` in `mgmt/internal/store/resolution.go`: forward zones and RPZ zones add `where engine_group_id is null or engine_group_id = $1` (RPZ zones keep `order by position`); add `EngineGroupID *uuid.UUID` to `store.ForwardZone` and `store.RPZZone` and their scans. `ListForwardZones`/`ListRPZZones` keep returning every row.
+- [ ] Change `AddAuthZones(ctx, tx, snap, groupID)` in `mgmt/internal/snapshot/authzones.go`: add `and (z.engine_group_id is null or z.engine_group_id = $1)` to the zones query. Update the call sites `mgmt/internal/snapshot/authzones_test.go` (pass `store.DefaultEngineGroupID`) and `mgmt/internal/snapshot/snapshot_test.go` (unchanged `snapshot.Build`).
+- [ ] Change `harness.PublishRawSnapshot` in `e2e/harness/mgmt.go` (the harness cannot import `mgmt/internal`): inside the same transaction after the version lock, `insert into config_versions(version, created_by, summary) values ($1, 'e2e', 'raw snapshot')`, then for each `select id from engine_groups`: `insert into group_snapshots(version, engine_group_id, snapshot, content_sha256) values ($1, $2, $3, encode(sha256($3), 'hex'))`, `update rollouts set state = 'superseded', finished_at = now() where engine_group_id = $2 and state in ('pending','canary','verifying','rolling','halted')`, `insert into rollouts(engine_group_id, version, kind, strategy, state, params, created_by, phase_started_at) values ($2, $1, 'change', 'all_at_once', 'rolling', '{"strategy":"all_at_once","ack_timeout_seconds":60}', 'e2e', now())`, `select pg_notify('nexora_rollout', $2::text)`; keep `pg_notify('nexora_config', version)`.
+- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/snapshot/ ./mgmt/internal/rollout/ ./mgmt/internal/store/ -count=1 && go vet ./mgmt/... ./e2e/...'` and expect `ok` for each package and no vet output.
+- [ ] Commit: `git add mgmt/internal/snapshot mgmt/internal/rollout/create.go mgmt/internal/store e2e/harness/mgmt.go && git commit -m "feat(snapshot): one snapshot and rollout per engine group"`.
 
-  import (
-  	"context"
-  	"crypto/sha256"
-  	"encoding/hex"
-  	"errors"
-  	"fmt"
+## Task 6: Rollout controller, targeted pushes and fleet status
 
-  	"github.com/google/uuid"
-  	"github.com/jackc/pgx/v5"
-  	"google.golang.org/protobuf/proto"
-
-  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
-  	"github.com/piwi3910/nexora/mgmt/internal/rollout"
-  )
-
-  var ErrUnknownVersion = errors.New("snapshot: version not found for group")
-
-  func nextVersion(ctx context.Context, tx pgx.Tx, actor string) (int64, error) {
-  	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('publish'))`); err != nil {
-  		return 0, err
-  	}
-  	var v int64
-  	err := tx.QueryRow(ctx, `INSERT INTO config_versions (created_by) VALUES ($1) RETURNING version`, actor).Scan(&v)
-  	return v, err
-  }
-
-  func saveGroupSnapshot(ctx context.Context, tx pgx.Tx, group uuid.UUID, snap *controlv1.ConfigSnapshot) error {
-  	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
-  	if err != nil {
-  		return err
-  	}
-  	sum := sha256.Sum256(raw)
-  	_, err = tx.Exec(ctx, `INSERT INTO group_snapshots (version, group_id, snapshot, sha256) VALUES ($1, $2, $3, $4)`,
-  		int64(snap.GetVersion()), group, raw, hex.EncodeToString(sum[:]))
-  	return err
-  }
-
-  // Publish builds one snapshot per affected group under a new version and
-  // creates a pending rollout for each. Call it inside the mutation's transaction.
-  func Publish(ctx context.Context, tx pgx.Tx, actor string, scopes ...Scope) (int64, error) {
-  	all, groups := affected(scopes)
-  	if all || len(scopes) == 0 {
-  		groups = nil
-  		rows, err := tx.Query(ctx, `SELECT id FROM engine_groups ORDER BY name`)
-  		if err != nil {
-  			return 0, err
-  		}
-  		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-  		if err != nil {
-  			return 0, err
-  		}
-  		groups = ids
-  	}
-  	version, err := nextVersion(ctx, tx, actor)
-  	if err != nil {
-  		return 0, fmt.Errorf("publish: version: %w", err)
-  	}
-  	for _, g := range groups {
-  		snap, err := BuildForGroup(ctx, tx, g, version)
-  		if err != nil {
-  			return 0, fmt.Errorf("publish: build group %s: %w", g, err)
-  		}
-  		if err := saveGroupSnapshot(ctx, tx, g, snap); err != nil {
-  			return 0, fmt.Errorf("publish: store group %s: %w", g, err)
-  		}
-  		if _, err := rollout.Create(ctx, tx, g, version, rollout.KindChange, nil, actor); err != nil {
-  			return 0, err
-  		}
-  	}
-  	return version, nil
-  }
-
-  // Republish copies the group's snapshot at fromVersion into a new version.
-  func Republish(ctx context.Context, tx pgx.Tx, actor string, groupID uuid.UUID, fromVersion int64, kind rollout.Kind) (int64, uuid.UUID, error) {
-  	var raw []byte
-  	err := tx.QueryRow(ctx, `SELECT snapshot FROM group_snapshots WHERE version = $1 AND group_id = $2`, fromVersion, groupID).Scan(&raw)
-  	if errors.Is(err, pgx.ErrNoRows) {
-  		return 0, uuid.Nil, ErrUnknownVersion
-  	}
-  	if err != nil {
-  		return 0, uuid.Nil, err
-  	}
-  	var snap controlv1.ConfigSnapshot
-  	if err := proto.Unmarshal(raw, &snap); err != nil {
-  		return 0, uuid.Nil, fmt.Errorf("republish: decode %d: %w", fromVersion, err)
-  	}
-  	version, err := nextVersion(ctx, tx, actor)
-  	if err != nil {
-  		return 0, uuid.Nil, err
-  	}
-  	snap.Version = uint64(version)
-  	if err := saveGroupSnapshot(ctx, tx, groupID, &snap); err != nil {
-  		return 0, uuid.Nil, err
-  	}
-  	id, err := rollout.Create(ctx, tx, groupID, version, kind, &fromVersion, actor)
-  	return version, id, err
-  }
-  ```
-  Delete M1's former `Publish` body (including its `pg_notify('nexora_config', ...)` and its write of `config_versions.snapshot`). When Task 1 recorded additional NOT NULL columns on `config_versions`, supply them in `nextVersion`'s INSERT.
-- [ ] Change M1's `Build(ctx, tx, version)` in `mgmt/internal/snapshot/builder.go` into `BuildForGroup(ctx, tx, groupID, version)`: load `SELECT upstream_mode FROM engine_groups WHERE id = $1`; add `WHERE ` + `ScopeClause(<alias>, 1)` (with `groupID` as `$1`, renumbering existing parameters) to the query of each table in `store.ScopedConfigTables`; add `GroupID *uuid.UUID` plus `func (r X) ScopeGroup() *uuid.UUID { return r.GroupID }` to each row struct; order rows with `ForGroup` (ACL entries, filter lists, client policies, rewrites, zones, RPZ zones), `UpstreamsForGroup(rows, groupID, upstreamMode)` for upstreams and `SettingsForGroup` for telemetry settings; blob references, DNSSEC key material and TSIG keys are collected only from the rows that survived the scope filter.
-- [ ] Update call sites: run `scripts/dev-exec.sh 'grep -rn "snapshot.Publish(" mgmt/internal --include=*.go'`; for mutations of a table in `store.ScopedConfigTables` pass `snapshot.ScopeOf(before.GroupID), snapshot.ScopeOf(after.GroupID)` (create: only `after`; delete: only `before`); for every other mutation pass `snapshot.Global()`.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/snapshot/ ./mgmt/internal/rollout/ -count=1 && go vet ./mgmt/...'` and expect `ok` for both packages and no vet output.
-- [ ] Commit: `git add mgmt/internal/snapshot mgmt/internal/rollout/store.go mgmt/internal/api && git commit -m "feat(snapshot): per-group snapshots with pending rollouts"`.
-
-## Task 6: Rollout controller, targeted pushes and fleet health
-
-Files: `mgmt/internal/rollout/controller.go` (multi-instance driver), `mgmt/internal/rollout/controller_test.go`, `mgmt/internal/fleet/engines.go` (engine views: connection state, drift, target), `mgmt/internal/fleet/health.go` (heartbeat, acks, samples, health window, prune), `mgmt/internal/fleet/metrics.go` (fleet gauges), `mgmt/internal/fleet/fleet_test.go`, `mgmt/internal/store/storetest/fleet.go` (engine row fixture), `mgmt/internal/control/hub.go` (M1 hub: push by target), `mgmt/internal/control/hub_fleet_test.go`, `mgmt/internal/config/config.go` (new env), `mgmt/cmd/nexora-mgmt/main.go` (start controller and metrics refresher)
+Files: `mgmt/internal/rollout/controller.go` (multi-instance driver, health from `engine_stats`), `mgmt/internal/rollout/controller_test.go`, `mgmt/internal/fleet/engines.go` (engine views, status, targets), `mgmt/internal/fleet/collector.go` (fleet gauges), `mgmt/internal/fleet/fleet_test.go`, `mgmt/internal/store/storetest/fleet.go` (engine row fixtures), `mgmt/internal/control/hub.go` (push by target, per-group notifications), `mgmt/internal/control/server.go` (`Connect` uses the target), `mgmt/internal/control/keys.go` (per-engine key filtering), `mgmt/internal/control/keys_test.go`, `mgmt/internal/control/control_test.go` (fixture runs a controller per instance), `mgmt/internal/control/fleet_push_test.go`, `mgmt/internal/api/handlers_fleet.go` (engine list and status from `fleet.ListEngines`), `mgmt/internal/stats/stats.go` (`Record` notifies nothing; unchanged signature), `mgmt/internal/config/config.go` (`NEXORA_ROLLOUT_TICK`), `mgmt/internal/config/config_test.go`, `mgmt/cmd/nexora-mgmt/main.go` (start the controller, register the collector)
 Interfaces:
+
 ```go
 package rollout
-type Controller struct { Pool *pgxpool.Pool; Tick time.Duration; Log *slog.Logger }
-func (c *Controller) Run(ctx context.Context) error
+type Controller struct { Store *store.Store; Tick time.Duration }
+func (c *Controller) Run(ctx context.Context)
 func (c *Controller) Step(ctx context.Context) (driven int, err error)
+func HealthSince(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, since time.Time) (Health, error)
 
 package fleet
-type Querier interface { Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error); QueryRow(ctx context.Context, sql string, args ...any) pgx.Row; Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) }
-type EngineView struct { ID, GroupID uuid.UUID; Name, GroupName string; Labels map[string]string; Revision int64; ConnectionState string; LastSeenAt *time.Time; ConnectedInstance string; AppliedVersion, TargetVersion int64; RejectedVersion *int64; RejectedReason string; Drift string; CreatedAt time.Time }
-type EngineFilter struct { GroupID *uuid.UUID; EngineID *uuid.UUID }
-func ListEngines(ctx context.Context, q Querier, f EngineFilter) ([]EngineView, error)
-func SnapshotFor(ctx context.Context, q Querier, groupID uuid.UUID, version int64) ([]byte, error)
-func Heartbeat(ctx context.Context, q Querier, engineID uuid.UUID, instance string) error
-func Disconnect(ctx context.Context, q Querier, engineID uuid.UUID, instance string) error
-func RecordApplied(ctx context.Context, q Querier, engineID uuid.UUID, version int64, instance string) error
-func RecordRejected(ctx context.Context, q Querier, engineID uuid.UUID, version int64, reason, instance string) error
-func RecordStats(ctx context.Context, q Querier, engineID uuid.UUID, instance string, applied int64, h *controlv1.FleetHealth) error
-func HealthSince(ctx context.Context, q Querier, engineID uuid.UUID, since time.Time) (rollout.Health, error)
-func Prune(ctx context.Context, pool *pgxpool.Pool) (deleted int64, err error)
-type Metrics struct { Disconnected prometheus.Gauge; Engines, Drift, Rollouts *prometheus.GaugeVec }
-func NewMetrics(reg prometheus.Registerer) *Metrics
-func (m *Metrics) Refresh(ctx context.Context, q Querier) error
+type EngineView struct {
+	ID, EngineGroupID uuid.UUID
+	NodeName, EngineVersion, EngineGroupName, RejectedReason, PersistError, CertificateSerial, Status string
+	EnrolledAt time.Time
+	LastSeenAt, RevokedAt, CertRotateRequestedAt, CertificateNotAfter *time.Time
+	Connected, VersionAhead bool
+	AppliedVersion, TargetVersion uint64
+	RejectedVersion *uint64
+	Labels map[string]string
+	Revision int64
+}
+type EngineFilter struct { EngineGroupID, EngineID *uuid.UUID }
+func ListEngines(ctx context.Context, q store.PolicyQuerier, f EngineFilter) ([]EngineView, error)
+type Target struct { EngineGroupID uuid.UUID; Version uint64; Snapshot *controlv1.ConfigSnapshot; RotateRequested bool }
+func TargetFor(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID) (Target, error)
+func NewCollector(st *store.Store) prometheus.Collector
 
 package storetest
-func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) uuid.UUID
+func InsertEngine(t *testing.T, st *store.Store, nodeName string, engineGroupID uuid.UUID) uuid.UUID
+func ConnectEngine(t *testing.T, st *store.Store, engineID uuid.UUID)
+
+package control
+func FilterRPZKeys(snap *controlv1.ConfigSnapshot, keys *controlv1.RpzTsigKeys) *controlv1.RpzTsigKeys
+func FilterKeyMaterial(snap *controlv1.ConfigSnapshot, km *controlv1.KeyMaterial) *controlv1.KeyMaterial
 ```
 
-- [ ] Create the fixture `mgmt/internal/store/storetest/fleet.go` (INSERT lists every NOT NULL column without default that Task 1 found on `engines`; the M1 columns assumed are `id` and `name`):
+- [ ] Create the fixture `mgmt/internal/store/storetest/fleet.go`:
   ```go
   package storetest
 
@@ -1586,20 +1458,35 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
   	"testing"
 
   	"github.com/google/uuid"
-  	"github.com/jackc/pgx/v5/pgxpool"
+
+  	"github.com/piwi3910/nexora/mgmt/internal/store"
   )
 
-  // InsertEngine creates an enrolled, never-connected engine row.
-  func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) uuid.UUID {
+  // InsertEngine creates an enrolled, never-connected engine row in engineGroupID.
+  func InsertEngine(t *testing.T, st *store.Store, nodeName string, engineGroupID uuid.UUID) uuid.UUID {
   	t.Helper()
-  	id := uuid.New()
-  	if _, err := db.Exec(context.Background(),
-  		`INSERT INTO engines (id, name, group_id) VALUES ($1, $2, $3)`, id, name, group); err != nil {
-  		t.Fatalf("insert engine %s: %v", name, err)
+  	var id uuid.UUID
+  	if err := st.Pool.QueryRow(context.Background(), `insert into engines (node_name, certificate_serial, engine_group_id)
+  		values ($1, md5(random()::text), $2) returning id`, nodeName, engineGroupID).Scan(&id); err != nil {
+  		t.Fatalf("insert engine %s: %v", nodeName, err)
   	}
   	return id
   }
+
+  // ConnectEngine marks the engine as holding a live stream on the fixture instance "storetest".
+  func ConnectEngine(t *testing.T, st *store.Store, engineID uuid.UUID) {
+  	t.Helper()
+  	ctx := context.Background()
+  	if _, err := st.Pool.Exec(ctx, `insert into instances (id) values ('storetest')
+  		on conflict (id) do update set heartbeat_at = now()`); err != nil {
+  		t.Fatal(err)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update engines set connected_instance = 'storetest', last_seen_at = now() where id = $1`, engineID); err != nil {
+  		t.Fatal(err)
+  	}
+  }
   ```
+  `md5(random()::text)` is a lowercase hex serial without the `pgcrypto` extension.
 - [ ] Write the failing test `mgmt/internal/rollout/controller_test.go`:
   ```go
   package rollout_test
@@ -1607,81 +1494,134 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
   import (
   	"context"
   	"testing"
+  	"time"
 
   	"github.com/google/uuid"
-  	"github.com/jackc/pgx/v5/pgxpool"
+  	"github.com/jackc/pgx/v5"
+  	"google.golang.org/protobuf/proto"
 
+  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+  	"github.com/piwi3910/nexora/mgmt/internal/auth"
   	"github.com/piwi3910/nexora/mgmt/internal/rollout"
   	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
   	"github.com/piwi3910/nexora/mgmt/internal/store"
   	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
   )
 
-  func publishDefault(t *testing.T, db *pgxpool.Pool) int64 {
+  func stateOf(t *testing.T, st *store.Store, version uint64) (string, []uuid.UUID) {
   	t.Helper()
-  	ctx := context.Background()
-  	tx, err := db.Begin(ctx)
-  	if err != nil {
+  	var s string
+  	var canaries []uuid.UUID
+  	if err := st.Pool.QueryRow(context.Background(), `select state, canary_engine_ids from rollouts
+  		where engine_group_id = $1 and version = $2`, store.DefaultEngineGroupID, int64(version)).Scan(&s, &canaries); err != nil {
   		t.Fatal(err)
   	}
-  	v, err := snapshot.Publish(ctx, tx, "test", snapshot.Group(store.DefaultGroupID))
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	if err := tx.Commit(ctx); err != nil {
-  		t.Fatal(err)
-  	}
-  	return v
+  	return s, canaries
   }
 
-  func TestControllerDrivesUnderAdvisoryLock(t *testing.T) {
-  	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	v := publishDefault(t, db)
-  	var id uuid.UUID
-  	if err := db.QueryRow(ctx, `SELECT id FROM rollouts WHERE version = $1`, v).Scan(&id); err != nil {
+  func sample(t *testing.T, st *store.Store, engine uuid.UUID, at string, queries, servfail uint64) {
+  	t.Helper()
+  	raw, _ := proto.Marshal(&controlv1.Stats{QueriesTotal: queries, ServfailTotal: servfail})
+  	if _, err := st.Pool.Exec(context.Background(), `insert into engine_stats (engine_id, at, stats)
+  		select $1, phase_started_at + $2::interval, $3 from rollouts where state = 'verifying'`, engine, at, raw); err != nil {
   		t.Fatal(err)
   	}
-  	c := &rollout.Controller{Pool: db}
+  }
 
-  	conn, err := db.Acquire(ctx)
+  func TestControllerDrivesCanaryUnderAdvisoryLock(t *testing.T) {
+  	ctx := context.Background()
+  	st := storetest.New(t)
+  	if _, err := snapshot.EnsureInitial(ctx, st, snapshot.BuildConfig{}); err != nil {
+  		t.Fatal(err)
+  	}
+  	a := storetest.InsertEngine(t, st, "a", store.DefaultEngineGroupID)
+  	b := storetest.InsertEngine(t, st, "b", store.DefaultEngineGroupID)
+  	storetest.ConnectEngine(t, st, a)
+  	storetest.ConnectEngine(t, st, b)
+  	c := &rollout.Controller{Store: st}
+
+  	if n, err := c.Step(ctx); err != nil || n != 0 {
+  		t.Fatalf("version 1 completed before any ack: driven=%d err=%v", n, err)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update engines set applied_version = 1`); err != nil {
+  		t.Fatal(err)
+  	}
+  	if n, err := c.Step(ctx); err != nil || n != 1 {
+  		t.Fatalf("rolling -> completed: driven=%d err=%v", n, err)
+  	}
+
+  	if _, err := st.Pool.Exec(ctx, `update engine_groups set rollout_strategy = 'canary', canary_count = 1, min_health_queries = 10`); err != nil {
+  		t.Fatal(err)
+  	}
+  	v2, err := snapshot.Mutate(ctx, st, snapshot.BuildConfig{}, auth.Actor{Type: "system", ID: "t", Name: "t"}, func(tx pgx.Tx) (auth.Change, error) {
+  		_, err := tx.Exec(ctx, `update resolver_settings set block_ttl = 7`)
+  		return auth.Change{Action: "updateResolverSettings", TargetType: "resolver_settings", TargetID: "singleton"}, err
+  	})
   	if err != nil {
   		t.Fatal(err)
   	}
-  	holder, err := conn.Begin(ctx)
+  	var id uuid.UUID
+  	if err := st.Pool.QueryRow(ctx, `select id from rollouts where version = $1`, int64(v2)).Scan(&id); err != nil {
+  		t.Fatal(err)
+  	}
+  	holder, err := st.Pool.Begin(ctx)
   	if err != nil {
   		t.Fatal(err)
   	}
-  	if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('rollout:' || $1::text))`, id); err != nil {
+  	if _, err := holder.Exec(ctx, `select pg_advisory_xact_lock(hashtext('nexora:rollout:' || $1::text))`, id); err != nil {
   		t.Fatal(err)
   	}
   	if n, err := c.Step(ctx); err != nil || n != 0 {
   		t.Fatalf("locked rollout: driven=%d err=%v, want 0 nil", n, err)
   	}
   	_ = holder.Rollback(ctx)
-  	conn.Release()
 
   	if n, err := c.Step(ctx); err != nil || n != 1 {
-  		t.Fatalf("pending -> rolling: driven=%d err=%v", n, err)
+  		t.Fatalf("pending -> canary: driven=%d err=%v", n, err)
+  	}
+  	if s, canaries := stateOf(t, st, v2); s != "canary" || len(canaries) != 1 || canaries[0] != a {
+  		t.Fatalf("state %s canaries %v, want canary [a]", s, canaries)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update engines set applied_version = $1 where id = $2`, int64(v2), a); err != nil {
+  		t.Fatal(err)
+  	}
+  	if n, err := c.Step(ctx); err != nil || n != 1 {
+  		t.Fatalf("canary -> verifying: driven=%d err=%v", n, err)
+  	}
+  	if s, _ := stateOf(t, st, v2); s != "verifying" {
+  		t.Fatalf("state %s, want verifying", s)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update rollouts set phase_started_at = now() - interval '31 seconds' where id = $1`, id); err != nil {
+  		t.Fatal(err)
+  	}
+  	sample(t, st, a, "-5 seconds", 1000, 3)
+  	sample(t, st, a, "10 seconds", 1400, 5)
+  	sample(t, st, a, "20 seconds", 1900, 8)
+  	var since time.Time
+  	_ = st.Pool.QueryRow(ctx, `select phase_started_at from rollouts where id = $1`, id).Scan(&since)
+  	if h, err := rollout.HealthSince(ctx, st.Pool, a, since); err != nil || h.Samples != 3 || h.Queries != 900 || h.Servfail != 5 {
+  		t.Fatalf("health = %+v err %v, want 3 samples, 900 queries, 5 servfail", h, err)
+  	}
+  	if n, err := c.Step(ctx); err != nil || n != 1 {
+  		t.Fatalf("verifying -> rolling: driven=%d err=%v", n, err)
+  	}
+  	if _, err := st.Pool.Exec(ctx, `update engines set applied_version = $1 where id = $2`, int64(v2), b); err != nil {
+  		t.Fatal(err)
   	}
   	if n, err := c.Step(ctx); err != nil || n != 1 {
   		t.Fatalf("rolling -> completed: driven=%d err=%v", n, err)
   	}
-  	var state string
-  	var stable *int64
-  	if err := db.QueryRow(ctx, `SELECT r.state, g.stable_version FROM rollouts r JOIN engine_groups g ON g.id = r.group_id WHERE r.id = $1`, id).Scan(&state, &stable); err != nil {
-  		t.Fatal(err)
-  	}
-  	if state != "completed" || stable == nil || *stable != v {
-  		t.Fatalf("state %s stable %v, want completed %d", state, stable, v)
+  	var stable int64
+  	if err := st.Pool.QueryRow(ctx, `select stable_version from engine_groups where id = $1`, store.DefaultEngineGroupID).Scan(&stable); err != nil || uint64(stable) != v2 {
+  		t.Fatalf("stable_version = %d err %v, want %d", stable, err, v2)
   	}
   	if n, _ := c.Step(ctx); n != 0 {
   		t.Fatalf("terminal rollout driven again (%d)", n)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/rollout/ -run TestControllerDrivesUnderAdvisoryLock -count=1` and expect FAIL with `undefined: rollout.Controller`.
-- [ ] Create `mgmt/internal/rollout/controller.go`. The engine and health loading lives here as SQL (not via `fleet`, which imports `rollout`):
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/rollout/ -run TestControllerDrivesCanaryUnderAdvisoryLock -count=1` and expect FAIL with `undefined: rollout.Controller`.
+- [ ] Create `mgmt/internal/rollout/controller.go`:
   ```go
   package rollout
 
@@ -1694,54 +1634,56 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
 
   	"github.com/google/uuid"
   	"github.com/jackc/pgx/v5"
-  	"github.com/jackc/pgx/v5/pgxpool"
+  	"google.golang.org/protobuf/proto"
+
+  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+  	"github.com/piwi3910/nexora/mgmt/internal/store"
   )
 
+  // Controller steps every open rollout; any number of instances run one.
   type Controller struct {
-  	Pool *pgxpool.Pool
-  	Tick time.Duration // NEXORA_ROLLOUT_TICK, default 1s
-  	Log  *slog.Logger
+  	Store *store.Store
+  	Tick  time.Duration // NEXORA_ROLLOUT_TICK; default 1 s
   }
 
-  // Run steps open rollouts on every tick and on nexora_rollout / nexora_rollout_tick notifications.
-  func (c *Controller) Run(ctx context.Context) error {
-  	if c.Tick <= 0 {
-  		c.Tick = time.Second
-  	}
-  	if c.Log == nil {
-  		c.Log = slog.Default()
+  // Run steps on every tick and on nexora_rollout notifications until ctx ends.
+  func (c *Controller) Run(ctx context.Context) {
+  	tick := c.Tick
+  	if tick <= 0 {
+  		tick = time.Second
   	}
   	wake := make(chan struct{}, 1)
   	go c.listen(ctx, wake)
-  	t := time.NewTicker(c.Tick)
+  	t := time.NewTicker(tick)
   	defer t.Stop()
   	for {
   		if _, err := c.Step(ctx); err != nil && ctx.Err() == nil {
-  			c.Log.Warn("rollout step failed", "err", err)
+  			slog.Warn("rollout step", "err", err)
   		}
   		select {
   		case <-ctx.Done():
-  			return nil
+  			return
   		case <-t.C:
   		case <-wake:
   		}
   	}
   }
 
+  // listen holds a dedicated connection outside the pool, like the hub's LISTEN.
   func (c *Controller) listen(ctx context.Context, wake chan<- struct{}) {
   	for ctx.Err() == nil {
-  		conn, err := c.Pool.Acquire(ctx)
+  		conn, err := pgx.ConnectConfig(ctx, c.Store.Pool.Config().ConnConfig)
   		if err == nil {
-  			_, err = conn.Exec(ctx, `LISTEN nexora_rollout; LISTEN nexora_rollout_tick`)
+  			_, err = conn.Exec(ctx, "listen nexora_rollout")
   			for err == nil {
-  				if _, err = conn.Conn().WaitForNotification(ctx); err == nil {
+  				if _, err = conn.WaitForNotification(ctx); err == nil {
   					select {
   					case wake <- struct{}{}:
   					default:
   					}
   				}
   			}
-  			conn.Release()
+  			_ = conn.Close(context.WithoutCancel(ctx))
   		}
   		select {
   		case <-ctx.Done():
@@ -1752,13 +1694,13 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
 
   // Step drives every open rollout once and returns how many changed state.
   func (c *Controller) Step(ctx context.Context) (int, error) {
-  	rows, err := c.Pool.Query(ctx, `SELECT id FROM rollouts WHERE state IN ('pending','canary','verifying','rolling') ORDER BY created_at`)
+  	rows, err := c.Store.Pool.Query(ctx, `select id from rollouts where state in ('pending','canary','verifying','rolling') order by created_at`)
   	if err != nil {
-  		return 0, err
+  		return 0, store.MapError(err)
   	}
   	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
   	if err != nil {
-  		return 0, err
+  		return 0, store.MapError(err)
   	}
   	driven := 0
   	var errs []error
@@ -1775,31 +1717,33 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
   }
 
   func (c *Controller) driveOne(ctx context.Context, id uuid.UUID) (bool, error) {
-  	tx, err := c.Pool.Begin(ctx)
+  	tx, err := c.Store.Pool.Begin(ctx)
   	if err != nil {
   		return false, err
   	}
-  	defer func() { _ = tx.Rollback(ctx) }()
+  	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
   	var locked bool
-  	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtext('rollout:' || $1::text))`, id).Scan(&locked); err != nil || !locked {
+  	if err := tx.QueryRow(ctx, `select pg_try_advisory_xact_lock(hashtext('nexora:rollout:' || $1::text))`, id).Scan(&locked); err != nil || !locked {
   		return false, err
   	}
   	var (
   		r       Rollout
+  		version int64
   		params  []byte
   		phase   *time.Time
   		paused  bool
   		now     time.Time
   	)
   	err = tx.QueryRow(ctx, `
-  		SELECT r.id, r.group_id, r.version, r.kind, r.state, r.canary_engine_ids, r.phase_started_at, r.halt_reason, r.params,
+  		select r.id, r.engine_group_id, r.version, r.kind, r.state, r.canary_engine_ids, r.phase_started_at, r.halt_reason, r.params,
   		       g.rollouts_paused, now()
-  		FROM rollouts r JOIN engine_groups g ON g.id = r.group_id
-  		WHERE r.id = $1 FOR UPDATE OF r`, id).
-  		Scan(&r.ID, &r.GroupID, &r.Version, &r.Kind, &r.State, &r.CanaryEngineIDs, &phase, &r.HaltReason, &params, &paused, &now)
+  		from rollouts r join engine_groups g on g.id = r.engine_group_id
+  		where r.id = $1 for update of r`, id).
+  		Scan(&r.ID, &r.EngineGroupID, &version, &r.Kind, &r.State, &r.CanaryEngineIDs, &phase, &r.HaltReason, &params, &paused, &now)
   	if err != nil {
   		return false, err
   	}
+  	r.Version = uint64(version)
   	if r.State.Terminal() || r.State == Halted {
   		return false, nil
   	}
@@ -1809,7 +1753,7 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
   	if err := json.Unmarshal(params, &r.Params); err != nil {
   		return false, err
   	}
-  	engines, err := loadEngines(ctx, tx, r.GroupID)
+  	engines, err := loadEngines(ctx, tx, r.EngineGroupID)
   	if err != nil {
   		return false, err
   	}
@@ -1824,20 +1768,19 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
   	if !changed {
   		return false, nil
   	}
-  	_, err = tx.Exec(ctx, `
-  		UPDATE rollouts SET state = $2, canary_engine_ids = $3, phase_started_at = $4, halt_reason = $5, updated_at = now(),
-  		       finished_at = CASE WHEN $2 IN ('completed') THEN now() ELSE finished_at END
-  		WHERE id = $1`, next.ID, string(next.State), next.CanaryEngineIDs, next.PhaseStartedAt, next.HaltReason)
-  	if err != nil {
+  	if _, err := tx.Exec(ctx, `
+  		update rollouts set state = $2, canary_engine_ids = $3, phase_started_at = $4, halt_reason = $5, updated_at = now(),
+  		       finished_at = case when $2 = 'completed' then now() else finished_at end
+  		where id = $1`, next.ID, string(next.State), next.CanaryEngineIDs, next.PhaseStartedAt, next.HaltReason); err != nil {
   		return false, err
   	}
   	if next.State == Completed {
-  		if _, err := tx.Exec(ctx, `UPDATE engine_groups SET stable_version = GREATEST(coalesce(stable_version, 0), $2), updated_at = now() WHERE id = $1`,
-  			next.GroupID, next.Version); err != nil {
+  		if _, err := tx.Exec(ctx, `update engine_groups set stable_version = greatest(coalesce(stable_version, 0), $2), updated_at = now()
+  			where id = $1`, next.EngineGroupID, int64(next.Version)); err != nil {
   			return false, err
   		}
   	}
-  	if _, err := tx.Exec(ctx, `SELECT pg_notify('nexora_rollout', $1::text)`, next.GroupID); err != nil {
+  	if _, err := tx.Exec(ctx, `select pg_notify('nexora_rollout', $1::text)`, next.EngineGroupID); err != nil {
   		return false, err
   	}
   	return true, tx.Commit(ctx)
@@ -1845,53 +1788,60 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
 
   func loadEngines(ctx context.Context, tx pgx.Tx, group uuid.UUID) ([]Engine, error) {
   	rows, err := tx.Query(ctx, `
-  		SELECT id, name, labels, coalesce(last_seen_at >= now() - interval '60 seconds', false),
-  		       applied_version, coalesce(rejected_version, 0), coalesce(rejected_reason, '')
-  		FROM engines WHERE group_id = $1 AND revoked_at IS NULL ORDER BY name`, group)
+  		select e.id, e.node_name, e.labels,
+  		       (e.connected_instance is not null and coalesce(i.heartbeat_at > now() - interval '15 seconds', false)),
+  		       e.applied_version, coalesce(e.rejected_version, 0), e.rejected_reason
+  		from engines e left join instances i on i.id = e.connected_instance
+  		where e.engine_group_id = $1 and e.revoked_at is null and e.deleted_at is null
+  		order by e.node_name, e.enrolled_at`, group)
   	if err != nil {
   		return nil, err
   	}
   	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Engine, error) {
   		var e Engine
-  		err := row.Scan(&e.ID, &e.Name, &e.Labels, &e.Connected, &e.AppliedVersion, &e.RejectedVersion, &e.RejectedReason)
+  		var applied, rejected int64
+  		err := row.Scan(&e.ID, &e.Name, &e.Labels, &e.Connected, &applied, &rejected, &e.RejectedReason)
+  		e.AppliedVersion, e.RejectedVersion = uint64(applied), uint64(rejected)
   		return e, err
   	})
   }
 
-  // HealthSince: baseline = newest sample in (since-60s, since]; then every later sample.
-  func HealthSince(ctx context.Context, q interface {
-  	Query(context.Context, string, ...any) (pgx.Rows, error)
-  }, engine uuid.UUID, since time.Time) (Health, error) {
+  // HealthSince: the baseline is the newest engine_stats sample in (since-60s, since]; then every
+  // later sample. Counters that went down (engine restart) count from zero.
+  func HealthSince(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, since time.Time) (Health, error) {
   	rows, err := q.Query(ctx, `
-  		(SELECT at, queries_total, servfail_total FROM engine_health_samples
-  		  WHERE engine_id = $1 AND at <= $2 AND at > $2 - interval '60 seconds' ORDER BY at DESC LIMIT 1)
-  		UNION ALL
-  		(SELECT at, queries_total, servfail_total FROM engine_health_samples
-  		  WHERE engine_id = $1 AND at > $2 ORDER BY at)
-  		ORDER BY at`, engine, since)
+  		(select at, stats from engine_stats where engine_id = $1 and at <= $2 and at > $2 - interval '60 seconds' order by at desc limit 1)
+  		union all
+  		(select at, stats from engine_stats where engine_id = $1 and at > $2 order by at)
+  		order by at`, engineID, since)
   	if err != nil {
   		return Health{}, err
   	}
   	defer rows.Close()
   	var h Health
-  	var firstQ, firstS, lastQ, lastS int64
+  	var first, last *controlv1.Stats
   	for rows.Next() {
   		var at time.Time
-  		var q, s int64
-  		if err := rows.Scan(&at, &q, &s); err != nil {
+  		var raw []byte
+  		if err := rows.Scan(&at, &raw); err != nil {
   			return Health{}, err
   		}
-  		if h.Samples == 0 {
-  			firstQ, firstS = q, s
+  		s := &controlv1.Stats{}
+  		if proto.Unmarshal(raw, s) != nil {
+  			continue
   		}
-  		lastQ, lastS = q, s
+  		if first == nil {
+  			first = s
+  		}
+  		last = s
   		h.Samples++
   	}
   	if h.Samples >= 2 {
-  		if lastQ < firstQ || lastS < firstS { // engine restarted: counters reset
-  			firstQ, firstS = 0, 0
+  		q0, f0 := first.QueriesTotal, first.ServfailTotal
+  		if last.QueriesTotal < q0 || last.ServfailTotal < f0 {
+  			q0, f0 = 0, 0
   		}
-  		h.Queries, h.Servfail = uint64(lastQ-firstQ), uint64(lastS-firstS)
+  		h.Queries, h.Servfail = last.QueriesTotal-q0, last.ServfailTotal-f0
   	}
   	return h, rows.Err()
   }
@@ -1903,224 +1853,265 @@ func InsertEngine(t *testing.T, db *pgxpool.Pool, name string, group uuid.UUID) 
 
   import (
   	"context"
+  	"strings"
   	"testing"
-  	"time"
 
-  	"github.com/prometheus/client_golang/prometheus"
   	"github.com/prometheus/client_golang/prometheus/testutil"
 
-  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
   	"github.com/piwi3910/nexora/mgmt/internal/fleet"
-  	"github.com/piwi3910/nexora/mgmt/internal/rollout"
-  	"github.com/piwi3910/nexora/mgmt/internal/store"
-  	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
-  )
-
-  func TestHealthAndDisconnectedGauge(t *testing.T) {
-  	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	a := storetest.InsertEngine(t, db, "a", store.DefaultGroupID)
-  	b := storetest.InsertEngine(t, db, "b", store.DefaultGroupID)
-  	c := storetest.InsertEngine(t, db, "c", store.DefaultGroupID)
-
-  	if err := fleet.RecordStats(ctx, db, c, "mgmt-1", 3, &controlv1.FleetHealth{QueriesTotal: 10, ServfailTotal: 1, LatencyP99Us: 900}); err != nil {
-  		t.Fatal(err)
-  	}
-  	views, err := fleet.ListEngines(ctx, db, fleet.EngineFilter{})
-  	if err != nil || len(views) != 3 {
-  		t.Fatalf("views %v err %v", views, err)
-  	}
-  	byName := map[string]fleet.EngineView{}
-  	for _, v := range views {
-  		byName[v.Name] = v
-  	}
-  	if byName["c"].ConnectionState != "connected" || byName["c"].ConnectedInstance != "mgmt-1" || byName["b"].ConnectionState != "never_connected" {
-  		t.Fatalf("states c=%+v b=%+v", byName["c"], byName["b"])
-  	}
-
-  	if _, err := db.Exec(ctx, `UPDATE engines SET created_at = now() - interval '2 minutes' WHERE id = $1`, b); err != nil {
-  		t.Fatal(err)
-  	}
-  	m := fleet.NewMetrics(prometheus.NewRegistry())
-  	if err := m.Refresh(ctx, db); err != nil {
-  		t.Fatal(err)
-  	}
-  	if got := testutil.ToFloat64(m.Disconnected); got != 1 {
-  		t.Fatalf("nexora_mgmt_engines_disconnected = %v, want 1 (b unseen for 2 minutes)", got)
-  	}
-  	if _, err := db.Exec(ctx, `UPDATE engines SET revoked_at = now() WHERE id = $1`, b); err != nil {
-  		t.Fatal(err)
-  	}
-  	_ = m.Refresh(ctx, db)
-  	if got := testutil.ToFloat64(m.Disconnected); got != 0 {
-  		t.Fatalf("revoked engines must not count as disconnected, got %v", got)
-  	}
-
-  	since := time.Now().Add(-time.Minute)
-  	for _, s := range []struct {
-  		off  time.Duration
-  		q, f int64
-  	}{{-15 * time.Second, 100, 0}, {5 * time.Second, 300, 50}, {15 * time.Second, 500, 100}} {
-  		if _, err := db.Exec(ctx, `INSERT INTO engine_health_samples VALUES ($1, $2, 3, $3, $4, 0, 0, 0, 0)`, a, since.Add(s.off), s.q, s.f); err != nil {
-  			t.Fatal(err)
-  		}
-  	}
-  	h, err := rollout.HealthSince(ctx, db, a, since)
-  	if err != nil || h.Samples != 3 || h.Queries != 400 || h.Servfail != 100 {
-  		t.Fatalf("health = %+v err %v, want 3 samples, 400 queries, 100 servfail", h, err)
-  	}
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/fleet/ -count=1` and expect FAIL with `undefined: fleet.RecordStats`.
-- [ ] Create `mgmt/internal/fleet/health.go` with these statements (each function is a single `Exec` unless noted; `instance` is `NEXORA_INSTANCE_ID`):
-  ```sql
-  -- Heartbeat
-  UPDATE engines SET last_seen_at = now(), connected_instance = $2 WHERE id = $1;
-  -- Disconnect (only clears when this instance still owns the stream)
-  UPDATE engines SET connected_instance = NULL WHERE id = $1 AND connected_instance = $2;
-  -- RecordApplied, then SELECT pg_notify('nexora_rollout_tick', group_id::text) FROM engines WHERE id = $1
-  UPDATE engines SET applied_version = $2, last_seen_at = now(), connected_instance = $3,
-         rejected_version = CASE WHEN rejected_version <= $2 THEN NULL ELSE rejected_version END,
-         rejected_reason  = CASE WHEN rejected_version <= $2 THEN NULL ELSE rejected_reason END
-  WHERE id = $1;
-  -- RecordRejected, then the same pg_notify
-  UPDATE engines SET rejected_version = $2, rejected_reason = left($3, 1024), last_seen_at = now(), connected_instance = $4 WHERE id = $1;
-  -- RecordStats (both statements in one transaction)
-  INSERT INTO engine_health_samples (engine_id, at, applied_version, queries_total, servfail_total, cache_hits_total,
-         cache_misses_total, latency_p50_us, latency_p99_us)
-  VALUES ($1, now(), $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING;
-  UPDATE engines SET last_seen_at = now(), connected_instance = $2 WHERE id = $1;
-  -- Prune (inside a transaction; skip when the lock is not acquired)
-  SELECT pg_try_advisory_xact_lock(hashtext('fleet:prune'));
-  DELETE FROM engine_health_samples WHERE at < now() - interval '24 hours';
-  ```
-  `RecordStats` with a nil `FleetHealth` (an engine older than M5) only runs the heartbeat. Values above `math.MaxInt64` are clamped. `HealthSince` calls `rollout.HealthSince`.
-- [ ] Create `mgmt/internal/fleet/engines.go`. `ListEngines` runs two queries and computes state in Go:
-  ```sql
-  SELECT e.id, e.name, e.group_id, g.name, e.labels, e.revision, e.last_seen_at, coalesce(e.connected_instance, ''),
-         e.applied_version, e.rejected_version, coalesce(e.rejected_reason, ''), e.revoked_at, e.created_at,
-         coalesce(e.last_seen_at >= now() - interval '60 seconds', false)
-  FROM engines e JOIN engine_groups g ON g.id = e.group_id
-  WHERE ($1::uuid IS NULL OR e.group_id = $1) AND ($2::uuid IS NULL OR e.id = $2)
-  ORDER BY g.name, e.name;
-
-  SELECT g.id, coalesce(g.stable_version, 0), r.id, r.version, r.state, r.canary_engine_ids
-  FROM engine_groups g
-  LEFT JOIN LATERAL (SELECT id, version, state, canary_engine_ids FROM rollouts
-                     WHERE group_id = g.id ORDER BY version DESC LIMIT 1) r ON true;
-  ```
-  Per engine: `TargetVersion = rollout.Target(engine, stable, latest)`; `ConnectionState` = `revoked` if `revoked_at` set, else `connected` if the last column is true, else `never_connected` if `last_seen_at` is NULL, else `disconnected`; `Drift` = `unknown` if never connected, `rejected` if `rejected_version = TargetVersion`, `ahead` if applied > target, `behind` if applied < target, else `in_sync`. `SnapshotFor` returns `SELECT snapshot FROM group_snapshots WHERE group_id = $1 AND version = $2`.
-- [ ] Create `mgmt/internal/fleet/metrics.go`: gauges `nexora_mgmt_engines_disconnected` (help "Non-revoked engines not seen for more than 60 seconds"), `nexora_mgmt_engines{group,state}`, `nexora_mgmt_engine_drift{group,drift}`, `nexora_mgmt_rollouts{state}`. `Refresh` computes all of them from `ListEngines` (disconnected = views with state `disconnected`, plus `never_connected` whose `CreatedAt` is more than 60 s before the database `now()` read via `SELECT now()`) and `SELECT state, count(*) FROM rollouts WHERE state IN ('pending','canary','verifying','rolling','halted') GROUP BY state`; it calls `Reset()` on each vector before setting values so vanished groups disappear.
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/fleet/ -count=1` and expect `ok`.
-- [ ] Write the failing hub test `mgmt/internal/control/hub_fleet_test.go` (uses the M1 in-process hub test helpers; the test drives `Hub.TargetFor`, the one function the hub uses both on `Hello` and on `nexora_rollout`):
-  ```go
-  package control_test
-
-  import (
-  	"context"
-  	"testing"
-
-  	"github.com/piwi3910/nexora/mgmt/internal/control"
-  	"github.com/piwi3910/nexora/mgmt/internal/rollout"
   	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
   	"github.com/piwi3910/nexora/mgmt/internal/store"
   	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
   )
 
-  func TestHubTargetsCanariesOnly(t *testing.T) {
+  func TestEngineStatusTargetsAndMetrics(t *testing.T) {
   	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	a := storetest.InsertEngine(t, db, "a", store.DefaultGroupID)
-  	b := storetest.InsertEngine(t, db, "b", store.DefaultGroupID)
-  	ctl := &rollout.Controller{Pool: db}
+  	st := storetest.New(t)
+  	if _, err := snapshot.EnsureInitial(ctx, st, snapshot.BuildConfig{}); err != nil {
+  		t.Fatal(err)
+  	}
+  	for _, n := range []string{"current", "behind", "rejected", "revoked", "gone"} {
+  		storetest.ConnectEngine(t, st, storetest.InsertEngine(t, st, n, store.DefaultEngineGroupID))
+  	}
+  	quiet := storetest.InsertEngine(t, st, "quiet", store.DefaultEngineGroupID)
+  	for _, stmt := range []string{
+  		`update engines set applied_version = 1 where node_name in ('current', 'revoked')`,
+  		`update engines set rejected_version = 1, rejected_reason = 'bad' where node_name = 'rejected'`,
+  		`update engines set revoked_at = now() where node_name = 'revoked'`,
+  		`update engines set connected_instance = null, last_seen_at = now() - interval '2 minutes' where node_name = 'gone'`,
+  		`update engines set enrolled_at = now() - interval '5 seconds' where node_name = 'quiet'`,
+  	} {
+  		if _, err := st.Pool.Exec(ctx, stmt); err != nil {
+  			t.Fatal(err)
+  		}
+  	}
+  	views, err := fleet.ListEngines(ctx, st.Pool, fleet.EngineFilter{})
+  	if err != nil || len(views) != 6 {
+  		t.Fatalf("views %d err %v", len(views), err)
+  	}
+  	want := map[string]string{"current": "current", "behind": "behind", "rejected": "rejected", "revoked": "revoked", "gone": "disconnected", "quiet": "disconnected"}
+  	for _, v := range views {
+  		if v.Status != want[v.NodeName] || v.TargetVersion != 1 || v.EngineGroupName != "default" {
+  			t.Errorf("%s: status %s target %d group %s, want %s 1 default", v.NodeName, v.Status, v.TargetVersion, v.EngineGroupName, want[v.NodeName])
+  		}
+  	}
+  	target, err := fleet.TargetFor(ctx, st.Pool, quiet)
+  	if err != nil || target.Version != 1 || target.Snapshot.GetVersion() != 1 || target.EngineGroupID != store.DefaultEngineGroupID {
+  		t.Fatalf("target = %+v err %v", target, err)
+  	}
 
-  	tx, _ := db.Begin(ctx)
-  	v1, err := snapshot.Publish(ctx, tx, "test", snapshot.Global())
-  	if err != nil {
+  	// Positive first: the gauge counts "gone" (unseen for 2 minutes); "quiet" enrolled 5 s ago and
+  	// "revoked" are not counted.
+  	expected := `
+  # HELP nexora_mgmt_engines_disconnected Non-revoked engines without a live control stream for more than 60 seconds
+  # TYPE nexora_mgmt_engines_disconnected gauge
+  nexora_mgmt_engines_disconnected 1
+  `
+  	if err := testutil.CollectAndCompare(fleet.NewCollector(st), strings.NewReader(expected), "nexora_mgmt_engines_disconnected"); err != nil {
   		t.Fatal(err)
   	}
-  	_ = tx.Commit(ctx)
-  	for i := 0; i < 3; i++ {
-  		_, _ = ctl.Step(ctx)
-  	}
-  	if _, err := db.Exec(ctx, `UPDATE engines SET last_seen_at = now(), applied_version = $1`, v1); err != nil {
+  	if _, err := st.Pool.Exec(ctx, `update engines set revoked_at = now() where node_name = 'gone'`); err != nil {
   		t.Fatal(err)
   	}
-  	if _, err := db.Exec(ctx, `UPDATE engine_groups SET rollout_strategy = 'canary', canary_count = 1 WHERE id = $1`, store.DefaultGroupID); err != nil {
-  		t.Fatal(err)
+  	if err := testutil.CollectAndCompare(fleet.NewCollector(st), strings.NewReader(strings.Replace(expected, "disconnected 1", "disconnected 0", 1)),
+  		"nexora_mgmt_engines_disconnected"); err != nil {
+  		t.Fatalf("revoked engines must not count as disconnected: %v", err)
   	}
-  	tx, _ = db.Begin(ctx)
-  	v2, _ := snapshot.Publish(ctx, tx, "test", snapshot.Global())
-  	_ = tx.Commit(ctx)
-  	if _, err := ctl.Step(ctx); err != nil { // pending -> canary, selects "a"
-  		t.Fatal(err)
-  	}
-
-  	hub := control.NewHubForTest(db, "mgmt-1")
-  	ta, err := hub.TargetFor(ctx, a)
-  	if err != nil || ta.Version != v2 || len(ta.Snapshot) == 0 {
-  		t.Fatalf("canary target = %d (%d bytes) err %v, want %d", ta.Version, len(ta.Snapshot), err, v2)
-  	}
-  	tb, err := hub.TargetFor(ctx, b)
-  	if err != nil || tb.Version != v1 || tb.Push {
-  		t.Fatalf("non-canary target = %d push=%v err %v, want %d and no push", tb.Version, tb.Push, err, v1)
-  	}
-  	if _, err := db.Exec(ctx, `UPDATE engines SET applied_version = $1 WHERE id = $2`, v2+10, b); err != nil {
-  		t.Fatal(err)
-  	}
-  	if tb, _ = hub.TargetFor(ctx, b); !tb.Ahead || tb.Push {
-  		t.Fatalf("engine above its target must be flagged ahead and not pushed: %+v", tb)
+  	if n := testutil.CollectAndCount(fleet.NewCollector(st), "nexora_mgmt_engines"); n == 0 {
+  		t.Fatal("nexora_mgmt_engines not exported")
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestHubTargetsCanariesOnly -count=1` and expect FAIL with `undefined: control.NewHubForTest`.
-- [ ] Change the M1 hub in `mgmt/internal/control/hub.go`:
-  - `type PushTarget struct { Version int64; Snapshot []byte; Push, Ahead bool }`; `func (h *Hub) TargetFor(ctx context.Context, engineID uuid.UUID) (PushTarget, error)` loads the engine's view with `fleet.ListEngines(ctx, h.pool, fleet.EngineFilter{EngineID: &engineID})`, sets `Ahead = applied > target`, `Push = target > applied && target > session.lastSent` (lastSent is 0 without a session), and loads `Snapshot` with `fleet.SnapshotFor` only when `Push`. `NewHubForTest(pool *pgxpool.Pool, instance string) *Hub` constructs a hub without a gRPC server.
-  - Sessions are keyed by engine id and record `groupID` and `lastSent`.
-  - On `Hello`: `fleet.Heartbeat`, then `TargetFor`; when `Push`, send the snapshot and set `lastSent`; when `Ahead`, log `engine ahead of management plane` with both versions once per stream (the spec's "flagged, not silently downgraded").
-  - A dedicated LISTEN connection on `nexora_rollout` and `nexora_engine_updated`: for `nexora_rollout` (payload group id) run `TargetFor` for each local session in that group and push when `Push`; for `nexora_engine_updated` (payload engine id) reload the session's group with `SELECT group_id FROM engines WHERE id = $1` and then run `TargetFor`. Every 30 s every local session is re-synced the same way (covers notifications lost while the LISTEN connection reconnected). Remove the M1 `nexora_config` listener.
-  - `Applied{version}` -> `fleet.RecordApplied`; `Rejected{version, reason}` -> `fleet.RecordRejected`; `Stats` -> `fleet.RecordStats(ctx, pool, id, instance, stats.AppliedVersion, stats.GetHealth())` (use the applied-version field M1 put in `Stats`, or the session's last applied version when M1 has none); stream end -> `fleet.Disconnect`.
-- [ ] Wire `mgmt/internal/config/config.go`: `InstanceID string` from `NEXORA_INSTANCE_ID` (default `os.Hostname()`), `RolloutTick time.Duration` from `NEXORA_ROLLOUT_TICK` (default `1s`, must be between `100ms` and `1m`, otherwise startup fails with `NEXORA_ROLLOUT_TICK must be between 100ms and 1m`). In `mgmt/cmd/nexora-mgmt/main.go` `serve`: start `(&rollout.Controller{Pool: pool, Tick: cfg.RolloutTick, Log: log}).Run(ctx)` in a goroutine; create `fleet.NewMetrics(prometheus.DefaultRegisterer)` and refresh it every 15 s; run `fleet.Prune` every 5 min.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... -count=1'` and expect every package `ok` (M1–M4 tests that published through `nexora_config` now pass through rollouts; `all_at_once` is the default strategy).
-- [ ] Commit: `git add mgmt/internal/rollout mgmt/internal/fleet mgmt/internal/control mgmt/internal/store/storetest/fleet.go mgmt/internal/config mgmt/cmd/nexora-mgmt && git commit -m "feat(mgmt): rollout controller, targeted pushes, fleet health"`.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/fleet/ -count=1` and expect FAIL with `undefined: fleet.ListEngines`.
+- [ ] Create `mgmt/internal/fleet/engines.go`:
+  - `ListEngines` runs, then computes target and status in Go:
+    ```sql
+    select e.id, e.node_name, e.engine_version, e.enrolled_at, e.last_seen_at,
+           (e.connected_instance is not null and coalesce(i.heartbeat_at > now() - interval '15 seconds', false)),
+           e.applied_version, e.rejected_version, e.rejected_reason, e.persist_error, e.version_ahead,
+           e.engine_group_id, g.name, e.labels, e.revision, e.revoked_at, e.cert_rotate_requested_at,
+           e.certificate_serial, c.not_after, coalesce(g.stable_version, 0)
+    from engines e
+    join engine_groups g on g.id = e.engine_group_id
+    left join instances i on i.id = e.connected_instance
+    left join engine_certificates c on c.serial = e.certificate_serial
+    where e.deleted_at is null and ($1::uuid is null or e.engine_group_id = $1) and ($2::uuid is null or e.id = $2)
+    order by e.node_name, e.enrolled_at;
 
-## Task 7: Fleet HTTP API and the fleet e2e harness
+    select distinct on (engine_group_id) engine_group_id, version, state, canary_engine_ids
+    from rollouts where state <> 'superseded' order by engine_group_id, version desc;
+    ```
+    `TargetVersion = rollout.Target(rollout.Engine{ID, AppliedVersion}, stable, newest)`; `Status`, first match wins: `revoked` (`RevokedAt != nil`), `ahead` (`VersionAhead` or `TargetVersion > 0 && AppliedVersion > TargetVersion`), `disconnected` (`!Connected`), `rejected` (`RejectedVersion != nil && *RejectedVersion > AppliedVersion`), `current` (`AppliedVersion == TargetVersion`), `behind`.
+  - `TargetFor(ctx, q, engineID)`: `ListEngines` with `EngineID`; no row -> `store.ErrNotFound`; when `TargetVersion > 0` load `select snapshot from group_snapshots where engine_group_id = $1 and version = $2` and unmarshal into `Snapshot`; `RotateRequested = CertRotateRequestedAt != nil`.
+- [ ] Create `mgmt/internal/fleet/collector.go` in the style of `stats.NewCollector` (read at scrape time, 5 s timeout, a database error leaves the families out): `nexora_mgmt_engines{engine_group,status}` (gauge, help `Engines by engine group and status`, one sample per group and status that has engines), `nexora_mgmt_engines_disconnected` (gauge, help `Non-revoked engines without a live control stream for more than 60 seconds`, from `select count(*) from engines e left join instances i on i.id = e.connected_instance where e.deleted_at is null and e.revoked_at is null and not (e.connected_instance is not null and coalesce(i.heartbeat_at > now() - interval '15 seconds', false)) and coalesce(e.last_seen_at, e.enrolled_at) < now() - interval '60 seconds'`), `nexora_mgmt_rollouts{engine_group,state}` (gauge, help `Open and halted rollouts by engine group and state`, from `select g.name, r.state, count(*) from rollouts r join engine_groups g on g.id = r.engine_group_id where r.state in ('pending','canary','verifying','rolling','halted') group by 1, 2`).
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/fleet/ -count=1` and expect `ok`.
+- [ ] Write the failing test `mgmt/internal/control/keys_test.go`:
+  ```go
+  package control_test
 
-Files: `mgmt/api/openapi.yaml` (new operations and scoped `group_id`), `mgmt/internal/api/fleet_groups.go` (group and rollout handlers), `mgmt/internal/api/fleet_engines.go` (engine, stats, summary handlers), `mgmt/internal/api/fleet_join_tokens.go` (join token handlers), `mgmt/internal/fleet/groups.go` (group queries and validation), `mgmt/internal/fleet/join_tokens.go` (join token queries), `mgmt/internal/fleet/stats.go` (derived rates), `mgmt/internal/auth/permissions.go` (roles for new operations), `mgmt/internal/auth/permissions_fleet_test.go`, M1–M4 handlers of scoped resources (accept and return `group_id`), `web/src/api/schema.d.ts` (regenerated), `e2e/harness/fleet.go` (fleet harness and typed API client), `e2e/harness/fleet_openapi_test.go` (helper bodies validated against OpenAPI), `e2e/fleet_api_test.go` (`TestFleetAPI`)
-Interfaces: operationIds `listEngineGroups`, `createEngineGroup`, `getEngineGroup`, `updateEngineGroup`, `deleteEngineGroup`, `rollbackEngineGroup`, `resumeEngineGroupRollouts`, `listRollouts`, `getRollout`, `getFleetSummary`, `listEngines`, `getEngine`, `updateEngine`, `deleteEngine`, `getEngineStats`, `listJoinTokens`, `createJoinToken`, `revokeJoinToken`; error codes `conflict`, `name_taken`, `group_protected`, `group_not_empty`, `invalid_rollout_params`, `invalid_labels`, `version_not_found`, `not_older`, `not_paused`, `engine_revoked`, `group_not_found`; harness API below.
+  import (
+  	"testing"
+
+  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+  	"github.com/piwi3910/nexora/mgmt/internal/control"
+  )
+
+  func TestKeysFilteredToTargetSnapshot(t *testing.T) {
+  	snap := &controlv1.ConfigSnapshot{
+  		RpzZones: []*controlv1.RpzZone{{Id: "zone-a"}},
+  		AuthZones: []*controlv1.AuthZone{{
+  			Name:           "served.test.",
+  			Transfer:       &controlv1.TransferPolicy{TsigKey: "xfr.key."},
+  			Notify:         []*controlv1.NotifyTarget{{Address: "192.0.2.9:53", TsigKey: "notify.key."}},
+  			UpdateTsigKeys: []string{"update.key."},
+  		}},
+  	}
+  	rpz := control.FilterRPZKeys(snap, &controlv1.RpzTsigKeys{Keys: []*controlv1.RpzTsigKey{{ZoneId: "zone-a"}, {ZoneId: "zone-b"}}})
+  	if len(rpz.Keys) != 1 || rpz.Keys[0].ZoneId != "zone-a" {
+  		t.Fatalf("rpz keys %v, want only zone-a", rpz.Keys)
+  	}
+  	km := control.FilterKeyMaterial(snap, &controlv1.KeyMaterial{TsigKeys: []*controlv1.TsigSecret{
+  		{Name: "xfr.key."}, {Name: "notify.key."}, {Name: "update.key."}, {Name: "other-group.key."},
+  	}})
+  	names := map[string]bool{}
+  	for _, k := range km.TsigKeys {
+  		names[k.Name] = true
+  	}
+  	if len(names) != 3 || names["other-group.key."] {
+  		t.Fatalf("key material %v, want the three keys the snapshot names", names)
+  	}
+  }
+  ```
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestKeysFilteredToTargetSnapshot -count=1` and expect FAIL with `undefined: control.FilterRPZKeys`; create `mgmt/internal/control/keys.go` with both functions (they return new messages holding the matching element pointers; `FilterKeyMaterial` keeps keys named by any auth zone's `transfer.tsig_key`, `notify[].tsig_key` or `update_tsig_keys`) and expect `ok`.
+- [ ] Change the hub and server in `mgmt/internal/control`:
+  - `subscriber` gains `engineGroupID uuid.UUID`, `control chan *controlv1.ServerMessage` (capacity 4, never replaced: certificate messages) and `revoked chan struct{}` (closed once).
+  - `Hub.listen` LISTENs on `nexora_rollout`, `nexora_engine_updated`, `nexora_engine_revoked` and `nexora_engine_rotate` (keep the 30 s safety resync and the initial resync after connecting). `nexora_rollout` payload = engine group id: `h.push(ctx, s)` for every subscriber of that group. `nexora_engine_updated` (engine id): `h.push` for that engine's subscriber (TargetFor reloads its group). `nexora_engine_revoked` (engine id): close that subscriber's `revoked`. `nexora_engine_rotate` (engine id): queue `RenewCertificate{Reason: REASON_ROTATE}` on its `control` channel. The safety resync calls `h.push` for every subscriber.
+  - `h.push(ctx, s)`: `t, err := fleet.TargetFor(ctx, h.st.Pool, s.engineID)`; set `s.engineGroupID = t.EngineGroupID`; when `t.Snapshot != nil`, offer `FilterRPZKeys(t.Snapshot, keys)` and `FilterKeyMaterial(t.Snapshot, km)` (digest = lowercase hex SHA-256 of the deterministic encoding of the filtered set; the unfiltered `KeyMaterial` is cleared after offering, as today) and then `s.offer(t.Version, t.Snapshot)`.
+  - `Server.Connect`: after registering the subscriber, `t, err := fleet.TargetFor(ctx, s.st.Pool, id)` replaces `snapshot.Latest`; keys are offered filtered as in `push`; `hello.AppliedVersion < t.Version` -> `sub.offer`; `t.Version > 0 && hello.AppliedVersion > t.Version` -> set `version_ahead` and send `VersionAhead{ServerVersion: t.Version}` (M1 behaviour); `t.RotateRequested` -> queue `RenewCertificate{REASON_ROTATE}`. The send loop also drains `sub.control`. `receive` runs in its own goroutine and `Connect` returns `status.Error(codes.PermissionDenied, "certificate revoked")` when `sub.revoked` closes first.
+  - `Applied` and `Rejected` handling additionally run `select pg_notify('nexora_rollout', engine_group_id::text) from engines where id = $1` after their update, so controllers step at once.
+- [ ] Change `setupServers` in `mgmt/internal/control/control_test.go` to start `go (&rollout.Controller{Store: st, Tick: 100 * time.Millisecond}).Run(ctx)` next to each hub.
+- [ ] Write the failing test `mgmt/internal/control/fleet_push_test.go`:
+  ```go
+  package control_test
+
+  import (
+  	"testing"
+  	"time"
+
+  	"github.com/jackc/pgx/v5"
+  	"google.golang.org/protobuf/proto"
+
+  	"github.com/piwi3910/nexora/e2e/harness"
+  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+  	"github.com/piwi3910/nexora/mgmt/internal/auth"
+  	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
+  )
+
+  func connectAs(t *testing.T, f *fixture, node string) (controlv1.EngineControl_ConnectClient, string) {
+  	t.Helper()
+  	client, id := f.enroll(t, f.addr[0])
+  	stream, err := client.Connect(f.ctx)
+  	if err != nil {
+  		t.Fatal(err)
+  	}
+  	_ = stream.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Hello{Hello: &controlv1.Hello{EngineId: id, NodeName: node}}})
+  	s := recvSnapshot(t, stream)
+  	_ = stream.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Applied{Applied: &controlv1.Applied{Version: s.Version}}})
+  	return stream, id
+  }
+
+  func TestCanaryVersionReachesOnlyCanariesUntilHealthy(t *testing.T) {
+  	f := setup(t, 1)
+  	a, aID := connectAs(t, f, "canary-a")
+  	b, _ := connectAs(t, f, "canary-b")
+  	harness.Eventually(t, 5*time.Second, func() error {
+  		return expectRow(f, "select count(*) from rollouts where version = 1 and state = 'completed'", int64(1))
+  	})
+  	if _, err := f.st.Pool.Exec(f.ctx, `update engine_groups set rollout_strategy = 'canary', canary_count = 1, min_health_queries = 10`); err != nil {
+  		t.Fatal(err)
+  	}
+  	v, err := snapshot.Mutate(f.ctx, f.st, snapshot.BuildConfig{}, auth.Actor{Type: "system", ID: "t", Name: "t"}, func(tx pgx.Tx) (auth.Change, error) {
+  		_, err := tx.Exec(f.ctx, "update resolver_settings set block_ttl = 11")
+  		return auth.Change{Action: "updateResolverSettings", TargetType: "resolver_settings", TargetID: "singleton"}, err
+  	})
+  	if err != nil {
+  		t.Fatal(err)
+  	}
+  	// Positive path first: the canary receives the new version.
+  	if s := recvSnapshot(t, a); s.Version != v {
+  		t.Fatalf("canary got version %d, want %d", s.Version, v)
+  	}
+  	got := make(chan *controlv1.ServerMessage, 1)
+  	go func() { m, _ := b.Recv(); got <- m }()
+  	select {
+  	case m := <-got:
+  		t.Fatalf("non-canary received %v during the canary phase", m)
+  	case <-time.After(1500 * time.Millisecond):
+  	}
+  	_ = a.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Applied{Applied: &controlv1.Applied{Version: v}}})
+  	harness.Eventually(t, 5*time.Second, func() error {
+  		return expectRow(f, "select count(*) from rollouts where state = 'verifying'", int64(1))
+  	})
+  	raw := func(q uint64) []byte { r, _ := proto.Marshal(&controlv1.Stats{QueriesTotal: q}); return r }
+  	for i, q := range []uint64{100, 300, 500} {
+  		if _, err := f.st.Pool.Exec(f.ctx, `insert into engine_stats (engine_id, at, stats)
+  			select $1, now() - interval '40 seconds' + $2 * interval '10 seconds', $3`, aID, i, raw(q)); err != nil {
+  			t.Fatal(err)
+  		}
+  	}
+  	if _, err := f.st.Pool.Exec(f.ctx, `update rollouts set phase_started_at = now() - interval '35 seconds' where state = 'verifying'`); err != nil {
+  		t.Fatal(err)
+  	}
+  	select {
+  	case m := <-got:
+  		if m.GetSnapshot().GetVersion() != v {
+  			t.Fatalf("non-canary got %v, want version %d after the health gate", m, v)
+  		}
+  	case <-time.After(5 * time.Second):
+  		t.Fatal("non-canary never received the version after the canary passed")
+  	}
+  }
+
+  func expectRow(f *fixture, sql string, want any) error {
+  	var got any
+  	if err := f.st.Pool.QueryRow(f.ctx, sql).Scan(&got); err != nil {
+  		return err
+  	}
+  	if got != want {
+  		return fmt.Errorf("%s = %v, want %v", sql, got, want)
+  	}
+  	return nil
+  }
+  ```
+  (import `fmt` alongside the packages listed).
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run 'TestCanaryVersionReachesOnlyCanariesUntilHealthy|TestEnrollConnectPushAckReject|TestVersionAheadIsFlaggedNotDowngraded|TestNotifyFansOutToEngineOnOtherInstance' -count=1` before the hub change and expect FAIL with `non-canary received`; after it, expect `ok`.
+- [ ] Change `mgmt/internal/api/handlers_fleet.go`: `ListEngines`, `GetEngine` and `DeleteEngine`'s `before` map `fleet.EngineView` to the existing `Engine` schema fields (`Status` from the view; the M1 fields keep their meaning) instead of `engineSelect`; remove `engineSelect` and `scanEngine`.
+- [ ] Add `RolloutTick time.Duration` to `mgmt/internal/config/config.go` from `NEXORA_ROLLOUT_TICK` (default `1s`; outside `100ms`..`1m` -> `NEXORA_ROLLOUT_TICK must be between 100ms and 1m`) with a case in `config_test.go` for `50ms` expecting that error; in `serve` of `mgmt/cmd/nexora-mgmt/main.go` start `go (&rollout.Controller{Store: st, Tick: cfg.RolloutTick}).Run(ctx)` after `snapshot.EnsureInitial` and register `fleet.NewCollector(st)` next to `stats.NewCollector(st)`.
+- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... -count=1 && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA|TestPerClientPolicy|TestAuthoritativeZonePropagation" -count=1 -timeout 20m'` and expect every package and test `ok` (all_at_once is the default, so M1–M4 flows reach every engine without a controller tick).
+- [ ] Commit: `git add mgmt/internal/rollout mgmt/internal/fleet mgmt/internal/control mgmt/internal/store/storetest/fleet.go mgmt/internal/api/handlers_fleet.go mgmt/internal/config mgmt/cmd/nexora-mgmt && git commit -m "feat(mgmt): rollout controller, targeted pushes, fleet status and metrics"`.
+
+## Task 7: Fleet HTTP API, engine-group scoping in the API, and the fleet harness
+
+Files: `mgmt/api/openapi.yaml` (new operations, extended `Engine`/`JoinToken` schemas, `engine_group_id` on scoped schemas), `mgmt/internal/api/gen.go` and `web/src/api/schema.d.ts` (regenerated on the laptop), `mgmt/internal/api/fleet_errors.go` (coded API errors), `mgmt/internal/api/server.go` (`mapError` case), `mgmt/internal/api/fleet_groups.go` (engine group and rollback/resume handlers), `mgmt/internal/api/fleet_rollouts.go` (rollout list/detail, fleet summary), `mgmt/internal/api/fleet_engines.go` (update engine, engine stats), `mgmt/internal/api/handlers_fleet.go` (engine schema mapping, join tokens with group, labels, max uses), `mgmt/internal/fleet/groups.go` (engine group queries, label validation), `mgmt/internal/fleet/stats.go` (derived per-engine series), `mgmt/internal/control/jointokens.go` (`CreateJoinTokenFor`), scoped resource handlers and stores (`mgmt/internal/api/handlers_dns.go` upstreams and filter lists, `policies.go`, `rewrites.go`, `resolution.go` forward zones, `rpz.go`, `zones.go`; `mgmt/internal/store/policies.go`, `rewrites.go`, `resolution.go`; `mgmt/internal/zone/service.go`), `mgmt/internal/auth/permissions.go`, `mgmt/internal/auth/permissions_fleet_test.go`, `web/src/auth/permissions.ts`, `e2e/harness/mgmt.go` (`EngineView` fields, `EngineOptions.ExtraEnv`, `Engine` restart data), `e2e/harness/engine.go` (metric scraping shared with mgmt), `e2e/harness/fleet.go` (fleet helpers), `e2e/fleet_api_test.go` (`TestFleetAPI`)
+Interfaces: operationIds `listEngineGroups`, `createEngineGroup`, `getEngineGroup`, `updateEngineGroup`, `deleteEngineGroup`, `rollbackEngineGroup`, `resumeEngineGroupRollouts`, `listRollouts`, `getRollout`, `getFleetSummary`, `updateEngine`, `getEngineStats`; existing `listEngines`, `getEngine`, `deleteEngine`, `listJoinTokens`, `createJoinToken`, `revokeJoinToken` extended; error codes `conflict` (M1), `name_taken`, `engine_group_protected`, `engine_group_not_empty`, `engine_group_not_found`, `engine_group_scope`, `invalid_rollout_params`, `invalid_labels`, `version_not_found`, `not_older`, `not_paused`, `engine_revoked`; harness API below.
+
 ```go
 package harness
-const DefaultGroupID = "00000000-0000-0000-0000-000000000001"
-type FleetOptions struct { Engines, MgmtInstances int; MgmtEnv, EngineEnv map[string]string; EngineGroup string }
-type Fleet struct { DB *Postgres; Mgmt []*Mgmt; Engines []*Engine; API *API; GRPCURLs []string; CADir string }
-func StartFleet(t *testing.T, o FleetOptions) *Fleet
-func (f *Fleet) AddEngine(t *testing.T, name, groupID string, env map[string]string) *Engine
-func (f *Fleet) AddEngineWithToken(t *testing.T, name, token string, env map[string]string) *Engine
-func (f *Fleet) Engine(name string) *Engine
-func (f *Fleet) DNSAddr(name string) string
-func (f *Fleet) MetricsURL(name string) string
-func (f *Fleet) StateDir(name string) string
-func (f *Fleet) WaitConnected(t *testing.T, n int, timeout time.Duration)
-func (f *Fleet) WaitAllApplied(t *testing.T, names []string, version int64, timeout time.Duration)
-type API struct { Base, Token string; HC *http.Client }
-func NewAPI(base, token string) *API
-func (a *API) Do(t *testing.T, method, path string, in, out any) int
-func (a *API) Must(t *testing.T, method, path string, in, out any, want int)
-func (a *API) CreateGroup(t *testing.T, g GroupSpec) EngineGroup
-func (a *API) Group(t *testing.T, id string) EngineGroup
-func (a *API) WaitGroupStable(t *testing.T, id string, after int64, timeout time.Duration) int64
-func (a *API) Engines(t *testing.T) []EngineInfo
-func (a *API) EngineByName(t *testing.T, name string) EngineInfo
-func (a *API) PatchEngine(t *testing.T, name string, fields map[string]any) EngineInfo
-func (a *API) WaitRollout(t *testing.T, groupID string, minVersion int64, timeout time.Duration, states ...string) Rollout
-func (a *API) CreateJoinToken(t *testing.T, s JoinTokenSpec) JoinToken
-func (a *API) CreateRewrite(t *testing.T, r Rewrite) string
-func (a *API) CreateUpstream(t *testing.T, u Upstream) string
-func (a *API) SetUpstreamAddress(t *testing.T, id, address string)
-func Exchange(addr, name string, qtype uint16) (*dns.Msg, error)
-func ExpectA(t *testing.T, addr, name, ip string)
-func ExpectRcode(t *testing.T, addr, name string, rcode int)
-func MetricValue(t *testing.T, metricsURL, name string) float64
+const DefaultEngineGroupID = "00000000-0000-0000-0000-000000000001"
+type EngineGroupView struct { ID, Name, Description, UpstreamMode, RolloutStrategy string; CanaryCount, CanaryPercent, EngineCount int; RolloutsPaused bool; StableVersion *uint64; Revision int64 }
+type RolloutView struct { ID, EngineGroupID, Kind, Strategy, State, HaltReason string; Version uint64; FromVersion *uint64; CanaryEngineIDs []string }
+func (a *API) CreateEngineGroup(body map[string]any) EngineGroupView
+func (a *API) EngineGroup(id string) EngineGroupView
+func (a *API) WaitEngineGroupStable(id string, after uint64, timeout time.Duration) uint64
+func (a *API) WaitRollout(engineGroupID string, minVersion uint64, timeout time.Duration, states ...string) RolloutView
+func (a *API) CreateJoinTokenFor(engineGroupID string, labels map[string]string) string
+func (a *API) EngineByNode(nodeName string) EngineView
+func (a *API) PatchEngine(nodeName string, fields map[string]any) EngineView
+func (a *API) ErrorCode(method, path string, body any) (int, string)
+func (e *Env) RestartEngine(en *Engine)
+func (m *Mgmt) Metric(t *testing.T, name string, labels map[string]string) float64
+// EngineView gains: EngineGroupID, EngineGroupName, CertificateSerial string; Labels map[string]string; Revision int64; TargetVersion uint64; RevokedAt *time.Time
+// EngineOptions gains: ExtraEnv []string
 ```
 
 - [ ] Write the failing permission test `mgmt/internal/auth/permissions_fleet_test.go`:
@@ -2150,670 +2141,534 @@ func MetricValue(t *testing.T, metricsURL, name string) float64
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/auth/ -run TestFleetPermissions -count=1` and expect FAIL with `listEngineGroups has no permission entry`.
-- [ ] Add the 18 entries of `want` to the `Permissions` map in `mgmt/internal/auth/permissions.go` (entries M1 already has for `listEngines`, `getEngine`, `deleteEngine`, `createJoinToken` are set to the roles above). Run the same command and expect `ok`.
-- [ ] Add to `mgmt/api/openapi.yaml` (tag `fleet`; existing M1 operations with the same operationId are replaced by these definitions):
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/auth/ -run TestFleetPermissions -count=1` and expect FAIL with `listEngineGroups has no permission entry`; add the twelve new entries to `Permissions` in `mgmt/internal/auth/permissions.go` (the six existing entries already match) and the same entries to `web/src/auth/permissions.ts` (lower-case role strings); rerun and expect `ok`.
+- [ ] Add to `mgmt/api/openapi.yaml` under `paths`:
   ```yaml
-  paths:
-    /engine-groups:
-      get:
-        operationId: listEngineGroups
-        tags: [fleet]
-        responses:
-          "200": { description: Engine groups, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/EngineGroup" } } } } }
-      post:
-        operationId: createEngineGroup
-        tags: [fleet]
-        requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/EngineGroupInput" } } } }
-        responses:
-          "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/EngineGroup" } } } }
-          "400": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-    /engine-groups/{groupId}:
-      parameters: [{ name: groupId, in: path, required: true, schema: { type: string, format: uuid } }]
-      get:
-        operationId: getEngineGroup
-        tags: [fleet]
-        responses:
-          "200": { description: Group, content: { application/json: { schema: { $ref: "#/components/schemas/EngineGroup" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-      put:
-        operationId: updateEngineGroup
-        tags: [fleet]
-        requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/EngineGroupUpdate" } } } }
-        responses:
-          "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/EngineGroup" } } } }
-          "400": { $ref: "#/components/responses/Error" }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-      delete:
-        operationId: deleteEngineGroup
-        tags: [fleet]
-        responses:
-          "204": { description: Deleted }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-    /engine-groups/{groupId}/rollback:
-      parameters: [{ name: groupId, in: path, required: true, schema: { type: string, format: uuid } }]
-      post:
-        operationId: rollbackEngineGroup
-        tags: [fleet]
-        requestBody:
-          required: true
+  /engine-groups:
+    get:
+      operationId: listEngineGroups
+      responses:
+        "200":
+          description: ok
           content:
             application/json:
-              schema: { type: object, additionalProperties: false, required: [to_version], properties: { to_version: { type: integer, format: int64, minimum: 1 } } }
-        responses:
-          "202": { description: Rollback rollout created, content: { application/json: { schema: { $ref: "#/components/schemas/Rollout" } } } }
-          "400": { $ref: "#/components/responses/Error" }
-          "404": { $ref: "#/components/responses/Error" }
-    /engine-groups/{groupId}/resume-rollouts:
-      parameters: [{ name: groupId, in: path, required: true, schema: { type: string, format: uuid } }]
-      post:
-        operationId: resumeEngineGroupRollouts
-        tags: [fleet]
-        responses:
-          "202": { description: Fresh change rollout created, content: { application/json: { schema: { $ref: "#/components/schemas/Rollout" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-    /rollouts:
-      get:
-        operationId: listRollouts
-        tags: [fleet]
-        parameters:
-          - { name: group_id, in: query, schema: { type: string, format: uuid } }
-          - { name: state, in: query, schema: { $ref: "#/components/schemas/RolloutState" } }
-          - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
-        responses:
-          "200": { description: Rollouts newest first, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Rollout" } } } } }
-    /rollouts/{rolloutId}:
-      parameters: [{ name: rolloutId, in: path, required: true, schema: { type: string, format: uuid } }]
-      get:
-        operationId: getRollout
-        tags: [fleet]
-        responses:
-          "200": { description: Rollout with per-engine progress, content: { application/json: { schema: { $ref: "#/components/schemas/RolloutDetail" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-    /fleet/summary:
-      get:
-        operationId: getFleetSummary
-        tags: [fleet]
-        responses:
-          "200": { description: Fleet totals, content: { application/json: { schema: { $ref: "#/components/schemas/FleetSummary" } } } }
-    /engines:
-      get:
-        operationId: listEngines
-        tags: [fleet]
-        parameters:
-          - { name: group_id, in: query, schema: { type: string, format: uuid } }
-          - { name: state, in: query, schema: { $ref: "#/components/schemas/ConnectionState" } }
-          - { name: drift, in: query, schema: { $ref: "#/components/schemas/Drift" } }
-        responses:
-          "200": { description: Engines, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Engine" } } } } }
-    /engines/{engineId}:
-      parameters: [{ name: engineId, in: path, required: true, schema: { type: string, format: uuid } }]
-      get:
-        operationId: getEngine
-        tags: [fleet]
-        responses:
-          "200": { description: Engine, content: { application/json: { schema: { $ref: "#/components/schemas/EngineDetail" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-      patch:
-        operationId: updateEngine
-        tags: [fleet]
-        requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/EngineUpdate" } } } }
-        responses:
-          "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Engine" } } } }
-          "400": { $ref: "#/components/responses/Error" }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-      delete:
-        operationId: deleteEngine
-        tags: [fleet]
-        responses:
-          "204": { description: Deleted and its certificates revoked }
-          "404": { $ref: "#/components/responses/Error" }
-    /engines/{engineId}/stats:
-      parameters: [{ name: engineId, in: path, required: true, schema: { type: string, format: uuid } }]
-      get:
-        operationId: getEngineStats
-        tags: [fleet]
-        parameters: [{ name: window, in: query, schema: { type: string, enum: [5m, 1h, 24h], default: 1h } }]
-        responses:
-          "200": { description: Samples, content: { application/json: { schema: { $ref: "#/components/schemas/EngineStats" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-    /join-tokens:
-      get:
-        operationId: listJoinTokens
-        tags: [fleet]
-        responses:
-          "200": { description: Join tokens (secrets never returned), content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/JoinToken" } } } } }
-      post:
-        operationId: createJoinToken
-        tags: [fleet]
-        requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/JoinTokenInput" } } } }
-        responses:
-          "201": { description: Created; token shown once, content: { application/json: { schema: { $ref: "#/components/schemas/JoinTokenCreated" } } } }
-          "400": { $ref: "#/components/responses/Error" }
-    /join-tokens/{tokenId}:
-      parameters: [{ name: tokenId, in: path, required: true, schema: { type: string, format: uuid } }]
-      delete:
-        operationId: revokeJoinToken
-        tags: [fleet]
-        responses:
-          "204": { description: Revoked }
-          "404": { $ref: "#/components/responses/Error" }
-  components:
-    schemas:
-      ScopeGroupId:
-        type: [string, "null"]
-        format: uuid
-        description: Engine group this resource applies to; null applies it to every group.
-      RolloutState: { type: string, enum: [pending, canary, verifying, rolling, completed, halted, rolled_back, superseded] }
-      ConnectionState: { type: string, enum: [connected, disconnected, never_connected, revoked] }
-      Drift: { type: string, enum: [in_sync, behind, ahead, rejected, unknown] }
-      EngineGroupInput:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/EngineGroup" },
+                }
+    post:
+      operationId: createEngineGroup
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/EngineGroupInput" } },
+          }
+      responses:
+        "201":
+          {
+            description: created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}:
+    get:
+      operationId: getEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updateEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/EngineGroupUpdate" } },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteEngineGroup
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}/rollback:
+    post:
+      operationId: rollbackEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to_version]
+              properties:
+                { to_version: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        "202":
+          {
+            description: rollback rollout created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rollout" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}/resume-rollouts:
+    post:
+      operationId: resumeEngineGroupRollouts
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "202":
+          {
+            description: fresh version published,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rollout" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /rollouts:
+    get:
+      operationId: listRollouts
+      parameters:
+        - {
+            name: engine_group_id,
+            in: query,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: state,
+            in: query,
+            schema: { $ref: "#/components/schemas/RolloutState" },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 200 },
+          }
+      responses:
+        "200":
+          description: newest version first
+          content:
+            application/json:
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/Rollout" } }
+        "400": { $ref: "#/components/responses/Error" }
+  /rollouts/{id}:
+    get:
+      operationId: getRollout
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/RolloutDetail" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+  /fleet/summary:
+    get:
+      operationId: getFleetSummary
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/FleetSummary" } },
+              },
+          }
+  /engines/{id}/stats:
+    get:
+      operationId: getEngineStats
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - {
+            name: window,
+            in: query,
+            schema: { type: string, enum: [5m, 1h, 24h] },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineStats" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  ```
+  add `patch` with `operationId: updateEngine`, `parameters: [{ $ref: "#/components/parameters/Id" }]`, request body `EngineUpdate`, responses `200` (`Engine`), `400`, `404`, `409` to the existing `/engines/{id}` path; and add under `components.schemas`:
+  ```yaml
+  RolloutState:
+    {
+      type: string,
+      enum:
+        [
+          pending,
+          canary,
+          verifying,
+          rolling,
+          completed,
+          halted,
+          rolled_back,
+          superseded,
+        ],
+    }
+  EngineGroupInput:
+    type: object
+    additionalProperties: false
+    required: [name]
+    properties:
+      name: { type: string, pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }
+      description: { type: string, maxLength: 1024 }
+      upstream_mode: { type: string, enum: [inherit, override] }
+      extra_acl_cidrs: { type: array, items: { type: string }, maxItems: 256 }
+      otlp_endpoint: { type: string, maxLength: 512 }
+      rollout_strategy: { type: string, enum: [all_at_once, canary] }
+      canary_count: { type: integer, minimum: 0 }
+      canary_percent: { type: integer, minimum: 0, maximum: 100 }
+      ack_timeout_seconds: { type: integer, minimum: 5, maximum: 3600 }
+      health_window_seconds: { type: integer, minimum: 20, maximum: 3600 }
+      max_servfail_ratio: { type: number, minimum: 0, maximum: 1 }
+      min_health_queries: { type: integer, minimum: 0 }
+  EngineGroupUpdate:
+    allOf:
+      - { $ref: "#/components/schemas/EngineGroupInput" }
+      - {
+          type: object,
+          required: [revision],
+          properties: { revision: { type: integer, format: int64 } },
+        }
+  EngineGroup:
+    type: object
+    required:
+      [
+        id,
+        name,
+        description,
+        upstream_mode,
+        extra_acl_cidrs,
+        otlp_endpoint,
+        rollout_strategy,
+        canary_count,
+        canary_percent,
+        ack_timeout_seconds,
+        health_window_seconds,
+        max_servfail_ratio,
+        min_health_queries,
+        rollouts_paused,
+        engine_count,
+        revision,
+        created_at,
+        updated_at,
+      ]
+    properties:
+      id: { type: string, format: uuid }
+      name: { type: string }
+      description: { type: string }
+      upstream_mode: { type: string, enum: [inherit, override] }
+      extra_acl_cidrs: { type: array, items: { type: string } }
+      otlp_endpoint: { type: string }
+      rollout_strategy: { type: string, enum: [all_at_once, canary] }
+      canary_count: { type: integer }
+      canary_percent: { type: integer }
+      ack_timeout_seconds: { type: integer }
+      health_window_seconds: { type: integer }
+      max_servfail_ratio: { type: number }
+      min_health_queries: { type: integer }
+      rollouts_paused: { type: boolean }
+      stable_version: { type: [integer, "null"], format: int64 }
+      engine_count: { type: integer }
+      active_rollout:
+        { oneOf: [{ $ref: "#/components/schemas/Rollout" }, { type: "null" }] }
+      revision: { type: integer, format: int64 }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+  Rollout:
+    type: object
+    required:
+      [
+        id,
+        engine_group_id,
+        engine_group_name,
+        version,
+        kind,
+        strategy,
+        state,
+        canary_engine_ids,
+        halt_reason,
+        created_by,
+        created_at,
+        progress,
+      ]
+    properties:
+      id: { type: string, format: uuid }
+      engine_group_id: { type: string, format: uuid }
+      engine_group_name: { type: string }
+      version: { type: integer, format: int64 }
+      from_version: { type: [integer, "null"], format: int64 }
+      kind: { type: string, enum: [change, rollback, republish] }
+      strategy: { type: string, enum: [all_at_once, canary] }
+      state: { $ref: "#/components/schemas/RolloutState" }
+      canary_engine_ids: { type: array, items: { type: string, format: uuid } }
+      phase_started_at: { type: [string, "null"], format: date-time }
+      halt_reason: { type: string }
+      created_by: { type: string }
+      created_at: { type: string, format: date-time }
+      finished_at: { type: [string, "null"], format: date-time }
+      progress:
         type: object
-        additionalProperties: false
-        required: [name]
+        required: [total, applied, rejected]
         properties:
-          name: { type: string, pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }
-          description: { type: string, maxLength: 1024 }
-          upstream_mode: { type: string, enum: [inherit, override], default: inherit }
-          rollout_strategy: { type: string, enum: [all_at_once, canary], default: all_at_once }
-          canary_count: { type: integer, minimum: 0, default: 0 }
-          canary_percent: { type: integer, minimum: 0, maximum: 100, default: 0 }
-          ack_timeout_seconds: { type: integer, minimum: 5, maximum: 3600, default: 60 }
-          health_window_seconds: { type: integer, minimum: 20, maximum: 3600, default: 30 }
-          max_servfail_ratio: { type: number, minimum: 0, maximum: 1, default: 0.05 }
-          min_health_queries: { type: integer, minimum: 0, default: 100 }
-      EngineGroupUpdate:
-        allOf:
-          - $ref: "#/components/schemas/EngineGroupInput"
-          - type: object
-            required: [revision]
-            properties: { revision: { type: integer, format: int64 } }
-      EngineGroup:
-        allOf:
-          - $ref: "#/components/schemas/EngineGroupInput"
-          - type: object
-            required: [id, rollouts_paused, stable_version, revision, engine_count, active_rollout, created_at, updated_at]
-            properties:
-              id: { type: string, format: uuid }
-              rollouts_paused: { type: boolean }
-              stable_version: { type: [integer, "null"], format: int64 }
-              revision: { type: integer, format: int64 }
-              engine_count: { type: integer }
-              active_rollout: { oneOf: [{ $ref: "#/components/schemas/Rollout" }, { type: "null" }] }
-              created_at: { type: string, format: date-time }
-              updated_at: { type: string, format: date-time }
-      Rollout:
-        type: object
-        required: [id, group_id, group_name, version, from_version, kind, strategy, state, canary_engine_ids, phase_started_at, halt_reason, created_by, created_at, finished_at, progress]
-        properties:
-          id: { type: string, format: uuid }
-          group_id: { type: string, format: uuid }
-          group_name: { type: string }
-          version: { type: integer, format: int64 }
-          from_version: { type: [integer, "null"], format: int64 }
-          kind: { type: string, enum: [change, rollback, republish] }
-          strategy: { type: string, enum: [all_at_once, canary] }
-          state: { $ref: "#/components/schemas/RolloutState" }
-          canary_engine_ids: { type: array, items: { type: string, format: uuid } }
-          phase_started_at: { type: [string, "null"], format: date-time }
-          halt_reason: { type: string }
-          created_by: { type: string }
-          created_at: { type: string, format: date-time }
-          finished_at: { type: [string, "null"], format: date-time }
-          progress:
-            type: object
-            required: [total, applied, rejected]
-            properties: { total: { type: integer }, applied: { type: integer }, rejected: { type: integer } }
-      RolloutDetail:
-        allOf:
-          - $ref: "#/components/schemas/Rollout"
-          - type: object
-            required: [engines]
-            properties:
-              engines:
-                type: array
-                items:
-                  type: object
-                  required: [engine_id, name, canary, connection_state, applied_version, status, rejected_reason]
-                  properties:
-                    engine_id: { type: string, format: uuid }
-                    name: { type: string }
-                    canary: { type: boolean }
-                    connection_state: { $ref: "#/components/schemas/ConnectionState" }
-                    applied_version: { type: integer, format: int64 }
-                    status: { type: string, enum: [waiting, applied, rejected, disconnected] }
-                    rejected_reason: { type: string }
-      EngineStatsLatest:
-        type: object
-        required: [sampled_at, qps, cache_hit_ratio, servfail_ratio, latency_p50_us, latency_p99_us]
-        properties:
-          sampled_at: { type: string, format: date-time }
-          qps: { type: number }
-          cache_hit_ratio: { type: number }
-          servfail_ratio: { type: number }
-          latency_p50_us: { type: integer }
-          latency_p99_us: { type: integer }
-      Engine:
-        type: object
-        required: [id, name, group_id, group_name, labels, revision, connection_state, last_seen_at, connected_instance, applied_version, target_version, rejected_version, rejected_reason, drift, created_at, revoked_at, certificate, stats]
-        properties:
-          id: { type: string, format: uuid }
-          name: { type: string }
-          group_id: { type: string, format: uuid }
-          group_name: { type: string }
-          labels: { type: object, additionalProperties: { type: string, maxLength: 63 }, maxProperties: 32 }
-          revision: { type: integer, format: int64 }
-          connection_state: { $ref: "#/components/schemas/ConnectionState" }
-          last_seen_at: { type: [string, "null"], format: date-time }
-          connected_instance: { type: string }
-          applied_version: { type: integer, format: int64 }
-          target_version: { type: integer, format: int64 }
-          rejected_version: { type: [integer, "null"], format: int64 }
-          rejected_reason: { type: string }
-          drift: { $ref: "#/components/schemas/Drift" }
-          created_at: { type: string, format: date-time }
-          revoked_at: { type: [string, "null"], format: date-time }
-          certificate:
-            oneOf:
-              - type: "null"
-              - type: object
-                required: [serial, not_before, not_after]
-                properties: { serial: { type: string }, not_before: { type: string, format: date-time }, not_after: { type: string, format: date-time } }
-          stats: { oneOf: [{ $ref: "#/components/schemas/EngineStatsLatest" }, { type: "null" }] }
-      EngineDetail:
-        allOf:
-          - $ref: "#/components/schemas/Engine"
-          - type: object
-            required: [certificates, cert_rotate_requested_at]
-            properties:
-              cert_rotate_requested_at: { type: [string, "null"], format: date-time }
-              certificates:
-                type: array
-                items:
-                  type: object
-                  required: [serial, not_before, not_after, issued_at, revoked_at, revoke_reason]
-                  properties:
-                    serial: { type: string }
-                    not_before: { type: string, format: date-time }
-                    not_after: { type: string, format: date-time }
-                    issued_at: { type: string, format: date-time }
-                    revoked_at: { type: [string, "null"], format: date-time }
-                    revoke_reason: { type: [string, "null"], enum: [revoked, superseded, null] }
-      EngineUpdate:
-        type: object
-        additionalProperties: false
-        required: [revision]
-        properties:
-          revision: { type: integer, format: int64 }
-          group_id: { type: string, format: uuid }
-          labels: { type: object, additionalProperties: { type: string, maxLength: 63 }, maxProperties: 32 }
-      EngineStats:
-        type: object
-        required: [window, samples]
-        properties:
-          window: { type: string, enum: [5m, 1h, 24h] }
-          samples:
-            type: array
-            items:
-              allOf:
-                - $ref: "#/components/schemas/EngineStatsLatest"
-                - type: object
-                  required: [applied_version]
-                  properties: { applied_version: { type: integer, format: int64 } }
-      FleetSummary:
-        type: object
-        required: [engines, drift, qps, cache_hit_ratio, servfail_ratio, latency_p99_us_max, halted_rollouts, groups]
+          {
+            total: { type: integer },
+            applied: { type: integer },
+            rejected: { type: integer },
+          }
+  RolloutDetail:
+    allOf:
+      - { $ref: "#/components/schemas/Rollout" }
+      - type: object
+        required: [engines]
         properties:
           engines:
-            type: object
-            required: [total, connected, disconnected, never_connected, revoked]
-            properties: { total: { type: integer }, connected: { type: integer }, disconnected: { type: integer }, never_connected: { type: integer }, revoked: { type: integer } }
-          drift:
-            type: object
-            required: [in_sync, behind, ahead, rejected, unknown]
-            properties: { in_sync: { type: integer }, behind: { type: integer }, ahead: { type: integer }, rejected: { type: integer }, unknown: { type: integer } }
-          qps: { type: number }
-          cache_hit_ratio: { type: number }
-          servfail_ratio: { type: number }
-          latency_p99_us_max: { type: integer }
-          halted_rollouts: { type: integer }
-          groups:
             type: array
             items:
               type: object
-              required: [group_id, name, engines, connected, stable_version, qps, active_rollout]
+              required:
+                [
+                  engine_id,
+                  node_name,
+                  canary,
+                  connected,
+                  applied_version,
+                  progress,
+                  rejected_reason,
+                ]
               properties:
-                group_id: { type: string, format: uuid }
-                name: { type: string }
-                engines: { type: integer }
-                connected: { type: integer }
-                stable_version: { type: [integer, "null"], format: int64 }
-                qps: { type: number }
-                active_rollout: { oneOf: [{ $ref: "#/components/schemas/Rollout" }, { type: "null" }] }
-      JoinTokenInput:
-        type: object
-        additionalProperties: false
-        required: [group_id]
-        properties:
-          group_id: { type: string, format: uuid }
-          ttl_seconds: { type: integer, minimum: 60, maximum: 2592000, default: 86400 }
-          max_uses: { type: integer, minimum: 1, maximum: 10000, default: 1 }
-          labels: { type: object, additionalProperties: { type: string, maxLength: 63 }, maxProperties: 32 }
-      JoinToken:
-        type: object
-        required: [id, group_id, group_name, labels, expires_at, max_uses, uses, revoked_at, created_at, state]
-        properties:
-          id: { type: string, format: uuid }
-          group_id: { type: string, format: uuid }
-          group_name: { type: string }
-          labels: { type: object, additionalProperties: { type: string } }
-          expires_at: { type: string, format: date-time }
-          max_uses: { type: integer }
-          uses: { type: integer }
-          revoked_at: { type: [string, "null"], format: date-time }
-          created_at: { type: string, format: date-time }
-          state: { type: string, enum: [active, expired, exhausted, revoked] }
-      JoinTokenCreated:
-        allOf:
-          - $ref: "#/components/schemas/JoinToken"
-          - type: object
-            required: [token]
-            properties: { token: { type: string, pattern: "^nxj1\\.[A-Z2-7]+\\.[0-9a-f]{64}$" } }
+                engine_id: { type: string, format: uuid }
+                node_name: { type: string }
+                canary: { type: boolean }
+                connected: { type: boolean }
+                applied_version: { type: integer, format: int64 }
+                progress:
+                  {
+                    type: string,
+                    enum: [waiting, applied, rejected, disconnected],
+                  }
+                rejected_reason: { type: string }
+  EngineUpdate:
+    type: object
+    additionalProperties: false
+    required: [revision]
+    properties:
+      revision: { type: integer, format: int64 }
+      engine_group_id: { type: string, format: uuid }
+      labels:
+        {
+          type: object,
+          additionalProperties: { type: string, maxLength: 63 },
+          maxProperties: 32,
+        }
+  EngineStats:
+    type: object
+    required: [window, samples]
+    properties:
+      window: { type: string, enum: [5m, 1h, 24h] }
+      samples:
+        type: array
+        items:
+          type: object
+          required: [at, qps, cache_hit_ratio, servfail_ratio, p99_ms]
+          properties:
+            at: { type: string, format: date-time }
+            qps: { type: number }
+            cache_hit_ratio: { type: number }
+            servfail_ratio: { type: number }
+            p99_ms: { type: number }
+  FleetSummary:
+    type: object
+    required: [engines_total, engines_by_status, halted_rollouts, engine_groups]
+    properties:
+      engines_total: { type: integer }
+      engines_by_status:
+        { type: object, additionalProperties: { type: integer } }
+      halted_rollouts: { type: integer }
+      engine_groups:
+        type: array
+        items:
+          type: object
+          required:
+            [id, name, engines, connected, rollout_strategy, rollouts_paused]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            engines: { type: integer }
+            connected: { type: integer }
+            rollout_strategy: { type: string, enum: [all_at_once, canary] }
+            rollouts_paused: { type: boolean }
+            stable_version: { type: [integer, "null"], format: int64 }
+            active_rollout:
+              {
+                oneOf:
+                  [{ $ref: "#/components/schemas/Rollout" }, { type: "null" }],
+              }
   ```
-  For every request and response schema of the resources in `store.ScopedConfigTables` add property `group_id: { $ref: "#/components/schemas/ScopeGroupId" }` and to their list operations the query parameter `{ name: group_id, in: query, schema: { type: string, format: uuid } }` (filter: rows of that group plus global rows when `include_global=true`, a second boolean query parameter defaulting to `false`).
-- [ ] Run `scripts/dev-exec.sh 'make proto && go build ./mgmt/... && pnpm --dir web run gen:api'` and expect exit 0 (oapi-codegen strict server now has unimplemented methods, so `go build` fails with `does not implement` until the handlers below exist; fix that before moving on).
-- [ ] Implement the handlers with this exact behaviour; every mutation runs in one transaction and writes `auth.Audit` with the operationId, before and after JSON:
-  - `createEngineGroup`: validate (canary strategy needs `canary_count > 0` or `canary_percent > 0`, else 400 `invalid_rollout_params`); insert; `snapshot.Publish(ctx, tx, actor, snapshot.Group(id))`; unique violation on name -> 409 `name_taken`; 201.
-  - `updateEngineGroup`: `UPDATE engine_groups SET ..., revision = revision + 1, updated_at = now() WHERE id = $1 AND revision = $2 RETURNING *`; no row and the group exists -> 409 `conflict`; renaming `default` -> 409 `group_protected`; when `upstream_mode` changed, `snapshot.Publish(..., snapshot.Group(id))`.
-  - `deleteEngineGroup`: `default` -> 409 `group_protected`; when the group has engines, rows in any scoped table, or active join tokens -> 409 `group_not_empty` with message `group has N engines, M scoped resources and K active join tokens`; otherwise delete.
-  - `rollbackEngineGroup`: `to_version` missing from `group_snapshots` for the group -> 404 `version_not_found`; `to_version` not below the group's newest version -> 400 `not_older`; else `snapshot.Republish(ctx, tx, actor, group, to_version, rollout.KindRollback)` and 202 with the rollout.
-  - `resumeEngineGroupRollouts`: not paused -> 409 `not_paused`; else `UPDATE engine_groups SET rollouts_paused = false` then `snapshot.Publish(..., snapshot.Group(id))`, 202 with the newest rollout of the group.
-  - `listRollouts`/`getRollout`: newest first; `progress.total` counts non-revoked engines of the group (canaries only while state is `canary`/`verifying`), `applied` those with `applied_version >= version`, `rejected` those with `rejected_version = version`; detail `status` per engine is `rejected`, `applied`, `disconnected` or `waiting` in that precedence.
-  - `listEngines`/`getEngine`: from `fleet.ListEngines`; `certificate` is the newest non-revoked `engine_certificates` row; `stats` from `fleet.LatestStats` (below); `getEngine` adds all certificates newest first.
-  - `updateEngine`: revision check as above (409 `conflict`); revoked engine -> 409 `engine_revoked`; labels checked against the label key pattern of docs/architecture.md (`fleet.LabelKeyPattern`, a `regexp.MustCompile` of that pattern declared in `mgmt/internal/fleet/groups.go` and also applied to join token labels), value length <= 63, at most 32 -> else 400 `invalid_labels`; unknown `group_id` -> 400 `group_not_found`; on group change: update the row, `snapshot.Republish(ctx, tx, actor, newGroup, v, rollout.KindRepublish)` where `v` is the new group's `stable_version`, or its newest `group_snapshots` version when `stable_version` is NULL, then `pg_notify('nexora_engine_updated', engine_id)`.
-  - `deleteEngine`: `UPDATE engine_certificates SET revoked_at = now(), revoke_reason = 'revoked' WHERE engine_id = $1 AND revoked_at IS NULL`, `pg_notify('nexora_engine_revoked', id)`, `DELETE FROM engines WHERE id = $1`; 204.
-  - `getEngineStats`: samples in the window; for consecutive samples s0, s1: `qps = (s1.queries - s0.queries) / seconds`, `cache_hit_ratio = dHits / (dHits + dMisses)` (0 when no lookups), `servfail_ratio = dServfail / dQueries` (0 when no queries), latency copied from s1; a negative delta (engine restart) uses s1's counters as the delta. `fleet.LatestStats(ctx, q, engineID) (*EngineStatsLatest, error)` returns the same numbers for the newest pair, nil when fewer than two samples exist in the last 60 s.
-  - `getFleetSummary`: engine and drift counts from `fleet.ListEngines`; `qps` is the sum and `cache_hit_ratio`/`servfail_ratio` are query-weighted means of `LatestStats` over connected engines; `latency_p99_us_max` the maximum; `halted_rollouts` counts `state = 'halted'`.
-  - `createJoinToken`: secret = 32 random bytes base32 (no padding); token `nxj1.<secret>.<CA sha256 hex>`; store the SHA-256 of the secret the way M1 stores it plus `group_id`, `labels`, `expires_at = now() + ttl`, `max_uses`; unknown group -> 400 `group_not_found`; 201 with `token`. `listJoinTokens` never selects the secret hash; `state` = `revoked` / `expired` / `exhausted` / `active` in that precedence. `revokeJoinToken` sets `revoked_at`.
-  - Scoped resource handlers: accept `group_id` (unknown group -> 400 `group_not_found`), store it, return it, and pass scopes to `snapshot.Publish` as in Task 5. Zones: creating or re-scoping a zone whose name already exists globally, or creating a global zone whose name exists in any group, returns 409 `name_taken`; the same name in two different groups is allowed.
+  Extend existing schemas: `Engine` adds required `engine_group_id` (uuid), `engine_group_name`, `labels` (object of strings), `revision` (int64), `target_version` (int64), `certificate_serial`, optional `revoked_at`, `cert_rotate_requested_at`, `certificate_not_after` (nullable date-time), and `status` gains `revoked`; `JoinToken` adds required `engine_group_id`, `engine_group_name`, `labels`, `state` (`active|expired|exhausted|revoked`) and optional nullable `max_uses`; `JoinTokenCreate` adds optional `engine_group_id` (uuid), `max_uses` (integer 1..100000) and `labels` (object of strings, at most 32). Add `engine_group_id: { type: [string, "null"], format: uuid, description: "engine group; null applies to every group" }` to `UpstreamInput`, `Upstream`, `FilterListInput`, `FilterList`, `PolicyGroupInput`, `PolicyGroup`, `RewriteInput`, `Rewrite`, `ForwardZoneInput`, `ForwardZone`, `RpzZoneInput`, `RpzZone`, `ZoneCreate`, `Zone` (required in the response schemas).
+- [ ] On the laptop run `make proto` and expect exit 0; then `scripts/dev-exec.sh go build ./mgmt/...` fails with `does not implement StrictServerInterface` until the handlers below exist.
+- [ ] Create `mgmt/internal/api/fleet_errors.go`:
+  ```go
+  package api
+
+  import "fmt"
+
+  // apiError is a request refused with a specific status and error code.
+  type apiError struct {
+  	status    int
+  	code, msg string
+  }
+
+  func (e apiError) Error() string { return e.msg }
+
+  func coded(status int, code, format string, args ...any) error {
+  	return apiError{status: status, code: code, msg: fmt.Sprintf(format, args...)}
+  }
+  ```
+  and in `mapError` (`mgmt/internal/api/server.go`) add as the first case `case errors.As(err, &aerr): writeError(w, aerr.status, aerr.code, aerr.msg)` with `var aerr apiError`.
+- [ ] Create `mgmt/internal/fleet/groups.go`: `type EngineGroup struct` mirroring the table (with `EngineCount int`, `StableVersion *uint64`, `ExtraACLCIDRs []string`); `ListEngineGroups(ctx, q)`, `GetEngineGroup(ctx, q, id)`, `CreateEngineGroup(ctx, tx, g)`, `UpdateEngineGroup(ctx, tx, g, revision)` (`update ... revision = revision + 1, updated_at = now() where id = $1 and revision = $2 returning ...`; no row and the group exists -> `store.ErrConflict`), `DeleteEngineGroup(ctx, tx, id, revision)` (returns counts of engines, scoped rows over `store.EngineScopedTables` and unrevoked unexpired join tokens when any is non-zero, wrapped in `ErrEngineGroupNotEmpty`); `LabelKeyRE`, a `regexp.MustCompile` of the label key pattern from the "Engine groups and scoping" section of `docs/architecture.md`; `ValidateLabels(map[string]string) error` (key pattern, value at most 63 characters, at most 32 labels; the error message names the offending key); `ErrEngineGroupNotEmpty`, `ErrEngineGroupProtected`.
+- [ ] Create `mgmt/internal/fleet/stats.go`: `Series(ctx, q, engineID uuid.UUID, window time.Duration) ([]Point, error)` reads `select at, stats from engine_stats where engine_id = $1 and at > now() - $2 * interval '1 second' order by at` and, for each consecutive pair (skipping pairs whose `queries_total` went down), returns `Point{At, QPS, CacheHitRatio, ServfailRatio, P99Ms}` where `QPS = dQueries / seconds`, `CacheHitRatio = dHits / (dHits + dMisses)` (0 without lookups), `ServfailRatio = dServfail / dQueries` (0 without queries), and `P99Ms` is the upper bound (ms) of the first `duration_bucket_bounds_us` entry whose cumulative count delta reaches 99% of the pair's total count delta (0 when the delta is 0).
+- [ ] Implement the handlers; every mutation uses `h.mutate` (publishes a version) or, where no configuration changes, `h.audited` (audit only):
+  - `createEngineGroup` (`fleet_groups.go`): canary strategy with `canary_count == 0 && canary_percent == 0` -> `coded(400, "invalid_rollout_params", "canary strategy needs canary_count or canary_percent")`; unique violation on `name` -> `coded(409, "name_taken", "engine group %q already exists")`; `extra_acl_cidrs` parse with `netip.ParsePrefix` (400 `invalid_request`); inside `h.mutate` (a new group gets its first snapshot with the publish); 201.
+  - `updateEngineGroup`: renaming `default` -> `coded(409, "engine_group_protected", ...)`; stale revision -> `store.ErrConflict` (409 `conflict`); inside `h.mutate`; 200.
+  - `deleteEngineGroup`: `default` -> 409 `engine_group_protected`; `ErrEngineGroupNotEmpty` -> `coded(409, "engine_group_not_empty", "engine group has %d engines, %d scoped resources and %d active join tokens")`; inside `h.audited`; 204.
+  - `rollbackEngineGroup`: runs in `h.d.Store.InTx`: `to_version` without a `group_snapshots` row for the group -> `coded(404, "version_not_found", ...)`; `to_version` not below the group's newest group snapshot version -> `coded(400, "not_older", ...)`; else `snapshot.Republish(ctx, tx, actor, id, to_version, rollout.KindRollback)`; 202 with the created rollout.
+  - `resumeEngineGroupRollouts`: not paused -> `coded(409, "not_paused", ...)`; else inside `h.mutate`: `update engine_groups set rollouts_paused = false` (the publish creates the fresh version); 202 with the group's newest rollout.
+  - `listRollouts` / `getRollout` (`fleet_rollouts.go`): newest version first, `limit` default 50; `progress.total` counts the group's non-revoked, non-deleted engines (only canaries while `canary`/`verifying`), `applied` those with `applied_version >= version`, `rejected` those with `rejected_version = version`; detail `progress` per engine: `rejected`, `applied`, `disconnected`, `waiting` in that precedence.
+  - `getFleetSummary`: from `fleet.ListEngines` and `fleet.ListEngineGroups`; `active_rollout` is the group's newest rollout in `pending`/`canary`/`verifying`/`rolling`/`halted`.
+  - `updateEngine` (`fleet_engines.go`): stale revision -> 409 `conflict`; revoked engine -> `coded(409, "engine_revoked", ...)`; `fleet.ValidateLabels` error -> `coded(400, "invalid_labels", ...)`; unknown `engine_group_id` -> `coded(422, "engine_group_not_found", ...)`; update `engine_group_id`, `labels`, `revision = revision + 1`; on a group change inside the same transaction: `snapshot.Republish(ctx, tx, actor, newGroup, from, rollout.KindRepublish)` where `from` is the new group's `stable_version` or, when NULL, its newest group snapshot version, then `pg_notify('nexora_engine_updated', id)`; audit `updateEngine`; 200 with the engine.
+  - `getEngineStats`: window `5m` (default), `1h`, `24h` -> `fleet.Series`; unknown engine -> 404.
+  - `listEngines` / `getEngine` / `deleteEngine` (`handlers_fleet.go`): map every `fleet.EngineView` field to the extended schema; `deleteEngine` stays as M1 until Task 8 adds revocation.
+  - `createJoinToken`: add `control.CreateJoinTokenFor(ctx, tx, ca, control.JoinTokenSpec{Name, CreatedBy string; TTL time.Duration; EngineGroupID uuid.UUID; MaxUses *int; Labels map[string]string})` in `mgmt/internal/control/jointokens.go` (inserts `engine_group_id`, `labels`, `max_uses`); `control.CreateJoinToken(ctx, tx, ca, name, createdBy, ttl)` calls it with the default group, no labels and unlimited uses; unknown group -> 422 `engine_group_not_found`; invalid labels -> 400 `invalid_labels`. `listJoinTokens` adds the group name, labels, max uses and `state` (`revoked` if `revoked_at`, `expired` if `expires_at <= now()`, `exhausted` if `max_uses is not null and uses >= max_uses`, else `active`).
+  - Scoped resources: every create/update body accepts `engine_group_id` (store structs gain `EngineGroupID *uuid.UUID`; inserts, updates and selects carry the column); an unknown id -> 422 `engine_group_not_found`. A rewrite with both `group_id` and `engine_group_id` -> 422 `engine_group_scope` (`a rewrite inside a policy group follows the policy group's engine group`). A policy group whose `filter_list_ids` include a list scoped to another engine group -> 422 `engine_group_scope`; a filter list re-scoped while a policy group of another engine group selects it -> 422 `engine_group_scope`. Zones: `zone.Service` create/update carry `EngineGroupID`; names stay unique fleet-wide (M4 behaviour unchanged).
+- [ ] Extend `e2e/harness/mgmt.go`: `EngineView` gains `EngineGroupID string json:"engine_group_id"`, `EngineGroupName string json:"engine_group_name"`, `Labels map[string]string json:"labels"`, `Revision int64 json:"revision"`, `TargetVersion uint64 json:"target_version"`, `CertificateSerial string json:"certificate_serial"`, `RevokedAt *time.Time json:"revoked_at"`; `EngineOptions` gains `ExtraEnv []string` (passed to `e.Start` for the engine process); `Engine` gains an unexported `env []string` set by `StartManagedEngineWith`. In `e2e/harness/engine.go` move the body of `(*Engine).Metric` into `scrapeMetric(t *testing.T, url, name string, labels map[string]string) float64` and call it with `"http://" + en.Metrics + "/metrics"`.
 - [ ] Create `e2e/harness/fleet.go`:
   ```go
   package harness
 
   import (
-  	"bytes"
-  	"context"
   	"encoding/json"
   	"fmt"
-  	"io"
-  	"net"
   	"net/http"
-  	"path/filepath"
-  	"strconv"
   	"strings"
   	"testing"
   	"time"
-
-  	"github.com/miekg/dns"
   )
 
-  const DefaultGroupID = "00000000-0000-0000-0000-000000000001"
+  // DefaultEngineGroupID is the engine group that always exists.
+  const DefaultEngineGroupID = "00000000-0000-0000-0000-000000000001"
 
-  type FleetOptions struct {
-  	Engines       int               // engine processes, each with its own state dir and loopback address
-  	MgmtInstances int               // default 1
-  	MgmtEnv       map[string]string // extra environment for every mgmt instance
-  	EngineEnv     map[string]string // extra environment for every engine
-  	EngineGroup   string            // join-token group for the initial engines; default DefaultGroupID
+  // EngineGroupView is the part of the API's EngineGroup the tests inspect.
+  type EngineGroupView struct {
+  	ID              string  `json:"id"`
+  	Name            string  `json:"name"`
+  	Description     string  `json:"description"`
+  	UpstreamMode    string  `json:"upstream_mode"`
+  	RolloutStrategy string  `json:"rollout_strategy"`
+  	CanaryCount     int     `json:"canary_count"`
+  	CanaryPercent   int     `json:"canary_percent"`
+  	EngineCount     int     `json:"engine_count"`
+  	RolloutsPaused  bool    `json:"rollouts_paused"`
+  	StableVersion   *uint64 `json:"stable_version"`
+  	Revision        int64   `json:"revision"`
   }
 
-  type Fleet struct {
-  	DB       *Postgres
-  	Mgmt     []*Mgmt
-  	Engines  []*Engine
-  	API      *API
-  	GRPCURLs []string
-  	CADir    string // ca.crt and ca.key shared by every mgmt instance
-  	next     int
-  	byName   map[string]*fleetEngine
+  // RolloutView is the part of the API's Rollout the tests inspect.
+  type RolloutView struct {
+  	ID              string   `json:"id"`
+  	EngineGroupID   string   `json:"engine_group_id"`
+  	Kind            string   `json:"kind"`
+  	Strategy        string   `json:"strategy"`
+  	State           string   `json:"state"`
+  	HaltReason      string   `json:"halt_reason"`
+  	Version         uint64   `json:"version"`
+  	FromVersion     *uint64  `json:"from_version"`
+  	CanaryEngineIDs []string `json:"canary_engine_ids"`
   }
 
-  type fleetEngine struct {
-  	proc                        *Engine
-  	dnsAddr, metricsURL, stateDir string
+  // CreateEngineGroup posts body to /engine-groups and expects 201.
+  func (a *API) CreateEngineGroup(body map[string]any) EngineGroupView {
+  	a.T.Helper()
+  	var g EngineGroupView
+  	a.Must(http.MethodPost, "/engine-groups", body, &g, http.StatusCreated)
+  	return g
   }
 
-  func (f *Fleet) Engine(name string) *Engine     { return f.byName[name].proc }
-  func (f *Fleet) DNSAddr(name string) string     { return f.byName[name].dnsAddr }
-  func (f *Fleet) MetricsURL(name string) string  { return f.byName[name].metricsURL }
-  func (f *Fleet) StateDir(name string) string    { return f.byName[name].stateDir }
-
-  func StartFleet(t *testing.T, o FleetOptions) *Fleet {
-  	t.Helper()
-  	if o.MgmtInstances == 0 {
-  		o.MgmtInstances = 1
-  	}
-  	if o.EngineGroup == "" {
-  		o.EngineGroup = DefaultGroupID
-  	}
-  	f := &Fleet{DB: StartPostgres(t), CADir: t.TempDir(), byName: map[string]*fleetEngine{}}
-  	for i := 0; i < o.MgmtInstances; i++ {
-  		env := map[string]string{"NEXORA_INSTANCE_ID": fmt.Sprintf("mgmt-%d", i+1)}
-  		for k, v := range o.MgmtEnv {
-  			env[k] = v
-  		}
-  		m := StartMgmt(t, MgmtOptions{DatabaseURL: f.DB.URL, CADir: f.CADir, Env: env})
-  		f.Mgmt = append(f.Mgmt, m)
-  		f.GRPCURLs = append(f.GRPCURLs, "https://"+m.GRPCAddr)
-  	}
-  	f.API = NewAPI(f.Mgmt[0].HTTPURL, f.Mgmt[0].AdminToken)
-  	for i := 0; i < o.Engines; i++ {
-  		f.AddEngine(t, fmt.Sprintf("engine-%d", i+1), o.EngineGroup, o.EngineEnv)
-  	}
-  	return f
+  // EngineGroup returns one engine group.
+  func (a *API) EngineGroup(id string) EngineGroupView {
+  	a.T.Helper()
+  	var g EngineGroupView
+  	a.Must(http.MethodGet, "/engine-groups/"+id, nil, &g, http.StatusOK)
+  	return g
   }
 
-  // AddEngine starts one engine on its own loopback address (127.0.1.N) and state dir,
-  // the process-harness stand-in for a separate host.
-  func (f *Fleet) AddEngine(t *testing.T, name, groupID string, env map[string]string) *Engine {
-  	t.Helper()
-  	tok := f.API.CreateJoinToken(t, JoinTokenSpec{GroupID: groupID, TTLSeconds: 3600, MaxUses: 1})
-  	return f.AddEngineWithToken(t, name, tok.Token, env)
-  }
-
-  // AddEngineWithToken starts an engine with a caller-supplied join token and
-  // returns as soon as the process runs (enrollment may be refused).
-  func (f *Fleet) AddEngineWithToken(t *testing.T, name, token string, env map[string]string) *Engine {
-  	t.Helper()
-  	f.next++
-  	ip := fmt.Sprintf("127.0.1.%d", f.next)
-  	fe := &fleetEngine{dnsAddr: freeAddr(t, ip), stateDir: filepath.Join(t.TempDir(), name)}
-  	metrics := freeAddr(t, ip)
-  	fe.metricsURL = "http://" + metrics + "/metrics"
-  	fe.proc = StartEngine(t, EngineOptions{
-  		Name: name, StateDir: fe.stateDir, ManagementURLs: f.GRPCURLs,
-  		JoinToken: token, ListenUDP: []string{fe.dnsAddr}, ListenTCP: []string{fe.dnsAddr},
-  		MetricsListen: metrics, Env: env, SkipReadyWait: true,
-  	})
-  	f.byName[name] = fe
-  	f.Engines = append(f.Engines, fe.proc)
-  	return fe.proc
-  }
-
-  func freeAddr(t *testing.T, ip string) string {
-  	t.Helper()
-  	for i := 0; i < 50; i++ {
-  		l, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
-  		if err != nil {
-  			t.Fatalf("listen %s: %v", ip, err)
-  		}
-  		addr := l.Addr().String()
-  		_ = l.Close()
-  		if u, err := net.ListenPacket("udp", addr); err == nil {
-  			_ = u.Close()
-  			return addr
-  		}
-  	}
-  	t.Fatalf("no free tcp+udp port on %s", ip)
-  	return ""
-  }
-
-  func (f *Fleet) WaitConnected(t *testing.T, n int, timeout time.Duration) {
-  	t.Helper()
-  	Eventually(t, timeout, func() error {
-  		c := 0
-  		for _, e := range f.API.Engines(t) {
-  			if e.ConnectionState == "connected" {
-  				c++
-  			}
-  		}
-  		if c < n {
-  			return fmt.Errorf("%d/%d engines connected", c, n)
-  		}
-  		return nil
-  	})
-  }
-
-  func (f *Fleet) WaitAllApplied(t *testing.T, names []string, version int64, timeout time.Duration) {
-  	t.Helper()
-  	Eventually(t, timeout, func() error {
-  		for _, name := range names {
-  			if e := f.API.EngineByName(t, name); e.AppliedVersion != version {
-  				return fmt.Errorf("%s applied %d, want %d", name, e.AppliedVersion, version)
-  			}
-  		}
-  		return nil
-  	})
-  }
-
-  // Eventually retries fn every 250ms until it returns nil or timeout passes.
-  func Eventually(t *testing.T, timeout time.Duration, fn func() error) {
-  	t.Helper()
-  	deadline := time.Now().Add(timeout)
-  	var err error
-  	for time.Now().Before(deadline) {
-  		if err = fn(); err == nil {
-  			return
-  		}
-  		time.Sleep(250 * time.Millisecond)
-  	}
-  	t.Fatalf("not reached within %s: %v", timeout, err)
-  }
-
-  type API struct {
-  	Base, Token string
-  	HC          *http.Client
-  }
-
-  func NewAPI(base, token string) *API {
-  	return &API{Base: strings.TrimSuffix(base, "/"), Token: token, HC: &http.Client{Timeout: 15 * time.Second}}
-  }
-
-  // Do sends JSON and decodes a 2xx JSON body into out; it returns the status code.
-  func (a *API) Do(t *testing.T, method, path string, in, out any) int {
-  	t.Helper()
-  	var body io.Reader
-  	if in != nil {
-  		raw, err := json.Marshal(in)
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		body = bytes.NewReader(raw)
-  	}
-  	req, err := http.NewRequestWithContext(context.Background(), method, a.Base+path, body)
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	req.Header.Set("Authorization", "Bearer "+a.Token)
-  	req.Header.Set("Content-Type", "application/json")
-  	resp, err := a.HC.Do(req)
-  	if err != nil {
-  		t.Fatalf("%s %s: %v", method, path, err)
-  	}
-  	defer resp.Body.Close()
-  	raw, _ := io.ReadAll(resp.Body)
-  	if out != nil && len(raw) > 0 {
-  		if err := json.Unmarshal(raw, out); err != nil {
-  			t.Fatalf("%s %s: decode %q: %v", method, path, raw, err)
-  		}
-  	}
-  	return resp.StatusCode
-  }
-
-  func (a *API) Must(t *testing.T, method, path string, in, out any, want int) {
-  	t.Helper()
-  	if got := a.Do(t, method, path, in, out); got != want {
-  		t.Fatalf("%s %s = %d, want %d", method, path, got, want)
-  	}
-  }
-
-  type APIError struct {
-  	Code    string `json:"code"`
-  	Message string `json:"message"`
-  }
-
-  type GroupSpec struct {
-  	Name, UpstreamMode, RolloutStrategy                                          string
-  	CanaryCount, CanaryPercent, AckTimeoutSeconds, HealthWindowSeconds, MinHealthQueries int
-  	MaxServfailRatio                                                             float64
-  }
-
-  func groupBody(g GroupSpec) map[string]any {
-  	b := map[string]any{"name": g.Name}
-  	set := func(k string, v any, zero bool) {
-  		if !zero {
-  			b[k] = v
-  		}
-  	}
-  	set("upstream_mode", g.UpstreamMode, g.UpstreamMode == "")
-  	set("rollout_strategy", g.RolloutStrategy, g.RolloutStrategy == "")
-  	set("canary_count", g.CanaryCount, g.CanaryCount == 0)
-  	set("canary_percent", g.CanaryPercent, g.CanaryPercent == 0)
-  	set("ack_timeout_seconds", g.AckTimeoutSeconds, g.AckTimeoutSeconds == 0)
-  	set("health_window_seconds", g.HealthWindowSeconds, g.HealthWindowSeconds == 0)
-  	set("min_health_queries", g.MinHealthQueries, g.MinHealthQueries == 0)
-  	set("max_servfail_ratio", g.MaxServfailRatio, g.MaxServfailRatio == 0)
-  	return b
-  }
-
-  type EngineGroup struct {
-  	ID               string `json:"id"`
-  	Name             string `json:"name"`
-  	RolloutStrategy  string `json:"rollout_strategy"`
-  	UpstreamMode     string `json:"upstream_mode"`
-  	RolloutsPaused   bool   `json:"rollouts_paused"`
-  	StableVersion    *int64 `json:"stable_version"`
-  	Revision         int64  `json:"revision"`
-  	EngineCount      int    `json:"engine_count"`
-  }
-
-  func (a *API) CreateGroup(t *testing.T, g GroupSpec) EngineGroup {
-  	t.Helper()
-  	var out EngineGroup
-  	a.Must(t, "POST", "/api/v1/engine-groups", groupBody(g), &out, http.StatusCreated)
-  	return out
-  }
-
-  func (a *API) Group(t *testing.T, id string) EngineGroup {
-  	t.Helper()
-  	var out EngineGroup
-  	a.Must(t, "GET", "/api/v1/engine-groups/"+id, nil, &out, http.StatusOK)
-  	return out
-  }
-
-  // WaitGroupStable waits until the group's stable version is above after and returns it.
-  func (a *API) WaitGroupStable(t *testing.T, id string, after int64, timeout time.Duration) int64 {
-  	t.Helper()
-  	var v int64
-  	Eventually(t, timeout, func() error {
-  		g := a.Group(t, id)
+  // WaitEngineGroupStable waits until the group's stable version is above after and returns it.
+  func (a *API) WaitEngineGroupStable(id string, after uint64, timeout time.Duration) uint64 {
+  	a.T.Helper()
+  	var v uint64
+  	Eventually(a.T, timeout, func() error {
+  		g := a.EngineGroup(id)
   		if g.StableVersion == nil || *g.StableVersion <= after {
-  			return fmt.Errorf("group %s stable %v, waiting for > %d", g.Name, g.StableVersion, after)
+  			return fmt.Errorf("engine group %s stable %v, waiting for > %d", g.Name, g.StableVersion, after)
   		}
   		v = *g.StableVersion
   		return nil
@@ -2821,71 +2676,15 @@ func MetricValue(t *testing.T, metricsURL, name string) float64
   	return v
   }
 
-  type EngineInfo struct {
-  	ID              string            `json:"id"`
-  	Name            string            `json:"name"`
-  	GroupID         string            `json:"group_id"`
-  	GroupName       string            `json:"group_name"`
-  	Labels          map[string]string `json:"labels"`
-  	Revision        int64             `json:"revision"`
-  	ConnectionState string            `json:"connection_state"`
-  	AppliedVersion  int64             `json:"applied_version"`
-  	TargetVersion   int64             `json:"target_version"`
-  	RejectedReason  string            `json:"rejected_reason"`
-  	Drift           string            `json:"drift"`
-  	Certificate     *struct {
-  		Serial string `json:"serial"`
-  	} `json:"certificate"`
-  }
-
-  func (a *API) Engines(t *testing.T) []EngineInfo {
-  	t.Helper()
-  	var out []EngineInfo
-  	a.Must(t, "GET", "/api/v1/engines", nil, &out, http.StatusOK)
-  	return out
-  }
-
-  func (a *API) EngineByName(t *testing.T, name string) EngineInfo {
-  	t.Helper()
-  	for _, e := range a.Engines(t) {
-  		if e.Name == name {
-  			return e
-  		}
-  	}
-  	t.Fatalf("engine %s not listed", name)
-  	return EngineInfo{}
-  }
-
-  func (a *API) PatchEngine(t *testing.T, name string, fields map[string]any) EngineInfo {
-  	t.Helper()
-  	e := a.EngineByName(t, name)
-  	body := map[string]any{"revision": e.Revision}
-  	for k, v := range fields {
-  		body[k] = v
-  	}
-  	var out EngineInfo
-  	a.Must(t, "PATCH", "/api/v1/engines/"+e.ID, body, &out, http.StatusOK)
-  	return out
-  }
-
-  type Rollout struct {
-  	ID              string   `json:"id"`
-  	GroupID         string   `json:"group_id"`
-  	Version         int64    `json:"version"`
-  	Kind            string   `json:"kind"`
-  	Strategy        string   `json:"strategy"`
-  	State           string   `json:"state"`
-  	HaltReason      string   `json:"halt_reason"`
-  	CanaryEngineIDs []string `json:"canary_engine_ids"`
-  }
-
   // WaitRollout waits for the group's newest rollout with version >= minVersion to reach one of states.
-  func (a *API) WaitRollout(t *testing.T, groupID string, minVersion int64, timeout time.Duration, states ...string) Rollout {
-  	t.Helper()
-  	var got Rollout
-  	Eventually(t, timeout, func() error {
-  		var rs []Rollout
-  		a.Must(t, "GET", "/api/v1/rollouts?group_id="+groupID+"&limit=1", nil, &rs, http.StatusOK)
+  func (a *API) WaitRollout(engineGroupID string, minVersion uint64, timeout time.Duration, states ...string) RolloutView {
+  	a.T.Helper()
+  	var got RolloutView
+  	Eventually(a.T, timeout, func() error {
+  		var rs []RolloutView
+  		if _, err := a.Do(http.MethodGet, "/rollouts?limit=1&engine_group_id="+engineGroupID, nil, &rs); err != nil {
+  			return err
+  		}
   		if len(rs) == 0 || rs[0].Version < minVersion {
   			return fmt.Errorf("no rollout >= %d yet", minVersion)
   		}
@@ -2900,191 +2699,80 @@ func MetricValue(t *testing.T, metricsURL, name string) float64
   	return got
   }
 
-  type JoinTokenSpec struct {
-  	GroupID             string
-  	TTLSeconds, MaxUses int
-  	Labels              map[string]string
-  }
-
-  func joinTokenBody(s JoinTokenSpec) map[string]any {
-  	b := map[string]any{"group_id": s.GroupID, "ttl_seconds": s.TTLSeconds, "max_uses": s.MaxUses}
-  	if len(s.Labels) > 0 {
-  		b["labels"] = s.Labels
+  // CreateJoinTokenFor creates a one-hour, unlimited join token for an engine group.
+  func (a *API) CreateJoinTokenFor(engineGroupID string, labels map[string]string) string {
+  	a.T.Helper()
+  	var created struct {
+  		Token string `json:"token"`
   	}
-  	return b
+  	body := map[string]any{"name": UniqueName("e2e"), "ttl_seconds": 3600, "engine_group_id": engineGroupID}
+  	if len(labels) > 0 {
+  		body["labels"] = labels
+  	}
+  	a.Must(http.MethodPost, "/join-tokens", body, &created, http.StatusCreated)
+  	return created.Token
   }
 
-  type JoinToken struct {
-  	ID      string `json:"id"`
-  	Token   string `json:"token"`
-  	GroupID string `json:"group_id"`
-  	State   string `json:"state"`
-  	Uses    int    `json:"uses"`
-  	MaxUses int    `json:"max_uses"`
+  // EngineByNode returns the listed engine with nodeName.
+  func (a *API) EngineByNode(nodeName string) EngineView {
+  	a.T.Helper()
+  	var engines []EngineView
+  	a.Must(http.MethodGet, "/engines", nil, &engines, http.StatusOK)
+  	for _, e := range engines {
+  		if e.NodeName == nodeName {
+  			return e
+  		}
+  	}
+  	a.T.Fatalf("engine %s not listed", nodeName)
+  	return EngineView{}
   }
 
-  func (a *API) CreateJoinToken(t *testing.T, s JoinTokenSpec) JoinToken {
-  	t.Helper()
-  	var out JoinToken
-  	a.Must(t, "POST", "/api/v1/join-tokens", joinTokenBody(s), &out, http.StatusCreated)
+  // PatchEngine sends fields with the engine's current revision and expects 200.
+  func (a *API) PatchEngine(nodeName string, fields map[string]any) EngineView {
+  	a.T.Helper()
+  	e := a.EngineByNode(nodeName)
+  	body := map[string]any{"revision": e.Revision}
+  	for k, v := range fields {
+  		body[k] = v
+  	}
+  	var out EngineView
+  	a.Must(http.MethodPatch, "/engines/"+e.ID, body, &out, http.StatusOK)
   	return out
   }
 
-  type Rewrite struct {
-  	Domain, Type, Value string
-  	GroupID             *string
+  // ErrorCode sends a request that must fail and returns its status and the error body's code.
+  func (a *API) ErrorCode(method, path string, body any) (int, string) {
+  	a.T.Helper()
+  	status, err := a.Do(method, path, body, nil)
+  	if err == nil {
+  		a.T.Fatalf("%s %s succeeded with %d, want an error", method, path, status)
+  	}
+  	msg := err.Error()
+  	var e struct {
+  		Code string `json:"code"`
+  	}
+  	if i := strings.Index(msg, "{"); i >= 0 {
+  		_ = json.Unmarshal([]byte(msg[i:]), &e)
+  	}
+  	return status, e.Code
   }
 
-  func rewriteBody(r Rewrite) map[string]any {
-  	return map[string]any{"domain": r.Domain, "type": r.Type, "value": r.Value, "group_id": r.GroupID}
+  // RestartEngine stops en and starts it again on the same engine.toml and state directory, then
+  // waits for its control stream (it must not enroll again).
+  func (e *Env) RestartEngine(en *Engine) {
+  	e.T.Helper()
+  	en.Proc.Stop()
+  	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath}, en.env)
+  	en.readAddrs()
+  	en.Proc.WaitLog(controlConnected, 30*time.Second)
   }
 
-  func (a *API) CreateRewrite(t *testing.T, r Rewrite) string {
+  // Metric scrapes the management instance's /metrics like (*Engine).Metric.
+  func (m *Mgmt) Metric(t *testing.T, name string, labels map[string]string) float64 {
   	t.Helper()
-  	var out struct {
-  		ID string `json:"id"`
-  	}
-  	a.Must(t, "POST", "/api/v1/rewrites", rewriteBody(r), &out, http.StatusCreated)
-  	return out.ID
-  }
-
-  type Upstream struct {
-  	Name, Address, Protocol string
-  	GroupID                 *string
-  }
-
-  func upstreamBody(u Upstream) map[string]any {
-  	return map[string]any{"name": u.Name, "address": u.Address, "protocol": u.Protocol, "group_id": u.GroupID}
-  }
-
-  func (a *API) CreateUpstream(t *testing.T, u Upstream) string {
-  	t.Helper()
-  	var out struct {
-  		ID string `json:"id"`
-  	}
-  	a.Must(t, "POST", "/api/v1/upstreams", upstreamBody(u), &out, http.StatusCreated)
-  	return out.ID
-  }
-
-  func (a *API) SetUpstreamAddress(t *testing.T, id, address string) {
-  	t.Helper()
-  	var cur map[string]any
-  	a.Must(t, "GET", "/api/v1/upstreams/"+id, nil, &cur, http.StatusOK)
-  	cur["address"] = address
-  	for _, readOnly := range []string{"id", "created_at", "updated_at", "health"} {
-  		delete(cur, readOnly)
-  	}
-  	a.Must(t, "PUT", "/api/v1/upstreams/"+id, cur, nil, http.StatusOK)
-  }
-
-  func Exchange(addr, name string, qtype uint16) (*dns.Msg, error) {
-  	m := new(dns.Msg)
-  	m.SetQuestion(dns.Fqdn(name), qtype)
-  	c := &dns.Client{Timeout: 3 * time.Second}
-  	r, _, err := c.Exchange(m, addr)
-  	return r, err
-  }
-
-  func ExpectA(t *testing.T, addr, name, ip string) {
-  	t.Helper()
-  	r, err := Exchange(addr, name, dns.TypeA)
-  	if err != nil {
-  		t.Fatalf("%s A @%s: %v", name, addr, err)
-  	}
-  	for _, rr := range r.Answer {
-  		if a, ok := rr.(*dns.A); ok && a.A.String() == ip {
-  			return
-  		}
-  	}
-  	t.Fatalf("%s A @%s = %s %v, want %s", name, addr, dns.RcodeToString[r.Rcode], r.Answer, ip)
-  }
-
-  func ExpectRcode(t *testing.T, addr, name string, rcode int) {
-  	t.Helper()
-  	r, err := Exchange(addr, name, dns.TypeA)
-  	if err != nil {
-  		t.Fatalf("%s @%s: %v", name, addr, err)
-  	}
-  	if r.Rcode != rcode {
-  		t.Fatalf("%s @%s rcode %s, want %s", name, addr, dns.RcodeToString[r.Rcode], dns.RcodeToString[rcode])
-  	}
-  }
-
-  // MetricValue returns the first sample of an unlabelled metric from a Prometheus text endpoint.
-  func MetricValue(t *testing.T, metricsURL, name string) float64 {
-  	t.Helper()
-  	resp, err := http.Get(metricsURL)
-  	if err != nil {
-  		t.Fatalf("scrape %s: %v", metricsURL, err)
-  	}
-  	defer resp.Body.Close()
-  	raw, _ := io.ReadAll(resp.Body)
-  	for _, line := range strings.Split(string(raw), "\n") {
-  		if f := strings.Fields(line); len(f) == 2 && f[0] == name {
-  			v, err := strconv.ParseFloat(f[1], 64)
-  			if err == nil {
-  				return v
-  			}
-  		}
-  	}
-  	t.Fatalf("metric %s not found at %s", name, metricsURL)
-  	return 0
+  	return scrapeMetric(t, m.BaseURL+"/metrics", name, labels)
   }
   ```
-- [ ] In M1's `e2e/harness` engine starter add `SkipReadyWait bool` to `EngineOptions` when it is missing: with it set, `StartEngine` returns once the process is spawned instead of waiting for the DNS listener (an engine whose enrollment is refused never listens). Run `scripts/dev-exec.sh go vet ./e2e/...` and expect no output.
-- [ ] Write the failing helper contract test `e2e/harness/fleet_openapi_test.go`:
-  ```go
-  package harness
-
-  import (
-  	"bytes"
-  	"encoding/json"
-  	"net/http/httptest"
-  	"os"
-  	"testing"
-
-  	"github.com/pb33f/libopenapi"
-  	validator "github.com/pb33f/libopenapi-validator"
-  )
-
-  func TestFleetAPIHelpersMatchOpenAPI(t *testing.T) {
-  	spec, err := os.ReadFile("../../mgmt/api/openapi.yaml")
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	doc, err := libopenapi.NewDocument(spec)
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	v, errs := validator.NewValidator(doc)
-  	if len(errs) > 0 {
-  		t.Fatalf("validator: %v", errs)
-  	}
-  	group := DefaultGroupID
-  	cases := []struct {
-  		method, path string
-  		body         any
-  	}{
-  		{"POST", "/api/v1/engine-groups", groupBody(GroupSpec{Name: "edge-a", RolloutStrategy: "canary", CanaryCount: 1, HealthWindowSeconds: 20, MaxServfailRatio: 0.05})},
-  		{"POST", "/api/v1/join-tokens", joinTokenBody(JoinTokenSpec{GroupID: group, TTLSeconds: 600, MaxUses: 2, Labels: map[string]string{"site": "lab"}})},
-  		{"POST", "/api/v1/rewrites", rewriteBody(Rewrite{Domain: "a.fleet.test", Type: "A", Value: "192.0.2.1", GroupID: &group})},
-  		{"POST", "/api/v1/upstreams", upstreamBody(Upstream{Name: "fixture", Address: "127.0.0.1:5300", Protocol: "udp", GroupID: &group})},
-  		{"PATCH", "/api/v1/engines/" + group, map[string]any{"revision": 1, "labels": map[string]string{"nexora.io/canary": "true"}}},
-  		{"POST", "/api/v1/engine-groups/" + group + "/rollback", map[string]any{"to_version": 3}},
-  	}
-  	for _, c := range cases {
-  		raw, _ := json.Marshal(c.body)
-  		req := httptest.NewRequest(c.method, "http://nexora.test"+c.path, bytes.NewReader(raw))
-  		req.Header.Set("Content-Type", "application/json")
-  		if ok, verrs := v.ValidateHttpRequest(req); !ok {
-  			for _, e := range verrs {
-  				t.Errorf("%s %s: %s", c.method, c.path, e.Message)
-  			}
-  		}
-  	}
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./e2e/harness/ -run TestFleetAPIHelpersMatchOpenAPI -count=1` and expect `ok` when the OpenAPI edits above are in place (run it once with the `/join-tokens` path temporarily renamed in the YAML and expect FAIL with `POST /api/v1/join-tokens`, then restore).
 - [ ] Write the failing black-box test `e2e/fleet_api_test.go`:
   ```go
   package e2e
@@ -3099,167 +2787,187 @@ func MetricValue(t *testing.T, metricsURL, name string) float64
   )
 
   func TestFleetAPI(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{})
-  	api := f.API
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
 
-  	g := api.CreateGroup(t, harness.GroupSpec{Name: "edge-a", RolloutStrategy: "canary", CanaryPercent: 34,
-  		AckTimeoutSeconds: 30, HealthWindowSeconds: 20, MaxServfailRatio: 0.05, MinHealthQueries: 10})
-  	if g.Revision != 1 || g.RolloutsPaused || g.RolloutStrategy != "canary" {
-  		t.Fatalf("created group %+v", g)
+  	g := api.CreateEngineGroup(map[string]any{"name": "edge-a", "description": "first", "extra_acl_cidrs": []string{"198.51.100.0/24"}})
+  	if g.Revision != 1 || g.RolloutsPaused || g.RolloutStrategy != "all_at_once" || g.UpstreamMode != "inherit" {
+  		t.Fatalf("created engine group %+v", g)
   	}
-  	stable := api.WaitGroupStable(t, g.ID, 0, 15*time.Second)
-
-  	var groups []harness.EngineGroup
-  	api.Must(t, "GET", "/api/v1/engine-groups", nil, &groups, http.StatusOK)
+  	stable := api.WaitEngineGroupStable(g.ID, 0, 15*time.Second)
+  	var groups []harness.EngineGroupView
+  	api.Must(http.MethodGet, "/engine-groups", nil, &groups, http.StatusOK)
   	if len(groups) != 2 {
-  		t.Fatalf("groups = %+v, want default and edge-a", groups)
+  		t.Fatalf("engine groups = %+v, want default and edge-a", groups)
   	}
+  	if code, c := api.ErrorCode(http.MethodPost, "/engine-groups", map[string]any{"name": "edge-a"}); code != http.StatusConflict || c != "name_taken" {
+  		t.Fatalf("duplicate name: %d %s", code, c)
+  	}
+  	if code, c := api.ErrorCode(http.MethodPost, "/engine-groups", map[string]any{"name": "bad", "rollout_strategy": "canary"}); code != http.StatusBadRequest || c != "invalid_rollout_params" {
+  		t.Fatalf("canary without size: %d %s", code, c)
+  	}
+  	upd := map[string]any{"name": "edge-a", "revision": g.Revision, "rollout_strategy": "canary", "canary_percent": 34, "health_window_seconds": 20}
+  	api.Must(http.MethodPut, "/engine-groups/"+g.ID, upd, nil, http.StatusOK)
+  	if code, c := api.ErrorCode(http.MethodPut, "/engine-groups/"+g.ID, upd); code != http.StatusConflict || c != "conflict" {
+  		t.Fatalf("stale revision: %d %s", code, c)
+  	}
+  	if code, c := api.ErrorCode(http.MethodDelete, "/engine-groups/"+harness.DefaultEngineGroupID+"?revision=1", nil); code != http.StatusConflict || c != "engine_group_protected" {
+  		t.Fatalf("delete default: %d %s", code, c)
+  	}
+  	g = api.EngineGroup(g.ID)
+  	api.Must(http.MethodPut, "/engine-groups/"+g.ID, map[string]any{"name": "edge-a", "revision": g.Revision, "rollout_strategy": "all_at_once"}, nil, http.StatusOK)
 
-  	var e harness.APIError
-  	if code := api.Do(t, "POST", "/api/v1/engine-groups", map[string]any{"name": "edge-a"}, &e); code != http.StatusConflict || e.Code != "name_taken" {
-  		t.Fatalf("duplicate name: %d %+v", code, e)
+  	api.Must(http.MethodPost, "/rewrites", map[string]any{"name": "scoped.fleet.test", "type": "A", "value": "192.0.2.7", "engine_group_id": g.ID}, nil, http.StatusCreated)
+  	g = api.EngineGroup(g.ID)
+  	if code, c := api.ErrorCode(http.MethodDelete, "/engine-groups/"+g.ID+"?revision="+itoa(g.Revision), nil); code != http.StatusConflict || c != "engine_group_not_empty" {
+  		t.Fatalf("delete non-empty engine group: %d %s", code, c)
   	}
-  	if code := api.Do(t, "POST", "/api/v1/engine-groups", map[string]any{"name": "bad", "rollout_strategy": "canary"}, &e); code != http.StatusBadRequest {
-  		t.Fatalf("canary without size: %d %+v", code, e)
+  	if code, c := api.ErrorCode(http.MethodPost, "/upstreams", map[string]any{"name": "nowhere", "protocol": "udp", "address": "192.0.2.53:53",
+  		"timeout_ms": 250, "enabled": true, "position": 0, "engine_group_id": "11111111-1111-1111-1111-111111111111"}); code != http.StatusUnprocessableEntity || c != "engine_group_not_found" {
+  		t.Fatalf("unknown engine group: %d %s", code, c)
   	}
+  	var pg1 struct {
+  		ID string `json:"id"`
+  	}
+  	api.Must(http.MethodPost, "/policy-groups", map[string]any{"name": "fleet-policy", "cidrs": []string{"10.9.0.0/16"}}, &pg1, http.StatusCreated)
+  	if code, c := api.ErrorCode(http.MethodPost, "/rewrites", map[string]any{"group_id": pg1.ID, "engine_group_id": g.ID, "name": "p.fleet.test", "type": "A", "value": "192.0.2.8"}); code != http.StatusUnprocessableEntity || c != "engine_group_scope" {
+  		t.Fatalf("policy group rewrite with its own engine group: %d %s", code, c)
+  	}
+  	after := api.WaitEngineGroupStable(g.ID, stable, 15*time.Second)
 
-  	upd := map[string]any{"name": "edge-a", "revision": g.Revision, "description": "first"}
-  	api.Must(t, "PUT", "/api/v1/engine-groups/"+g.ID, upd, nil, http.StatusOK)
-  	if code := api.Do(t, "PUT", "/api/v1/engine-groups/"+g.ID, upd, &e); code != http.StatusConflict || e.Code != "conflict" {
-  		t.Fatalf("stale revision: %d %+v", code, e)
+  	var created struct {
+  		Token     string `json:"token"`
+  		JoinToken struct {
+  			ID string `json:"id"`
+  		} `json:"join_token"`
   	}
-  	if code := api.Do(t, "DELETE", "/api/v1/engine-groups/"+harness.DefaultGroupID, nil, &e); code != http.StatusConflict || e.Code != "group_protected" {
-  		t.Fatalf("delete default: %d %+v", code, e)
-  	}
-
-  	gid := g.ID
-  	api.CreateRewrite(t, harness.Rewrite{Domain: "scoped.fleet.test", Type: "A", Value: "192.0.2.7", GroupID: &gid})
-  	if code := api.Do(t, "DELETE", "/api/v1/engine-groups/"+g.ID, nil, &e); code != http.StatusConflict || e.Code != "group_not_empty" {
-  		t.Fatalf("delete non-empty group: %d %+v", code, e)
-  	}
-  	after := api.WaitGroupStable(t, g.ID, stable, 15*time.Second)
-
-  	tok := api.CreateJoinToken(t, harness.JoinTokenSpec{GroupID: g.ID, TTLSeconds: 600, MaxUses: 2, Labels: map[string]string{"site": "lab"}})
-  	if !regexp.MustCompile(`^nxj1\.[A-Z2-7]+\.[0-9a-f]{64}$`).MatchString(tok.Token) || tok.State != "active" {
-  		t.Fatalf("join token %+v", tok)
+  	api.Must(http.MethodPost, "/join-tokens", map[string]any{"name": "edge", "ttl_seconds": 600, "engine_group_id": g.ID, "max_uses": 2,
+  		"labels": map[string]string{"site": "lab"}}, &created, http.StatusCreated)
+  	if !regexp.MustCompile(`^nxj1\.[A-Z2-7]+\.[0-9a-f]{64}$`).MatchString(created.Token) {
+  		t.Fatalf("join token format %q", created.Token)
   	}
   	var listed []map[string]any
-  	api.Must(t, "GET", "/api/v1/join-tokens", nil, &listed, http.StatusOK)
-  	for _, row := range listed {
-  		if _, has := row["token"]; has {
-  			t.Fatal("listJoinTokens must never return the token")
-  		}
+  	api.Must(http.MethodGet, "/join-tokens", nil, &listed, http.StatusOK)
+  	if len(listed) != 1 || listed[0]["state"] != "active" || listed[0]["engine_group_name"] != "edge-a" || listed[0]["max_uses"] != float64(2) {
+  		t.Fatalf("listed join tokens %+v", listed)
   	}
-  	api.Must(t, "DELETE", "/api/v1/join-tokens/"+tok.ID, nil, nil, http.StatusNoContent)
-  	api.Must(t, "GET", "/api/v1/join-tokens", nil, &listed, http.StatusOK)
-  	if len(listed) != 1 || listed[0]["state"] != "revoked" {
+  	if _, has := listed[0]["token"]; has {
+  		t.Fatal("listJoinTokens must never return the token")
+  	}
+  	api.Must(http.MethodDelete, "/join-tokens/"+created.JoinToken.ID, nil, nil, http.StatusNoContent)
+  	api.Must(http.MethodGet, "/join-tokens", nil, &listed, http.StatusOK)
+  	if listed[0]["state"] != "revoked" {
   		t.Fatalf("revoked token listing %+v", listed)
   	}
 
-  	var rb harness.Rollout
-  	if code := api.Do(t, "POST", "/api/v1/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": after + 1000}, &e); code != http.StatusNotFound || e.Code != "version_not_found" {
-  		t.Fatalf("rollback to unknown version: %d %+v", code, e)
+  	if code, c := api.ErrorCode(http.MethodPost, "/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": after + 1000}); code != http.StatusNotFound || c != "version_not_found" {
+  		t.Fatalf("rollback to an unknown version: %d %s", code, c)
   	}
-  	api.Must(t, "POST", "/api/v1/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": stable}, &rb, http.StatusAccepted)
-  	if rb.Kind != "rollback" || rb.Version <= after {
+  	if code, c := api.ErrorCode(http.MethodPost, "/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": api.LatestVersion()}); code != http.StatusBadRequest || c != "not_older" {
+  		t.Fatalf("rollback to the newest version: %d %s", code, c)
+  	}
+  	var rb harness.RolloutView
+  	api.Must(http.MethodPost, "/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": stable}, &rb, http.StatusAccepted)
+  	if rb.Kind != "rollback" || rb.Version <= after || rb.FromVersion == nil || *rb.FromVersion != stable {
   		t.Fatalf("rollback rollout %+v", rb)
   	}
-  	api.WaitRollout(t, g.ID, rb.Version, 15*time.Second, "completed")
-  	if !api.Group(t, g.ID).RolloutsPaused {
+  	api.WaitRollout(g.ID, rb.Version, 15*time.Second, "completed")
+  	if !api.EngineGroup(g.ID).RolloutsPaused {
   		t.Fatal("rollback must pause change rollouts")
   	}
-  	var resumed harness.Rollout
-  	api.Must(t, "POST", "/api/v1/engine-groups/"+g.ID+"/resume-rollouts", nil, &resumed, http.StatusAccepted)
+  	var resumed harness.RolloutView
+  	api.Must(http.MethodPost, "/engine-groups/"+g.ID+"/resume-rollouts", nil, &resumed, http.StatusAccepted)
   	if resumed.Kind != "change" || resumed.Version <= rb.Version {
   		t.Fatalf("resume rollout %+v", resumed)
   	}
-  	if code := api.Do(t, "POST", "/api/v1/engine-groups/"+g.ID+"/resume-rollouts", nil, &e); code != http.StatusConflict || e.Code != "not_paused" {
-  		t.Fatalf("resume twice: %d %+v", code, e)
+  	if code, c := api.ErrorCode(http.MethodPost, "/engine-groups/"+g.ID+"/resume-rollouts", nil); code != http.StatusConflict || c != "not_paused" {
+  		t.Fatalf("resume twice: %d %s", code, c)
   	}
 
   	var sum struct {
-  		Engines struct{ Total int } `json:"engines"`
-  		Groups  []struct {
+  		EnginesTotal int `json:"engines_total"`
+  		EngineGroups []struct {
   			Name string `json:"name"`
-  		} `json:"groups"`
+  		} `json:"engine_groups"`
   	}
-  	api.Must(t, "GET", "/api/v1/fleet/summary", nil, &sum, http.StatusOK)
-  	if sum.Engines.Total != 0 || len(sum.Groups) != 2 {
+  	api.Must(http.MethodGet, "/fleet/summary", nil, &sum, http.StatusOK)
+  	if sum.EnginesTotal != 0 || len(sum.EngineGroups) != 2 {
   		t.Fatalf("summary %+v", sum)
   	}
-  	if code := api.Do(t, "PATCH", "/api/v1/engines/"+harness.DefaultGroupID, map[string]any{"revision": 1}, &e); code != http.StatusNotFound {
-  		t.Fatalf("patch unknown engine: %d %+v", code, e)
+  	var detail map[string]any
+  	api.Must(http.MethodGet, "/rollouts/"+rb.ID, nil, &detail, http.StatusOK)
+  	if detail["state"] != "completed" || detail["engines"] == nil {
+  		t.Fatalf("rollout detail %+v", detail)
+  	}
+  	if code, _ := api.ErrorCode(http.MethodPatch, "/engines/"+harness.DefaultEngineGroupID, map[string]any{"revision": 1}); code != http.StatusNotFound {
+  		t.Fatalf("patch unknown engine: %d", code)
   	}
   }
+
+  func itoa(v int64) string { return strconv.FormatInt(v, 10) }
   ```
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/ -run TestFleetAPI -count=1 -v'` before the handlers exist and expect FAIL with `POST /api/v1/engine-groups = 404, want 201` (or 501 from the strict server stub); after the handlers above, run it again and expect `--- PASS: TestFleetAPI`.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... ./e2e/harness/ -count=1 && go test ./e2e/ -run "TestAuthRBACAuditOIDC|TestMgmtStatelessHA" -count=1'` and expect `ok` for every package and test.
-- [ ] Run `scripts/dev-exec.sh 'go test ./e2e/ -run TestGUICoverage -count=1'` and expect FAIL whose uncovered-operation list contains only operationIds introduced in this task (Task 11 adds the covering Playwright tests); any other operation in the list is a regression to fix now.
-- [ ] Commit: `git add mgmt/api/openapi.yaml mgmt/internal/api mgmt/internal/fleet mgmt/internal/auth web/src/api/schema.d.ts e2e/harness/fleet.go e2e/harness/fleet_openapi_test.go e2e/fleet_api_test.go && git commit -m "feat(api): engine groups, rollouts, fleet engines and join tokens"`.
+  (import `strconv` alongside the packages listed).
+- [ ] Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestFleetAPI -count=1 -v'` before the handlers exist and expect FAIL with `POST /engine-groups: status 404` (or `no such API route`); after the handlers, expect `--- PASS: TestFleetAPI`.
+- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/... ./e2e/harness/ -count=1 && pnpm --dir web run lint && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestAuthRBACAuditOIDC|TestMgmtStatelessHA|TestSafeSearchRewrites|TestRPZPolicy" -count=1 -timeout 20m'` and expect `ok` for every package, lint clean (permissions mirrored), and each test passing.
+- [ ] Commit: `git add mgmt/api/openapi.yaml mgmt/internal/api mgmt/internal/fleet mgmt/internal/control/jointokens.go mgmt/internal/store mgmt/internal/zone mgmt/internal/auth web/src/api/schema.d.ts web/src/auth/permissions.ts e2e/harness e2e/fleet_api_test.go && git commit -m "feat(api): engine groups, rollouts, fleet summary and engine-group scoping"`.
 
 ## Task 8: Engine lifecycle in the management plane
 
-Files: `mgmt/internal/pki/engine_cert.go` (issuance with TTL and CSR checks), `mgmt/internal/pki/engine_cert_test.go`, `mgmt/internal/fleet/join_tokens.go` (consumption rules), `mgmt/internal/fleet/join_tokens_test.go`, `mgmt/internal/control/revocation.go` (CRL-equivalent checks, revoke, rotate), `mgmt/internal/control/revocation_test.go`, `mgmt/internal/control/enroll.go` (M1 Enroll: token rules, group, labels, recorded certificate), `mgmt/internal/control/hub.go` (certificate messages on the stream), `mgmt/internal/control/server.go` (interceptors on Connect, GetBlob, LogsService), `mgmt/api/openapi.yaml` + `mgmt/internal/api/fleet_engines.go` (revoke, rotate), `mgmt/internal/auth/permissions.go` + `permissions_fleet_test.go`, `mgmt/internal/config/config.go` (`NEXORA_ENGINE_CERT_TTL`), `mgmt/cmd/nexora-mgmt/cli_fleet.go` (group, join-token, api-token, ca init --if-missing), `e2e/cli_fleet_test.go` (`TestMgmtCLIFleet`)
+Files: `mgmt/internal/fleet/jointokens.go` (join token consumption rules), `mgmt/internal/control/jointokens_test.go`, `mgmt/internal/fleet/certs.go` (certificate records, checks, revocation, rotation), `mgmt/internal/control/tls.go` (verified leaf certificate), `mgmt/internal/control/server.go` (`Enroll` with group and labels, `Authenticate`, renewal on the stream, `EngineCertTTL`), `mgmt/internal/control/lifecycle_test.go`, `mgmt/internal/querylog/builtin.go` (`Authenticate` hook), `mgmt/api/openapi.yaml` and regenerated `mgmt/internal/api/gen.go` / `web/src/api/schema.d.ts` (`revokeEngine`, `rotateEngineCertificate`), `mgmt/internal/api/fleet_engines.go` (revoke, rotate, delete revokes), `mgmt/internal/auth/permissions.go`, `mgmt/internal/auth/permissions_fleet_test.go`, `web/src/auth/permissions.ts`, `mgmt/internal/config/config.go` and `config_test.go` (`NEXORA_ENGINE_CERT_TTL`), `mgmt/internal/pki/pki.go` (`FingerprintFile`), `mgmt/cmd/nexora-mgmt/fleet_cli.go` (`engine-group create`, `join-token create`), `mgmt/cmd/nexora-mgmt/main.go` (usage, `ca init --if-missing`, wiring), `e2e/cli_fleet_test.go` (`TestMgmtCLIFleet`)
 Interfaces:
+
 ```go
-package pki
-var ErrCSRSubject = errors.New("pki: CSR common name does not match engine id")
-var ErrCertTTL = errors.New("pki: engine certificate TTL must be at least 30s")
-func (ca *CA) IssueEngineCert(csrDER []byte, engineID uuid.UUID, ttl time.Duration, now time.Time) (certDER []byte, serialHex string, err error)
-
 package fleet
-var ErrJoinTokenUnknown, ErrJoinTokenExpired, ErrJoinTokenExhausted, ErrJoinTokenRevoked error // messages "join token unknown|expired|exhausted|revoked"
-type JoinTokenGrant struct { ID, GroupID uuid.UUID; Labels map[string]string }
-func CreateJoinToken(ctx context.Context, q Querier, caSHA256Hex string, groupID uuid.UUID, ttl time.Duration, maxUses int, labels map[string]string) (token string, id uuid.UUID, err error)
-func ConsumeJoinToken(ctx context.Context, tx pgx.Tx, token string) (JoinTokenGrant, error)
-
-package control
-type RevocationChecker struct { /* pool, cache ttl, cache */ }
-func NewRevocationChecker(pool *pgxpool.Pool, cacheTTL time.Duration) *RevocationChecker
-func (rc *RevocationChecker) CheckConnect(ctx context.Context, cert *x509.Certificate) error // status PermissionDenied "certificate revoked" / Unauthenticated "unknown engine"
-func (rc *RevocationChecker) Check(ctx context.Context, cert *x509.Certificate) error        // cached variant for GetBlob / LogsService
-func (rc *RevocationChecker) Invalidate(engineID uuid.UUID)
-func RecordCertificate(ctx context.Context, q fleet.Querier, engineID uuid.UUID, cert *x509.Certificate) error
+var ErrJoinTokenUnknown, ErrJoinTokenExpired, ErrJoinTokenExhausted, ErrJoinTokenRevoked error // "join token unknown|expired|exhausted|revoked"
+type JoinTokenGrant struct { ID, EngineGroupID uuid.UUID; Labels map[string]string }
+func ConsumeJoinToken(ctx context.Context, tx pgx.Tx, secret string) (JoinTokenGrant, error)
+var ErrUnknownEngine = errors.New("unknown or deleted engine")
+var ErrCertificateRevoked = errors.New("certificate revoked")
+var ErrEngineRevoked = errors.New("engine is revoked")
+func RecordCertificate(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, certDER []byte) error
+func CheckCertificate(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, serialHex string) error
+func SupersedeOlderCertificates(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, serialHex string) error
 func RevokeEngine(ctx context.Context, tx pgx.Tx, engineID uuid.UUID) error
 func RequestRotation(ctx context.Context, tx pgx.Tx, engineID uuid.UUID) error
+
+package control
+func PeerCertificate(ctx context.Context) (*x509.Certificate, error)
+func (s *Server) Authenticate(ctx context.Context) (string, error)
+// Server gains: EngineCertTTL time.Duration (0 = pki.EngineCertValidity)
+
+package pki
+func FingerprintFile(certFile string) (string, error)
 ```
+
 operationIds `revokeEngine` (admin), `rotateEngineCertificate` (admin).
 
-- [ ] Record the M1 spellings this task touches: run `scripts/dev-exec.sh 'grep -n "func InitCA\|func LoadCA\|func (ca \*CA)" mgmt/internal/pki/*.go; grep -A12 "CREATE TABLE join_tokens" mgmt/migrations/*.sql; grep -rn "AdminUsername" e2e/harness | head -3'` and expect `InitCA(outDir string) error`, `LoadCA(certFile, keyFile string) (*CA, error)`, a `join_tokens` column holding the SHA-256 of the secret (this task writes it as `secret_sha256 bytea`), and a harness constant `AdminUsername`. Use the spellings found wherever this task writes those names.
-- [ ] Write the failing test `mgmt/internal/pki/engine_cert_test.go`:
+- [ ] Write the failing test `mgmt/internal/control/jointokens_test.go`:
   ```go
-  package pki_test
+  package control_test
 
   import (
-  	"crypto/ecdsa"
-  	"crypto/elliptic"
-  	"crypto/rand"
-  	"crypto/x509"
-  	"crypto/x509/pkix"
+  	"context"
   	"errors"
   	"path/filepath"
   	"testing"
   	"time"
 
   	"github.com/google/uuid"
+  	"github.com/jackc/pgx/v5"
 
+  	"github.com/piwi3910/nexora/mgmt/internal/control"
+  	"github.com/piwi3910/nexora/mgmt/internal/fleet"
   	"github.com/piwi3910/nexora/mgmt/internal/pki"
+  	"github.com/piwi3910/nexora/mgmt/internal/store"
+  	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
   )
 
-  func csrFor(t *testing.T, cn string) []byte {
-  	t.Helper()
-  	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: cn}}, key)
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	return der
-  }
-
-  func TestIssueEngineCert(t *testing.T) {
+  func TestConsumeJoinToken(t *testing.T) {
+  	ctx := context.Background()
+  	st := storetest.New(t)
   	dir := t.TempDir()
   	if err := pki.InitCA(dir); err != nil {
   		t.Fatal(err)
@@ -3268,259 +2976,259 @@ operationIds `revokeEngine` (admin), `rotateEngineCertificate` (admin).
   	if err != nil {
   		t.Fatal(err)
   	}
-  	id := uuid.New()
-  	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
-
-  	der, serial, err := ca.IssueEngineCert(csrFor(t, id.String()), id, 45*time.Second, now)
-  	if err != nil {
-  		t.Fatalf("issue: %v", err)
-  	}
-  	cert, err := x509.ParseCertificate(der)
-  	if err != nil {
+  	var edge uuid.UUID
+  	if err := st.Pool.QueryRow(ctx, `insert into engine_groups (name) values ('edge') returning id`).Scan(&edge); err != nil {
   		t.Fatal(err)
   	}
-  	if cert.Subject.CommonName != id.String() || serial != cert.SerialNumber.Text(16) {
-  		t.Fatalf("cn %q serial %q/%q", cert.Subject.CommonName, serial, cert.SerialNumber.Text(16))
-  	}
-  	if !cert.NotBefore.Equal(now.Add(-5*time.Second)) || !cert.NotAfter.Equal(now.Add(45*time.Second)) {
-  		t.Fatalf("validity %s .. %s", cert.NotBefore, cert.NotAfter)
-  	}
-  	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
-  		t.Fatalf("ext key usage %v, want client auth only", cert.ExtKeyUsage)
-  	}
-  	_, serial2, _ := ca.IssueEngineCert(csrFor(t, id.String()), id, time.Hour, now)
-  	if serial2 == serial {
-  		t.Fatal("serials must be unique")
-  	}
-
-  	if _, _, err := ca.IssueEngineCert(csrFor(t, uuid.NewString()), id, time.Hour, now); !errors.Is(err, pki.ErrCSRSubject) {
-  		t.Fatalf("foreign CN: err = %v", err)
-  	}
-  	bad := csrFor(t, id.String())
-  	bad[len(bad)-3] ^= 0xff
-  	if _, _, err := ca.IssueEngineCert(bad, id, time.Hour, now); err == nil {
-  		t.Fatal("tampered CSR accepted")
-  	}
-  	if _, _, err := ca.IssueEngineCert(csrFor(t, id.String()), id, 29*time.Second, now); !errors.Is(err, pki.ErrCertTTL) {
-  		t.Fatalf("short TTL: err = %v", err)
-  	}
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/pki/ -run TestIssueEngineCert -count=1` and expect FAIL with `ca.IssueEngineCert undefined`.
-- [ ] Implement `IssueEngineCert` in `mgmt/internal/pki/engine_cert.go`: parse the CSR (`x509.ParseCertificateRequest`), `csr.CheckSignature()`, require `csr.PublicKey` to be ECDSA P-256 (else `pki: engine key must be ECDSA P-256`), require CN == `engineID.String()` (`ErrCSRSubject`), `ttl < 30*time.Second` -> `ErrCertTTL`; serial = 128 random bits (`rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))`, retried when zero); template `NotBefore: now.Add(-5 * time.Second)`, `NotAfter: now.Add(ttl)`, `KeyUsage: x509.KeyUsageDigitalSignature`, `ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}`, `Subject.CommonName: engineID.String()`; sign with the CA key. Make M1's Enroll issuance call this function. Run the test and expect `ok`.
-- [ ] Write the failing test `mgmt/internal/fleet/join_tokens_test.go`:
-  ```go
-  package fleet_test
-
-  import (
-  	"context"
-  	"errors"
-  	"strings"
-  	"testing"
-  	"time"
-
-  	"github.com/piwi3910/nexora/mgmt/internal/fleet"
-  	"github.com/piwi3910/nexora/mgmt/internal/store"
-  	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
-  )
-
-  func TestConsumeJoinToken(t *testing.T) {
-  	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	ca := strings.Repeat("ab", 32)
-  	consume := func(tok string) (fleet.JoinTokenGrant, error) {
-  		tx, err := db.Begin(ctx)
+  	two := 2
+  	create := func(spec control.JoinTokenSpec) (string, string) {
+  		var id, secret string
+  		err := st.InTx(ctx, func(tx pgx.Tx) error {
+  			jt, token, err := control.CreateJoinTokenFor(ctx, tx, ca, spec)
+  			id = jt.ID
+  			secret, _, _ = pki.ParseJoinToken(token)
+  			return err
+  		})
   		if err != nil {
   			t.Fatal(err)
   		}
-  		defer tx.Rollback(ctx)
-  		g, err := fleet.ConsumeJoinToken(ctx, tx, tok)
-  		if err == nil {
-  			_ = tx.Commit(ctx)
-  		}
+  		return id, secret
+  	}
+  	consume := func(secret string) (fleet.JoinTokenGrant, error) {
+  		var g fleet.JoinTokenGrant
+  		err := st.InTx(ctx, func(tx pgx.Tx) error {
+  			var err error
+  			g, err = fleet.ConsumeJoinToken(ctx, tx, secret)
+  			return err
+  		})
   		return g, err
   	}
 
-  	tok, id, err := fleet.CreateJoinToken(ctx, db, ca, store.DefaultGroupID, time.Hour, 2, map[string]string{"site": "lab"})
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	if !strings.HasPrefix(tok, "nxj1.") || !strings.HasSuffix(tok, "."+ca) {
-  		t.Fatalf("token format %q", tok)
-  	}
+  	_, secret := create(control.JoinTokenSpec{Name: "edge", CreatedBy: "t", TTL: time.Hour, EngineGroupID: edge, MaxUses: &two, Labels: map[string]string{"site": "lab"}})
   	for i := 0; i < 2; i++ {
-  		g, err := consume(tok)
-  		if err != nil || g.ID != id || g.GroupID != store.DefaultGroupID || g.Labels["site"] != "lab" {
+  		g, err := consume(secret)
+  		if err != nil || g.EngineGroupID != edge || g.Labels["site"] != "lab" {
   			t.Fatalf("use %d: %+v %v", i+1, g, err)
   		}
   	}
-  	if _, err := consume(tok); !errors.Is(err, fleet.ErrJoinTokenExhausted) {
+  	if _, err := consume(secret); !errors.Is(err, fleet.ErrJoinTokenExhausted) || err.Error() != "join token exhausted" {
   		t.Fatalf("third use: %v", err)
   	}
 
-  	exp, expID, _ := fleet.CreateJoinToken(ctx, db, ca, store.DefaultGroupID, time.Hour, 5, nil)
-  	if _, err := db.Exec(ctx, `UPDATE join_tokens SET expires_at = now() - interval '1 second' WHERE id = $1`, expID); err != nil {
+  	_, unlimited := create(control.JoinTokenSpec{Name: "fleet", CreatedBy: "t", TTL: time.Hour, EngineGroupID: store.DefaultEngineGroupID})
+  	for i := 0; i < 5; i++ {
+  		if _, err := consume(unlimited); err != nil {
+  			t.Fatalf("unlimited token use %d: %v", i+1, err)
+  		}
+  	}
+  	expID, expired := create(control.JoinTokenSpec{Name: "old", CreatedBy: "t", TTL: time.Hour, EngineGroupID: edge})
+  	if _, err := st.Pool.Exec(ctx, `update join_tokens set expires_at = now() - interval '1 second' where id = $1`, expID); err != nil {
   		t.Fatal(err)
   	}
-  	if _, err := consume(exp); !errors.Is(err, fleet.ErrJoinTokenExpired) || err.Error() != "join token expired" {
+  	if _, err := consume(expired); !errors.Is(err, fleet.ErrJoinTokenExpired) || err.Error() != "join token expired" {
   		t.Fatalf("expired: %v", err)
   	}
-  	rev, revID, _ := fleet.CreateJoinToken(ctx, db, ca, store.DefaultGroupID, time.Hour, 5, nil)
-  	_, _ = db.Exec(ctx, `UPDATE join_tokens SET revoked_at = now() WHERE id = $1`, revID)
-  	if _, err := consume(rev); !errors.Is(err, fleet.ErrJoinTokenRevoked) {
+  	revID, revoked := create(control.JoinTokenSpec{Name: "revoked", CreatedBy: "t", TTL: time.Hour, EngineGroupID: edge})
+  	if _, err := st.Pool.Exec(ctx, `update join_tokens set revoked_at = now() where id = $1`, revID); err != nil {
+  		t.Fatal(err)
+  	}
+  	if _, err := consume(revoked); !errors.Is(err, fleet.ErrJoinTokenRevoked) {
   		t.Fatalf("revoked: %v", err)
   	}
-  	if _, err := consume("nxj1.AAAAAAAA." + ca); !errors.Is(err, fleet.ErrJoinTokenUnknown) {
+  	if _, err := consume("AAAAAAAA"); !errors.Is(err, fleet.ErrJoinTokenUnknown) || err.Error() != "join token unknown" {
   		t.Fatalf("unknown: %v", err)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/fleet/ -run TestConsumeJoinToken -count=1` and expect FAIL with `undefined: fleet.ConsumeJoinToken`.
-- [ ] Implement `mgmt/internal/fleet/join_tokens.go`. `CreateJoinToken` validates labels, TTL (60 s .. 30 d) and max uses (1 .. 10000), generates the secret (32 random bytes, `base32.StdEncoding.WithPadding(base32.NoPadding)`), stores `sha256(secret)`, returns `nxj1.<secret>.<caSHA256Hex>`. `ConsumeJoinToken` parses the three dot-separated parts (malformed -> `ErrJoinTokenUnknown`) and runs:
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestConsumeJoinToken -count=1` and expect FAIL with `undefined: fleet.ConsumeJoinToken`.
+- [ ] Create `mgmt/internal/fleet/jointokens.go`: the four errors are `errors.New` with exactly the messages above; `ConsumeJoinToken` runs
   ```sql
-  UPDATE join_tokens SET uses = uses + 1
-  WHERE secret_sha256 = $1 AND revoked_at IS NULL AND expires_at > now() AND uses < max_uses
-  RETURNING id, group_id, labels;
+  update join_tokens set uses = uses + 1
+  where secret_hash = $1 and revoked_at is null and expires_at > now() and (max_uses is null or uses < max_uses)
+  returning id, engine_group_id, labels;
   ```
-  When no row returns it classifies with `SELECT revoked_at IS NOT NULL, expires_at <= now(), uses >= max_uses FROM join_tokens WHERE secret_sha256 = $1` in the order revoked, expired, exhausted; no row -> unknown. The API handler `createJoinToken` from Task 7 calls `CreateJoinToken`. Run the test and expect `ok`.
-- [ ] Write the failing test `mgmt/internal/control/revocation_test.go`:
+  with `pki.HashSecret(secret)`; when no row returns it classifies with `select revoked_at is not null, expires_at <= now(), max_uses is not null and uses >= max_uses from join_tokens where secret_hash = $1` in the order revoked, expired, exhausted; no row -> `ErrJoinTokenUnknown`. Remove `lookupJoinToken` from `mgmt/internal/control/jointokens.go`. Run the test and expect `ok`.
+- [ ] Write the failing test `mgmt/internal/control/lifecycle_test.go`:
   ```go
   package control_test
 
   import (
-  	"context"
   	"crypto/ecdsa"
   	"crypto/elliptic"
   	"crypto/rand"
+  	"crypto/tls"
   	"crypto/x509"
   	"crypto/x509/pkix"
-  	"math/big"
   	"testing"
   	"time"
 
   	"github.com/google/uuid"
+  	"github.com/jackc/pgx/v5"
+  	"google.golang.org/grpc"
   	"google.golang.org/grpc/codes"
+  	"google.golang.org/grpc/credentials"
   	"google.golang.org/grpc/status"
 
+  	"github.com/piwi3910/nexora/e2e/harness"
+  	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
   	"github.com/piwi3910/nexora/mgmt/internal/control"
-  	"github.com/piwi3910/nexora/mgmt/internal/store"
-  	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
+  	"github.com/piwi3910/nexora/mgmt/internal/fleet"
   )
 
-  func leaf(t *testing.T, id uuid.UUID, serial int64) *x509.Certificate {
+  func recvMsg(t *testing.T, s controlv1.EngineControl_ConnectClient, within time.Duration) (*controlv1.ServerMessage, error) {
+  	t.Helper()
+  	type res struct {
+  		m   *controlv1.ServerMessage
+  		err error
+  	}
+  	ch := make(chan res, 1)
+  	go func() { m, err := s.Recv(); ch <- res{m, err} }()
+  	select {
+  	case r := <-ch:
+  		return r.m, r.err
+  	case <-time.After(within):
+  		t.Fatalf("no server message within %s", within)
+  	}
+  	return nil, nil
+  }
+
+  func csrFor(t *testing.T, cn string) ([]byte, *ecdsa.PrivateKey) {
   	t.Helper()
   	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-  	tpl := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: id.String()},
-  		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour)}
-  	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+  	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: cn}}, key)
   	if err != nil {
   		t.Fatal(err)
   	}
-  	c, _ := x509.ParseCertificate(der)
-  	return c
+  	return der, key
   }
 
-  func wantCode(t *testing.T, err error, code codes.Code, msg string) {
-  	t.Helper()
-  	if s, _ := status.FromError(err); s.Code() != code || s.Message() != msg {
-  		t.Fatalf("err = %v, want %s %q", err, code, msg)
-  	}
+  func blobCode(c controlv1.EngineControlClient, f *fixture) codes.Code {
+  	_, err := mustRecvErr(c, f.ctx)
+  	return status.Code(err)
   }
 
-  func TestRevocationChecker(t *testing.T) {
-  	ctx := context.Background()
-  	db := storetest.NewDB(t)
-  	id := storetest.InsertEngine(t, db, "a", store.DefaultGroupID)
-  	old, cur := leaf(t, id, 0xa1), leaf(t, id, 0xb2)
-  	rc := control.NewRevocationChecker(db, 5*time.Second)
-
-  	if err := rc.CheckConnect(ctx, old); err != nil {
-  		t.Fatalf("pre-M5 certificate must be accepted and recorded: %v", err)
-  	}
-  	var n int
-  	_ = db.QueryRow(ctx, `SELECT count(*) FROM engine_certificates WHERE serial = 'a1' AND engine_id = $1`, id).Scan(&n)
-  	if n != 1 {
-  		t.Fatalf("recorded rows = %d", n)
-  	}
-
-  	time.Sleep(10 * time.Millisecond)
-  	if err := control.RecordCertificate(ctx, db, id, cur); err != nil {
+  func TestCertificateRenewalRotationAndRevocation(t *testing.T) {
+  	f := setupServers(t, 1, nil, func(s *control.Server) { s.EngineCertTTL = time.Hour })
+  	oldClient, id := f.enroll(t, f.addr[0])
+  	var oldSerial string
+  	if err := f.st.Pool.QueryRow(f.ctx, `select certificate_serial from engines where id = $1`, id).Scan(&oldSerial); err != nil {
   		t.Fatal(err)
   	}
-  	if err := rc.CheckConnect(ctx, cur); err != nil {
-  		t.Fatalf("renewed certificate: %v", err)
+  	if c := blobCode(oldClient, f); c != codes.NotFound {
+  		t.Fatalf("enrolled engine GetBlob -> %v, want NotFound (authenticated)", c)
   	}
-  	wantCode(t, rc.CheckConnect(ctx, old), codes.PermissionDenied, "certificate revoked")
-  	var reason string
-  	_ = db.QueryRow(ctx, `SELECT revoke_reason FROM engine_certificates WHERE serial = 'a1'`).Scan(&reason)
-  	if reason != "superseded" {
-  		t.Fatalf("old serial reason %q, want superseded", reason)
+  	stream, _ := oldClient.Connect(f.ctx)
+  	_ = stream.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Hello{Hello: &controlv1.Hello{EngineId: id, NodeName: "life-1"}}})
+  	if m, err := recvMsg(t, stream, 3*time.Second); err != nil || m.GetSnapshot() == nil {
+  		t.Fatalf("initial snapshot: %v %v", m, err)
   	}
 
-  	if err := rc.Check(ctx, cur); err != nil { // warms the cache
+  	if err := f.st.InTx(f.ctx, func(tx pgx.Tx) error { return fleet.RequestRotation(f.ctx, tx, uuid.MustParse(id)) }); err != nil {
   		t.Fatal(err)
   	}
-  	tx, _ := db.Begin(ctx)
-  	if err := control.RevokeEngine(ctx, tx, id); err != nil {
-  		t.Fatal(err)
+  	if m, err := recvMsg(t, stream, 3*time.Second); err != nil || m.GetRenewCertificate().GetReason() != controlv1.CertificateRequest_REASON_ROTATE {
+  		t.Fatalf("rotation request: %v %v", m, err)
   	}
-  	_ = tx.Commit(ctx)
-  	wantCode(t, rc.CheckConnect(ctx, cur), codes.PermissionDenied, "certificate revoked")
-  	rc.Invalidate(id)
-  	wantCode(t, rc.Check(ctx, cur), codes.PermissionDenied, "certificate revoked")
+  	foreign, _ := csrFor(t, uuid.NewString())
+  	_ = stream.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_CertRequest{CertRequest: &controlv1.CertificateRequest{CsrDer: foreign, Reason: controlv1.CertificateRequest_REASON_ROTATE}}})
+  	csr, key := csrFor(t, id)
+  	_ = stream.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_CertRequest{CertRequest: &controlv1.CertificateRequest{CsrDer: csr, Reason: controlv1.CertificateRequest_REASON_ROTATE}}})
+  	m, err := recvMsg(t, stream, 3*time.Second)
+  	if err != nil || m.GetCertIssued() == nil {
+  		t.Fatalf("certificate issued: %v %v (a CSR with a foreign CN must get no answer)", m, err)
+  	}
+  	cert, err := x509.ParseCertificate(m.GetCertIssued().CertDer)
+  	if err != nil || cert.Subject.CommonName != id || cert.SerialNumber.Text(16) == oldSerial || time.Until(cert.NotAfter) > time.Hour+time.Minute {
+  		t.Fatalf("issued certificate %v err %v", cert, err)
+  	}
+  	harness.Eventually(t, 3*time.Second, func() error { return expectEngine(f, id, "cert_rotate_requested_at is null", true) })
 
-  	wantCode(t, rc.CheckConnect(ctx, leaf(t, uuid.New(), 0xc3)), codes.Unauthenticated, "unknown engine")
-  	other := storetest.InsertEngine(t, db, "b", store.DefaultGroupID)
-  	stolen := leaf(t, other, 0xb2) // serial registered to engine a
-  	wantCode(t, rc.CheckConnect(ctx, stolen), codes.PermissionDenied, "certificate revoked")
+  	conn, _ := grpc.NewClient(f.addr[0], grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: f.ca.Pool(), ServerName: "127.0.0.1",
+  		Certificates: []tls.Certificate{{Certificate: [][]byte{m.GetCertIssued().CertDer}, PrivateKey: key}}})))
+  	t.Cleanup(func() { conn.Close() })
+  	newClient := controlv1.NewEngineControlClient(conn)
+  	renewed, _ := newClient.Connect(f.ctx)
+  	_ = renewed.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Hello{Hello: &controlv1.Hello{EngineId: id, NodeName: "life-1", AppliedVersion: 1}}})
+  	harness.Eventually(t, 3*time.Second, func() error {
+  		return expectRow(f, "select revoke_reason from engine_certificates where serial = '"+oldSerial+"'", "superseded")
+  	})
+  	if c := blobCode(oldClient, f); c != codes.PermissionDenied {
+  		t.Fatalf("superseded certificate GetBlob -> %v, want PermissionDenied", c)
+  	}
+  	if c := blobCode(newClient, f); c != codes.NotFound {
+  		t.Fatalf("renewed certificate GetBlob -> %v, want NotFound", c)
+  	}
+
+  	if err := f.st.InTx(f.ctx, func(tx pgx.Tx) error { return fleet.RevokeEngine(f.ctx, tx, uuid.MustParse(id)) }); err != nil {
+  		t.Fatal(err)
+  	}
+  	for {
+  		_, err := recvMsg(t, renewed, 3*time.Second)
+  		if err == nil {
+  			continue
+  		}
+  		if s, _ := status.FromError(err); s.Code() != codes.PermissionDenied || s.Message() != "certificate revoked" {
+  			t.Fatalf("stream end after revocation: %v", err)
+  		}
+  		break
+  	}
+  	if c := blobCode(newClient, f); c != codes.PermissionDenied {
+  		t.Fatalf("revoked engine GetBlob -> %v, want PermissionDenied", c)
+  	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestRevocationChecker -count=1` and expect FAIL with `undefined: control.NewRevocationChecker`.
-- [ ] Implement `mgmt/internal/control/revocation.go`:
-  - Engine id = `uuid.Parse(cert.Subject.CommonName)`; parse failure or no `engines` row -> `status.Error(codes.Unauthenticated, "unknown engine")`.
-  - `CheckConnect` runs, in one transaction:
-    ```sql
-    SELECT e.revoked_at IS NOT NULL FROM engines e WHERE e.id = $1;
-    INSERT INTO engine_certificates (serial, engine_id, not_before, not_after)
-    VALUES ($2, $1, $3, $4) ON CONFLICT (serial) DO NOTHING;
-    SELECT engine_id, revoked_at IS NOT NULL, issued_at FROM engine_certificates WHERE serial = $2;
-    UPDATE engine_certificates SET revoked_at = now(), revoke_reason = 'superseded'
-    WHERE engine_id = $1 AND revoked_at IS NULL AND issued_at < $5;   -- $5 = issued_at of this serial
-    ```
-    denied (`PermissionDenied`, `certificate revoked`) when the engine is revoked, the serial is revoked, or the serial belongs to another engine; the superseding UPDATE runs only when allowed.
-  - `Check` caches `(serial -> allowed, expiry)` for `cacheTTL`, calls `CheckConnect` on a miss, and `Invalidate(engineID)` drops every cached serial of that engine. A LISTEN on `nexora_engine_revoked` and `nexora_engine_rotate` calls `Invalidate`.
-  - `RecordCertificate` inserts the row (`issued_at = now()`).
-  - `RevokeEngine`: `UPDATE engines SET revoked_at = now(), revision = revision + 1 WHERE id = $1 AND revoked_at IS NULL`; `UPDATE engine_certificates SET revoked_at = now(), revoke_reason = 'revoked' WHERE engine_id = $1 AND revoked_at IS NULL`; `pg_notify('nexora_engine_revoked', $1)`.
-  - `RequestRotation`: revoked engine -> `ErrEngineRevoked`; `UPDATE engines SET cert_rotate_requested_at = now() WHERE id = $1`; `pg_notify('nexora_engine_rotate', $1)`.
-  Run the test and expect `ok`.
-- [ ] Wire the checks and stream messages:
-  - `mgmt/internal/control/server.go`: a stream interceptor calls `CheckConnect` for `/nexora.control.v1.EngineControl/Connect` and `Check` for `GetBlob` and the OTLP `LogsService/Export`, using the verified leaf from `peer.FromContext(ctx).AuthInfo.(credentials.TLSInfo).State.VerifiedChains[0][0]`.
-  - `mgmt/internal/control/enroll.go`: `fleet.ConsumeJoinToken` in the enroll transaction; its error text becomes `status.Error(codes.Unauthenticated, err.Error())`; the new engine row gets `group_id` and `labels` from the grant; the certificate is issued with `cfg.EngineCertTTL` and `RecordCertificate` is called in the same transaction.
-  - `mgmt/internal/control/hub.go`: on `CertificateRequest` from a session: at most one issuance per engine per 10 s (extra requests are ignored with a warning); `ca.IssueEngineCert(csr_der, sessionEngineID, cfg.EngineCertTTL, time.Now())`; `RecordCertificate`; `UPDATE engines SET cert_rotate_requested_at = NULL WHERE id = $1`; reply `CertificateIssued{cert_der, ca_der}`; issuance errors are logged and answered with nothing (the engine retries at its next check). On `Hello`, when `cert_rotate_requested_at IS NOT NULL`, send `RenewCertificate{reason: REASON_ROTATE}`; a LISTEN on `nexora_engine_rotate` sends it to the local session; a LISTEN on `nexora_engine_revoked` ends the local session's stream with `status.Error(codes.PermissionDenied, "certificate revoked")`.
-  - `mgmt/internal/config/config.go`: `EngineCertTTL` from `NEXORA_ENGINE_CERT_TTL` (default `2160h`; below `30s` startup fails with `NEXORA_ENGINE_CERT_TTL must be at least 30s`).
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestCertificateRenewalRotationAndRevocation -count=1` and expect FAIL with `s.EngineCertTTL undefined`.
+- [ ] Create `mgmt/internal/fleet/certs.go`:
+  - `RecordCertificate`: parse `certDER`; `insert into engine_certificates (serial, engine_id, not_before, not_after) values (lower($1), $2, $3, $4) on conflict (serial) do nothing`; `update engines set certificate_serial = lower($1) where id = $2`.
+  - `CheckCertificate`: `select e.deleted_at is not null, e.revoked_at is not null, c.engine_id, c.revoked_at is not null from engines e left join engine_certificates c on c.serial = lower($2) where e.id = $1`; no row or deleted -> `ErrUnknownEngine`; engine revoked, no certificate row, certificate revoked, or `c.engine_id <> e.id` -> `ErrCertificateRevoked`.
+  - `SupersedeOlderCertificates`: `update engine_certificates set revoked_at = now(), revoke_reason = 'superseded' where engine_id = $1 and revoked_at is null and issued_at < (select issued_at from engine_certificates where serial = lower($2))`.
+  - `RevokeEngine`: `update engines set revoked_at = coalesce(revoked_at, now()), revision = revision + 1 where id = $1 and deleted_at is null` (no row -> `store.ErrNotFound`); `update engine_certificates set revoked_at = now(), revoke_reason = 'revoked' where engine_id = $1 and revoked_at is null`; `select pg_notify('nexora_engine_revoked', $1::text)`.
+  - `RequestRotation`: revoked engine -> `ErrEngineRevoked`; `update engines set cert_rotate_requested_at = now() where id = $1`; `select pg_notify('nexora_engine_rotate', $1::text)`.
+- [ ] Change `mgmt/internal/control`:
+  - `tls.go`: `PeerCertificate(ctx)` returns `VerifiedChains[0][0]` (or `Unauthenticated` `client certificate required`); `EngineID` uses it.
+  - `server.go`: rename `engine(ctx)` to exported `Authenticate(ctx)`: `PeerCertificate`, UUID check as today, then `fleet.CheckCertificate(ctx, s.st.Pool, id, cert.SerialNumber.Text(16))` mapped to `status.Error(codes.PermissionDenied, "unknown or deleted engine")` / `status.Error(codes.PermissionDenied, "certificate revoked")`; `Connect` and `GetBlob` call it; `Connect` then runs `fleet.SupersedeOlderCertificates` for the presented serial.
+  - `Enroll`: replace `lookupJoinToken` with `fleet.ConsumeJoinToken` (errors -> `status.Error(codes.PermissionDenied, err.Error())`); insert the engine with `engine_group_id` and `labels` from the grant (drop the separate `uses + 1` update); sign with `s.certTTL()` (`EngineCertTTL`, or `pki.EngineCertValidity` when zero); `fleet.RecordCertificate` in the same transaction.
+  - `receive`: `case *controlv1.EngineMessage_CertRequest: s.renew(ctx, sub, m.CertRequest)`: at most one issuance per engine per 10 s (`subscriber.lastIssued`; extra requests logged `certificate request ignored: rate limited`); `x509.ParseCertificateRequest` and subject CN equal to the engine id, else log `certificate request refused: <reason>` and answer nothing; `s.ca.SignEngineCSR(csr, sub.engineID, s.certTTL())`; `fleet.RecordCertificate`; `update engines set cert_rotate_requested_at = null where id = $1`; queue `CertificateIssued{CertDer: der, CaDer: s.ca.Cert.Raw}` on `sub.control`.
+- [ ] Change `mgmt/internal/querylog/builtin.go`: `Builtin` gains `Authenticate func(context.Context) (string, error)`; `Export` uses it when set, else `control.EngineID`. In `serve` of `mgmt/cmd/nexora-mgmt/main.go` set `builtinLog.Authenticate = controlServer.Authenticate` and `controlServer.EngineCertTTL = cfg.EngineCertTTL`.
+- [ ] Add `EngineCertTTL time.Duration` to `mgmt/internal/config/config.go` from `NEXORA_ENGINE_CERT_TTL` (default `2160h`; below `30s` or unparsable -> `NEXORA_ENGINE_CERT_TTL must be a duration of at least 30s`) with a `config_test.go` case for `10s`.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ ./mgmt/internal/querylog/ ./mgmt/internal/config/ -count=1` and expect `ok` (including every M1–M4 control test: M1 certificates were backfilled into `engine_certificates`, and new enrollments record theirs).
 - [ ] Add to `mgmt/api/openapi.yaml`:
   ```yaml
-  paths:
-    /engines/{engineId}/revoke:
-      parameters: [{ name: engineId, in: path, required: true, schema: { type: string, format: uuid } }]
-      post:
-        operationId: revokeEngine
-        tags: [fleet]
-        responses:
-          "200": { description: Engine revoked; its streams are closed, content: { application/json: { schema: { $ref: "#/components/schemas/Engine" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
-    /engines/{engineId}/rotate-certificate:
-      parameters: [{ name: engineId, in: path, required: true, schema: { type: string, format: uuid } }]
-      post:
-        operationId: rotateEngineCertificate
-        tags: [fleet]
-        responses:
-          "202": { description: Rotation requested, content: { application/json: { schema: { $ref: "#/components/schemas/Engine" } } } }
-          "404": { $ref: "#/components/responses/Error" }
-          "409": { $ref: "#/components/responses/Error" }
+  /engines/{id}/revoke:
+    post:
+      operationId: revokeEngine
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: revoked; its streams are closed,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Engine" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engines/{id}/rotate-certificate:
+    post:
+      operationId: rotateEngineCertificate
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "202":
+          {
+            description: rotation requested,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Engine" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   ```
-  Handlers: `revokeEngine` runs `RevokeEngine` + audit (already revoked -> 409 `engine_revoked`); `rotateEngineCertificate` runs `RequestRotation` + audit (revoked -> 409 `engine_revoked`). Add `"revokeEngine": RoleAdmin, "rotateEngineCertificate": RoleAdmin` to both `Permissions` and the `want` map in `permissions_fleet_test.go`. Run `scripts/dev-exec.sh 'make proto && pnpm --dir web run gen:api && go test ./mgmt/... -count=1'` and expect `ok`.
+  Handlers in `mgmt/internal/api/fleet_engines.go` (both through `h.audited`): `revokeEngine` -> already revoked `coded(409, "engine_revoked", ...)`, else `fleet.RevokeEngine`, 200; `rotateEngineCertificate` -> `fleet.ErrEngineRevoked` maps to 409 `engine_revoked`, else 202. `deleteEngine` now runs `fleet.RevokeEngine` before setting `deleted_at`. Add `"revokeEngine": RoleAdmin, "rotateEngineCertificate": RoleAdmin` to `Permissions`, to `web/src/auth/permissions.ts` and to the `want` map of `permissions_fleet_test.go`. On the laptop run `make proto`.
+- [ ] Add `func FingerprintFile(certFile string) (string, error)` to `mgmt/internal/pki/pki.go` (PEM certificate -> lowercase hex SHA-256 of its DER, like `(*CA).Fingerprint`).
 - [ ] Write the failing black-box CLI test `e2e/cli_fleet_test.go`:
   ```go
   package e2e
@@ -3531,102 +3239,100 @@ operationIds `revokeEngine` (admin), `rotateEngineCertificate` (admin).
   	"net/http"
   	"os"
   	"os/exec"
-  	"path/filepath"
   	"regexp"
   	"strings"
   	"testing"
+  	"time"
 
   	"github.com/piwi3910/nexora/e2e/harness"
   )
 
-  func mgmtCLI(t *testing.T, f *harness.Fleet, args ...string) (string, string, error) {
-  	t.Helper()
-  	dir := os.Getenv("NEXORA_E2E_BIN_DIR")
-  	if dir == "" {
-  		dir = "../bin"
-  	}
-  	cmd := exec.Command(filepath.Join(dir, "nexora-mgmt"), args...)
-  	cmd.Env = append(os.Environ(),
-  		"NEXORA_DATABASE_URL="+f.DB.URL,
-  		"NEXORA_CA_CERT_FILE="+filepath.Join(f.CADir, "ca.crt"),
-  		"NEXORA_CA_KEY_FILE="+filepath.Join(f.CADir, "ca.key"))
-  	var out, errb bytes.Buffer
-  	cmd.Stdout, cmd.Stderr = &out, &errb
-  	err := cmd.Run()
-  	return strings.TrimSpace(out.String()), errb.String(), err
-  }
-
   func TestMgmtCLIFleet(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{})
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+  	run := func(args ...string) (string, string, error) {
+  		cmd := exec.Command(env.Bin("nexora-mgmt"), args...) // nosemgrep: dangerous-exec-command
+  		cmd.Env = append(os.Environ(), "NEXORA_DATABASE_URL="+pg.URL, "NEXORA_CA_CERT_FILE="+ca.CertFile)
+  		var out, errb bytes.Buffer
+  		cmd.Stdout, cmd.Stderr = &out, &errb
+  		err := cmd.Run()
+  		return strings.TrimSpace(out.String()), errb.String(), err
+  	}
 
-  	gid, stderr, err := mgmtCLI(t, f, "group", "create", "--name", "edge-cli", "--description", "from cli")
+  	gid, stderr, err := run("engine-group", "create", "--name", "edge-cli", "--description", "from cli")
   	if err != nil || !regexp.MustCompile(`^[0-9a-f-]{36}$`).MatchString(gid) {
-  		t.Fatalf("group create: %q %q %v", gid, stderr, err)
+  		t.Fatalf("engine-group create: %q %q %v", gid, stderr, err)
   	}
-  	if g := f.API.Group(t, gid); g.Name != "edge-cli" {
-  		t.Fatalf("group via API: %+v", g)
+  	if g := api.EngineGroup(gid); g.Name != "edge-cli" || g.Description != "from cli" {
+  		t.Fatalf("engine group via API: %+v", g)
   	}
-  	if again, _, err := mgmtCLI(t, f, "group", "create", "--name", "edge-cli", "--if-missing"); err != nil || again != gid {
-  		t.Fatalf("group create --if-missing: %q %v, want %s", again, err, gid)
+  	if again, _, err := run("engine-group", "create", "--name", "edge-cli", "--if-missing"); err != nil || again != gid {
+  		t.Fatalf("engine-group create --if-missing: %q %v, want %s", again, err, gid)
   	}
-  	if _, stderr, err := mgmtCLI(t, f, "group", "create", "--name", "edge-cli"); err == nil || !strings.Contains(stderr, `group "edge-cli" already exists`) {
-  		t.Fatalf("duplicate group create: %q %v", stderr, err)
-  	}
-
-  	tok, stderr, err := mgmtCLI(t, f, "join-token", "create", "--group", "edge-cli", "--ttl", "10m", "--max-uses", "3", "--label", "site=lab")
-  	if err != nil || !regexp.MustCompile(`^nxj1\.[A-Z2-7]+\.[0-9a-f]{64}$`).MatchString(tok) {
-  		t.Fatalf("join-token create: %q %q %v", tok, stderr, err)
-  	}
-  	var listed []harness.JoinToken
-  	f.API.Must(t, "GET", "/api/v1/join-tokens", nil, &listed, http.StatusOK)
-  	if len(listed) != 1 || listed[0].MaxUses != 3 || listed[0].GroupID != gid {
-  		t.Fatalf("listed tokens %+v", listed)
-  	}
-  	if _, stderr, err := mgmtCLI(t, f, "join-token", "create", "--group", "missing"); err == nil || !strings.Contains(stderr, `group "missing" not found`) {
-  		t.Fatalf("unknown group: %q %v", stderr, err)
+  	if _, stderr, err := run("engine-group", "create", "--name", "edge-cli"); err == nil || !strings.Contains(stderr, `engine group "edge-cli" already exists`) {
+  		t.Fatalf("duplicate engine-group create: %q %v", stderr, err)
   	}
 
-  	before, _ := os.ReadFile(filepath.Join(f.CADir, "ca.crt"))
-  	if _, stderr, err := mgmtCLI(t, f, "ca", "init", "--out", f.CADir, "--if-missing"); err != nil {
-  		t.Fatalf("ca init --if-missing on existing CA: %q %v", stderr, err)
+  	token, stderr, err := run("join-token", "create", "--engine-group", "edge-cli", "--ttl", "10m", "--max-uses", "3", "--label", "site=lab")
+  	if err != nil || !regexp.MustCompile(`^nxj1\.[A-Z2-7]+\.[0-9a-f]{64}$`).MatchString(token) {
+  		t.Fatalf("join-token create: %q %q %v", token, stderr, err)
   	}
-  	after, _ := os.ReadFile(filepath.Join(f.CADir, "ca.crt"))
+  	if _, stderr, err := run("join-token", "create", "--engine-group", "missing"); err == nil || !strings.Contains(stderr, `engine group "missing" not found`) {
+  		t.Fatalf("unknown engine group: %q %v", stderr, err)
+  	}
+  	env.StartManagedEngine("cli-1", []string{mg.GRPCURL}, token)
+  	e := api.WaitEngine("cli-1", 15*time.Second, func(v harness.EngineView) bool { return v.Connected })
+  	if e.EngineGroupID != gid || e.Labels["site"] != "lab" {
+  		t.Fatalf("engine enrolled with the CLI token: %+v", e)
+  	}
+  	var listed []map[string]any
+  	api.Must(http.MethodGet, "/join-tokens", nil, &listed, http.StatusOK)
+  	if len(listed) != 1 || listed[0]["max_uses"] != float64(3) || listed[0]["uses"] != float64(1) {
+  		t.Fatalf("listed join tokens %+v", listed)
+  	}
+
+  	before, _ := os.ReadFile(ca.CertFile)
+  	if out, stderr, err := run("ca", "init", "--out", ca.Dir, "--if-missing"); err != nil || !strings.HasPrefix(out, "ca fingerprint: ") {
+  		t.Fatalf("ca init --if-missing on an existing CA: %q %q %v", out, stderr, err)
+  	}
+  	after, _ := os.ReadFile(ca.CertFile)
   	if sha256.Sum256(before) != sha256.Sum256(after) {
   		t.Fatal("ca init --if-missing replaced an existing CA")
   	}
-  	if _, stderr, err := mgmtCLI(t, f, "ca", "init", "--out", f.CADir); err == nil || !strings.Contains(stderr, "already exists") {
-  		t.Fatalf("ca init over existing CA: %q %v", stderr, err)
+  	if _, stderr, err := run("ca", "init", "--out", ca.Dir); err == nil || !strings.Contains(stderr, "refusing to overwrite") {
+  		t.Fatalf("ca init over an existing CA: %q %v", stderr, err)
   	}
-
-  	api, stderr, err := mgmtCLI(t, f, "api-token", "create", "--user", harness.AdminUsername, "--name", "cli", "--ttl", "1h")
-  	if err != nil || !strings.HasPrefix(api, "nxt_") {
-  		t.Fatalf("api-token create: %q %q %v", api, stderr, err)
-  	}
-  	harness.NewAPI(f.Mgmt[0].HTTPURL, api).Must(t, "GET", "/api/v1/fleet/summary", nil, nil, http.StatusOK)
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/ -run TestMgmtCLIFleet -count=1 -v'` and expect FAIL with `group create:`.
-- [ ] Implement `mgmt/cmd/nexora-mgmt/cli_fleet.go` with the M1 command framework: `group create --name <n> [--description <d>] [--if-missing]` (existing name: with `--if-missing` prints the existing id and exits 0, otherwise stderr `group "<n>" already exists`, exit 1; a new group is inserted in a transaction with `snapshot.Publish(..., snapshot.Group(id))` and an audit row with actor `cli`; prints the id); `join-token create --group <name> [--ttl 24h] [--max-uses 1] [--label k=v]...` (reads the CA certificate from `NEXORA_CA_CERT_FILE` for the fingerprint; prints only the token; unknown group -> stderr `group "<name>" not found`, exit 1); `api-token create --user <username> --name <name> [--ttl 24h]` (M1 token creation function; prints only the token; unknown user -> exit 1); `ca init --out <dir> [--if-missing]` (when `ca.crt` exists: exit 0 without writing when `--if-missing`, otherwise stderr `ca.crt already exists in <dir>`, exit 1). Run the test and expect `--- PASS: TestMgmtCLIFleet`.
-- [ ] Commit: `git add mgmt/internal/pki mgmt/internal/fleet mgmt/internal/control mgmt/api/openapi.yaml mgmt/internal/api mgmt/internal/auth mgmt/internal/config mgmt/cmd/nexora-mgmt web/src/api/schema.d.ts e2e/cli_fleet_test.go && git commit -m "feat(mgmt): join token rules, certificate renewal, rotation and revocation"`.
+- [ ] Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestMgmtCLIFleet -count=1 -v'` and expect FAIL with `engine-group create:` and the usage line.
+- [ ] Implement `mgmt/cmd/nexora-mgmt/fleet_cli.go` with the `flag.NewFlagSet` style of `userCreate`, both on `openMigrated`:
+  - `engine-group create --name N [--description D] [--if-missing]`: an existing name prints its id and exits 0 with `--if-missing`, otherwise `engine group "N" already exists` (exit 1); a new group is created inside `snapshot.Mutate` with actor `auth.Actor{Type: "system", ID: "cli", Name: "cli"}` and audit action `createEngineGroup`; prints the id.
+  - `join-token create --engine-group NAME [--name LABEL] [--ttl 24h] [--max-uses N] [--label k=v]...`: the CA fingerprint comes from `pki.FingerprintFile(os.Getenv("NEXORA_CA_CERT_FILE"))`; unknown group -> `engine group "NAME" not found` (exit 1); invalid labels -> the `fleet.ValidateLabels` message; creates the token with `pki.NewJoinToken` plus the same insert as `control.CreateJoinTokenFor` inside `snapshot.Mutate` (audit `createJoinToken`); `--max-uses 0` (default) means unlimited; prints only the token.
+  - `ca init --out DIR [--if-missing]` in `main.go`: with `--if-missing`, when both `ca.crt` and `ca.key` exist, load them and print `ca fingerprint: <hex>` without writing; exactly one present -> error `ca.crt and ca.key must both exist or both be absent`.
+  - Extend `usage` with `engine-group create --name N [--description D] [--if-missing] | join-token create --engine-group G [--ttl 24h] [--max-uses N] [--label k=v]` and dispatch `engine-group create` and `join-token create` in `run`.
+    Run the test and expect `--- PASS: TestMgmtCLIFleet`.
+- [ ] Commit: `git add mgmt/internal/fleet mgmt/internal/control mgmt/internal/querylog mgmt/api/openapi.yaml mgmt/internal/api mgmt/internal/auth mgmt/internal/config mgmt/internal/pki mgmt/cmd/nexora-mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e/cli_fleet_test.go && git commit -m "feat(mgmt): join token rules, certificate renewal, rotation and revocation"`.
 
-## Task 9: Engine side of renewal, rotation, revocation and fleet health
+## Task 9: Engine side of renewal, rotation, revocation and node naming
 
-Files: `engine/src/cert_renewal.rs` (renewal timing, CSR, atomic identity swap), `engine/src/lib.rs` (module declaration), `engine/src/control.rs` (stream handling of the new messages, revoked backoff, FleetHealth in Stats), `engine/src/telemetry/metrics.rs` (latency percentile from histogram deltas, SERVFAIL total, `nexora_control_revoked`, `nexora_control_cert_renewals_total`), the bootstrap loader that parses `engine.toml` (`NEXORA_ENGINE_NODE_NAME`; locate it with `grep -rln standalone_snapshot engine/src`)
+Files: `engine/src/cert_renewal.rs` (renewal timing, CSR, atomic identity swap, recovery), `engine/src/lib.rs` (module declaration), `engine/src/control.rs` (stream handling of the new messages, identity reload per session, revoked backoff), `engine/src/telemetry/metrics.rs` (`nexora_control_revoked`, `nexora_control_cert_renewals_total`), `engine/src/bootstrap.rs` (`NEXORA_ENGINE_NODE_NAME`)
 Interfaces:
+
 ```rust
 // engine/src/cert_renewal.rs
 pub fn renewal_due(not_before: SystemTime, not_after: SystemTime, now: SystemTime) -> bool;
-pub fn new_csr(engine_id: &str) -> Result<(Vec<u8> /* csr der */, String /* key pem */), RenewalError>;
+pub fn cert_validity(cert_pem: &str) -> Option<(SystemTime, SystemTime)>;
+pub fn new_csr(engine_id: &str) -> Result<(Vec<u8> /* csr der */, rcgen::KeyPair), rcgen::Error>;
 pub fn swap_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> std::io::Result<()>;
 pub fn recover_identity(state_dir: &Path) -> std::io::Result<()>;
-// engine/src/telemetry/metrics.rs
-pub fn percentile_us(bounds_us: &[u64], deltas: &[u64], q: f64) -> u32;
-pub struct HealthSampler { /* previous cumulative bucket counts */ }
-impl HealthSampler { pub fn new() -> Self; pub fn sample(&mut self, m: &Metrics) -> pb::FleetHealth; }
 // engine/src/control.rs
-pub fn reconnect_delay(status: Option<&tonic::Status>, attempt: u32, jitter: f64 /* 0.0..1.0 */) -> Duration;
-// bootstrap
-pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<String>) -> Result<(), BootstrapError>;
+pub fn reconnect_delay(status: Option<&tonic::Status>, attempt: u32, jitter: f64 /* 0.0..=1.0 */) -> Duration;
+// engine/src/bootstrap.rs
+pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<String>) -> anyhow::Result<()>;
+// engine/src/telemetry/metrics.rs: Metrics gains `pub control_revoked: AtomicBool`, `pub cert_renewals: AtomicU64`
 ```
 
 - [ ] Write the failing unit tests at the bottom of a new `engine/src/cert_renewal.rs` (declare `pub mod cert_renewal;` in `engine/src/lib.rs`):
@@ -3636,6 +3342,7 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       use super::*;
       use std::fs;
       use std::time::{Duration, UNIX_EPOCH};
+      use x509_parser::prelude::FromDer;
 
       #[test]
       fn renewal_due_from_two_thirds_of_lifetime() {
@@ -3650,12 +3357,12 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       #[test]
       fn csr_carries_engine_id_and_p256_key() {
           let id = "0b7c1f5e-8f4f-4d47-9a55-3f4f0f6d2c11";
-          let (der, key_pem) = new_csr(id).unwrap();
+          let (der, key) = new_csr(id).unwrap();
           let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(&der).unwrap();
           let cn = csr.certification_request_info.subject.iter_common_name().next().unwrap();
           assert_eq!(cn.as_str().unwrap(), id);
           csr.verify_signature().unwrap();
-          assert!(key_pem.starts_with("-----BEGIN PRIVATE KEY-----"));
+          assert_eq!(csr.certification_request_info.subject_pki.raw, key.public_key_der().as_slice());
       }
 
       fn identity(dir: &std::path::Path, cert: &[u8], key: &[u8]) {
@@ -3664,10 +3371,11 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
           fs::write(id.join("cert.pem"), cert).unwrap();
           fs::write(id.join("key.pem"), key).unwrap();
           fs::write(id.join("ca.pem"), b"ca").unwrap();
+          fs::write(id.join("engine_id"), b"engine-uuid").unwrap();
       }
 
       #[test]
-      fn swap_identity_replaces_pair_and_keeps_ca() {
+      fn swap_identity_replaces_pair_and_keeps_the_rest() {
           let dir = tempfile::tempdir().unwrap();
           identity(dir.path(), b"old-cert", b"old-key");
           swap_identity(dir.path(), b"new-cert", b"new-key").unwrap();
@@ -3675,13 +3383,11 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
           assert_eq!(fs::read(id.join("cert.pem")).unwrap(), b"new-cert");
           assert_eq!(fs::read(id.join("key.pem")).unwrap(), b"new-key");
           assert_eq!(fs::read(id.join("ca.pem")).unwrap(), b"ca");
+          assert_eq!(fs::read(id.join("engine_id")).unwrap(), b"engine-uuid");
           assert!(!dir.path().join("identity.new").exists());
           assert!(!dir.path().join("identity.old").exists());
-          #[cfg(unix)]
-          {
-              use std::os::unix::fs::PermissionsExt;
-              assert_eq!(fs::metadata(id.join("key.pem")).unwrap().permissions().mode() & 0o777, 0o600);
-          }
+          use std::os::unix::fs::PermissionsExt;
+          assert_eq!(fs::metadata(id.join("key.pem")).unwrap().permissions().mode() & 0o777, 0o600);
       }
 
       #[test]
@@ -3692,9 +3398,9 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
           fs::rename(dir.path().join("identity"), dir.path().join("identity.old")).unwrap();
           let new = dir.path().join("identity.new");
           fs::create_dir_all(&new).unwrap();
-          fs::write(new.join("cert.pem"), b"new-cert").unwrap();
-          fs::write(new.join("key.pem"), b"new-key").unwrap();
-          fs::write(new.join("ca.pem"), b"ca").unwrap();
+          for (name, data) in [("cert.pem", &b"new-cert"[..]), ("key.pem", b"new-key"), ("ca.pem", b"ca"), ("engine_id", b"engine-uuid")] {
+              fs::write(new.join(name), data).unwrap();
+          }
           recover_identity(dir.path()).unwrap();
           assert_eq!(fs::read(dir.path().join("identity/cert.pem")).unwrap(), b"new-cert");
           assert!(!dir.path().join("identity.old").exists());
@@ -3707,95 +3413,88 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       }
   }
   ```
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml cert_renewal` and expect FAIL with `cannot find function `renewal_due` in this scope`.
-- [ ] Implement `engine/src/cert_renewal.rs` above the tests (add `x509-parser` and `tempfile` (dev) to `engine/Cargo.toml` if M1 lacks them; `rcgen` generates the key and CSR):
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine cert_renewal` and expect FAIL with ``cannot find function `renewal_due` in this scope``.
+- [ ] Implement `engine/src/cert_renewal.rs` above the tests (`rcgen` with its `x509-parser` feature and `x509-parser` are already dependencies; `tempfile` is a dev-dependency):
   ```rust
   //! Engine certificate renewal: timing, CSR generation and the atomic swap of
   //! `state_dir/identity`. Runs on the control runtime only.
   use std::fs::{self, File, OpenOptions};
   use std::io::{self, Write};
+  use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
   use std::path::Path;
-  use std::time::SystemTime;
-
-  #[derive(Debug, thiserror::Error)]
-  pub enum RenewalError {
-      #[error("generate key or csr: {0}")]
-      Rcgen(#[from] rcgen::Error),
-  }
+  use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
   /// True from 2/3 of the certificate lifetime onwards (and for inverted validity).
   pub fn renewal_due(not_before: SystemTime, not_after: SystemTime, now: SystemTime) -> bool {
-      let Ok(lifetime) = not_after.duration_since(not_before) else { return true };
+      let Ok(lifetime) = not_after.duration_since(not_before) else {
+          return true;
+      };
       now >= not_before + lifetime * 2 / 3
   }
 
-  pub fn new_csr(engine_id: &str) -> Result<(Vec<u8>, String), RenewalError> {
+  /// NotBefore and NotAfter of the first certificate in `cert_pem`.
+  pub fn cert_validity(cert_pem: &str) -> Option<(SystemTime, SystemTime)> {
+      let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).ok()?;
+      let cert = pem.parse_x509().ok()?;
+      let at = |t: i64| UNIX_EPOCH + Duration::from_secs(t.max(0) as u64);
+      Some((at(cert.validity().not_before.timestamp()), at(cert.validity().not_after.timestamp())))
+  }
+
+  /// A fresh ECDSA P-256 key and a CSR whose subject CN is the engine id.
+  pub fn new_csr(engine_id: &str) -> Result<(Vec<u8>, rcgen::KeyPair), rcgen::Error> {
       let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
       let mut params = rcgen::CertificateParams::default();
       params.distinguished_name = rcgen::DistinguishedName::new();
       params.distinguished_name.push(rcgen::DnType::CommonName, engine_id);
       let csr = params.serialize_request(&key)?;
-      Ok((csr.der().to_vec(), key.serialize_pem()))
+      Ok((csr.der().to_vec(), key))
   }
 
-  fn write_synced(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
-      let mut opts = OpenOptions::new();
-      opts.write(true).create_new(true);
-      #[cfg(unix)]
-      {
-          use std::os::unix::fs::OpenOptionsExt;
-          opts.mode(mode);
-      }
-      let mut f = opts.open(path)?;
+  fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+      let mut f = OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
       f.write_all(bytes)?;
       f.sync_all()
   }
 
-  fn sync_dir(path: &Path) -> io::Result<()> {
-      File::open(path)?.sync_all()
-  }
-
-  /// Stage the new pair next to the other identity files in `identity.new`,
-  /// then rename `identity` -> `identity.old`, `identity.new` -> `identity`.
+  /// Stage the new pair with copies of the other identity files in `identity.new`, then rename
+  /// `identity` -> `identity.old` and `identity.new` -> `identity`.
   pub fn swap_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> io::Result<()> {
-      let cur = state_dir.join("identity");
-      let new = state_dir.join("identity.new");
-      let old = state_dir.join("identity.old");
+      let (cur, new, old) = (state_dir.join("identity"), state_dir.join("identity.new"), state_dir.join("identity.old"));
       if new.exists() {
           fs::remove_dir_all(&new)?;
       }
-      fs::create_dir(&new)?;
+      fs::DirBuilder::new().mode(0o700).create(&new)?;
       for entry in fs::read_dir(&cur)? {
           let entry = entry?;
           let name = entry.file_name();
-          if name != "cert.pem" && name != "key.pem" {
-              fs::copy(entry.path(), new.join(&name))?;
+          if name != "cert.pem" && name != "key.pem" && !name.to_string_lossy().ends_with(".tmp") {
+              write_synced(&new.join(&name), &fs::read(entry.path())?)?;
           }
       }
-      write_synced(&new.join("cert.pem"), cert_pem, 0o644)?;
-      write_synced(&new.join("key.pem"), key_pem, 0o600)?;
-      sync_dir(&new)?;
+      write_synced(&new.join("cert.pem"), cert_pem)?;
+      write_synced(&new.join("key.pem"), key_pem)?;
+      File::open(&new)?.sync_all()?;
       if old.exists() {
           fs::remove_dir_all(&old)?;
       }
       fs::rename(&cur, &old)?;
       fs::rename(&new, &cur)?;
-      sync_dir(state_dir)?;
+      File::open(state_dir)?.sync_all()?;
       fs::remove_dir_all(&old)
   }
 
   /// Finish or discard an interrupted swap. Call before loading the identity.
   pub fn recover_identity(state_dir: &Path) -> io::Result<()> {
-      let cur = state_dir.join("identity");
-      let new = state_dir.join("identity.new");
-      let old = state_dir.join("identity.old");
+      let (cur, new, old) = (state_dir.join("identity"), state_dir.join("identity.new"), state_dir.join("identity.old"));
       if !cur.exists() {
-          if new.join("cert.pem").exists() && new.join("key.pem").exists() {
+          if ["cert.pem", "key.pem", "ca.pem", "engine_id"].iter().all(|f| new.join(f).exists()) {
               fs::rename(&new, &cur)?;
           } else if old.exists() {
               fs::rename(&old, &cur)?;
           }
-          sync_dir(state_dir)?;
+          if state_dir.exists() {
+              File::open(state_dir)?.sync_all()?;
+          }
       }
       for leftover in [new, old] {
           if leftover.exists() {
@@ -3805,132 +3504,84 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
       Ok(())
   }
   ```
-  Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml cert_renewal` and expect `test result: ok. 4 passed`.
-- [ ] Write the failing tests in `engine/src/telemetry/metrics.rs` (inside its `#[cfg(test)] mod tests`):
+  Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine cert_renewal` and expect `test result: ok. 4 passed`.
+- [ ] Write the failing tests: in `engine/src/control.rs` (add `#[cfg(test)] mod tests` when absent)
   ```rust
-  #[test]
-  fn percentile_from_bucket_deltas_reports_bucket_upper_bound() {
-      let bounds = [50, 100, 250, 500, 1_000];
-      let deltas = [10, 70, 15, 4, 1, 0]; // last entry is the +Inf bucket
-      assert_eq!(percentile_us(&bounds, &deltas, 0.50), 100);
-      assert_eq!(percentile_us(&bounds, &deltas, 0.99), 500);
-      assert_eq!(percentile_us(&bounds, &[0, 0, 0, 0, 0, 0], 0.99), 0);
-      assert_eq!(percentile_us(&bounds, &[0, 0, 0, 0, 0, 3], 0.5), 1_000, "+Inf reports the largest finite bound");
-  }
-
-  #[test]
-  fn health_sampler_uses_interval_latency_and_cumulative_counters() {
-      let m = Metrics::new_for_test(1);
-      let mut s = HealthSampler::new();
-      m.record_query_for_test(0, Rcode::NoError, 80);
-      m.record_query_for_test(0, Rcode::ServFail, 900);
-      let first = s.sample(&m);
-      assert_eq!((first.queries_total, first.servfail_total), (2, 1));
-      m.record_query_for_test(0, Rcode::NoError, 40);
-      let second = s.sample(&m);
-      assert_eq!((second.queries_total, second.servfail_total), (3, 1));
-      assert_eq!(second.latency_p99_us, 50, "latency covers only the last interval");
-  }
-  ```
-  `Metrics::new_for_test(workers)` and `record_query_for_test(worker, rcode, duration_us)` are test-only constructors over the existing per-worker counters and histogram; add them under `#[cfg(test)]` if M1 has no equivalents.
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml telemetry::metrics` and expect FAIL with `cannot find function `percentile_us``.
-- [ ] Implement in `engine/src/telemetry/metrics.rs`:
-  ```rust
-  /// Upper bound (µs) of the bucket holding quantile `q` of the interval's observations.
-  pub fn percentile_us(bounds_us: &[u64], deltas: &[u64], q: f64) -> u32 {
-      let total: u64 = deltas.iter().sum();
-      if total == 0 {
-          return 0;
-      }
-      let rank = ((total as f64) * q).ceil().max(1.0) as u64;
-      let mut seen = 0;
-      for (i, count) in deltas.iter().enumerate() {
-          seen += count;
-          if seen >= rank {
-              let bound = bounds_us.get(i).or(bounds_us.last()).copied().unwrap_or(0);
-              return bound.min(u32::MAX as u64) as u32;
-          }
-      }
-      bounds_us.last().copied().unwrap_or(0).min(u32::MAX as u64) as u32
-  }
-
-  pub struct HealthSampler {
-      prev_buckets: Vec<u64>,
-  }
-
-  impl HealthSampler {
-      pub fn new() -> Self {
-          Self { prev_buckets: Vec::new() }
-      }
-
-      /// Reads the summed per-worker atomics; never touches worker threads.
-      pub fn sample(&mut self, m: &Metrics) -> pb::FleetHealth {
-          let buckets = m.duration_bucket_counts(); // non-cumulative, one per bound plus +Inf
-          let deltas: Vec<u64> = buckets
-              .iter()
-              .enumerate()
-              .map(|(i, c)| c.saturating_sub(self.prev_buckets.get(i).copied().unwrap_or(0)))
-              .collect();
-          self.prev_buckets = buckets;
-          let bounds = m.duration_bounds_us();
-          pb::FleetHealth {
-              queries_total: m.queries_total(),
-              servfail_total: m.queries_with_rcode(Rcode::ServFail),
-              cache_hits_total: m.cache_hits_total(),
-              cache_misses_total: m.cache_misses_total(),
-              latency_p50_us: percentile_us(&bounds, &deltas, 0.50),
-              latency_p99_us: percentile_us(&bounds, &deltas, 0.99),
-          }
-      }
-  }
-  ```
-  plus gauges `nexora_control_revoked` and counter `nexora_control_cert_renewals_total` registered with the existing registry, and accessors `duration_bucket_counts`, `duration_bounds_us`, `queries_total`, `queries_with_rcode`, `cache_hits_total`, `cache_misses_total` summing the per-worker arrays. Run the tests and expect `ok`.
-- [ ] Write the failing tests in `engine/src/control.rs` and in the bootstrap module:
-  ```rust
-  // engine/src/control.rs, #[cfg(test)] mod tests
   #[test]
   fn revoked_or_unknown_engine_backs_off_five_minutes() {
       let revoked = tonic::Status::permission_denied("certificate revoked");
-      let unknown = tonic::Status::unauthenticated("unknown engine");
+      let unknown = tonic::Status::permission_denied("unknown or deleted engine");
       for s in [&revoked, &unknown] {
           assert_eq!(reconnect_delay(Some(s), 0, 0.0), Duration::from_secs(270));
           assert_eq!(reconnect_delay(Some(s), 7, 1.0), Duration::from_secs(330));
       }
       let flaky = tonic::Status::unavailable("connection refused");
-      assert!(reconnect_delay(Some(&flaky), 0, 0.5) < Duration::from_secs(5));
-  }
-
-  // bootstrap module, #[cfg(test)] mod tests
-  #[test]
-  fn node_name_env_override_is_validated() {
-      let mut b = Bootstrap::parse_for_test("node_name = \"engine-1\"\nstate_dir = \"/tmp/x\"\nstandalone_snapshot = \"/tmp/s\"\n");
-      apply_env_overrides(&mut b, |k| (k == "NEXORA_ENGINE_NODE_NAME").then(|| "edge-a-worker-21".to_string())).unwrap();
-      assert_eq!(b.node_name, "edge-a-worker-21");
-      let err = apply_env_overrides(&mut b, |k| (k == "NEXORA_ENGINE_NODE_NAME").then(|| "Bad_Name".to_string()));
-      assert!(err.is_err());
-      apply_env_overrides(&mut b, |_| None).unwrap();
-      assert_eq!(b.node_name, "edge-a-worker-21");
+      assert!(reconnect_delay(Some(&flaky), 0, 0.5) <= Duration::from_millis(600));
+      assert!(reconnect_delay(None, 20, 1.0) <= Duration::from_secs(36));
   }
   ```
-- [ ] Run `scripts/dev-exec.sh cargo test --manifest-path engine/Cargo.toml 'control::tests::revoked_or_unknown_engine_backs_off_five_minutes|node_name_env_override_is_validated'` and expect FAIL with `cannot find function `reconnect_delay``.
+  and in `engine/src/bootstrap.rs` `mod tests`
+  ```rust
+  #[test]
+  fn node_name_env_override_is_validated() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("engine.toml");
+      std::fs::write(&path, "node_name = \"engine-1\"\nstate_dir = \"/tmp/x\"\nstandalone_snapshot = \"/tmp/s\"\n").unwrap();
+      let mut b = load(&path).unwrap();
+      apply_env_overrides(&mut b, |k| (k == "NEXORA_ENGINE_NODE_NAME").then(|| "edge-b-worker-24".to_string())).unwrap();
+      assert_eq!(b.node_name, "edge-b-worker-24");
+      let err = apply_env_overrides(&mut b, |k| (k == "NEXORA_ENGINE_NODE_NAME").then(|| "Bad_Name".to_string())).unwrap_err();
+      assert!(format!("{err:#}").contains("NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{1,63}"), "{err:#}");
+      apply_env_overrides(&mut b, |_| None).unwrap();
+      assert_eq!(b.node_name, "edge-b-worker-24");
+  }
+  ```
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine -- revoked_or_unknown_engine_backs_off_five_minutes node_name_env_override_is_validated` and expect FAIL with ``cannot find function `reconnect_delay` ``.
 - [ ] Implement:
-  - `reconnect_delay`: for `PermissionDenied` with message `certificate revoked` or `Unauthenticated` with message `unknown engine`, `Duration::from_secs_f64(300.0 * (0.9 + 0.2 * jitter))`; otherwise M1's jittered exponential backoff for `attempt`.
-  - `apply_env_overrides`: when `NEXORA_ENGINE_NODE_NAME` is set, validate `^[a-z0-9-]{1,63}$` (error `NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{1,63}`) and replace `node_name`; called by the bootstrap loader right after parsing `engine.toml`.
-  - `engine/src/control.rs` stream handling on the control runtime:
-    - before loading the identity call `cert_renewal::recover_identity(state_dir)`;
-    - on stream open and every 10 s: if `renewal_due(cert.not_before, cert.not_after, now)` and no renewal is pending, `new_csr(engine_id)` and send `EngineMessage{msg: CertRequest{csr_der, reason: REASON_RENEWAL}}`; keep the pending key in memory (never on disk until issued); a pending renewal older than 30 s is dropped so the next check retries;
-    - on `ServerMessage::RenewCertificate{reason}`: the same, with that reason, unless one is pending;
-    - on `ServerMessage::CertIssued{cert_der, ca_der}`: ignore without a pending renewal; require `sha256(ca_der)` to equal the SHA-256 of the DER in `identity/ca.pem`, the certificate's SubjectPublicKeyInfo to equal the pending key's public key, and the CN to equal the engine id; then `swap_identity(state_dir, cert_pem, key_pem)`, increment `nexora_control_cert_renewals_total`, close the stream and reconnect immediately with the new identity (backoff attempt reset); any check failure logs `rejected issued certificate: <reason>` and drops the pending renewal;
-    - each `Stats` message sets `health = Some(sampler.sample(&metrics))`;
-    - connect/stream errors go through `reconnect_delay`; a revoked/unknown status sets `nexora_control_revoked` to 1 and a successful `Hello` exchange sets it to 0; serving from the last applied snapshot continues in every case.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --manifest-path engine/Cargo.toml && cargo clippy --manifest-path engine/Cargo.toml --all-targets -- -D warnings'` and expect `test result: ok` for every suite, including `cache_hit_path_does_not_allocate`, and no clippy findings.
-- [ ] Commit: `git add engine && git commit -m "feat(engine): certificate renewal, revocation backoff and fleet health stats"`.
+  - `reconnect_delay` in `engine/src/control.rs`: a `PermissionDenied` status whose message is `certificate revoked` or `unknown or deleted engine` -> `Duration::from_secs_f64(300.0 * (0.9 + 0.2 * jitter))`; otherwise M1's `backoff(attempt)` computed with the given jitter (`500 ms × 2^attempt` capped at 30 s, times `0.8 + 0.4 * jitter`). `backoff(attempt)` keeps its signature and calls `reconnect_delay(None, attempt, rand::rng().random_range(0.0..=1.0))`.
+  - `apply_env_overrides` in `engine/src/bootstrap.rs`: when `NEXORA_ENGINE_NODE_NAME` is set, validate it with the same rule as `node_name` (error `NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{1,63}`) and replace `node_name`; `load` calls `apply_env_overrides(&mut b, |k| std::env::var(k).ok())` right after parsing and before its own `node_name` check.
+  - `engine/src/telemetry/metrics.rs`: `Metrics` gains `control_revoked: AtomicBool` and `cert_renewals: AtomicU64`; `render` registers `nexora_control_revoked` (`1 while the management plane refuses this engine's certificate`) and `nexora_control_cert_renewals_total` (`Engine certificates renewed over the control stream`).
+  - `engine/src/control.rs`: `obtain_identity` calls `cert_renewal::recover_identity(&boot.state_dir)` before `load_identity`; `run` reloads the identity with `load_identity` before every `session` (so a swapped identity is used on reconnect) and sleeps `reconnect_delay(status, attempt, jitter)` where `status` is the `tonic::Status` inside `ControlError::Grpc`; a revoked/unknown status sets `control_revoked` true, a successful `connect` sets it false. Inside `session` (control runtime only): keep `pending: Option<(rcgen::KeyPair, Instant)>`; on stream open and on every stats tick, when `cert_validity(&id.cert_pem)` says `renewal_due` and no renewal younger than 30 s is pending, `new_csr(&id.engine_id)` and send `Msg::CertRequest(CertificateRequest { csr_der, reason: Reason::Renewal as i32 })`; on `ServerMsg::RenewCertificate` do the same with `Reason::Rotate`; on `ServerMsg::CertIssued(ci)` with a pending key: require `sha256(ci.ca_der)` to equal the SHA-256 of the DER in `id.ca_pem`, the issued certificate's SubjectPublicKeyInfo to equal `key.public_key_der()`, and its CN to equal the engine id; then `swap_identity(state_dir, cert_pem, key.serialize_pem())`, increment `cert_renewals`, log `nexora-engine: certificate renewed (serial <hex>)` and return `stream_closed()` so `run` reconnects at once with the new identity (attempt reset to 0); any failed check logs `nexora-engine: rejected issued certificate: <reason>` and drops the pending key. The pending private key is never written to disk before it is issued and never logged. Serving from the last applied snapshot continues in every case.
+- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings && cargo fmt --all -- --check'` and expect `test result: ok` for every suite (including `cache_hit_path_does_not_allocate`) and no clippy or fmt findings.
+- [ ] Commit: `git add engine && git commit -m "feat(engine): certificate renewal and rotation, revoked backoff, node name override"`.
 
 ## Task 10: Fleet acceptance tests
 
-Files: `e2e/fleet_test.go` (`TestFleetRolloutAndPartition`, `TestGroupScopedConfig`, `TestJoinTokenGroupAndExpiry`), `e2e/fleet_canary_test.go` (`TestCanaryRolloutHaltsOnFailure`), `e2e/fleet_cert_test.go` (`TestEngineCertRevocation`)
-Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *FixtureUpstream{Addr string}` (answers every `A` query for names under `fixture.test.` with `192.0.2.1`), M1 `(*Engine).Stop()` / `Start()`, M1 `(*Mgmt).Stop()`.
+Files: `e2e/harness/lb.go` (backends that can change while the balancer runs), `e2e/harness/mgmt.go` (`EngineOptions.SkipControlWait`), `e2e/fleet_test.go` (`TestFleetRolloutAndPartition`, `TestEngineGroupScopedConfig`, `TestJoinTokenGroupAndExpiry`), `e2e/fleet_canary_test.go` (`TestCanaryRolloutHaltsOnFailure`), `e2e/fleet_cert_test.go` (`TestEngineCertRevocation`)
+Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *SwitchableBalancer`, `type SwitchableBalancer struct { Addr string }` with `func (b *SwitchableBalancer) SetBackends(backends ...string)`; `EngineOptions.SkipControlWait bool` (return once the READY line is read); consumes the Task 7 harness, M1 `(*Env).StartDNSFixture` (`SetRecords`, `SetMode(t, "servfail")`), `harness.MustQuery`, `waitLatestApplied`, `wantA`, `createUDPUpstream`.
 
+- [ ] Change `e2e/harness/lb.go`: `forward(l, backends func() []string)` reads the list for every accepted connection; `StartTCPBalancer` passes a function returning its fixed slice; add
+  ```go
+  // SwitchableBalancer is a TCP balancer whose backends can be replaced while it runs.
+  type SwitchableBalancer struct {
+  	Addr string
+
+  	mu       sync.Mutex
+  	backends []string
+  }
+
+  // StartSwitchableBalancer is StartTCPBalancer with SetBackends.
+  func (e *Env) StartSwitchableBalancer(backends ...string) *SwitchableBalancer {
+  	e.T.Helper()
+  	b := &SwitchableBalancer{backends: backends}
+  	l := e.listenLoopback()
+  	b.Addr = l.Addr().String()
+  	e.forward(l, func() []string {
+  		b.mu.Lock()
+  		defer b.mu.Unlock()
+  		return append([]string(nil), b.backends...)
+  	})
+  	return b
+  }
+
+  // SetBackends replaces the backends for connections accepted from now on.
+  func (b *SwitchableBalancer) SetBackends(backends ...string) {
+  	b.mu.Lock()
+  	defer b.mu.Unlock()
+  	b.backends = backends
+  }
+  ```
+  and in `e2e/harness/mgmt.go` make `StartManagedEngineWith` skip `en.Proc.WaitLog(controlConnected, ...)` when `o.SkipControlWait` is set. Run `scripts/dev-exec.sh 'go vet ./e2e/... && go test ./e2e/harness/ -count=1'` and expect no vet output and `ok`.
 - [ ] Write `e2e/fleet_test.go`:
   ```go
   package e2e
@@ -3938,7 +3589,8 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   import (
   	"context"
   	"fmt"
-  	"net"
+  	"net/http"
+  	"regexp"
   	"testing"
   	"time"
 
@@ -3948,179 +3600,199 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   	"github.com/piwi3910/nexora/e2e/harness"
   )
 
-  func stableOf(g harness.EngineGroup) int64 {
-  	if g.StableVersion == nil {
-  		return 0
-  	}
-  	return *g.StableVersion
+  func rewrite(t *testing.T, api *harness.API, name, value string, engineGroupID any) {
+  	t.Helper()
+  	api.Must(http.MethodPost, "/rewrites", map[string]any{"name": name, "type": "A", "value": value, "engine_group_id": engineGroupID}, nil, http.StatusCreated)
   }
 
   func TestFleetRolloutAndPartition(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{Engines: 3})
-  	names := []string{"engine-1", "engine-2", "engine-3"}
-  	f.WaitConnected(t, 3, 60*time.Second)
-
-  	hosts, dirs := map[string]bool{}, map[string]bool{}
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	a := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, a.SetupToken(t), a.BaseURL)
+  	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
+  	fx := env.StartDNSFixture()
+  	createUDPUpstream(t, api, "fixture", fx.UDP)
+  	lb := env.StartSwitchableBalancer(a.GRPCAddr)
+  	names := []string{"fleet-1", "fleet-2", "fleet-3"}
+  	engines := map[string]*harness.Engine{}
+  	token := api.CreateJoinToken()
+  	dirs := map[string]bool{}
   	for _, n := range names {
-  		host, _, _ := net.SplitHostPort(f.DNSAddr(n))
-  		hosts[host], dirs[f.StateDir(n)] = true, true
+  		engines[n] = env.StartManagedEngine(n, []string{"https://" + lb.Addr}, token)
+  		dirs[engines[n].StateDir] = true
   	}
-  	if len(hosts) != 3 || len(dirs) != 3 {
-  		t.Fatalf("engines must not share an address or state dir: %v %v", hosts, dirs)
+  	if len(dirs) != 3 {
+  		t.Fatalf("engines share a state directory: %v", dirs)
   	}
 
-  	base := stableOf(f.API.Group(t, harness.DefaultGroupID))
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "before.fleet.test", Type: "A", Value: "192.0.2.10"})
-  	v1 := f.API.WaitGroupStable(t, harness.DefaultGroupID, base, 20*time.Second)
-  	f.WaitAllApplied(t, names, v1, 20*time.Second)
+  	rewrite(t, api, "before.fleet.test", "192.0.2.10", nil)
+  	waitLatestApplied(t, api, names...)
+  	v := api.LatestVersion()
+  	ids := map[string]string{}
   	for _, n := range names {
-  		harness.ExpectA(t, f.DNSAddr(n), "before.fleet.test", "192.0.2.10")
-  	}
-
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "after.fleet.test", Type: "A", Value: "192.0.2.20"})
-  	v2 := f.API.WaitGroupStable(t, harness.DefaultGroupID, v1, 20*time.Second)
-  	f.WaitAllApplied(t, names, v2, 20*time.Second)
-  	acked := map[int64][]string{}
-  	for _, e := range f.API.Engines(t) {
-  		acked[e.AppliedVersion] = append(acked[e.AppliedVersion], e.Name)
-  		if e.Drift != "in_sync" || e.TargetVersion != v2 {
-  			t.Fatalf("%s drift %s target %d, want in_sync %d", e.Name, e.Drift, e.TargetVersion, v2)
+  		wantA(t, harness.MustQuery(t, engines[n].DNS, "before.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.10")
+  		e := api.EngineByNode(n)
+  		if e.Status != "current" || e.TargetVersion != v || e.EngineGroupID != harness.DefaultEngineGroupID {
+  			t.Fatalf("%s: %+v, want current at target %d in the default group", n, e, v)
   		}
+  		ids[n] = e.ID
   	}
-  	if len(acked) != 1 || len(acked[v2]) != 3 {
-  		t.Fatalf("applied versions %v, want all three engines on %d", acked, v2)
-  	}
+  	rewrite(t, api, "after.fleet.test", "192.0.2.20", nil)
+  	waitLatestApplied(t, api, names...)
 
-  	for _, m := range f.Mgmt {
-  		m.Stop()
-  	}
-  	harness.Eventually(t, 60*time.Second, func() error {
+  	// Partition: the only management instance dies; engines keep serving their last snapshot.
+  	a.Proc.Kill()
+  	harness.Eventually(t, 30*time.Second, func() error {
   		for _, n := range names {
-  			if v := harness.MetricValue(t, f.MetricsURL(n), "nexora_control_connected"); v != 0 {
-  				return fmt.Errorf("%s still reports connected", n)
+  			if v := engines[n].Metric(t, "nexora_control_connected", nil); v != 0 {
+  				return fmt.Errorf("%s still reports a control stream", n)
   			}
   		}
   		return nil
   	})
-  	deadline := time.Now().Add(30 * time.Second)
-  	for time.Now().Before(deadline) {
+  	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
   		for _, n := range names {
-  			harness.ExpectA(t, f.DNSAddr(n), "before.fleet.test", "192.0.2.10")
-  			harness.ExpectA(t, f.DNSAddr(n), "after.fleet.test", "192.0.2.20")
+  			wantA(t, harness.MustQuery(t, engines[n].DNS, "before.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.10")
+  			wantA(t, harness.MustQuery(t, engines[n].DNS, "after.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.20")
   		}
-  		time.Sleep(time.Second)
   	}
 
-  	f.Engine("engine-2").Stop()
-  	f.Engine("engine-2").Start()
-  	harness.Eventually(t, 30*time.Second, func() error {
-  		r, err := harness.Exchange(f.DNSAddr("engine-2"), "after.fleet.test", dns.TypeA)
-  		if err != nil {
-  			return err
-  		}
-  		if len(r.Answer) == 0 {
-  			return fmt.Errorf("restarted engine answered %s without data", dns.RcodeToString[r.Rcode])
-  		}
-  		return nil
-  	})
+  	// A new instance behind the same address: engines return, a restarted engine keeps its identity.
+  	b := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	lb.SetBackends(b.GRPCAddr)
+  	api2 := env.NewAPI(b.BaseURL)
+  	api2.Bearer = api.Bearer
+  	for _, n := range names {
+  		api2.WaitEngine(n, 45*time.Second, func(e harness.EngineView) bool { return e.Connected })
+  	}
+  	env.RestartEngine(engines["fleet-2"])
+  	var listed []harness.EngineView
+  	api2.Must(http.MethodGet, "/engines", nil, &listed, http.StatusOK)
+  	if len(listed) != 3 || api2.EngineByNode("fleet-2").ID != ids["fleet-2"] {
+  		t.Fatalf("restarted engine enrolled again: %+v", listed)
+  	}
+  	rewrite(t, api2, "later.fleet.test", "192.0.2.30", nil)
+  	waitLatestApplied(t, api2, names...)
+  	wantA(t, harness.MustQuery(t, engines["fleet-2"].DNS, "later.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.30")
   }
 
-  func TestGroupScopedConfig(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{})
-  	a := f.API.CreateGroup(t, harness.GroupSpec{Name: "site-a"})
-  	b := f.API.CreateGroup(t, harness.GroupSpec{Name: "site-b"})
-  	f.AddEngine(t, "engine-a", a.ID, nil)
-  	f.AddEngine(t, "engine-b", b.ID, nil)
-  	f.WaitConnected(t, 2, 60*time.Second)
+  func TestEngineGroupScopedConfig(t *testing.T) {
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+  	api.DisableForwardedValidation()
+  	fxA, fxB := env.StartDNSFixture(), env.StartDNSFixture()
+  	fxA.SetRecords(t, "site.fleet.test. 60 IN A 192.0.2.101")
+  	fxB.SetRecords(t, "site.fleet.test. 60 IN A 192.0.2.102")
+  	edge := api.CreateEngineGroup(map[string]any{"name": "edge", "upstream_mode": "override"})
+  	createUDPUpstream(t, api, "fixture-a", fxA.UDP)
+  	api.Must(http.MethodPost, "/upstreams", map[string]any{"name": "fixture-b", "protocol": "udp", "address": fxB.UDP, "timeout_ms": 250,
+  		"enabled": true, "position": 1, "engine_group_id": edge.ID}, nil, http.StatusCreated)
+  	rewrite(t, api, "global.scope.test", "192.0.2.1", nil)
+  	rewrite(t, api, "only-edge.scope.test", "192.0.2.2", edge.ID)
+  	zone := "edge-only.zone.test."
+  	api.Must(http.MethodPost, "/zones", map[string]any{"name": zone, "kind": "primary", "default_ttl": 60, "engine_group_id": edge.ID,
+  		"soa": map[string]any{"mname": "ns1." + zone, "rname": "hostmaster." + zone}, "nameservers": []string{"ns1." + zone}}, nil, http.StatusCreated)
 
-  	aID := a.ID
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "global.scope.test", Type: "A", Value: "192.0.2.1"})
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "only-a.scope.test", Type: "A", Value: "192.0.2.2", GroupID: &aID})
-  	harness.Eventually(t, 30*time.Second, func() error {
-  		for _, q := range []struct{ addr, name string }{{f.DNSAddr("engine-a"), "only-a.scope.test"}, {f.DNSAddr("engine-b"), "global.scope.test"}} {
-  			r, err := harness.Exchange(q.addr, q.name, dns.TypeA)
-  			if err != nil || len(r.Answer) == 0 {
-  				return fmt.Errorf("%s not served yet at %s (%v)", q.name, q.addr, err)
-  			}
-  		}
-  		return nil
-  	})
-  	harness.ExpectA(t, f.DNSAddr("engine-a"), "global.scope.test", "192.0.2.1")
-  	harness.ExpectA(t, f.DNSAddr("engine-a"), "only-a.scope.test", "192.0.2.2")
-  	harness.ExpectA(t, f.DNSAddr("engine-b"), "global.scope.test", "192.0.2.1")
-  	if r, err := harness.Exchange(f.DNSAddr("engine-b"), "only-a.scope.test", dns.TypeA); err == nil {
-  		for _, rr := range r.Answer {
-  			if rec, ok := rr.(*dns.A); ok && rec.A.String() == "192.0.2.2" {
-  				t.Fatal("engine in site-b served a rewrite scoped to site-a")
-  			}
-  		}
+  	engDefault := env.StartManagedEngine("scope-default", []string{mg.GRPCURL}, api.CreateJoinToken())
+  	engEdge := env.StartManagedEngine("scope-edge", []string{mg.GRPCURL}, api.CreateJoinTokenFor(edge.ID, nil))
+  	waitLatestApplied(t, api, "scope-default", "scope-edge")
+  	if e := api.EngineByNode("scope-edge"); e.EngineGroupName != "edge" {
+  		t.Fatalf("scope-edge enrolled into %q", e.EngineGroupName)
   	}
 
-  	before := f.API.EngineByName(t, "engine-b").AppliedVersion
-  	f.API.PatchEngine(t, "engine-b", map[string]any{"group_id": a.ID})
-  	harness.Eventually(t, 30*time.Second, func() error {
-  		e := f.API.EngineByName(t, "engine-b")
-  		if e.GroupName != "site-a" || e.AppliedVersion <= before || e.Drift != "in_sync" {
-  			return fmt.Errorf("engine-b group %s applied %d drift %s", e.GroupName, e.AppliedVersion, e.Drift)
-  		}
-  		return nil
+  	// Positive path first: each engine resolves through its own upstreams and serves the global rewrite.
+  	wantA(t, harness.MustQuery(t, engDefault.DNS, "site.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.101")
+  	wantA(t, harness.MustQuery(t, engEdge.DNS, "site.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.102")
+  	for _, en := range []*harness.Engine{engDefault, engEdge} {
+  		wantA(t, harness.MustQuery(t, en.DNS, "global.scope.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.1")
+  	}
+  	wantA(t, harness.MustQuery(t, engEdge.DNS, "only-edge.scope.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.2")
+  	if soa := harness.MustQuery(t, engEdge.DNS, zone, dns.TypeSOA, harness.QueryOpts{}); !soa.Authoritative {
+  		t.Fatalf("scope-edge is not authoritative for %s: %v", zone, soa)
+  	}
+  	if got := aValues(harness.MustQuery(t, engDefault.DNS, "only-edge.scope.test.", dns.TypeA, harness.QueryOpts{})); len(got) > 0 && got[0] == "192.0.2.2" {
+  		t.Fatal("an engine of the default group served a rewrite scoped to edge")
+  	}
+  	if soa := harness.MustQuery(t, engDefault.DNS, zone, dns.TypeSOA, harness.QueryOpts{}); soa.Authoritative {
+  		t.Fatalf("an engine of the default group serves %s: %v", zone, soa)
+  	}
+
+  	api.PatchEngine("scope-default", map[string]any{"engine_group_id": edge.ID})
+  	api.WaitEngine("scope-default", 20*time.Second, func(e harness.EngineView) bool {
+  		return e.EngineGroupID == edge.ID && e.Status == "current"
   	})
-  	harness.ExpectA(t, f.DNSAddr("engine-b"), "only-a.scope.test", "192.0.2.2")
+  	wantA(t, harness.MustQuery(t, engDefault.DNS, "only-edge.scope.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.2")
+  	wantA(t, harness.MustQuery(t, engDefault.DNS, "site.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.102")
   }
 
   func TestJoinTokenGroupAndExpiry(t *testing.T) {
   	ctx := context.Background()
-  	f := harness.StartFleet(t, harness.FleetOptions{})
-  	g := f.API.CreateGroup(t, harness.GroupSpec{Name: "site-x"})
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+  	g := api.CreateEngineGroup(map[string]any{"name": "site-x"})
 
-  	tok := f.API.CreateJoinToken(t, harness.JoinTokenSpec{GroupID: g.ID, TTLSeconds: 600, MaxUses: 1, Labels: map[string]string{"rack": "r1"}})
-  	f.AddEngineWithToken(t, "joined", tok.Token, nil)
-  	harness.Eventually(t, 60*time.Second, func() error {
-  		for _, e := range f.API.Engines(t) {
-  			if e.Name == "joined" && e.ConnectionState == "connected" && e.GroupName == "site-x" && e.Labels["rack"] == "r1" {
-  				return nil
-  			}
-  		}
-  		return fmt.Errorf("engine joined not connected in site-x with rack=r1")
-  	})
+  	var once, stale struct {
+  		Token     string `json:"token"`
+  		JoinToken struct {
+  			ID string `json:"id"`
+  		} `json:"join_token"`
+  	}
+  	api.Must(http.MethodPost, "/join-tokens", map[string]any{"name": "once", "ttl_seconds": 600, "engine_group_id": g.ID, "max_uses": 1,
+  		"labels": map[string]string{"rack": "r1"}}, &once, http.StatusCreated)
+  	env.StartManagedEngine("joined", []string{mg.GRPCURL}, once.Token)
+  	e := api.WaitEngine("joined", 20*time.Second, func(v harness.EngineView) bool { return v.Connected })
+  	if e.EngineGroupID != g.ID || e.Labels["rack"] != "r1" {
+  		t.Fatalf("joined engine %+v, want engine group site-x with rack=r1", e)
+  	}
 
-  	f.AddEngineWithToken(t, "second", tok.Token, nil)
-  	expired := f.API.CreateJoinToken(t, harness.JoinTokenSpec{GroupID: g.ID, TTLSeconds: 600, MaxUses: 5})
-  	conn, err := pgx.Connect(ctx, f.DB.URL)
+  	second := env.StartManagedEngineWith("second", []string{mg.GRPCURL}, once.Token, harness.EngineOptions{SkipControlWait: true})
+  	second.Proc.WaitLog(regexp.MustCompile(`join token exhausted`), 30*time.Second)
+  	api.Must(http.MethodPost, "/join-tokens", map[string]any{"name": "stale", "ttl_seconds": 600, "engine_group_id": g.ID}, &stale, http.StatusCreated)
+  	conn, err := pgx.Connect(ctx, pg.URL)
   	if err != nil {
   		t.Fatal(err)
   	}
   	defer conn.Close(ctx)
-  	if _, err := conn.Exec(ctx, `UPDATE join_tokens SET expires_at = now() - interval '1 second' WHERE id = $1`, expired.ID); err != nil {
+  	if _, err := conn.Exec(ctx, `update join_tokens set expires_at = now() - interval '1 second' where id = $1`, stale.JoinToken.ID); err != nil {
   		t.Fatal(err)
   	}
-  	f.AddEngineWithToken(t, "late", expired.Token, nil)
+  	late := env.StartManagedEngineWith("late", []string{mg.GRPCURL}, stale.Token, harness.EngineOptions{SkipControlWait: true})
+  	late.Proc.WaitLog(regexp.MustCompile(`join token expired`), 30*time.Second)
 
-  	time.Sleep(20 * time.Second)
-  	for _, e := range f.API.Engines(t) {
-  		if e.Name == "second" || e.Name == "late" {
-  			t.Fatalf("engine %s enrolled with an exhausted or expired token", e.Name)
+  	var engines []harness.EngineView
+  	api.Must(http.MethodGet, "/engines", nil, &engines, http.StatusOK)
+  	for _, v := range engines {
+  		if v.NodeName == "second" || v.NodeName == "late" {
+  			t.Fatalf("engine %s enrolled with an exhausted or expired token", v.NodeName)
   		}
   	}
-  	var listed []harness.JoinToken
-  	f.API.Must(t, "GET", "/api/v1/join-tokens", nil, &listed, 200)
-  	states := map[string]string{}
+  	var listed []map[string]any
+  	api.Must(http.MethodGet, "/join-tokens", nil, &listed, http.StatusOK)
+  	states := map[string]any{}
   	for _, jt := range listed {
-  		states[jt.ID] = jt.State
+  		states[jt["id"].(string)] = jt["state"]
   	}
-  	if states[tok.ID] != "exhausted" || states[expired.ID] != "expired" {
+  	if states[once.JoinToken.ID] != "exhausted" || states[stale.JoinToken.ID] != "expired" {
   		t.Fatalf("token states %v", states)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/ -run "TestFleetRolloutAndPartition|TestGroupScopedConfig|TestJoinTokenGroupAndExpiry" -count=1 -v -timeout 20m'`. Tasks 2–9 are in place, so expect `--- PASS` for all three. To prove the partition assertion bites, temporarily make the harness `(*Mgmt).Stop` a no-op and rerun `TestFleetRolloutAndPartition`; expect FAIL with `still reports connected`; restore.
+  `env.RestartEngine` already waits for the restarted engine's control stream; the engine count and id prove it did not enroll again.
+- [ ] Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestFleetRolloutAndPartition|TestEngineGroupScopedConfig|TestJoinTokenGroupAndExpiry" -count=1 -v -timeout 20m'` and expect `--- PASS` for all three. To prove the partition assertion bites, temporarily replace `a.Proc.Kill()` with `time.Sleep(time.Second)` and rerun `TestFleetRolloutAndPartition`; expect FAIL with `still reports a control stream`; restore.
 - [ ] Write `e2e/fleet_canary_test.go`:
   ```go
   package e2e
 
   import (
   	"fmt"
-  	"net"
   	"net/http"
   	"slices"
   	"strings"
@@ -4133,34 +3805,40 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   	"github.com/piwi3910/nexora/e2e/harness"
   )
 
-  func closedUDPAddr(t *testing.T) string {
-  	t.Helper()
-  	c, err := net.ListenPacket("udp", "127.0.0.1:0")
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	addr := c.LocalAddr().String()
-  	_ = c.Close()
-  	return addr
-  }
-
   func TestCanaryRolloutHaltsOnFailure(t *testing.T) {
-  	up := harness.StartFixtureUpstream(t)
-  	f := harness.StartFleet(t, harness.FleetOptions{})
-  	g := f.API.CreateGroup(t, harness.GroupSpec{Name: "canary", UpstreamMode: "override", RolloutStrategy: "canary",
-  		CanaryCount: 1, AckTimeoutSeconds: 30, HealthWindowSeconds: 30, MaxServfailRatio: 0.05, MinHealthQueries: 20})
-  	names := []string{"engine-1", "engine-2", "engine-3"}
-  	for _, n := range names {
-  		f.AddEngine(t, n, g.ID, nil)
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+  	api.DisableForwardedValidation()
+  	good, bad := env.StartDNSFixture(), env.StartDNSFixture()
+  	good.SetRecords(t, "healthy.canary.test. 60 IN A 192.0.2.1")
+  	bad.SetMode(t, "servfail")
+  	g := api.CreateEngineGroup(map[string]any{"name": "canary", "upstream_mode": "override", "rollout_strategy": "canary", "canary_count": 1,
+  		"ack_timeout_seconds": 30, "health_window_seconds": 20, "max_servfail_ratio": 0.05, "min_health_queries": 20})
+  	var up struct {
+  		ID string `json:"id"`
   	}
-  	f.WaitConnected(t, 3, 60*time.Second)
-  	f.API.PatchEngine(t, "engine-3", map[string]any{"labels": map[string]string{"nexora.io/canary": "true"}})
-  	canaryID := f.API.EngineByName(t, "engine-3").ID
+  	api.Must(http.MethodPost, "/upstreams", map[string]any{"name": "canary-up", "protocol": "udp", "address": good.UDP, "timeout_ms": 250,
+  		"enabled": true, "position": 0, "engine_group_id": g.ID}, &up, http.StatusCreated)
+  	names := []string{"canary-1", "canary-2", "canary-3"}
+  	engines := map[string]*harness.Engine{}
+  	token := api.CreateJoinTokenFor(g.ID, nil)
+  	for _, n := range names {
+  		engines[n] = env.StartManagedEngine(n, []string{mg.GRPCURL}, token)
+  	}
+  	api.PatchEngine("canary-3", map[string]any{"labels": map[string]string{"nexora.io/canary": "true"}})
+  	canaryID := api.EngineByNode("canary-3").ID
+  	base := api.WaitEngineGroupStable(g.ID, 0, 90*time.Second)
+  	for _, n := range names {
+  		api.WaitEngine(n, 30*time.Second, func(e harness.EngineView) bool { return e.Connected && e.AppliedVersion >= base })
+  	}
 
   	stop := make(chan struct{})
   	var wg sync.WaitGroup
   	for _, n := range names {
-  		addr := f.DNSAddr(n)
+  		addr := engines[n].DNS
   		wg.Add(1)
   		go func() {
   			defer wg.Done()
@@ -4168,64 +3846,67 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   				select {
   				case <-stop:
   					return
-  				case <-time.After(50 * time.Millisecond):
+  				case <-time.After(20 * time.Millisecond):
   				}
-  				_, _ = harness.Exchange(addr, fmt.Sprintf("load-%d-%d.fixture.test", i, time.Now().UnixNano()), dns.TypeA)
+  				_, _, _ = harness.Query(t, addr, fmt.Sprintf("load-%d.canary.test.", i), dns.TypeA, harness.QueryOpts{})
   			}
   		}()
   	}
   	defer func() { close(stop); wg.Wait() }()
 
-  	gid := g.ID
-  	upID := f.API.CreateUpstream(t, harness.Upstream{Name: "fixture", Address: up.Addr, Protocol: "udp", GroupID: &gid})
-  	var rs []harness.Rollout
-  	f.API.Must(t, "GET", "/api/v1/rollouts?limit=1&group_id="+g.ID, nil, &rs, http.StatusOK)
-
   	// Positive path: a healthy change passes the canary gate and completes everywhere.
-  	good := f.API.WaitRollout(t, g.ID, rs[0].Version, 3*time.Minute, "completed")
-  	if good.Strategy != "canary" || !slices.Equal(good.CanaryEngineIDs, []string{canaryID}) {
-  		t.Fatalf("healthy rollout %+v, want canary strategy with engine-3 as canary", good)
+  	rewrite(t, api, "gate.canary.test", "192.0.2.50", g.ID)
+  	healthy := api.WaitRollout(g.ID, base+1, 3*time.Minute, "completed")
+  	if healthy.Strategy != "canary" || !slices.Equal(healthy.CanaryEngineIDs, []string{canaryID}) {
+  		t.Fatalf("healthy rollout %+v, want canary strategy with canary-3 as canary", healthy)
   	}
-  	f.WaitAllApplied(t, names, good.Version, 30*time.Second)
   	for _, n := range names {
-  		harness.ExpectA(t, f.DNSAddr(n), "healthy.fixture.test", "192.0.2.1")
+  		api.WaitEngine(n, 20*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion == healthy.Version })
+  		wantA(t, harness.MustQuery(t, engines[n].DNS, "healthy.canary.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.1")
   	}
 
-  	f.API.SetUpstreamAddress(t, upID, closedUDPAddr(t))
-  	halted := f.API.WaitRollout(t, g.ID, good.Version+1, 3*time.Minute, "halted")
-  	if !strings.Contains(halted.HaltReason, "engine-3 servfail ratio") || !slices.Equal(halted.CanaryEngineIDs, []string{canaryID}) {
+  	var ups []map[string]any
+  	api.Must(http.MethodGet, "/upstreams", nil, &ups, http.StatusOK)
+  	for _, u := range ups {
+  		if u["id"] == up.ID {
+  			u["address"] = bad.UDP
+  			delete(u, "id")
+  			api.Must(http.MethodPut, "/upstreams/"+up.ID, u, nil, http.StatusOK)
+  		}
+  	}
+  	halted := api.WaitRollout(g.ID, healthy.Version+1, 3*time.Minute, "halted")
+  	if !strings.Contains(halted.HaltReason, "engine canary-3 servfail ratio") || !slices.Equal(halted.CanaryEngineIDs, []string{canaryID}) {
   		t.Fatalf("halted rollout %+v", halted)
   	}
-  	if e := f.API.EngineByName(t, "engine-3"); e.AppliedVersion != halted.Version {
+  	if e := api.EngineByNode("canary-3"); e.AppliedVersion != halted.Version {
   		t.Fatalf("canary applied %d, want %d", e.AppliedVersion, halted.Version)
   	}
-  	for _, n := range []string{"engine-1", "engine-2"} {
-  		if e := f.API.EngineByName(t, n); e.AppliedVersion != good.Version {
-  			t.Fatalf("%s applied %d during a halted canary, want %d", n, e.AppliedVersion, good.Version)
+  	for _, n := range []string{"canary-1", "canary-2"} {
+  		if e := api.EngineByNode(n); e.AppliedVersion != healthy.Version {
+  			t.Fatalf("%s applied %d during a halted canary, want %d", n, e.AppliedVersion, healthy.Version)
   		}
-  		harness.ExpectA(t, f.DNSAddr(n), "still-good.fixture.test", "192.0.2.1")
+  		wantA(t, harness.MustQuery(t, engines[n].DNS, "healthy.canary.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.1")
   	}
-  	time.Sleep(15 * time.Second)
-  	f.API.Must(t, "GET", "/api/v1/rollouts?limit=1&group_id="+g.ID, nil, &rs, http.StatusOK)
-  	if rs[0].State != "halted" || f.API.EngineByName(t, "engine-1").AppliedVersion != good.Version {
-  		t.Fatalf("halted rollout progressed on its own: %+v", rs[0])
+  	time.Sleep(10 * time.Second)
+  	if r := api.WaitRollout(g.ID, halted.Version, time.Second, "halted", "pending", "canary", "verifying", "rolling", "completed"); r.State != "halted" || api.EngineByNode("canary-1").AppliedVersion != healthy.Version {
+  		t.Fatalf("halted rollout progressed on its own: %+v", r)
   	}
 
-  	var rb harness.Rollout
-  	f.API.Must(t, "POST", "/api/v1/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": good.Version}, &rb, http.StatusAccepted)
-  	done := f.API.WaitRollout(t, g.ID, rb.Version, time.Minute, "completed")
-  	f.WaitAllApplied(t, names, done.Version, 30*time.Second)
-  	harness.ExpectA(t, f.DNSAddr("engine-3"), "recovered.fixture.test", "192.0.2.1")
+  	var rb harness.RolloutView
+  	api.Must(http.MethodPost, "/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": healthy.Version}, &rb, http.StatusAccepted)
+  	api.WaitRollout(g.ID, rb.Version, time.Minute, "completed")
+  	waitLatestApplied(t, api, names...)
+  	wantA(t, harness.MustQuery(t, engines["canary-3"].DNS, "healthy.canary.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.1")
 
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "held.fleet.test", Type: "A", Value: "192.0.2.99", GroupID: &gid})
+  	rewrite(t, api, "held.canary.test", "192.0.2.99", g.ID)
   	time.Sleep(5 * time.Second)
-  	f.API.Must(t, "GET", "/api/v1/rollouts?limit=1&group_id="+g.ID, nil, &rs, http.StatusOK)
-  	if rs[0].State != "pending" || f.API.EngineByName(t, "engine-1").AppliedVersion != done.Version {
-  		t.Fatalf("change after rollback must wait while paused: %+v", rs[0])
+  	held := api.WaitRollout(g.ID, rb.Version+1, time.Second, "pending", "canary", "verifying", "rolling", "completed", "halted")
+  	if held.State != "pending" || api.EngineByNode("canary-1").AppliedVersion != rb.Version {
+  		t.Fatalf("a change after rollback must wait while paused: %+v", held)
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test ./e2e/ -run TestCanaryRolloutHaltsOnFailure -count=1 -v -timeout 20m'` and expect `--- PASS`. Mutation check: change `MaxServfailRatio: 0.05` in the test to `1` (the gate can never trip), rerun, and expect FAIL with `waiting for [halted]`; restore `0.05`.
+- [ ] Run `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestCanaryRolloutHaltsOnFailure -count=1 -v -timeout 20m'` and expect `--- PASS`. Mutation check: change `"max_servfail_ratio": 0.05` in the test to `1` (the gate can never trip), rerun, and expect FAIL with `waiting for [halted]`; restore `0.05`.
 - [ ] Write `e2e/fleet_cert_test.go`:
   ```go
   package e2e
@@ -4239,6 +3920,7 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   	"testing"
   	"time"
 
+  	"github.com/jackc/pgx/v5"
   	"github.com/miekg/dns"
   	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
   	"google.golang.org/grpc"
@@ -4250,16 +3932,16 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   )
 
   // exportAs calls the builtin OTLP logs service with an engine's own identity files.
-  func exportAs(t *testing.T, f *harness.Fleet, engine string) error {
+  func exportAs(t *testing.T, mg *harness.Mgmt, en *harness.Engine) error {
   	t.Helper()
-  	id := filepath.Join(f.StateDir(engine), "identity")
+  	id := filepath.Join(en.StateDir, "identity")
   	pair, err := tls.LoadX509KeyPair(filepath.Join(id, "cert.pem"), filepath.Join(id, "key.pem"))
   	if err != nil {
   		t.Fatal(err)
   	}
-  	// Server identity is not under test here; the client certificate is.
+  	// The server's identity is not under test here; the client certificate is.
   	creds := credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{pair}, InsecureSkipVerify: true}) //nolint:gosec
-  	conn, err := grpc.NewClient(f.Mgmt[0].GRPCAddr, grpc.WithTransportCredentials(creds))
+  	conn, err := grpc.NewClient(mg.GRPCAddr, grpc.WithTransportCredentials(creds))
   	if err != nil {
   		t.Fatal(err)
   	}
@@ -4270,288 +3952,259 @@ Interfaces: consumes the Task 7 harness, M1 `harness.StartFixtureUpstream(t) *Fi
   	return err
   }
 
-  type engineDetail struct {
-  	ConnectionState string `json:"connection_state"`
-  	Certificates    []struct {
-  		Serial       string  `json:"serial"`
-  		RevokeReason *string `json:"revoke_reason"`
-  	} `json:"certificates"`
-  }
-
   func TestEngineCertRevocation(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{Engines: 3, MgmtEnv: map[string]string{"NEXORA_ENGINE_CERT_TTL": "60s"}})
-  	f.WaitConnected(t, 3, 60*time.Second)
-  	base := stableOf(f.API.Group(t, harness.DefaultGroupID))
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "rev.fleet.test", Type: "A", Value: "192.0.2.30"})
-  	v1 := f.API.WaitGroupStable(t, harness.DefaultGroupID, base, 20*time.Second)
-  	f.WaitAllApplied(t, []string{"engine-1", "engine-2", "engine-3"}, v1, 20*time.Second)
-
-  	if err := exportAs(t, f, "engine-1"); err != nil {
-  		t.Fatalf("engine-1 identity rejected before revocation: %v", err)
+  	ctx := context.Background()
+  	env := harness.New(t)
+  	pg := env.StartPostgres()
+  	ca := env.InitCA()
+  	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{ExtraEnv: []string{"NEXORA_ENGINE_CERT_TTL=60s"}})
+  	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+  	api.DisableForwardedValidation()
+  	fx := env.StartDNSFixture()
+  	createUDPUpstream(t, api, "fixture", fx.UDP)
+  	names := []string{"rev-1", "rev-2", "rev-3"}
+  	engines := map[string]*harness.Engine{}
+  	token := api.CreateJoinToken()
+  	for _, n := range names {
+  		engines[n] = env.StartManagedEngine(n, []string{mg.GRPCURL}, token)
   	}
-  	e1 := f.API.EngineByName(t, "engine-1")
-  	f.API.Must(t, "POST", "/api/v1/engines/"+e1.ID+"/revoke", nil, nil, http.StatusOK)
+  	rewrite(t, api, "rev.fleet.test", "192.0.2.30", nil)
+  	waitLatestApplied(t, api, names...)
+
+  	if err := exportAs(t, mg, engines["rev-1"]); err != nil {
+  		t.Fatalf("rev-1 identity rejected before revocation: %v", err)
+  	}
+  	api.Must(http.MethodPost, "/engines/"+api.EngineByNode("rev-1").ID+"/revoke", nil, nil, http.StatusOK)
   	harness.Eventually(t, 15*time.Second, func() error {
-  		if s := f.API.EngineByName(t, "engine-1").ConnectionState; s != "revoked" {
-  			return fmt.Errorf("state %s", s)
+  		if s := api.EngineByNode("rev-1").Status; s != "revoked" {
+  			return fmt.Errorf("status %s", s)
   		}
-  		if harness.MetricValue(t, f.MetricsURL("engine-1"), "nexora_control_revoked") != 1 ||
-  			harness.MetricValue(t, f.MetricsURL("engine-1"), "nexora_control_connected") != 0 {
-  			return fmt.Errorf("engine-1 has not observed its revocation")
+  		if engines["rev-1"].Metric(t, "nexora_control_revoked", nil) != 1 || engines["rev-1"].Metric(t, "nexora_control_connected", nil) != 0 {
+  			return fmt.Errorf("rev-1 has not observed its revocation")
   		}
-  		if s, _ := status.FromError(exportAs(t, f, "engine-1")); s.Code() != codes.PermissionDenied || s.Message() != "certificate revoked" {
-  			return fmt.Errorf("export as engine-1: %v", s)
+  		if s, _ := status.FromError(exportAs(t, mg, engines["rev-1"])); s.Code() != codes.PermissionDenied || s.Message() != "certificate revoked" {
+  			return fmt.Errorf("export as rev-1: %v", s)
   		}
   		return nil
   	})
-  	harness.ExpectA(t, f.DNSAddr("engine-1"), "rev.fleet.test", "192.0.2.30")
+  	wantA(t, harness.MustQuery(t, engines["rev-1"].DNS, "rev.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.30")
 
-  	f.API.CreateRewrite(t, harness.Rewrite{Domain: "post-revoke.fleet.test", Type: "A", Value: "192.0.2.31"})
-  	v2 := f.API.WaitGroupStable(t, harness.DefaultGroupID, v1, 20*time.Second)
-  	f.WaitAllApplied(t, []string{"engine-2", "engine-3"}, v2, 20*time.Second)
-  	harness.ExpectA(t, f.DNSAddr("engine-2"), "post-revoke.fleet.test", "192.0.2.31")
-  	if got := f.API.EngineByName(t, "engine-1").AppliedVersion; got != v1 {
-  		t.Fatalf("revoked engine applied %d, want %d", got, v1)
+  	applied := api.EngineByNode("rev-1").AppliedVersion
+  	rewrite(t, api, "post-revoke.fleet.test", "192.0.2.31", nil)
+  	waitLatestApplied(t, api, "rev-2", "rev-3")
+  	wantA(t, harness.MustQuery(t, engines["rev-2"].DNS, "post-revoke.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.31")
+  	if got := api.EngineByNode("rev-1").AppliedVersion; got != applied {
+  		t.Fatalf("revoked engine applied %d, want %d", got, applied)
   	}
-  	if r, err := harness.Exchange(f.DNSAddr("engine-1"), "post-revoke.fleet.test", dns.TypeA); err == nil {
-  		for _, rr := range r.Answer {
-  			if a, ok := rr.(*dns.A); ok && a.A.String() == "192.0.2.31" {
-  				t.Fatal("revoked engine received config after revocation")
-  			}
+  	if got := aValues(harness.MustQuery(t, engines["rev-1"].DNS, "post-revoke.fleet.test.", dns.TypeA, harness.QueryOpts{})); len(got) > 0 && got[0] == "192.0.2.31" {
+  		t.Fatal("revoked engine received configuration after revocation")
+  	}
+
+  	conn, err := pgx.Connect(ctx, pg.URL)
+  	if err != nil {
+  		t.Fatal(err)
+  	}
+  	defer conn.Close(ctx)
+  	reason := func(serial string) string {
+  		var r *string
+  		_ = conn.QueryRow(ctx, `select revoke_reason from engine_certificates where serial = $1`, serial).Scan(&r)
+  		if r == nil {
+  			return ""
   		}
+  		return *r
   	}
-
-  	e2 := f.API.EngineByName(t, "engine-2")
-  	oldSerial := e2.Certificate.Serial
-  	f.API.Must(t, "POST", "/api/v1/engines/"+e2.ID+"/rotate-certificate", nil, nil, http.StatusAccepted)
+  	rev2 := api.EngineByNode("rev-2")
+  	api.Must(http.MethodPost, "/engines/"+rev2.ID+"/rotate-certificate", nil, nil, http.StatusAccepted)
   	harness.Eventually(t, 30*time.Second, func() error {
-  		var d engineDetail
-  		f.API.Must(t, "GET", "/api/v1/engines/"+e2.ID, nil, &d, http.StatusOK)
-  		if d.ConnectionState != "connected" || len(d.Certificates) < 2 || d.Certificates[0].Serial == oldSerial {
-  			return fmt.Errorf("engine-2 not rotated yet: %+v", d)
-  		}
-  		for _, c := range d.Certificates {
-  			if c.Serial == oldSerial && (c.RevokeReason == nil || *c.RevokeReason != "superseded") {
-  				return fmt.Errorf("old serial %s not superseded yet", oldSerial)
-  			}
+  		e := api.EngineByNode("rev-2")
+  		if !e.Connected || e.CertificateSerial == rev2.CertificateSerial || reason(rev2.CertificateSerial) != "superseded" {
+  			return fmt.Errorf("rev-2 not rotated yet: %+v", e)
   		}
   		return nil
   	})
 
-  	s3 := f.API.EngineByName(t, "engine-3").Certificate.Serial
+  	s3 := api.EngineByNode("rev-3").CertificateSerial
   	harness.Eventually(t, 75*time.Second, func() error {
-  		e := f.API.EngineByName(t, "engine-3")
-  		if e.Certificate == nil || e.Certificate.Serial == s3 || e.ConnectionState != "connected" {
-  			return fmt.Errorf("engine-3 has not renewed on its own")
+  		if e := api.EngineByNode("rev-3"); e.CertificateSerial == s3 || !e.Connected {
+  			return fmt.Errorf("rev-3 has not renewed on its own")
   		}
   		return nil
   	})
 
-  	if v := harness.MetricValue(t, f.Mgmt[0].HTTPURL+"/metrics", "nexora_mgmt_engines_disconnected"); v != 0 {
+  	if v := mg.Metric(t, "nexora_mgmt_engines_disconnected", nil); v != 0 {
   		t.Fatalf("disconnected gauge %v with every non-revoked engine connected", v)
   	}
-  	f.Engine("engine-3").Stop()
+  	engines["rev-3"].Proc.Stop()
   	harness.Eventually(t, 110*time.Second, func() error {
-  		if v := harness.MetricValue(t, f.Mgmt[0].HTTPURL+"/metrics", "nexora_mgmt_engines_disconnected"); v != 1 {
+  		if v := mg.Metric(t, "nexora_mgmt_engines_disconnected", nil); v != 1 {
   			return fmt.Errorf("nexora_mgmt_engines_disconnected = %v, want 1", v)
   		}
   		return nil
   	})
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test ./e2e/ -run TestEngineCertRevocation -count=1 -v -timeout 20m'` and expect `--- PASS`. Mutation check: comment out the `CheckConnect` call in the stream interceptor and rerun; expect FAIL with `export as engine-1`; restore.
-- [ ] Run the regression set `scripts/dev-exec.sh 'go test ./e2e/ -run "TestMgmtStatelessHA|TestInvalidSnapshotRejected|TestAuthoritativeZonePropagation|TestFleetAPI|TestMgmtCLIFleet" -count=1 -v -timeout 30m'` and expect `--- PASS` for each (`TestMgmtStatelessHA` keeps the engine's control stream failing over within 10 s because targets are computed from Postgres on whichever instance receives `Hello`).
-- [ ] Commit: `git add e2e/fleet_test.go e2e/fleet_canary_test.go e2e/fleet_cert_test.go && git commit -m "test(e2e): fleet rollout, canary halt, scoping, join tokens, revocation"`.
+- [ ] Run `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestEngineCertRevocation -count=1 -v -timeout 20m'` and expect `--- PASS`. Mutation check: make `fleet.CheckCertificate` return nil for revoked engines, rebuild with `make e2e-build`, rerun, and expect FAIL with `export as rev-1`; restore and rebuild.
+- [ ] Run the regression set `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestMgmtStatelessHA|TestInvalidSnapshotRejected|TestAuthoritativeZonePropagation|TestSecondaryAndDynamicUpdate|TestRPZPolicy|TestFleetAPI|TestMgmtCLIFleet" -count=1 -v -timeout 40m'` and expect `--- PASS` for each.
+- [ ] Commit: `git add e2e/harness/lb.go e2e/harness/mgmt.go e2e/fleet_test.go e2e/fleet_canary_test.go e2e/fleet_cert_test.go && git commit -m "test(e2e): fleet partition, engine-group scoping, join tokens, canary halt, revocation"`.
 
 ## Task 11: Fleet GUI
 
-Files: `web/src/api/fleet.ts` (TanStack Query hooks over the generated client), `web/src/routes/engines/FleetPage.tsx` (`/engines`: summary, groups, rollouts, engines), `web/src/routes/engines/GroupDetailPage.tsx` (`/engines/groups/:groupId`: settings, join tokens, rollback/resume, delete), `web/src/routes/engines/EngineDetailPage.tsx` (`/engines/:engineId`: identity, certificate, group/labels, charts, revoke/rotate/delete), `web/src/routes/engines/RolloutDetailPage.tsx` (`/engines/rollouts/:rolloutId`), `web/src/components/fleet/RolloutProgress.tsx`, `web/src/components/fleet/StatusBadges.tsx` (connection state, drift, rollout state), `web/src/components/fleet/ScopeSelect.tsx` (Global / group picker for scoped resources), `web/src/components/fleet/LabelsEditor.tsx`, `web/src/components/fleet/fleet.test.tsx` (vitest), `web/src/router.tsx` (routes), the scoped resource pages (`/upstreams`, `/access-control`, `/filtering`, `/policies`, `/rewrites`, `/zones`, `/rpz`, `/settings` telemetry section: scope field, Scope column, scope filter), `web/e2e/fleet.spec.ts` (Playwright), `e2e/gui_fleet_test.go` (`TestGUIFleet` wrapper)
-Interfaces: routes above; `ScopeSelect` props `{ value: string | null; onChange(v: string | null): void; label?: string }` where `null` means global; visible copy used by tests: buttons `New group`, `Create`, `Save`, `New join token`, `Revoke`, `Roll back`, `Resume rollouts`, `Rotate certificate`, `Revoke engine`, `Delete engine`, `Delete group`, `Confirm`; headings `Fleet`, `Groups`, `Rollouts`, `Engines`; banner `Change rollouts are paused for this group`; badges `Connected`, `Disconnected`, `Never connected`, `Revoked`, `In sync`, `Behind`, `Ahead`, `Rejected`, `Unknown`, and rollout states in Title Case (`Pending`, `Canary`, `Verifying`, `Rolling`, `Completed`, `Halted`, `Rolled back`, `Superseded`); scope column text `Global` or the group name.
+The screens follow the M1–M4 GUI layout (pages in `web/src/pages/`, TanStack Query hooks over `api`/`unwrap`, Radix components from `components/ui`, `data-testid` hooks, `useCan` for role gating) and are covered by the request-based `TestGUICoverage`: every M5 operation must be issued by the browser in `web/e2e/screens/20-fleet.spec.ts` or `21-engine-group-scope.spec.ts`. The web package has no unit-test runner, so badge and progress rendering is asserted in Playwright. This task runs after M4 Task 15 (it edits `web/src/pages/ZonesPage.tsx`).
 
-- [ ] Write the failing unit test `web/src/components/fleet/fleet.test.tsx`:
-  ```tsx
-  import { render, screen } from "@testing-library/react";
-  import { describe, expect, it } from "vitest";
-  import { RolloutProgress } from "./RolloutProgress";
-  import { ConnectionBadge, DriftBadge, RolloutStateBadge } from "./StatusBadges";
+Files: `web/src/api/fleet.ts` (hooks), `web/src/components/fleet.tsx` (`EngineStatusBadge`, `RolloutStateBadge`, `RolloutProgress`, `EngineGroupSelect`, `LabelsEditor`), `web/src/pages/EnginesPage.tsx` (`/engines`: fleet summary, engine groups, engines, join tokens), `web/src/pages/EngineGroupPage.tsx` (`/engines/groups/:id`), `web/src/pages/EngineDetailPage.tsx` (`/engines/nodes/:id`), `web/src/pages/RolloutPage.tsx` (`/engines/rollouts/:id`), `web/src/app/router.tsx` (routes), engine-group scope fields in `web/src/pages/UpstreamsPage.tsx`, `FilteringPage.tsx`, `PoliciesPage.tsx`, `RewritesPage.tsx`, `ForwardZonesSection.tsx`, `RpzPage.tsx`, `ZonesPage.tsx`, `web/e2e/screens/20-fleet.spec.ts`, `web/e2e/screens/21-engine-group-scope.spec.ts`, `e2e/gui_test.go` (coverage glob)
+Interfaces: routes above; `EngineGroupSelect` props `{ value: string | null; onChange(v: string | null): void; id?: string; testId: string }` where `null` renders `All engine groups`; test ids listed in the specs below (the M1 ids `engine-row-<node>`, `engine-open-<node>`, `engine-detail`, `engine-delete`, `confirm-delete`, `jointoken-add`, `jointoken-name`, `jointoken-save`, `jointoken-value`, `jointoken-row-<name>`, `jointoken-revoke-<name>` keep working for `05-engines.spec.ts`).
 
-  describe("fleet components", () => {
-    it("shows applied over total and the halt reason", () => {
-      render(
-        <RolloutProgress
-          rollout={{ state: "halted", progress: { total: 3, applied: 1, rejected: 0 }, halt_reason: "engine engine-3 servfail ratio 0.950 > 0.050 over 400 queries" }}
-        />,
-      );
-      expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "33");
-      expect(screen.getByText("1 / 3 applied")).toBeInTheDocument();
-      expect(screen.getByText(/servfail ratio 0.950/)).toBeInTheDocument();
-    });
-
-    it("labels states for humans", () => {
-      render(
-        <>
-          <ConnectionBadge state="never_connected" />
-          <DriftBadge drift="ahead" />
-          <RolloutStateBadge state="rolled_back" />
-        </>,
-      );
-      expect(screen.getByText("Never connected")).toBeInTheDocument();
-      expect(screen.getByText("Ahead")).toBeInTheDocument();
-      expect(screen.getByText("Rolled back")).toBeInTheDocument();
-    });
-  });
-  ```
-- [ ] Run `scripts/dev-exec.sh 'pnpm --dir web vitest run src/components/fleet'` and expect FAIL with `Failed to resolve import "./RolloutProgress"`.
-- [ ] Implement the components: `RolloutProgress` renders a Radix `Progress` with `aria-valuenow = round(applied / total * 100)` (0 when total is 0), the text `<applied> / <total> applied`, `<rejected> rejected` when non-zero, and `halt_reason` in a destructive-coloured line when state is `halted`; badges map the enum values to the copy listed under Interfaces (connected/in_sync/completed green, behind/pending/canary/verifying/rolling blue, disconnected/ahead amber, revoked/rejected/halted red, others grey). Run the vitest command and expect `2 passed`.
-- [ ] Implement `web/src/api/fleet.ts` with one hook per operation (`useFleetSummary`, `useEngineGroups`, `useEngineGroup(id)`, `useRollouts({groupId,state})`, `useRollout(id)`, `useEngines(filters)`, `useEngine(id)`, `useEngineStats(id, window)`, `useJoinTokens`, and mutations `useCreateEngineGroup`, `useUpdateEngineGroup`, `useDeleteEngineGroup`, `useRollbackEngineGroup`, `useResumeRollouts`, `useUpdateEngine`, `useDeleteEngine`, `useRevokeEngine`, `useRotateEngineCertificate`, `useCreateJoinToken`, `useRevokeJoinToken`); list queries refetch every 5 s while the page is visible; mutations invalidate `["fleet"]`; a 409 `conflict` shows the toast `Someone else changed this; reload to see their change`.
-- [ ] Implement the pages:
-  - `/engines` (`FleetPage`, heading `Fleet`): summary cards (connected/total, disconnected, drift not in sync, fleet QPS, cache hit ratio as percent, max p99 in ms, halted rollouts); `Groups` table (name linking to the group page, strategy, engines connected/total, stable version, active rollout `RolloutProgress`) with `New group` dialog (name, description, upstream mode, strategy, canary count, canary percent, ack timeout, health window, max SERVFAIL ratio, min health queries; submit `Create`); `Rollouts` table (newest 20: group, version, kind, strategy, `RolloutStateBadge`, progress, created) linking to the rollout page; `Engines` table (name linking to engine page, group, `ConnectionBadge`, `DriftBadge`, applied/target version, QPS, p99, last seen, labels as chips) with filters group, state, drift.
-  - `/engines/groups/:groupId`: settings form (`Save`, sends `revision`); paused banner `Change rollouts are paused for this group` with `Resume rollouts`; `Roll back` dialog with a select of the group's earlier versions taken from its rollouts (`to_version`) and `Confirm`; join token table (state, uses/max, expires, labels, `Revoke` per active row) and `New join token` dialog (TTL select 1h/24h/7d, max uses, labels) that shows the created token once in a read-only field with a copy button; scoped resource counts; `Delete group` (disabled for `default`; `Confirm` dialog; 409 message shown inline).
-  - `/engines/:engineId`: identity (id, node name, created), `ConnectionBadge`, connected instance, last seen; versions (applied, target, `DriftBadge`, rejection reason); certificate (serial, not before/after, history table with revoke reason); group select and `LabelsEditor` with `Save`; Recharts line charts for QPS, cache hit ratio, p99 over the selected window (5m/1h/24h); buttons `Rotate certificate`, `Revoke engine`, `Delete engine`, each behind a `Confirm` dialog; admin-only buttons are hidden for other roles using the M1 role hook.
-  - `/engines/rollouts/:rolloutId`: rollout header (`RolloutStateBadge`, kind, strategy, version, from version, created by, halt reason), `RolloutProgress`, per-engine table (name, canary marker, connection, applied version, status).
-  - Scoped resource pages: a `ScopeSelect` field (options `Global` and every group name) in each create/edit form, a `Scope` column, and a scope filter above each list.
-- [ ] Write the failing Playwright spec `web/e2e/fleet.spec.ts` (uses M1's `loginAsAdmin` and `covers` helpers from `web/e2e/helpers`, the mechanism `TestGUICoverage` reads):
+- [ ] Widen the coverage glob in `e2e/gui_test.go` from `web/e2e/screens/[01][0-9]-*.spec.ts` to `web/e2e/screens/[012][0-9]-*.spec.ts`, and run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'`; expect FAIL whose uncovered list is exactly the M5 operations (`createEngineGroup`, `deleteEngineGroup`, `getEngineGroup`, `getEngineStats`, `getFleetSummary`, `getRollout`, `listEngineGroups`, `listRollouts`, `resumeEngineGroupRollouts`, `revokeEngine`, `rollbackEngineGroup`, `rotateEngineCertificate`, `updateEngine`, `updateEngineGroup`).
+- [ ] Write the failing Playwright spec `web/e2e/screens/20-fleet.spec.ts`:
   ```ts
-  import { expect, test } from "@playwright/test";
-  import { covers, loginAsAdmin } from "./helpers";
+  import { test, expect, env, login } from "../fixtures";
 
-  test.describe("fleet", () => {
-    test.beforeEach(async ({ page }) => {
-      await loginAsAdmin(page);
+  test("admin manages engine groups, engines, rollouts and certificates", async ({
+    page,
+  }) => {
+    // covers getFleetSummary, listEngineGroups, createEngineGroup, getEngineGroup, updateEngineGroup,
+    // updateEngine, getEngineStats, rotateEngineCertificate, listRollouts, getRollout,
+    // rollbackEngineGroup, resumeEngineGroupRollouts, revokeEngine, deleteEngineGroup
+    await login(
+      page,
+      env("NEXORA_E2E_ADMIN_USER"),
+      env("NEXORA_E2E_ADMIN_PASSWORD"),
+    );
+    await page.getByTestId("nav-engines").click();
+    await expect(page.getByTestId("fleet-summary")).toContainText("default");
+
+    await page.getByTestId("enginegroup-add").click();
+    await page.getByTestId("enginegroup-name").fill("gui-edge");
+    await page.getByTestId("enginegroup-save").click();
+    await expect(page.getByTestId("enginegroup-row-gui-edge")).toContainText(
+      "all_at_once",
+    );
+
+    await page.getByTestId("engine-open-gui-engine").click();
+    await expect(page.getByTestId("engine-detail")).toContainText("gui-engine");
+    await expect(page.getByTestId("engine-stats-chart")).toBeVisible();
+    await page.getByTestId("engine-group-select").click();
+    await page.getByRole("option", { name: "gui-edge", exact: true }).click();
+    await page.getByTestId("engine-label-add").click();
+    await page.getByTestId("engine-label-key-0").fill("nexora.io/canary");
+    await page.getByTestId("engine-label-value-0").fill("true");
+    await page.getByTestId("engine-save").click();
+    await expect(page.getByTestId("engine-group-name")).toHaveText("gui-edge");
+    await expect(page.getByTestId("engine-status")).toContainText("current", {
+      timeout: 30_000,
     });
+    await page.getByTestId("engine-rotate").click();
+    await page.getByTestId("confirm-rotate").click();
+    await expect(page.getByText("Rotation requested")).toBeVisible();
 
-    test("fleet view, groups, join tokens, engines, rollouts", async ({ page }) => {
-      covers("getFleetSummary", "listEngineGroups", "listEngines", "listRollouts", "createEngineGroup", "getEngineGroup",
-        "updateEngineGroup", "createJoinToken", "listJoinTokens", "revokeJoinToken", "getEngine", "updateEngine",
-        "getEngineStats", "rotateEngineCertificate", "getRollout", "rollbackEngineGroup", "resumeEngineGroupRollouts",
-        "revokeEngine", "deleteEngine", "deleteEngineGroup");
+    await page.getByTestId("nav-engines").click();
+    await page.getByTestId("enginegroup-open-gui-edge").click();
+    await expect(page.getByTestId("enginegroup-detail")).toContainText(
+      "gui-edge",
+    );
+    await page.getByTestId("enginegroup-description").fill("from the gui");
+    await page.getByTestId("enginegroup-save-settings").click();
+    await expect(page.getByText("Saved")).toBeVisible();
 
-      await page.goto("/engines");
-      await expect(page.getByRole("heading", { name: "Fleet" })).toBeVisible();
-      const engines = page.getByRole("region", { name: "Engines" });
-      await expect(engines.getByRole("row", { name: /engine-1/ })).toContainText("Connected");
-      await expect(engines.getByRole("row", { name: /engine-2/ })).toContainText("In sync");
+    await page.getByTestId("rollout-open").first().click();
+    await expect(page.getByTestId("rollout-detail")).toBeVisible();
+    await expect(page.getByTestId("rollout-progress")).toHaveAttribute(
+      "role",
+      "progressbar",
+    );
+    await expect(page.getByTestId("rollout-engines")).toContainText(
+      "gui-engine",
+    );
+    await page.goBack();
 
-      await page.getByRole("button", { name: "New group" }).click();
-      await page.getByLabel("Name").fill("edge-gui");
-      await page.getByLabel("Strategy").selectOption("canary");
-      await page.getByLabel("Canary count").fill("1");
-      await page.getByRole("button", { name: "Create" }).click();
-      await page.getByRole("region", { name: "Groups" }).getByRole("link", { name: "edge-gui" }).click();
+    await page.getByTestId("enginegroup-rollback").click();
+    await page.getByTestId("rollback-version").click();
+    await page.getByRole("option").last().click();
+    await page.getByTestId("rollback-confirm").click();
+    await expect(page.getByTestId("enginegroup-paused")).toBeVisible();
+    await page.getByTestId("enginegroup-resume").click();
+    await expect(page.getByTestId("enginegroup-paused")).toHaveCount(0);
 
-      await page.getByLabel("Health window (seconds)").fill("45");
-      await page.getByRole("button", { name: "Save" }).click();
-      await expect(page.getByText("Saved")).toBeVisible();
+    await page.getByTestId("nav-engines").click();
+    await page.getByTestId("engine-open-gui-engine").click();
+    await page.getByTestId("engine-revoke").click();
+    await page.getByTestId("confirm-revoke").click();
+    await expect(page.getByTestId("engine-status")).toContainText("revoked");
 
-      await page.getByRole("button", { name: "New join token" }).click();
-      await page.getByLabel("Max uses").fill("2");
-      await page.getByRole("button", { name: "Create" }).click();
-      await expect(page.getByLabel("Join token")).toHaveValue(/^nxj1\.[A-Z2-7]+\.[0-9a-f]{64}$/);
-      await page.keyboard.press("Escape");
-      const tokens = page.getByRole("region", { name: "Join tokens" });
-      await tokens.getByRole("button", { name: "Revoke" }).first().click();
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(tokens.getByRole("row").nth(1)).toContainText("revoked");
-
-      await page.goto("/engines");
-      await engines.getByRole("link", { name: "engine-2" }).click();
-      await page.getByLabel("Group").selectOption({ label: "edge-gui" });
-      await page.getByRole("button", { name: "Add label" }).click();
-      await page.getByLabel("Label key").last().fill("nexora.io/canary");
-      await page.getByLabel("Label value").last().fill("true");
-      await page.getByRole("button", { name: "Save" }).click();
-      await expect(page.getByText("edge-gui")).toBeVisible();
-      await expect(page.getByRole("img", { name: "QPS" })).toBeVisible();
-      await page.getByRole("button", { name: "Rotate certificate" }).click();
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page.getByText("Rotation requested")).toBeVisible();
-
-      await page.goto("/engines");
-      await page.getByRole("region", { name: "Rollouts" }).getByRole("link").first().click();
-      await expect(page.getByRole("progressbar")).toBeVisible();
-      await expect(page.getByRole("table", { name: "Engines in this rollout" })).toBeVisible();
-
-      await page.goto("/engines");
-      await page.getByRole("region", { name: "Groups" }).getByRole("link", { name: "edge-gui" }).click();
-      await page.getByRole("button", { name: "Roll back" }).click();
-      await page.getByLabel("Version").selectOption({ index: 1 });
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page.getByText("Change rollouts are paused for this group")).toBeVisible();
-      await page.getByRole("button", { name: "Resume rollouts" }).click();
-      await expect(page.getByText("Change rollouts are paused for this group")).toBeHidden();
-
-      await page.goto("/engines");
-      await engines.getByRole("link", { name: "engine-1" }).click();
-      await page.getByRole("button", { name: "Revoke engine" }).click();
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page.getByText("Revoked").first()).toBeVisible();
-      await page.getByRole("button", { name: "Delete engine" }).click();
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page).toHaveURL(/\/engines$/);
-      await expect(engines.getByRole("link", { name: "engine-1" })).toHaveCount(0);
-
-      await page.getByRole("button", { name: "New group" }).click();
-      await page.getByLabel("Name").fill("tmp-gui");
-      await page.getByRole("button", { name: "Create" }).click();
-      await page.getByRole("region", { name: "Groups" }).getByRole("link", { name: "tmp-gui" }).click();
-      await page.getByRole("button", { name: "Delete group" }).click();
-      await page.getByRole("button", { name: "Confirm" }).click();
-      await expect(page).toHaveURL(/\/engines$/);
-      await expect(page.getByRole("region", { name: "Groups" }).getByRole("link", { name: "tmp-gui" })).toHaveCount(0);
-    });
-
-    test("scoped rewrite shows its group", async ({ page }) => {
-      await page.goto("/rewrites");
-      await page.getByRole("button", { name: "New rewrite" }).click();
-      await page.getByLabel("Domain").fill("scoped-gui.fleet.test");
-      await page.getByLabel("Type").selectOption("A");
-      await page.getByLabel("Value").fill("192.0.2.77");
-      await page.getByLabel("Scope").selectOption({ label: "default" });
-      await page.getByRole("button", { name: "Create" }).click();
-      await expect(page.getByRole("row", { name: /scoped-gui\.fleet\.test/ })).toContainText("default");
-      await page.getByLabel("Scope filter").selectOption({ label: "Global" });
-      await expect(page.getByRole("row", { name: /scoped-gui\.fleet\.test/ })).toHaveCount(0);
-    });
+    await page.getByTestId("nav-engines").click();
+    await page.getByTestId("enginegroup-add").click();
+    await page.getByTestId("enginegroup-name").fill("gui-tmp");
+    await page.getByTestId("enginegroup-save").click();
+    await page.getByTestId("enginegroup-open-gui-tmp").click();
+    await page.getByTestId("enginegroup-delete").click();
+    await page.getByTestId("confirm-delete").click();
+    await expect(page.getByTestId("enginegroup-row-gui-tmp")).toHaveCount(0);
   });
   ```
-  Tables in the pages are wrapped in `<section aria-labelledby>` so `getByRole("region", { name })` resolves; the per-engine rollout table carries `aria-label="Engines in this rollout"`; charts carry `role="img"` with `aria-label` `QPS`, `Cache hit ratio`, `p99 latency`.
-- [ ] Write the Go wrapper `e2e/gui_fleet_test.go`:
-  ```go
-  package e2e
+- [ ] Write the failing Playwright spec `web/e2e/screens/21-engine-group-scope.spec.ts`:
+  ```ts
+  import { test, expect, env, login } from "../fixtures";
 
-  import (
-  	"testing"
-  	"time"
+  test("operator scopes an upstream and a rewrite to an engine group", async ({
+    page,
+  }) => {
+    await login(
+      page,
+      env("NEXORA_E2E_OPERATOR_USER"),
+      env("NEXORA_E2E_OPERATOR_PASSWORD"),
+    );
+    const host = `scoped-${Date.now()}.home.test`;
+    await page.getByTestId("nav-rewrites").click();
+    await page.getByRole("button", { name: "New rewrite" }).click();
+    const dialog = page.getByRole("dialog", { name: "New rewrite" });
+    await dialog.getByLabel("Name").fill(host);
+    await dialog.getByLabel("Type").click();
+    await page.getByRole("option", { name: "A", exact: true }).click();
+    await dialog.getByLabel("Value").fill("192.168.1.77");
+    await dialog.getByTestId("rewrite-engine-group").click();
+    await page.getByRole("option", { name: "gui-edge", exact: true }).click();
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(
+      page.getByRole("row", { name: new RegExp(host) }),
+    ).toContainText("gui-edge");
 
-  	"github.com/piwi3910/nexora/e2e/harness"
-  )
-
-  func TestGUIFleet(t *testing.T) {
-  	f := harness.StartFleet(t, harness.FleetOptions{Engines: 2})
-  	f.WaitConnected(t, 2, 60*time.Second)
-  	harness.RunPlaywright(t, harness.PlaywrightOptions{Spec: "fleet.spec.ts", Mgmt: f.Mgmt[0]})
-  }
+    await page.getByTestId("nav-upstreams").click();
+    await expect(
+      page.getByRole("columnheader", { name: "Engine group" }),
+    ).toBeVisible();
+  });
   ```
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/ -run TestGUIFleet -count=1 -v'` before the pages exist and expect FAIL with `getByRole('heading', { name: 'Fleet' })` in the Playwright output; after the pages, expect `--- PASS: TestGUIFleet`.
-- [ ] Run `scripts/dev-exec.sh 'pnpm --dir web run lint && pnpm --dir web run typecheck && pnpm --dir web vitest run && go test ./e2e/ -run "TestGUICoverage|TestGUIFleet" -count=1'` and expect lint and typecheck clean, vitest passing, and `ok` (every OpenAPI operation, including the fleet ones, is covered).
-- [ ] Commit: `git add web e2e/gui_fleet_test.go && git commit -m "feat(web): fleet view, group, engine and rollout pages"`.
+- [ ] Run `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'` and expect FAIL with `getByTestId('fleet-summary')` in the Playwright output.
+- [ ] Implement `web/src/api/fleet.ts`: one hook per operation (`useFleetSummary`, `useEngineGroups`, `useEngineGroup(id)`, `useRollouts({ engineGroupId, limit })`, `useRollout(id)`, `useEngine(id)`, `useEngineStats(id, window)`, and mutations `useCreateEngineGroup`, `useUpdateEngineGroup`, `useDeleteEngineGroup`, `useRollbackEngineGroup`, `useResumeRollouts`, `useUpdateEngine`, `useRevokeEngine`, `useRotateEngineCertificate`); list queries refetch every 5 s; mutations invalidate the `["fleet"]` and `["engines"]` query keys; a 409 `conflict` shows the existing conflict message pattern of the M2 pages (`reload to see the other change`).
+- [ ] Implement `web/src/components/fleet.tsx`: `EngineStatusBadge` (current green, behind/ahead amber, rejected/revoked red, disconnected muted; text is the status value), `RolloutStateBadge` (completed green, pending/canary/verifying/rolling blue, halted red, rolled_back/superseded muted), `RolloutProgress` (`role="progressbar"`, `aria-valuenow` = round(applied / total × 100), text `<applied> / <total> applied`, `<rejected> rejected` when non-zero, halt reason under it when halted; `data-testid="rollout-progress"`), `EngineGroupSelect` (Radix `Select` over `useEngineGroups`, first option `All engine groups` mapping to `null`), `LabelsEditor` (rows of key/value inputs `engine-label-key-<i>` / `engine-label-value-<i>`, add button `engine-label-add`, remove buttons).
+- [ ] Implement the pages:
+  - `EnginesPage` (`/engines`): `fleet-summary` card (engines by status, halted rollouts, one line per engine group with name, engines connected/total, stable version and `RolloutStateBadge` of its active rollout); "Engine groups" table (row `enginegroup-row-<name>` with name, strategy, upstream mode, engines, stable version; link `enginegroup-open-<name>`) with `enginegroup-add` dialog (`enginegroup-name`, description, upstream mode, strategy, canary count/percent, save `enginegroup-save`; 400/409 messages inline); the M1 engines table extended with engine group, target version and `EngineStatusBadge` (`engine-open-<node>` navigates to the engine page); the M1 join token section extended with an engine group select and max uses in the create dialog and engine group, state and uses columns.
+  - `EngineGroupPage` (`/engines/groups/:id`, `enginegroup-detail`): settings form (description `enginegroup-description`, upstream mode, extra ACL CIDRs, OTLP endpoint, strategy and gate parameters; save `enginegroup-save-settings` sends `revision`, success text `Saved`); paused banner `enginegroup-paused` with `enginegroup-resume`; `enginegroup-rollback` dialog whose `rollback-version` select lists the group's rollout versions older than the newest one and `rollback-confirm`; rollouts table (newest 20, `rollout-open` links, `RolloutStateBadge`, `RolloutProgress`); engines of the group; `enginegroup-delete` (hidden for `default` and without `deleteEngineGroup` permission) with `confirm-delete`, returning to `/engines`.
+  - `EngineDetailPage` (`/engines/nodes/:id`, `engine-detail`): node name, engine id, version, connected, last seen, `engine-status` (`EngineStatusBadge`), applied/target version and rejection reason; `engine-group-name`; `engine-group-select` (the `EngineGroupSelect` without the `All engine groups` option) and `LabelsEditor` with `engine-save` (sends `revision`); certificate serial and not-after; Recharts line chart `engine-stats-chart` of QPS and p99 over `useEngineStats(id, "1h")`; `engine-rotate` (+ `confirm-rotate`, toast `Rotation requested`), `engine-revoke` (+ `confirm-revoke`), the M1 `engine-delete` (+ `confirm-delete`); admin-only actions hidden via `useCan`.
+  - `RolloutPage` (`/engines/rollouts/:id`, `rollout-detail`): state, kind, strategy, version, from version, creator, halt reason, `RolloutProgress`, and table `rollout-engines` (node name, canary marker, connected, applied version, progress).
+  - `web/src/app/router.tsx`: routes `engines/groups/:id`, `engines/nodes/:id`, `engines/rollouts/:id` under the authenticated shell.
+  - Scoped pages: each create/edit dialog gets an "Engine group" `EngineGroupSelect` (test id `<resource>-engine-group`, e.g. `rewrite-engine-group`, `upstream-engine-group`) and each table an "Engine group" column showing the group name or `All engine groups`; the rewrite dialog hides the field when a policy group is selected.
+- [ ] Run `scripts/dev-exec.sh 'make web-test && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1 -v'` and expect typecheck, lint and build clean and `--- PASS: TestGUICoverage` (every OpenAPI operation, including the fleet ones, is covered; `05-engines.spec.ts` still passes).
+- [ ] Commit: `git add web e2e/gui_test.go && git commit -m "feat(web): fleet overview, engine group, engine and rollout pages; engine-group scope fields"`.
 
-## Task 12: Release images workflow and docker-compose example
+## Task 12: Release images workflow (extend) and docker-compose example
 
-Files: `.github/workflows/images.yml` (per-arch builds, digest merge), `.github/actionlint.yaml` (self-hosted runner labels), `deploy/compose/docker-compose.yml` (example stack), `deploy/compose/engine.toml` (engine bootstrap for compose), `deploy/compose/otel-collector.yaml` (optional collector config), `deploy/compose/.env.example` (required variables), `deploy/compose/secrets/.gitignore` (keeps the token directory, never its contents), `deploy/deploytest/workflow_test.go` (`TestImagesWorkflow`), `deploy/deploytest/compose_test.go` (`TestComposeExample`)
-Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-mgmt` tagged `sha-<7>` (and `main` on main); compose services `postgres`, `ca-init`, `migrate`, `mgmt`, `engine` (profile `engine`), `otel-collector` (profile `otel`).
+Files: `.github/workflows/images.yml` (existing: add `:main` and the multi-arch manifest check), `deploy/deploytest/workflow_test.go` (`TestImagesWorkflow`), `deploy/compose/docker-compose.yml`, `deploy/compose/engine.toml`, `deploy/compose/otel-collector.yaml`, `deploy/compose/.env.example`, `deploy/compose/secrets/.gitignore`, `deploy/deploytest/compose_test.go` (`TestComposeExample`)
+Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-mgmt` tagged `sha-<7>` (`v*` on tags) and `main` on main, pulled as `192.168.10.131/azrtydxb/<name>:<tag>`; compose services `postgres`, `volume-init`, `ca-init`, `migrate`, `mgmt`, `engine` (profile `engine`), `otel-collector` (profile `otel`).
 
 - [ ] Write the failing test `deploy/deploytest/workflow_test.go`:
   ```go
+  // Package deploytest checks the deployment artifacts (workflow, compose, Helm chart, docs) statically.
   package deploytest
 
   import (
+  	"fmt"
   	"os"
   	"regexp"
   	"strings"
   	"testing"
 
-  	"gopkg.in/yaml.v3"
+  	"go.yaml.in/yaml/v3"
   )
 
   type step struct {
@@ -4566,10 +4219,7 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   	Needs          any    `yaml:"needs"`
   	TimeoutMinutes int    `yaml:"timeout-minutes"`
   	Strategy       struct {
-  		Matrix struct {
-  			Include []map[string]string `yaml:"include"`
-  			Image   []string            `yaml:"image"`
-  		} `yaml:"matrix"`
+  		Matrix map[string]any `yaml:"matrix"`
   	} `yaml:"strategy"`
   	Steps []step `yaml:"steps"`
   }
@@ -4586,22 +4236,29 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   		t.Fatal(err)
   	}
   	build, merge := wf.Jobs["build"], wf.Jobs["merge"]
-  	combos := map[string]bool{}
-  	for _, inc := range build.Strategy.Matrix.Include {
-  		combos[inc["image"]+"|"+inc["runner"]+"|"+inc["platform"]] = true
+  	images, archs := map[string]bool{}, map[string]bool{}
+  	for _, im := range build.Strategy.Matrix["image"].([]any) {
+  		images[im.(map[string]any)["name"].(string)] = true
   	}
-  	for _, img := range []string{"nexora-engine", "nexora-mgmt"} {
-  		for _, rp := range []string{"arc-azrtydxb-publish|linux/arm64", "arc-azrtydxb-amd64-publish|linux/amd64"} {
-  			if !combos[img+"|"+rp] {
-  				t.Errorf("build matrix lacks %s on %s", img, rp)
-  			}
+  	for _, a := range build.Strategy.Matrix["arch"].([]any) {
+  		m := a.(map[string]any)
+  		archs[fmt.Sprint(m["runner"], "|", m["platform"])] = true
+  	}
+  	for _, want := range []string{"nexora-engine", "nexora-mgmt"} {
+  		if !images[want] {
+  			t.Errorf("build matrix lacks image %s", want)
   		}
   	}
-  	if build.RunsOn != "${{ matrix.runner }}" || merge.RunsOn != "arc-azrtydxb-publish" || merge.Needs != "build" {
+  	for _, want := range []string{"arc-azrtydxb-publish|linux/arm64", "arc-azrtydxb-amd64-publish|linux/amd64"} {
+  		if !archs[want] {
+  			t.Errorf("build matrix lacks %s", want)
+  		}
+  	}
+  	if build.RunsOn != "${{ matrix.arch.runner }}" || merge.RunsOn != "arc-azrtydxb-publish" || merge.Needs != "build" {
   		t.Errorf("runs-on/needs: build %q merge %q needs %v", build.RunsOn, merge.RunsOn, merge.Needs)
   	}
   	pinned := regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
-  	all := strings.Builder{}
+  	var all strings.Builder
   	for name, j := range wf.Jobs {
   		if j.TimeoutMinutes == 0 {
   			t.Errorf("job %s has no timeout-minutes", name)
@@ -4616,157 +4273,35 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   			}
   		}
   	}
-  	for _, want := range []string{"push-by-digest=true", "imagetools create", "sha-${GITHUB_SHA::7}", `grep -q '"arm64"'`, `grep -q '"amd64"'`} {
-  		if !strings.Contains(all.String(), want) {
+  	for _, want := range []string{"push-by-digest=true", "192.168.10.131:5000/azrtydxb", "imagetools create", "sha-${GITHUB_SHA::7}",
+  		`refs/heads/main`, `:main"`, `grep -q '"arm64"'`, `grep -q '"amd64"'`} {
+  		if !strings.Contains(all.String()+string(raw), want) {
   			t.Errorf("workflow does not contain %q", want)
   		}
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestImagesWorkflow -count=1` and expect FAIL with `no such file or directory`.
-- [ ] Verify the M1 Dockerfiles build for either architecture: `scripts/dev-exec.sh 'grep -nE "arm64|aarch64|amd64|x86_64" deploy/docker/engine.Dockerfile deploy/docker/mgmt.Dockerfile'` must print nothing; where it prints a line, replace the hard-coded architecture with `ARG TARGETARCH` / `$TARGETARCH` (Go: `GOARCH=$TARGETARCH`; Rust builds natively on each runner so no cross target is needed).
-- [ ] Create `.github/workflows/images.yml`:
+- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestImagesWorkflow -count=1` and expect FAIL with `workflow does not contain "refs/heads/main"`.
+- [ ] Change the `Create the multi-arch manifest list` step of the `merge` job in `.github/workflows/images.yml` to:
   ```yaml
-  # Release images for engine and management plane. Each architecture builds on
-  # hardware of that architecture (kw is arm64 without emulation); the merge job
-  # stitches the per-arch digests into one multi-arch tag.
-  name: images
-
-  on:
-    push:
-      branches: [main]
-      paths:
-        - "engine/**"
-        - "mgmt/**"
-        - "web/**"
-        - "proto/**"
-        - "gen/**"
-        - "go.mod"
-        - "go.sum"
-        - "deploy/docker/**"
-        - ".github/workflows/images.yml"
-    workflow_dispatch:
-
-  concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
-    cancel-in-progress: false
-
-  permissions:
-    contents: read
-
-  env:
-    PUSH_REGISTRY: 192.168.10.131:5000
-
-  jobs:
-    build:
-      strategy:
-        fail-fast: false
-        matrix:
-          include:
-            - { image: nexora-engine, dockerfile: deploy/docker/engine.Dockerfile, runner: arc-azrtydxb-publish, platform: linux/arm64, arch: arm64 }
-            - { image: nexora-engine, dockerfile: deploy/docker/engine.Dockerfile, runner: arc-azrtydxb-amd64-publish, platform: linux/amd64, arch: amd64 }
-            - { image: nexora-mgmt, dockerfile: deploy/docker/mgmt.Dockerfile, runner: arc-azrtydxb-publish, platform: linux/arm64, arch: arm64 }
-            - { image: nexora-mgmt, dockerfile: deploy/docker/mgmt.Dockerfile, runner: arc-azrtydxb-amd64-publish, platform: linux/amd64, arch: amd64 }
-      runs-on: ${{ matrix.runner }}
-      timeout-minutes: 120
-      steps:
-        - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-        - name: Set up buildx
-          run: |
-            cat > /tmp/buildkitd.toml <<'TOML'
-            [registry."192.168.10.131"]
-              insecure = true
-            [registry."192.168.10.131:5000"]
-              insecure = true
-            [registry."docker.io"]
-              mirrors = ["192.168.10.131"]
-            TOML
-            docker buildx create --name builder --driver docker-container \
-              --platform ${{ matrix.platform }} --buildkitd-config /tmp/buildkitd.toml --use
-            docker buildx inspect --bootstrap
-
-        - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-          with:
-            registry: ${{ env.PUSH_REGISTRY }}
-            username: ${{ secrets.NEXUS_USER }}
-            password: ${{ secrets.NEXUS_PASSWORD }}
-
-        - name: Build and push by digest
-          id: build
-          uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-          with:
-            context: .
-            file: ${{ matrix.dockerfile }}
-            builder: builder
-            platforms: ${{ matrix.platform }}
-            outputs: type=image,name=${{ env.PUSH_REGISTRY }}/azrtydxb/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-            cache-from: type=registry,ref=${{ env.PUSH_REGISTRY }}/azrtydxb/${{ matrix.image }}-buildcache:${{ matrix.arch }}
-            cache-to: type=registry,ref=${{ env.PUSH_REGISTRY }}/azrtydxb/${{ matrix.image }}-buildcache:${{ matrix.arch }},mode=max,image-manifest=true,ignore-error=true
-            provenance: false
-            sbom: false
-
-        - name: Record digest
-          env:
-            DIGEST: ${{ steps.build.outputs.digest }}
-          run: |
-            mkdir -p /tmp/digests
-            touch "/tmp/digests/${DIGEST#sha256:}"
-
-        - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-          with:
-            name: digests-${{ matrix.image }}-${{ matrix.arch }}
-            path: /tmp/digests/*
-            if-no-files-found: error
-            retention-days: 1
-
-    merge:
-      needs: build
-      runs-on: arc-azrtydxb-publish
-      timeout-minutes: 20
-      strategy:
-        fail-fast: false
-        matrix:
-          image: [nexora-engine, nexora-mgmt]
-      steps:
-        - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-          with:
-            pattern: digests-${{ matrix.image }}-*
-            path: /tmp/digests
-            merge-multiple: true
-
-        - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-          with:
-            registry: ${{ env.PUSH_REGISTRY }}
-            username: ${{ secrets.NEXUS_USER }}
-            password: ${{ secrets.NEXUS_PASSWORD }}
-
-        - name: Merge digests into sha-<7> (and main)
-          working-directory: /tmp/digests
-          env:
-            IMAGE: ${{ env.PUSH_REGISTRY }}/azrtydxb/${{ matrix.image }}
-          run: |
-            set -euo pipefail
-            test "$(ls | wc -l)" -eq 2 || { echo "expected 2 digests, got: $(ls)"; exit 1; }
-            tags=(-t "${IMAGE}:sha-${GITHUB_SHA::7}")
-            if [ "${GITHUB_REF}" = "refs/heads/main" ]; then tags+=(-t "${IMAGE}:main"); fi
-            docker buildx imagetools create "${tags[@]}" $(printf "${IMAGE}@sha256:%s " *)
-            manifest=$(docker buildx imagetools inspect --raw "${IMAGE}:sha-${GITHUB_SHA::7}")
-            echo "$manifest"
-            echo "$manifest" | grep -q '"arm64"'
-            echo "$manifest" | grep -q '"amd64"'
+  - name: Create the multi-arch manifest list
+    working-directory: /tmp/digests
+    env:
+      IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+      VERSION: ${{ steps.meta.outputs.version }}
+    run: |
+      refs=()
+      for d in *; do refs+=("$IMAGE@sha256:$d"); done
+      test "${#refs[@]}" -eq 2 || { echo "expected 2 digests, got ${#refs[@]}"; exit 1; }
+      tags=(-t "$IMAGE:$VERSION")
+      if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$IMAGE:main"); fi
+      docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+      manifest=$(docker buildx imagetools inspect --raw "$IMAGE:$VERSION")
+      echo "$manifest"
+      grep -q '"arm64"' <<<"$manifest"
+      grep -q '"amd64"' <<<"$manifest"
   ```
-- [ ] Create `.github/actionlint.yaml`:
-  ```yaml
-  # Self-hosted ARC scale sets registered to the azrtydxb org; each carries one label.
-  self-hosted-runner:
-    labels:
-      - arc-azrtydxb
-      - arc-azrtydxb-publish
-      - arc-azrtydxb-amd64
-      - arc-azrtydxb-amd64-publish
-  ```
-- [ ] Run `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -run TestImagesWorkflow -count=1 && go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/images.yml'` and expect `ok` and no actionlint output.
+  Run `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -run TestImagesWorkflow -count=1 && go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/images.yml'` and expect `ok` and no actionlint output (`.github/actionlint.yaml` already lists the self-hosted runner labels).
 - [ ] Write the failing test `deploy/deploytest/compose_test.go`:
   ```go
   package deploytest
@@ -4776,15 +4311,17 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   	"strings"
   	"testing"
 
-  	"gopkg.in/yaml.v3"
+  	"go.yaml.in/yaml/v3"
   )
 
   type composeService struct {
   	Image       string            `yaml:"image"`
   	Command     []string          `yaml:"command"`
+  	User        string            `yaml:"user"`
   	Profiles    []string          `yaml:"profiles"`
   	Environment map[string]string `yaml:"environment"`
   	Ports       []string          `yaml:"ports"`
+  	Sysctls     map[string]string `yaml:"sysctls"`
   	DependsOn   map[string]struct {
   		Condition string `yaml:"condition"`
   	} `yaml:"depends_on"`
@@ -4800,24 +4337,29 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   	}
   	var c struct {
   		Services map[string]composeService `yaml:"services"`
-  		Volumes  map[string]any            `yaml:"volumes"`
   	}
   	if err := yaml.Unmarshal(raw, &c); err != nil {
   		t.Fatal(err)
   	}
-  	for _, s := range []string{"postgres", "ca-init", "migrate", "mgmt", "engine", "otel-collector"} {
+  	for _, s := range []string{"postgres", "volume-init", "ca-init", "migrate", "mgmt", "engine", "otel-collector"} {
   		if _, ok := c.Services[s]; !ok {
   			t.Fatalf("service %s missing", s)
   		}
   	}
-  	pg, mgmt, engine, otel := c.Services["postgres"], c.Services["mgmt"], c.Services["engine"], c.Services["otel-collector"]
-  	if pg.Healthcheck == nil || !strings.Contains(pg.Environment["POSTGRES_PASSWORD"], ":?") {
-  		t.Error("postgres needs a healthcheck and a required (no default) password")
+  	pg, ca, mgmt, engine, otel := c.Services["postgres"], c.Services["ca-init"], c.Services["mgmt"], c.Services["engine"], c.Services["otel-collector"]
+  	if pg.Healthcheck == nil || pg.Environment["POSTGRES_PASSWORD_FILE"] != "/run/secrets/postgres-password" {
+  		t.Error("postgres needs a healthcheck and its password from the secret file")
+  	}
+  	if !strings.Contains(c.Services["migrate"].Environment["NEXORA_DATABASE_URL"], "passfile=/run/secrets/pgpass") {
+  		t.Error("migrate must read the database password from the pgpass secret")
+  	}
+  	if strings.Join(ca.Command, " ") != "ca init --out /var/lib/nexora-ca --if-missing" || ca.DependsOn["volume-init"].Condition != "service_completed_successfully" {
+  		t.Errorf("ca-init = %+v", ca)
   	}
   	if mgmt.DependsOn["migrate"].Condition != "service_completed_successfully" || mgmt.DependsOn["ca-init"].Condition != "service_completed_successfully" {
   		t.Errorf("mgmt depends_on = %+v", mgmt.DependsOn)
   	}
-  	if !strings.Contains(mgmt.Image, "nexora-mgmt:") || !strings.Contains(engine.Image, "nexora-engine:") {
+  	if !strings.Contains(mgmt.Image, "/nexora-mgmt:") || !strings.Contains(engine.Image, "/nexora-engine:") {
   		t.Errorf("images mgmt=%q engine=%q", mgmt.Image, engine.Image)
   	}
   	for _, k := range []string{"NEXORA_DATABASE_URL", "NEXORA_CA_CERT_FILE", "NEXORA_CA_KEY_FILE", "NEXORA_GRPC_SERVER_NAMES", "NEXORA_PUBLIC_URL"} {
@@ -4825,8 +4367,14 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   			t.Errorf("mgmt environment lacks %s", k)
   		}
   	}
+  	if !strings.Contains(mgmt.Environment["NEXORA_GRPC_SERVER_NAMES"], "mgmt") {
+  		t.Error("the gRPC server certificate must name the compose service mgmt")
+  	}
   	if len(engine.Profiles) != 1 || engine.Profiles[0] != "engine" || len(otel.Profiles) != 1 || otel.Profiles[0] != "otel" {
   		t.Errorf("profiles engine=%v otel=%v", engine.Profiles, otel.Profiles)
+  	}
+  	if engine.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" {
+  		t.Error("the engine runs as uid 10001 and needs net.ipv4.ip_unprivileged_port_start=0 for port 53")
   	}
   	udp := false
   	for _, p := range engine.Ports {
@@ -4835,22 +4383,30 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   	if !udp {
   		t.Errorf("engine ports %v lack DNS over UDP", engine.Ports)
   	}
+  	if !strings.Contains(mgmt.Environment["NEXORA_DATABASE_URL"], "passfile=/run/secrets/pgpass") {
+  		t.Error("mgmt must read the database password from the pgpass secret")
+  	}
   	env, err := os.ReadFile("../compose/.env.example")
-  	if err != nil || !strings.Contains(string(env), "POSTGRES_PASSWORD=") || !strings.Contains(string(env), "NEXORA_TAG=") {
-  		t.Errorf(".env.example: %v %q", err, env)
+  	if err != nil || !strings.Contains(string(env), "NEXORA_TAG=") || strings.Contains(strings.ToUpper(string(env)), "PASSWORD") {
+  		t.Errorf(".env.example must set NEXORA_TAG and hold no password: %v %q", err, env)
+  	}
+  	toml, err := os.ReadFile("../compose/engine.toml")
+  	if err != nil || !strings.Contains(string(toml), `management_urls = ["https://mgmt:9443"]`) {
+  		t.Errorf("engine.toml: %v %q", err, toml)
   	}
   }
   ```
 - [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestComposeExample -count=1` and expect FAIL with `no such file or directory`.
 - [ ] Create `deploy/compose/docker-compose.yml`:
   ```yaml
-  # Nexora example: one management plane, one engine, PostgreSQL, optional
-  # OpenTelemetry Collector. See docs/operations.md "Docker Compose".
-  #   cp .env.example .env && $EDITOR .env
-  #   docker compose up -d
-  #   docker compose exec mgmt nexora-mgmt join-token create --group default --ttl 1h > secrets/join-token
-  #   docker compose --profile engine up -d
+  # Nexora example: PostgreSQL, one management plane, one engine and an optional OpenTelemetry
+  # Collector. See "Install with Docker Compose" in docs/operations.md. The database password lives
+  # only in secrets/postgres-password and secrets/pgpass, which the operator generates.
   name: nexora
+
+  secrets:
+    postgres-password: { file: ./secrets/postgres-password }
+    pgpass: { file: ./secrets/pgpass }
 
   services:
     postgres:
@@ -4859,7 +4415,8 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
       environment:
         POSTGRES_USER: nexora
         POSTGRES_DB: nexora
-        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+        POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      secrets: [postgres-password]
       volumes:
         - pgdata:/var/lib/postgresql/data
       healthcheck:
@@ -4868,18 +4425,35 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
         timeout: 3s
         retries: 20
 
+    # The CA volume must belong to the management plane's non-root user before ca-init writes to it.
+    volume-init:
+      image: busybox:1.37
+      command:
+        [
+          "sh",
+          "-c",
+          "chown 65532:65532 /var/lib/nexora-ca && chmod 0700 /var/lib/nexora-ca",
+        ]
+      volumes:
+        - ca:/var/lib/nexora-ca
+      restart: "no"
+
     ca-init:
       image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
       command: ["ca", "init", "--out", "/var/lib/nexora-ca", "--if-missing"]
+      user: "65532:65532"
       volumes:
         - ca:/var/lib/nexora-ca
+      depends_on:
+        volume-init: { condition: service_completed_successfully }
       restart: "no"
 
     migrate:
       image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
       command: ["migrate"]
       environment:
-        NEXORA_DATABASE_URL: postgres://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora?sslmode=disable
+        NEXORA_DATABASE_URL: postgres://nexora@postgres:5432/nexora?sslmode=disable&passfile=/run/secrets/pgpass
+      secrets: [pgpass]
       depends_on:
         postgres: { condition: service_healthy }
       restart: "no"
@@ -4887,9 +4461,10 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
     mgmt:
       image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
       command: ["serve"]
+      user: "65532:65532"
       restart: unless-stopped
       environment:
-        NEXORA_DATABASE_URL: postgres://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora?sslmode=disable
+        NEXORA_DATABASE_URL: postgres://nexora@postgres:5432/nexora?sslmode=disable&passfile=/run/secrets/pgpass
         NEXORA_CA_CERT_FILE: /var/lib/nexora-ca/ca.crt
         NEXORA_CA_KEY_FILE: /var/lib/nexora-ca/ca.key
         NEXORA_GRPC_SERVER_NAMES: mgmt,localhost,${NEXORA_PUBLIC_HOST:-localhost}
@@ -4897,6 +4472,7 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
         NEXORA_SECURE_COOKIES: ${NEXORA_SECURE_COOKIES:-false}
         NEXORA_QUERYLOG_BACKEND: builtin
         NEXORA_OTLP_ENDPOINT: ${NEXORA_OTLP_ENDPOINT:-}
+      secrets: [pgpass]
       ports:
         - "${NEXORA_HTTP_PORT:-8080}:8080"
         - "${NEXORA_GRPC_PORT:-9443}:9443"
@@ -4913,9 +4489,10 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
       command: ["--config", "/etc/nexora/engine.toml"]
       environment:
         NEXORA_ENGINE_NODE_NAME: ${NEXORA_ENGINE_NODE_NAME:-compose-engine-1}
-      cap_drop: [ALL]
-      cap_add: [NET_BIND_SERVICE]
       read_only: true
+      cap_drop: [ALL]
+      sysctls:
+        net.ipv4.ip_unprivileged_port_start: "0"
       ports:
         - "${NEXORA_DNS_PORT:-53}:53/udp"
         - "${NEXORA_DNS_PORT:-53}:53/tcp"
@@ -4967,14 +4544,28 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
     debug: { verbosity: basic }
   service:
     pipelines:
-      logs: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
-      traces: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
-      metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
+      logs:
+        {
+          receivers: [otlp],
+          processors: [memory_limiter, batch],
+          exporters: [debug],
+        }
+      traces:
+        {
+          receivers: [otlp],
+          processors: [memory_limiter, batch],
+          exporters: [debug],
+        }
+      metrics:
+        {
+          receivers: [otlp],
+          processors: [memory_limiter, batch],
+          exporters: [debug],
+        }
   ```
-- [ ] Create `deploy/compose/.env.example`:
+- [ ] Create `deploy/compose/.env.example` (no credentials; the database secret files are generated as described in `docs/operations.md`):
   ```dotenv
-  # Copy to .env. No defaults for secrets.
-  POSTGRES_PASSWORD=
+  # Copy to .env.
   NEXORA_TAG=main
   NEXORA_REGISTRY=192.168.10.131/azrtydxb
   NEXORA_PUBLIC_URL=http://localhost:8080
@@ -4987,14 +4578,14 @@ Interfaces: images `192.168.10.131:5000/azrtydxb/nexora-engine` and `.../nexora-
   NEXORA_ENGINE_NODE_NAME=compose-engine-1
   NEXORA_OTLP_ENDPOINT=
   ```
-  and `deploy/compose/secrets/.gitignore` containing `*` and `!.gitignore` so the directory exists without committing tokens.
+  and `deploy/compose/secrets/.gitignore` with the two lines `*` and `!.gitignore`, so the directory exists without committing the join token or the database secret files. pgx reads `passfile` (libpq `.pgpass` format `host:port:database:user:secret`) and does not require mode 0600, so the bind-mounted file stays readable by uid 65532.
 - [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -count=1` and expect `ok`.
-- [ ] Commit: `git add .github/workflows/images.yml .github/actionlint.yaml deploy/compose deploy/deploytest deploy/docker && git commit -m "build: multi-arch release images and docker-compose example"`.
+- [ ] Commit: `git add .github/workflows/images.yml deploy/compose deploy/deploytest && git commit -m "build: main tag and manifest check for release images; docker-compose example"`.
 
-## Task 13: Helm chart finalisation
+## Task 13: Helm chart
 
-Files: `deploy/helm/nexora/Chart.yaml`, `deploy/helm/nexora/values.yaml`, `deploy/helm/nexora/values.schema.json`, `deploy/helm/nexora/templates/_helpers.tpl`, `templates/mgmt-deployment.yaml`, `templates/mgmt-services.yaml` (http ClusterIP + gRPC LoadBalancer), `templates/mgmt-ingress.yaml`, `templates/mgmt-pdb.yaml`, `templates/engine-configmap.yaml`, `templates/engine-workload.yaml` (per group Deployment or DaemonSet), `templates/engine-services.yaml` (per group DNS service + metrics headless service), `templates/database-cnpg.yaml`, `templates/otel-collector.yaml`, `templates/servicemonitor.yaml`, `templates/prometheusrule.yaml`, `templates/NOTES.txt`, `deploy/helm/nexora/ci/lint-values.yaml`, `deploy/kw/values-kw.yaml` (kw release values), `deploy/deploytest/helm_test.go` (`TestHelmTemplate`)
-Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`, else `R-nexora`; `F-mgmt` (Deployment, http Service), `F-mgmt-grpc` (Service), `F-engine-<group>` (ConfigMap, workload, DNS Service), `F-engine-metrics` (headless Service), `F-otel-collector`, `F` (ServiceMonitor, PrometheusRule); CNPG `Cluster` named `database.cnpg.clusterName`; pod labels `app.kubernetes.io/component` (`mgmt`, `engine`, `otel-collector`) and `nexora.io/group`.
+Files: `deploy/helm/nexora/Chart.yaml`, `deploy/helm/nexora/values.yaml`, `deploy/helm/nexora/values.schema.json`, `deploy/helm/nexora/templates/_helpers.tpl`, `templates/mgmt-deployment.yaml`, `templates/mgmt-services.yaml` (http and gRPC ClusterIP, optional gRPC LoadBalancer), `templates/mgmt-ingress.yaml`, `templates/mgmt-pdb.yaml`, `templates/engine-configmap.yaml`, `templates/engine-workloads.yaml` (one DaemonSet or Deployment per entry of `engine.groups`), `templates/engine-services.yaml` (per-group DNS Service, metrics Service), `templates/database-cnpg.yaml`, `templates/servicemonitor.yaml`, `templates/prometheusrule.yaml`, `templates/NOTES.txt`, `deploy/helm/nexora/ci/lint-values.yaml`, `deploy/kw/values-kw.yaml` (kw release values), `deploy/deploytest/helm_test.go` (`TestHelmTemplate`), `Makefile` (`GO_PKGS` includes `deploy`)
+Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora`, else `R-nexora`; objects `F-mgmt` (Deployment, http Service, Ingress unless `mgmt.ingress.name` is set, PodDisruptionBudget), `F-mgmt-grpc` (ClusterIP Service), `F-mgmt-lb` (LoadBalancer Service when `mgmt.grpcLoadBalancer.enabled`), per engine group entry `workloadName` (default `F-engine-<name>`) for the ConfigMap and workload and `service.name` (default `F-dns-<name>`) for the DNS Service, `F-engine-metrics` (Service), CNPG `Cluster` `database.cnpg.clusterName`, `F` (ServiceMonitor, PrometheusRule); pod labels `app.kubernetes.io/name` (`nexora-mgmt` or `nexora-engine`), `app.kubernetes.io/instance`, `nexora.io/engine-group`.
 
 - [ ] Write the failing test `deploy/deploytest/helm_test.go`:
   ```go
@@ -5008,13 +4599,13 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   	"strings"
   	"testing"
 
-  	"gopkg.in/yaml.v3"
+  	"go.yaml.in/yaml/v3"
   )
 
   const chartDir = "../helm/nexora"
 
   func helm(args ...string) (string, error) {
-  	out, err := exec.Command("helm", args...).CombinedOutput()
+  	out, err := exec.Command("helm", args...).CombinedOutput() // nosemgrep: dangerous-exec-command
   	return string(out), err
   }
 
@@ -5085,10 +4676,10 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   	return nil
   }
 
-  func env(c obj, name string) map[string]any {
+  func env(c obj, name string) obj {
   	for _, e := range c["env"].([]any) {
   		if m := e.(map[string]any); m["name"] == name {
-  			return m
+  			return obj(m)
   		}
   	}
   	return nil
@@ -5099,77 +4690,104 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   		t.Fatalf("helm lint: %v\n%s", err, out)
   	}
 
-  	kw := render(t, "-f", "../kw/values-kw.yaml", "--api-versions", "postgresql.cnpg.io/v1", "--api-versions", "monitoring.coreos.com/v1")
+  	kw := render(t, "-f", "../kw/values-kw.yaml", "--set", "image.tag=sha-0000000", "--api-versions", "monitoring.coreos.com/v1")
   	mgmt := find(t, kw, "Deployment", "nexora-mgmt")
   	if mgmt.path("spec", "replicas") != 2 {
   		t.Errorf("mgmt replicas = %v", mgmt.path("spec", "replicas"))
   	}
-  	db := env(container(t, mgmt, "mgmt"), "NEXORA_DATABASE_URL")
-  	if ref := obj(db).path("valueFrom", "secretKeyRef"); ref == nil || ref.(map[string]any)["name"] != "nexora-db-app" || ref.(map[string]any)["key"] != "uri" {
-  		t.Errorf("database env = %v", db)
+  	mc := container(t, mgmt, "mgmt")
+  	if ref := env(mc, "NEXORA_DATABASE_URL").path("valueFrom", "secretKeyRef"); ref == nil || ref.(map[string]any)["name"] != "nexora-db-app" || ref.(map[string]any)["key"] != "uri" {
+  		t.Errorf("database env = %v", env(mc, "NEXORA_DATABASE_URL"))
   	}
-  	init := mgmt.path("spec", "template", "spec", "initContainers").([]any)[0].(map[string]any)
-  	if args := init["args"].([]any); len(args) != 1 || args[0] != "migrate" {
-  		t.Errorf("migrate init container args = %v", init["args"])
-  	}
-  	grpc := find(t, kw, "Service", "nexora-mgmt-grpc")
-  	if grpc.path("spec", "type") != "LoadBalancer" || grpc.path("spec", "loadBalancerIP") != "192.168.10.135" {
-  		t.Errorf("grpc service spec = %v", grpc["spec"])
-  	}
-  	for group, want := range map[string]struct {
-  		ip       string
-  		replicas int
-  	}{"edge-a": {"192.168.10.136", 2}, "edge-b": {"192.168.10.137", 1}} {
-  		w := find(t, kw, "Deployment", "nexora-engine-"+group)
-  		if w.path("spec", "replicas") != want.replicas {
-  			t.Errorf("%s replicas = %v", group, w.path("spec", "replicas"))
-  		}
-  		anti := w.path("spec", "template", "spec", "affinity", "podAntiAffinity", "requiredDuringSchedulingIgnoredDuringExecution")
-  		if anti == nil || anti.([]any)[0].(map[string]any)["topologyKey"] != "kubernetes.io/hostname" {
-  			t.Errorf("%s lacks required host anti-affinity: %v", group, anti)
-  		}
-  		if nn := env(container(t, w, "engine"), "NEXORA_ENGINE_NODE_NAME"); nn == nil || nn["value"] != group+"-$(K8S_NODE_NAME)" {
-  			t.Errorf("%s node name env = %v", group, nn)
-  		}
-  		svc := find(t, kw, "Service", "nexora-engine-"+group)
-  		if svc.path("spec", "loadBalancerIP") != want.ip {
-  			t.Errorf("%s service IP = %v", group, svc.path("spec", "loadBalancerIP"))
+  	for name, want := range map[string]string{
+  		"NEXORA_KEK_FILE": "/etc/nexora/kek/kek", "NEXORA_DNS_TLS_CERT_FILE": "/etc/nexora/dns-tls/tls.crt",
+  		"NEXORA_QUERYLOG_BACKEND": "opensearch", "NEXORA_SECURE_COOKIES": "true", "NEXORA_PUBLIC_URL": "https://nexora.kw.local",
+  	} {
+  		if e := env(mc, name); e == nil || e["value"] != want {
+  			t.Errorf("mgmt %s = %v, want %s", name, e, want)
   		}
   	}
-  	cluster := find(t, kw, "Cluster", "nexora-db")
-  	if cluster.path("spec", "instances") != 2 || cluster.path("spec", "storage", "storageClass") != "longhorn-single" {
-  		t.Errorf("cnpg cluster spec = %v", cluster["spec"])
+  	if names := env(mc, "NEXORA_GRPC_SERVER_NAMES"); names == nil || !strings.Contains(names["value"].(string), "192.168.10.135") ||
+  		!strings.Contains(names["value"].(string), "nexora-mgmt-grpc.nexora.svc.cluster.local") {
+  		t.Errorf("gRPC server names = %v", names)
+  	}
+  	if probe := mc.path("readinessProbe", "httpGet", "path"); probe != "/api/v1/health" {
+  		t.Errorf("mgmt readiness path = %v", probe)
+  	}
+  	if init := mgmt.path("spec", "template", "spec", "initContainers").([]any)[0].(map[string]any); init["args"].([]any)[0] != "migrate" {
+  		t.Errorf("migrate init container = %v", init)
+  	}
+  	if lb := find(t, kw, "Service", "nexora-mgmt-lb"); lb.path("spec", "loadBalancerIP") != "192.168.10.135" || len(lb.path("spec", "ports").([]any)) != 1 {
+  		t.Errorf("gRPC load balancer = %v", lb["spec"])
+  	}
+  	find(t, kw, "Service", "nexora-mgmt-grpc")
+  	ing := find(t, kw, "Ingress", "nexora")
+  	if ing.path("spec", "ingressClassName") != "nginx" || ing.path("metadata", "annotations", "cert-manager.io/cluster-issuer") != "cluster-ca" ||
+  		ing.path("spec", "tls").([]any)[0].(map[string]any)["secretName"] != "nexora-ingress-tls" {
+  		t.Errorf("ingress = %v", ing)
+  	}
+
+  	for _, g := range []struct{ workload, service, ip, policy, prefix, token, op string }{
+  		{"nexora-engine", "nexora-dns", "192.168.10.136", "Local", "", "nexora-join-token", "NotIn"},
+  		{"nexora-engine-edge-b", "nexora-dns-edge-b", "192.168.10.137", "Cluster", "edge-b-", "nexora-join-token-edge-b", "In"},
+  	} {
+  		ds := find(t, kw, "DaemonSet", g.workload)
+  		spec := obj(ds.path("spec", "template", "spec").(map[string]any))
+  		term := spec.path("affinity", "nodeAffinity", "requiredDuringSchedulingIgnoredDuringExecution", "nodeSelectorTerms").([]any)[0].(map[string]any)
+  		expr := term["matchExpressions"].([]any)[0].(map[string]any)
+  		if expr["key"] != "nexora.io/engine-group" || expr["operator"] != g.op {
+  			t.Errorf("%s node affinity = %v", g.workload, expr)
+  		}
+  		ec := container(t, ds, "engine")
+  		if nn := env(ec, "NEXORA_ENGINE_NODE_NAME"); nn == nil || nn["value"] != g.prefix+"$(K8S_NODE_NAME)" {
+  			t.Errorf("%s node name env = %v", g.workload, nn)
+  		}
+  		var hostPath, tokenSecret any
+  		for _, v := range spec["volumes"].([]any) {
+  			m := obj(v.(map[string]any))
+  			switch m["name"] {
+  			case "state":
+  				hostPath = m.path("hostPath", "path")
+  			case "join":
+  				tokenSecret = m.path("secret", "secretName")
+  			}
+  		}
+  		if hostPath != "/var/lib/nexora/"+g.workload || tokenSecret != g.token {
+  			t.Errorf("%s state %v join secret %v", g.workload, hostPath, tokenSecret)
+  		}
+  		svc := find(t, kw, "Service", g.service)
+  		if svc.path("spec", "loadBalancerIP") != g.ip || svc.path("spec", "externalTrafficPolicy") != g.policy {
+  			t.Errorf("%s = %v", g.service, svc["spec"])
+  		}
+  		if len(svc.path("spec", "ports").([]any)) != 5 {
+  			t.Errorf("%s ports = %v, want dns-udp, dns-tcp, dot, doq, doh", g.service, svc.path("spec", "ports"))
+  		}
+  	}
+  	find(t, kw, "Service", "nexora-engine-metrics")
+  	if has(kw, "Cluster") {
+  		t.Error("kw uses its existing CNPG cluster (external database mode)")
   	}
   	sm := find(t, kw, "ServiceMonitor", "nexora")
   	if sm.path("metadata", "namespace") != "monitoring" || sm.path("metadata", "labels", "release") != "kps" {
   		t.Errorf("service monitor metadata = %v", sm["metadata"])
   	}
   	rule, _ := yaml.Marshal(find(t, kw, "PrometheusRule", "nexora"))
-  	if !strings.Contains(string(rule), "max(nexora_mgmt_engines_disconnected") {
-  		t.Errorf("prometheus rule lacks the disconnected alert:\n%s", rule)
-  	}
-  	otel, _ := yaml.Marshal(find(t, kw, "ConfigMap", "nexora-otel-collector"))
-  	if !strings.Contains(string(otel), "jaeger.observability:4317") {
-  		t.Errorf("collector config lacks jaeger exporter:\n%s", otel)
-  	}
-  	ing := find(t, kw, "Ingress", "nexora-mgmt")
-  	if ing.path("spec", "ingressClassName") != "nginx" || ing.path("metadata", "annotations", "cert-manager.io/cluster-issuer") != "cluster-ca" {
-  		t.Errorf("ingress = %v", ing)
+  	for _, want := range []string{"max(nexora_mgmt_engines_disconnected", `nexora_mgmt_rollouts{state="halted"}`, "NexoraManagementPlaneDown"} {
+  		if !strings.Contains(string(rule), want) {
+  			t.Errorf("prometheus rule lacks %q:\n%s", want, rule)
+  		}
   	}
 
-  	ds := render(t, "--set", "database.mode=external", "--set", "database.external.existingSecret=pg",
-  		"--set", "mgmt.ca.existingSecret=ca", "--set", "engine.kind=DaemonSet", "--set", "engine.hostNetwork=true",
-  		"--set-json", `engine.groups=[{"name":"default","joinTokenSecret":"jt"}]`)
-  	d := find(t, ds, "DaemonSet", "nexora-engine-default")
-  	if d.path("spec", "template", "spec", "hostNetwork") != true || d.path("spec", "template", "spec", "dnsPolicy") != "ClusterFirstWithHostNet" {
-  		t.Errorf("daemonset host network = %v", d.path("spec", "template", "spec"))
+  	cnpg := render(t, "--set", "mgmt.ca.existingSecret=ca", "--api-versions", "postgresql.cnpg.io/v1",
+  		"--set", "engine.kind=Deployment", "--set-json", `engine.groups=[{"name":"default","replicas":2,"joinTokenSecret":"jt"}]`)
+  	if c := find(t, cnpg, "Cluster", "nexora-db"); c.path("spec", "instances") != 2 {
+  		t.Errorf("cnpg cluster = %v", c["spec"])
   	}
-  	if has(ds, "Cluster") || has(ds, "ServiceMonitor") {
-  		t.Error("external database or disabled monitoring must not render CNPG or ServiceMonitor objects")
+  	if d := find(t, cnpg, "Deployment", "nexora-engine-default"); d.path("spec", "replicas") != 2 {
+  		t.Errorf("engine deployment replicas = %v", d.path("spec", "replicas"))
   	}
-  	ref := obj(env(container(t, find(t, ds, "Deployment", "nexora-mgmt"), "mgmt"), "NEXORA_DATABASE_URL")).path("valueFrom", "secretKeyRef").(map[string]any)
-  	if ref["name"] != "pg" || ref["key"] != "url" {
-  		t.Errorf("external database secret ref = %v", ref)
+  	if has(cnpg, "ServiceMonitor") || has(cnpg, "Ingress") {
+  		t.Error("disabled monitoring and ingress must not render")
   	}
 
   	for _, bad := range []struct {
@@ -5177,9 +4795,10 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   		want string
   	}{
   		{[]string{"--set", "mgmt.ca.existingSecret=ca", "--set", "database.mode=external", "--set", "database.external.existingSecret=pg", "--set", "mgmt.replicas=0"}, "replicas"},
-  		{[]string{"--set", "database.mode=external", "--set", "database.external.existingSecret=pg"}, "existingSecret"},
+  		{[]string{"--set", "database.mode=external", "--set", "database.external.existingSecret=pg", "--set-json", `engine.groups=[{"name":"default","joinTokenSecret":"jt"}]`}, "mgmt.ca.existingSecret"},
   		{[]string{"--set", "mgmt.ca.existingSecret=ca", "--set", "database.mode=external", "--set", "database.external.existingSecret=pg", "--set", "engine.kind=StatefulSet"}, "kind"},
   		{[]string{"--set", "mgmt.ca.existingSecret=ca", "--set-json", `engine.groups=[{"name":"default","joinTokenSecret":"jt"}]`}, "postgresql.cnpg.io/v1"},
+  		{[]string{"--set", "mgmt.ca.existingSecret=ca", "--set", "database.mode=external", "--set", "database.external.existingSecret=pg"}, "joinTokenSecret is required"},
   	} {
   		out, err := helm(append([]string{"template", "nexora", chartDir}, bad.args...)...)
   		if err == nil || !strings.Contains(out, bad.want) {
@@ -5188,7 +4807,7 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestHelmTemplate -count=1` and expect FAIL with `helm lint:` (the chart does not exist yet or is the M1 skeleton).
+- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestHelmTemplate -count=1` and expect FAIL with `helm lint:` (`deploy/helm/nexora` does not exist).
 - [ ] Create `deploy/helm/nexora/Chart.yaml`:
   ```yaml
   apiVersion: v2
@@ -5199,14 +4818,13 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
   appVersion: "main"
   kubeVersion: ">=1.28.0-0"
   annotations:
-    nexora.io/requires: "CloudNativePG operator (postgresql.cnpg.io/v1) when database.mode=cnpg; Prometheus Operator CRDs when metrics.* are enabled"
+    nexora.io/requires: "CloudNativePG operator (postgresql.cnpg.io/v1) when database.mode=cnpg; Prometheus Operator CRDs when metrics are enabled"
   ```
 - [ ] Create `deploy/helm/nexora/values.yaml`:
   ```yaml
   image:
-    registry: 192.168.10.131
-    repository: azrtydxb
-    tag: ""            # defaults to .Chart.AppVersion
+    registry: 192.168.10.131/azrtydxb
+    tag: "" # defaults to .Chart.AppVersion
     pullPolicy: IfNotPresent
   imagePullSecrets: []
 
@@ -5215,32 +4833,34 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
     publicURL: ""
     secureCookies: true
     engineCertTTL: 2160h
-    grpcServerNames: []   # extra SANs; the gRPC service DNS names and loadBalancerIP are always included
+    rolloutTick: 1s
+    grpcServerNames: [] # extra SANs; the gRPC Service names and the load balancer IP are always included
+    otlpEndpoint: ""
     ca:
-      existingSecret: ""  # required: secret with ca.crt and ca.key (nexora-mgmt ca init)
+      existingSecret: "" # required: secret with ca.crt and ca.key (nexora-mgmt ca init)
+    kek:
+      existingSecret: "" # optional: secret with key "kek" (32 random bytes, base64)
+    dnsTLS:
+      existingSecret: "" # optional: kubernetes.io/tls secret for DoT/DoH/DoQ, pushed to engines
+      reloadInterval: 30s
     querylog:
-      backend: builtin    # builtin | opensearch
+      backend: builtin # builtin | opensearch
       builtinCapacity: 200000
       opensearch:
         url: ""
         index: nexora-querylog-*
-        username: ""
-        passwordSecret: ""  # secret with key "password"
     extraEnv: []
     extraVolumes: []
     extraVolumeMounts: []
     resources:
       requests: { cpu: 100m, memory: 128Mi }
-      limits: { memory: 512Mi }
-    service:
-      httpPort: 8080
-    grpcService:
-      type: LoadBalancer
-      port: 9443
+      limits: { cpu: "1", memory: 512Mi }
+    grpcLoadBalancer:
+      enabled: false
       loadBalancerIP: ""
-      annotations: {}
     ingress:
       enabled: false
+      name: "" # default <prefix>-mgmt
       className: nginx
       host: ""
       clusterIssuer: ""
@@ -5249,787 +4869,99 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
       minAvailable: 1
 
   database:
-    mode: cnpg            # cnpg | external
+    mode: cnpg # cnpg | external
     external:
-      existingSecret: ""  # secret holding the PostgreSQL URL
-      key: url
+      existingSecret: ""
+      key: uri
     cnpg:
       clusterName: nexora-db
       instances: 2
       imageName: ghcr.io/cloudnative-pg/postgresql:17.6
       storageClass: ""
       size: 10Gi
-      podMonitor: false
 
   engine:
     enabled: true
-    kind: Deployment      # Deployment | DaemonSet
-    hostNetwork: false
-    managementURL: ""     # default https://<fullname>-mgmt-grpc.<namespace>.svc:9443
-    workers: 0
-    listenAddresses: ["0.0.0.0"]
-    ports:
-      dns: 53
-      metrics: 9153
-      dot: 0              # 0 disables the port
-      doh: 0
-      doq: 0
-    extraToml: ""         # appended to engine.toml verbatim
+    kind: DaemonSet # DaemonSet | Deployment
+    managementURL: "" # default https://<prefix>-mgmt-grpc.<namespace>.svc.cluster.local:9443
+    workers: 2
+    initImage: busybox:1.37
+    ports: { dns: 53, metrics: 9153, dot: 0, doh: 0, doq: 0 } # 0 disables an encrypted listener
+    dohPath: /dns-query
     stateDir:
-      type: hostPath      # hostPath | emptyDir (emptyDir re-enrolls after every pod restart)
+      type: hostPath # hostPath | emptyDir (emptyDir enrolls again after every pod restart)
       hostPathPrefix: /var/lib/nexora
-    spreadAcrossNodes: true
-    nodeAffinity: {}
     tolerations: []
     resources:
       requests: { cpu: 250m, memory: 256Mi }
-      limits: { memory: 2Gi }
+      limits: { cpu: "2", memory: 1Gi }
     groups:
       - name: default
-        replicas: 1
-        joinTokenSecret: ""   # secret with key "token" (nexora-mgmt join-token create)
-        nodeSelector: {}
+        workloadName: "" # default <prefix>-engine-<name>
+        nodeNamePrefix: "" # NEXORA_ENGINE_NODE_NAME = <nodeNamePrefix><Kubernetes node name>
+        replicas: 1 # Deployment only
+        nodeAffinity: {}
+        joinTokenSecret: ""
+        joinTokenKey: join-token
         service:
+          name: "" # default <prefix>-dns-<name>
           type: LoadBalancer
           loadBalancerIP: ""
           externalTrafficPolicy: Local
-          annotations: {}
-
-  otelCollector:
-    enabled: false
-    image: otel/opentelemetry-collector-contrib:0.160.0
-    traces:
-      otlpEndpoint: ""    # e.g. jaeger.observability:4317
-      insecure: true
-    logs:
-      opensearch:
-        url: ""
-    resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits: { memory: 512Mi }
 
   metrics:
-    serviceMonitor:
-      enabled: false
-      namespace: ""
-      labels: {}
-      interval: 30s
-    prometheusRule:
-      enabled: false
-      namespace: ""
-      labels: {}
+    serviceMonitor: { enabled: false, namespace: "", labels: {}, interval: 30s }
+    prometheusRule: { enabled: false, namespace: "", labels: {} }
   ```
-- [ ] Create `deploy/helm/nexora/values.schema.json`:
-  ```json
-  {
-    "$schema": "https://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "required": ["image", "mgmt", "database", "engine"],
-    "properties": {
-      "image": {
-        "type": "object",
-        "required": ["registry", "repository"],
-        "properties": {
-          "registry": { "type": "string", "minLength": 1 },
-          "repository": { "type": "string", "minLength": 1 },
-          "tag": { "type": "string" },
-          "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
-        }
-      },
-      "imagePullSecrets": { "type": "array" },
-      "mgmt": {
-        "type": "object",
-        "required": ["replicas", "ca"],
-        "properties": {
-          "replicas": { "type": "integer", "minimum": 1 },
-          "publicURL": { "type": "string" },
-          "secureCookies": { "type": "boolean" },
-          "engineCertTTL": { "type": "string", "pattern": "^([0-9]+(h|m|s))+$" },
-          "grpcServerNames": { "type": "array", "items": { "type": "string" } },
-          "ca": {
-            "type": "object",
-            "required": ["existingSecret"],
-            "properties": { "existingSecret": { "type": "string", "minLength": 1 } }
-          },
-          "querylog": {
-            "type": "object",
-            "properties": {
-              "backend": { "enum": ["builtin", "opensearch"] },
-              "builtinCapacity": { "type": "integer", "minimum": 1000 },
-              "opensearch": { "type": "object" }
-            }
-          },
-          "grpcService": {
-            "type": "object",
-            "properties": {
-              "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
-              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-              "loadBalancerIP": { "type": "string" }
-            }
-          },
-          "ingress": { "type": "object" },
-          "pdb": { "type": "object" }
-        }
-      },
-      "database": {
-        "type": "object",
-        "required": ["mode"],
-        "properties": {
-          "mode": { "enum": ["cnpg", "external"] },
-          "external": { "type": "object", "properties": { "existingSecret": { "type": "string" }, "key": { "type": "string", "minLength": 1 } } },
-          "cnpg": {
-            "type": "object",
-            "properties": {
-              "clusterName": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$" },
-              "instances": { "type": "integer", "minimum": 1 },
-              "size": { "type": "string" },
-              "storageClass": { "type": "string" }
-            }
-          }
-        },
-        "if": { "properties": { "mode": { "const": "external" } } },
-        "then": { "properties": { "external": { "required": ["existingSecret"], "properties": { "existingSecret": { "minLength": 1 } } } } }
-      },
-      "engine": {
-        "type": "object",
-        "required": ["kind", "groups"],
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "kind": { "enum": ["Deployment", "DaemonSet"] },
-          "hostNetwork": { "type": "boolean" },
-          "workers": { "type": "integer", "minimum": 0 },
-          "listenAddresses": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-          "ports": {
-            "type": "object",
-            "properties": {
-              "dns": { "type": "integer", "minimum": 1, "maximum": 65535 },
-              "metrics": { "type": "integer", "minimum": 1, "maximum": 65535 },
-              "dot": { "type": "integer", "minimum": 0, "maximum": 65535 },
-              "doh": { "type": "integer", "minimum": 0, "maximum": 65535 },
-              "doq": { "type": "integer", "minimum": 0, "maximum": 65535 }
-            }
-          },
-          "stateDir": { "type": "object", "properties": { "type": { "enum": ["hostPath", "emptyDir"] }, "hostPathPrefix": { "type": "string", "pattern": "^/" } } },
-          "spreadAcrossNodes": { "type": "boolean" },
-          "groups": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "required": ["name"],
-              "properties": {
-                "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
-                "replicas": { "type": "integer", "minimum": 0 },
-                "joinTokenSecret": { "type": "string" },
-                "nodeSelector": { "type": "object" },
-                "service": { "type": "object" }
-              }
-            }
-          }
-        }
-      },
-      "otelCollector": { "type": "object" },
-      "metrics": { "type": "object" }
-    }
-  }
-  ```
-- [ ] Create `deploy/helm/nexora/templates/_helpers.tpl`:
+- [ ] Create `deploy/helm/nexora/values.schema.json` (draft-07): `required: ["image", "mgmt", "database", "engine"]`; `mgmt.replicas` integer `minimum: 1`; `mgmt.ca.existingSecret` string; `mgmt.engineCertTTL` and `mgmt.rolloutTick` strings matching `^([0-9]+(ms|h|m|s))+$`; `mgmt.querylog.backend` enum `builtin|opensearch`; `database.mode` enum `cnpg|external` with `if mode = external then external.existingSecret minLength 1`; `engine.kind` enum `DaemonSet|Deployment`; `engine.stateDir.type` enum `hostPath|emptyDir`, `hostPathPrefix` pattern `^/`; `engine.ports.*` integers 0..65535 (`dns`, `metrics` minimum 1); `engine.groups` array `minItems: 1` of objects with required `name` (the same pattern as `EngineGroupInput.name` in `mgmt/api/openapi.yaml`), `replicas` integer `minimum: 0`, `joinTokenSecret` string, `service.type` enum `ClusterIP|NodePort|LoadBalancer`, `service.externalTrafficPolicy` enum `Local|Cluster`.
+- [ ] Create `deploy/helm/nexora/templates/_helpers.tpl` with: `nexora.prefix` (`.Release.Name` when it contains `nexora`, else `<release>-nexora`, truncated to 50); `nexora.selectorLabels` (dict `root`, `name`: `app.kubernetes.io/name: <name>`, `app.kubernetes.io/instance: <release>`); `nexora.labels` (selector labels plus `app.kubernetes.io/managed-by`, `app.kubernetes.io/version`, `helm.sh/chart`); `nexora.image` (dict `root`, `name` -> `<image.registry>/<name>:<image.tag or AppVersion>`); `nexora.containerSecurity` (`allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, `capabilities.drop: [ALL]`); `nexora.databaseEnv` (`NEXORA_DATABASE_URL` from `<cnpg.clusterName>-app`/`uri` in cnpg mode, else `required "database.external.existingSecret is required when database.mode=external"` with `database.external.key`); `nexora.managementURL` (default `https://<prefix>-mgmt-grpc.<namespace>.svc.cluster.local:9443`); `nexora.grpcServerNames` (`<prefix>-mgmt-grpc`, `<prefix>-mgmt-grpc.<namespace>.svc`, `<prefix>-mgmt-grpc.<namespace>.svc.cluster.local`, the load balancer IP when set, then `mgmt.grpcServerNames`, comma-joined).
+- [ ] Create `deploy/helm/nexora/templates/mgmt-deployment.yaml`: fail with `database.mode=cnpg needs the CloudNativePG operator (API postgresql.cnpg.io/v1); install it or set database.mode=external` when `database.mode` is `cnpg` and `.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1"` is false; Deployment `<prefix>-mgmt` with `replicas`, pod security context `runAsNonRoot: true, runAsUser: 65532, fsGroup: 65532, seccompProfile RuntimeDefault`, preferred host anti-affinity; init container `migrate` (`args: ["migrate"]`, database env); container `mgmt` with `args: ["serve"]`, ports `http` 8080 and `grpc` 9443, env `NEXORA_HTTP_LISTEN=:8080`, `NEXORA_GRPC_LISTEN=:9443`, database env, `NEXORA_CA_CERT_FILE=/etc/nexora/ca/ca.crt`, `NEXORA_CA_KEY_FILE=/etc/nexora/ca/ca.key` (volume from `required "mgmt.ca.existingSecret is required (create it with nexora-mgmt ca init)"`), `NEXORA_GRPC_SERVER_NAMES`, `NEXORA_PUBLIC_URL`, `NEXORA_SECURE_COOKIES`, `NEXORA_ENGINE_CERT_TTL`, `NEXORA_ROLLOUT_TICK`, `NEXORA_QUERYLOG_BACKEND`, `NEXORA_QUERYLOG_BUILTIN_CAPACITY`, with opensearch `NEXORA_OPENSEARCH_URL` (required) and `NEXORA_OPENSEARCH_INDEX`, `NEXORA_OTLP_ENDPOINT` when set, with `mgmt.kek.existingSecret` a `kek` volume at `/etc/nexora/kek` and `NEXORA_KEK_FILE=/etc/nexora/kek/kek`, with `mgmt.dnsTLS.existingSecret` a `dns-tls` volume at `/etc/nexora/dns-tls`, `NEXORA_DNS_TLS_CERT_FILE=/etc/nexora/dns-tls/tls.crt`, `NEXORA_DNS_TLS_KEY_FILE=/etc/nexora/dns-tls/tls.key` and `NEXORA_DNS_TLS_RELOAD_INTERVAL`, then `mgmt.extraEnv`; readiness `httpGet /api/v1/health` on `http` every 5 s, liveness `tcpSocket grpc` every 10 s; secret volumes `defaultMode: 0440`; `mgmt.extraVolumes`/`extraVolumeMounts`.
+- [ ] Create `templates/mgmt-services.yaml` (`<prefix>-mgmt` ClusterIP port `http` 8080; `<prefix>-mgmt-grpc` ClusterIP port `grpc` 9443; when `mgmt.grpcLoadBalancer.enabled`, `<prefix>-mgmt-lb` `type: LoadBalancer` with `loadBalancerIP` and only the `grpc` port, so the GUI is never reachable in cleartext there), `templates/mgmt-ingress.yaml` (when enabled: name `mgmt.ingress.name` or `<prefix>-mgmt`, annotations `cert-manager.io/cluster-issuer` when set plus `nginx.ingress.kubernetes.io/ssl-redirect: "true"` and `force-ssl-redirect: "true"`, `ingressClassName`, TLS host `required "mgmt.ingress.host is required"` with `tlsSecretName` or `<prefix>-mgmt-tls`, backend `<prefix>-mgmt` port `http`) and `templates/mgmt-pdb.yaml` (when `replicas > 1`, `minAvailable`).
+- [ ] Create `templates/engine-configmap.yaml` (like `engine-workloads.yaml` and `engine-services.yaml`, the whole file is wrapped in `{{- if .Values.engine.enabled }}`): for each group, ConfigMap `<workload>` with `engine.toml`:
   ```yaml
-  {{- define "nexora.fullname" -}}
-  {{- if contains "nexora" .Release.Name -}}{{ .Release.Name | trunc 50 | trimSuffix "-" }}{{- else -}}{{ printf "%s-nexora" .Release.Name | trunc 50 | trimSuffix "-" }}{{- end -}}
-  {{- end -}}
-
-  {{- define "nexora.selectorLabels" -}}
-  app.kubernetes.io/name: nexora
-  app.kubernetes.io/instance: {{ .root.Release.Name }}
-  app.kubernetes.io/component: {{ .component }}
-  {{- end -}}
-
-  {{- define "nexora.labels" -}}
-  {{ include "nexora.selectorLabels" . }}
-  app.kubernetes.io/managed-by: {{ .root.Release.Service }}
-  app.kubernetes.io/version: {{ default .root.Chart.AppVersion .root.Values.image.tag | quote }}
-  helm.sh/chart: {{ printf "%s-%s" .root.Chart.Name .root.Chart.Version }}
-  {{- end -}}
-
-  {{- define "nexora.image" -}}
-  {{ printf "%s/%s/%s:%s" .root.Values.image.registry .root.Values.image.repository .name (default .root.Chart.AppVersion .root.Values.image.tag) }}
-  {{- end -}}
-
-  {{- define "nexora.containerSecurity" -}}
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop: [ALL]
-  {{- end -}}
-
-  {{- define "nexora.databaseEnv" -}}
-  - name: NEXORA_DATABASE_URL
-    valueFrom:
-      secretKeyRef:
-        {{- if eq .Values.database.mode "cnpg" }}
-        name: {{ .Values.database.cnpg.clusterName }}-app
-        key: uri
-        {{- else }}
-        name: {{ required "database.external.existingSecret is required when database.mode=external" .Values.database.external.existingSecret }}
-        key: {{ .Values.database.external.key }}
-        {{- end }}
-  {{- end -}}
-
-  {{- define "nexora.managementURL" -}}
-  {{- default (printf "https://%s-mgmt-grpc.%s.svc:%d" (include "nexora.fullname" .) .Release.Namespace (int .Values.mgmt.grpcService.port)) .Values.engine.managementURL -}}
-  {{- end -}}
-
-  {{- define "nexora.grpcServerNames" -}}
-  {{- $f := include "nexora.fullname" . -}}
-  {{- $names := list (printf "%s-mgmt-grpc" $f) (printf "%s-mgmt-grpc.%s.svc" $f .Release.Namespace) (printf "%s-mgmt-grpc.%s.svc.cluster.local" $f .Release.Namespace) -}}
-  {{- with .Values.mgmt.grpcService.loadBalancerIP }}{{ $names = append $names . }}{{ end -}}
-  {{- join "," (concat $names .Values.mgmt.grpcServerNames) -}}
-  {{- end -}}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/mgmt-deployment.yaml`:
-  ```yaml
-  {{- if eq .Values.database.mode "cnpg" }}
-  {{- if not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1") }}
-  {{- fail "database.mode=cnpg needs the CloudNativePG operator (API postgresql.cnpg.io/v1); install it or set database.mode=external" }}
-  {{- end }}
-  {{- end }}
-  {{- $f := include "nexora.fullname" . }}
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: {{ $f }}-mgmt
-    labels: {{- include "nexora.labels" (dict "root" . "component" "mgmt") | nindent 4 }}
-  spec:
-    replicas: {{ .Values.mgmt.replicas }}
-    selector:
-      matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 6 }}
-    template:
-      metadata:
-        labels: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 8 }}
-      spec:
-        {{- with .Values.imagePullSecrets }}
-        imagePullSecrets: {{- toYaml . | nindent 8 }}
-        {{- end }}
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          seccompProfile: { type: RuntimeDefault }
-        affinity:
-          podAntiAffinity:
-            preferredDuringSchedulingIgnoredDuringExecution:
-              - weight: 100
-                podAffinityTerm:
-                  topologyKey: kubernetes.io/hostname
-                  labelSelector:
-                    matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 20 }}
-        initContainers:
-          - name: migrate
-            image: {{ include "nexora.image" (dict "root" . "name" "nexora-mgmt") }}
-            imagePullPolicy: {{ .Values.image.pullPolicy }}
-            args: ["migrate"]
-            env: {{- include "nexora.databaseEnv" . | nindent 12 }}
-            securityContext: {{- include "nexora.containerSecurity" . | nindent 12 }}
-        containers:
-          - name: mgmt
-            image: {{ include "nexora.image" (dict "root" . "name" "nexora-mgmt") }}
-            imagePullPolicy: {{ .Values.image.pullPolicy }}
-            args: ["serve"]
-            ports:
-              - { name: http, containerPort: 8080, protocol: TCP }
-              - { name: grpc, containerPort: 9443, protocol: TCP }
-            env:
-              {{- include "nexora.databaseEnv" . | nindent 14 }}
-              - name: NEXORA_INSTANCE_ID
-                valueFrom: { fieldRef: { fieldPath: metadata.name } }
-              - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
-              - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
-              - { name: NEXORA_GRPC_SERVER_NAMES, value: {{ include "nexora.grpcServerNames" . | quote }} }
-              - { name: NEXORA_PUBLIC_URL, value: {{ .Values.mgmt.publicURL | quote }} }
-              - { name: NEXORA_SECURE_COOKIES, value: {{ .Values.mgmt.secureCookies | quote }} }
-              - { name: NEXORA_ENGINE_CERT_TTL, value: {{ .Values.mgmt.engineCertTTL | quote }} }
-              - { name: NEXORA_QUERYLOG_BACKEND, value: {{ .Values.mgmt.querylog.backend | quote }} }
-              - { name: NEXORA_QUERYLOG_BUILTIN_CAPACITY, value: {{ .Values.mgmt.querylog.builtinCapacity | quote }} }
-              {{- if eq .Values.mgmt.querylog.backend "opensearch" }}
-              - { name: NEXORA_OPENSEARCH_URL, value: {{ required "mgmt.querylog.opensearch.url is required" .Values.mgmt.querylog.opensearch.url | quote }} }
-              - { name: NEXORA_OPENSEARCH_INDEX, value: {{ .Values.mgmt.querylog.opensearch.index | quote }} }
-              {{- with .Values.mgmt.querylog.opensearch.username }}
-              - { name: NEXORA_OPENSEARCH_USERNAME, value: {{ . | quote }} }
-              {{- end }}
-              {{- if .Values.mgmt.querylog.opensearch.passwordSecret }}
-              - { name: NEXORA_OPENSEARCH_PASSWORD_FILE, value: /etc/nexora/opensearch/password }
-              {{- end }}
-              {{- end }}
-              {{- if .Values.otelCollector.enabled }}
-              - { name: NEXORA_OTLP_ENDPOINT, value: {{ printf "http://%s-otel-collector:4317" $f | quote }} }
-              {{- end }}
-              {{- with .Values.mgmt.extraEnv }}
-              {{- toYaml . | nindent 14 }}
-              {{- end }}
-            readinessProbe:
-              httpGet: { path: /healthz, port: http }
-              periodSeconds: 5
-            livenessProbe:
-              httpGet: { path: /healthz, port: http }
-              periodSeconds: 20
-              failureThreshold: 6
-            resources: {{- toYaml .Values.mgmt.resources | nindent 14 }}
-            securityContext: {{- include "nexora.containerSecurity" . | nindent 14 }}
-            volumeMounts:
-              - { name: ca, mountPath: /etc/nexora/ca, readOnly: true }
-              - { name: tmp, mountPath: /tmp }
-              {{- if and (eq .Values.mgmt.querylog.backend "opensearch") .Values.mgmt.querylog.opensearch.passwordSecret }}
-              - { name: opensearch, mountPath: /etc/nexora/opensearch, readOnly: true }
-              {{- end }}
-              {{- with .Values.mgmt.extraVolumeMounts }}
-              {{- toYaml . | nindent 14 }}
-              {{- end }}
-        volumes:
-          - name: ca
-            secret:
-              secretName: {{ required "mgmt.ca.existingSecret is required (create it with nexora-mgmt ca init)" .Values.mgmt.ca.existingSecret }}
-              defaultMode: 0440
-          - name: tmp
-            emptyDir: {}
-          {{- if and (eq .Values.mgmt.querylog.backend "opensearch") .Values.mgmt.querylog.opensearch.passwordSecret }}
-          - name: opensearch
-            secret: { secretName: {{ .Values.mgmt.querylog.opensearch.passwordSecret }}, defaultMode: 0440 }
-          {{- end }}
-          {{- with .Values.mgmt.extraVolumes }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
-  ```
-  The M1 management plane serves its readiness endpoint at `/healthz`; use M1's path if it differs.
-- [ ] Create `deploy/helm/nexora/templates/mgmt-services.yaml`, `mgmt-ingress.yaml`, `mgmt-pdb.yaml`:
-  ```yaml
-  {{- $f := include "nexora.fullname" . }}
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: {{ $f }}-mgmt
-    labels:
-      {{- include "nexora.labels" (dict "root" . "component" "mgmt") | nindent 4 }}
-      nexora.io/metrics: "true"
-  spec:
-    type: ClusterIP
-    selector: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 4 }}
-    ports:
-      - { name: http, port: {{ .Values.mgmt.service.httpPort }}, targetPort: http, protocol: TCP }
-  ---
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: {{ $f }}-mgmt-grpc
-    labels: {{- include "nexora.labels" (dict "root" . "component" "mgmt") | nindent 4 }}
-    {{- with .Values.mgmt.grpcService.annotations }}
-    annotations: {{- toYaml . | nindent 4 }}
-    {{- end }}
-  spec:
-    type: {{ .Values.mgmt.grpcService.type }}
-    {{- with .Values.mgmt.grpcService.loadBalancerIP }}
-    loadBalancerIP: {{ . }}
-    {{- end }}
-    selector: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 4 }}
-    ports:
-      - { name: grpc, port: {{ .Values.mgmt.grpcService.port }}, targetPort: grpc, protocol: TCP }
-  ```
-  ```yaml
-  {{- if .Values.mgmt.ingress.enabled }}
-  apiVersion: networking.k8s.io/v1
-  kind: Ingress
-  metadata:
-    name: {{ include "nexora.fullname" . }}-mgmt
-    labels: {{- include "nexora.labels" (dict "root" . "component" "mgmt") | nindent 4 }}
-    {{- with .Values.mgmt.ingress.clusterIssuer }}
-    annotations:
-      cert-manager.io/cluster-issuer: {{ . }}
-    {{- end }}
-  spec:
-    ingressClassName: {{ .Values.mgmt.ingress.className }}
-    tls:
-      - hosts: [{{ required "mgmt.ingress.host is required" .Values.mgmt.ingress.host | quote }}]
-        secretName: {{ default (printf "%s-mgmt-tls" (include "nexora.fullname" .)) .Values.mgmt.ingress.tlsSecretName }}
-    rules:
-      - host: {{ .Values.mgmt.ingress.host | quote }}
-        http:
-          paths:
-            - path: /
-              pathType: Prefix
-              backend:
-                service:
-                  name: {{ include "nexora.fullname" . }}-mgmt
-                  port: { name: http }
-  {{- end }}
-  ```
-  ```yaml
-  {{- if gt (int .Values.mgmt.replicas) 1 }}
-  apiVersion: policy/v1
-  kind: PodDisruptionBudget
-  metadata:
-    name: {{ include "nexora.fullname" . }}-mgmt
-    labels: {{- include "nexora.labels" (dict "root" . "component" "mgmt") | nindent 4 }}
-  spec:
-    minAvailable: {{ .Values.mgmt.pdb.minAvailable }}
-    selector:
-      matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "component" "mgmt") | nindent 6 }}
-  {{- end }}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/engine-configmap.yaml` and `engine-workload.yaml`:
-  ```yaml
-  {{- if .Values.engine.enabled }}
   {{- range $g := .Values.engine.groups }}
+  {{- $workload := default (printf "%s-engine-%s" (include "nexora.prefix" $) $g.name) $g.workloadName }}
   ---
   apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: {{ include "nexora.fullname" $ }}-engine-{{ $g.name }}
-    labels: {{- include "nexora.labels" (dict "root" $ "component" "engine") | nindent 4 }}
+    name: {{ $workload }}
+    labels: {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
   data:
     engine.toml: |
-      node_name = "{{ $g.name }}"
+      node_name = "engine"
       state_dir = "/var/lib/nexora"
       management_urls = [{{ include "nexora.managementURL" $ | quote }}]
-      join_token_file = "/etc/nexora/join/token"
-      listen_udp = [{{ range $i, $a := $.Values.engine.listenAddresses }}{{ if $i }}, {{ end }}"{{ $a }}:{{ $.Values.engine.ports.dns }}"{{ end }}]
-      listen_tcp = [{{ range $i, $a := $.Values.engine.listenAddresses }}{{ if $i }}, {{ end }}"{{ $a }}:{{ $.Values.engine.ports.dns }}"{{ end }}]
+      join_token_file = "/etc/nexora/join/{{ $g.joinTokenKey | default "join-token" }}"
+      listen_udp = ["0.0.0.0:{{ $.Values.engine.ports.dns }}"]
+      listen_tcp = ["0.0.0.0:{{ $.Values.engine.ports.dns }}"]
+      {{- with $.Values.engine.ports.dot }}
+      listen_dot = ["0.0.0.0:{{ . }}"]
+      {{- end }}
+      {{- with $.Values.engine.ports.doh }}
+      listen_doh = ["0.0.0.0:{{ . }}"]
+      doh_path = {{ $.Values.engine.dohPath | quote }}
+      {{- end }}
+      {{- with $.Values.engine.ports.doq }}
+      listen_doq = ["0.0.0.0:{{ . }}"]
+      {{- end }}
       metrics_listen = "0.0.0.0:{{ $.Values.engine.ports.metrics }}"
       workers = {{ $.Values.engine.workers }}
-      {{- with $.Values.engine.extraToml }}
-      {{- . | nindent 4 }}
-      {{- end }}
-  {{- end }}
   {{- end }}
   ```
-  ```yaml
-  {{- if .Values.engine.enabled }}
-  {{- range $g := .Values.engine.groups }}
-  {{- $name := printf "%s-engine-%s" (include "nexora.fullname" $) $g.name }}
-  ---
-  apiVersion: apps/v1
-  kind: {{ $.Values.engine.kind }}
-  metadata:
-    name: {{ $name }}
-    labels:
-      {{- include "nexora.labels" (dict "root" $ "component" "engine") | nindent 4 }}
-      nexora.io/group: {{ $g.name }}
-  spec:
-    {{- if eq $.Values.engine.kind "Deployment" }}
-    replicas: {{ $g.replicas | default 1 }}
-    strategy:
-      type: RollingUpdate
-      rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
-    {{- else }}
-    updateStrategy:
-      type: RollingUpdate
-      rollingUpdate: { maxUnavailable: 1 }
-    {{- end }}
-    selector:
-      matchLabels:
-        {{- include "nexora.selectorLabels" (dict "root" $ "component" "engine") | nindent 6 }}
-        nexora.io/group: {{ $g.name }}
-    template:
-      metadata:
-        labels:
-          {{- include "nexora.selectorLabels" (dict "root" $ "component" "engine") | nindent 8 }}
-          nexora.io/group: {{ $g.name }}
-        annotations:
-          checksum/config: {{ include (print $.Template.BasePath "/engine-configmap.yaml") $ | sha256sum }}
-      spec:
-        {{- with $.Values.imagePullSecrets }}
-        imagePullSecrets: {{- toYaml . | nindent 8 }}
-        {{- end }}
-        {{- if $.Values.engine.hostNetwork }}
-        hostNetwork: true
-        dnsPolicy: ClusterFirstWithHostNet
-        {{- end }}
-        {{- with $g.nodeSelector }}
-        nodeSelector: {{- toYaml . | nindent 8 }}
-        {{- end }}
-        {{- with $.Values.engine.tolerations }}
-        tolerations: {{- toYaml . | nindent 8 }}
-        {{- end }}
-        affinity:
-          {{- with $.Values.engine.nodeAffinity }}
-          nodeAffinity: {{- toYaml . | nindent 10 }}
-          {{- end }}
-          {{- if $.Values.engine.spreadAcrossNodes }}
-          podAntiAffinity:
-            requiredDuringSchedulingIgnoredDuringExecution:
-              - topologyKey: kubernetes.io/hostname
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/instance: {{ $.Release.Name }}
-                    app.kubernetes.io/component: engine
-          {{- end }}
-        securityContext:
-          {{- if eq $.Values.engine.stateDir.type "hostPath" }}
-          runAsUser: 0
-          {{- else }}
-          runAsNonRoot: true
-          runAsUser: 65532
-          runAsGroup: 65532
-          fsGroup: 65532
-          {{- end }}
-          seccompProfile: { type: RuntimeDefault }
-        containers:
-          - name: engine
-            image: {{ include "nexora.image" (dict "root" $ "name" "nexora-engine") }}
-            imagePullPolicy: {{ $.Values.image.pullPolicy }}
-            args: ["--config", "/etc/nexora/engine.toml"]
-            env:
-              - name: K8S_NODE_NAME
-                valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
-              - name: NEXORA_ENGINE_NODE_NAME
-                value: "{{ $g.name }}-$(K8S_NODE_NAME)"
-            ports:
-              - { name: dns-udp, containerPort: {{ $.Values.engine.ports.dns }}, protocol: UDP }
-              - { name: dns-tcp, containerPort: {{ $.Values.engine.ports.dns }}, protocol: TCP }
-              - { name: metrics, containerPort: {{ $.Values.engine.ports.metrics }}, protocol: TCP }
-              {{- with $.Values.engine.ports.dot }}
-              - { name: dot, containerPort: {{ . }}, protocol: TCP }
-              {{- end }}
-              {{- with $.Values.engine.ports.doh }}
-              - { name: doh, containerPort: {{ . }}, protocol: TCP }
-              {{- end }}
-              {{- with $.Values.engine.ports.doq }}
-              - { name: doq, containerPort: {{ . }}, protocol: UDP }
-              {{- end }}
-            readinessProbe:
-              tcpSocket: { port: dns-tcp }
-              periodSeconds: 5
-            resources: {{- toYaml $.Values.engine.resources | nindent 14 }}
-            securityContext:
-              allowPrivilegeEscalation: false
-              readOnlyRootFilesystem: true
-              capabilities:
-                drop: [ALL]
-                add: [NET_BIND_SERVICE]
-            volumeMounts:
-              - { name: config, mountPath: /etc/nexora/engine.toml, subPath: engine.toml, readOnly: true }
-              - { name: join, mountPath: /etc/nexora/join, readOnly: true }
-              - { name: state, mountPath: /var/lib/nexora }
-        volumes:
-          - name: config
-            configMap: { name: {{ $name }} }
-          - name: join
-            secret:
-              secretName: {{ required (printf "engine.groups[%s].joinTokenSecret is required" $g.name) $g.joinTokenSecret }}
-              defaultMode: 0400
-          - name: state
-            {{- if eq $.Values.engine.stateDir.type "hostPath" }}
-            hostPath:
-              path: {{ printf "%s/%s-%s" $.Values.engine.stateDir.hostPathPrefix $.Release.Name $g.name }}
-              type: DirectoryOrCreate
-            {{- else }}
-            emptyDir: {}
-            {{- end }}
-  {{- end }}
-  {{- end }}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/engine-services.yaml`:
-  ```yaml
-  {{- if .Values.engine.enabled }}
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: {{ include "nexora.fullname" . }}-engine-metrics
-    labels:
-      {{- include "nexora.labels" (dict "root" . "component" "engine") | nindent 4 }}
-      nexora.io/metrics: "true"
-  spec:
-    clusterIP: None
-    selector: {{- include "nexora.selectorLabels" (dict "root" . "component" "engine") | nindent 4 }}
-    ports:
-      - { name: metrics, port: {{ .Values.engine.ports.metrics }}, targetPort: metrics, protocol: TCP }
-  {{- range $g := .Values.engine.groups }}
-  {{- $svc := $g.service | default dict }}
-  ---
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: {{ include "nexora.fullname" $ }}-engine-{{ $g.name }}
-    labels:
-      {{- include "nexora.labels" (dict "root" $ "component" "engine") | nindent 4 }}
-      nexora.io/group: {{ $g.name }}
-    {{- with $svc.annotations }}
-    annotations: {{- toYaml . | nindent 4 }}
-    {{- end }}
-  spec:
-    type: {{ $svc.type | default "LoadBalancer" }}
-    {{- with $svc.loadBalancerIP }}
-    loadBalancerIP: {{ . }}
-    {{- end }}
-    {{- if ne ($svc.type | default "LoadBalancer") "ClusterIP" }}
-    externalTrafficPolicy: {{ $svc.externalTrafficPolicy | default "Local" }}
-    {{- end }}
-    selector:
-      {{- include "nexora.selectorLabels" (dict "root" $ "component" "engine") | nindent 4 }}
-      nexora.io/group: {{ $g.name }}
-    ports:
-      - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
-      - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
-      {{- if $.Values.engine.ports.dot }}
-      - { name: dot, port: 853, targetPort: dot, protocol: TCP }
-      {{- end }}
-      {{- if $.Values.engine.ports.doh }}
-      - { name: doh, port: 443, targetPort: doh, protocol: TCP }
-      {{- end }}
-      {{- if $.Values.engine.ports.doq }}
-      - { name: doq, port: 853, targetPort: doq, protocol: UDP }
-      {{- end }}
-  {{- end }}
-  {{- end }}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/database-cnpg.yaml`:
-  ```yaml
-  {{- if eq .Values.database.mode "cnpg" }}
-  apiVersion: postgresql.cnpg.io/v1
-  kind: Cluster
-  metadata:
-    name: {{ .Values.database.cnpg.clusterName }}
-    labels: {{- include "nexora.labels" (dict "root" . "component" "database") | nindent 4 }}
-  spec:
-    instances: {{ .Values.database.cnpg.instances }}
-    imageName: {{ .Values.database.cnpg.imageName }}
-    bootstrap:
-      initdb:
-        database: nexora
-        owner: nexora
-    storage:
-      size: {{ .Values.database.cnpg.size }}
-      {{- with .Values.database.cnpg.storageClass }}
-      storageClass: {{ . }}
-      {{- end }}
-    monitoring:
-      enablePodMonitor: {{ .Values.database.cnpg.podMonitor }}
-  {{- end }}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/otel-collector.yaml` (the OpenSearch exporter settings are the ones M1 used for the kw collector; keep M1's keys when they differ):
-  ```yaml
-  {{- if .Values.otelCollector.enabled }}
-  {{- $f := include "nexora.fullname" . }}
-  {{- $c := .Values.otelCollector }}
-  apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: {{ $f }}-otel-collector
-    labels: {{- include "nexora.labels" (dict "root" . "component" "otel-collector") | nindent 4 }}
-  data:
-    config.yaml: |
-      receivers:
-        otlp:
-          protocols:
-            grpc: { endpoint: 0.0.0.0:4317 }
-            http: { endpoint: 0.0.0.0:4318 }
-      processors:
-        memory_limiter: { check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20 }
-        batch: { send_batch_size: 1000, timeout: 1s }
-      exporters:
-        debug: { verbosity: basic }
-        {{- with $c.traces.otlpEndpoint }}
-        otlp/traces:
-          endpoint: {{ . }}
-          tls: { insecure: {{ $c.traces.insecure }} }
-        {{- end }}
-        {{- with $c.logs.opensearch.url }}
-        opensearch/logs:
-          http: { endpoint: {{ . }} }
-          logs_index: nexora-querylog
-          logs_index_time_format: "yyyy.MM.dd"
-        {{- end }}
-      service:
-        telemetry:
-          metrics:
-            readers:
-              - pull: { exporter: { prometheus: { host: 0.0.0.0, port: 8888 } } }
-        pipelines:
-          traces: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [{{ if $c.traces.otlpEndpoint }}otlp/traces{{ else }}debug{{ end }}] }
-          logs: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [{{ if $c.logs.opensearch.url }}opensearch/logs{{ else }}debug{{ end }}] }
-          metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
-  ---
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: {{ $f }}-otel-collector
-    labels: {{- include "nexora.labels" (dict "root" . "component" "otel-collector") | nindent 4 }}
-  spec:
-    replicas: 1
-    selector:
-      matchLabels: {{- include "nexora.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 6 }}
-    template:
-      metadata:
-        labels: {{- include "nexora.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 8 }}
-        annotations:
-          checksum/config: {{ $c | toJson | sha256sum }}
-      spec:
-        securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
-        containers:
-          - name: otel-collector
-            image: {{ $c.image }}
-            args: ["--config", "/etc/otelcol/config.yaml"]
-            ports:
-              - { name: otlp-grpc, containerPort: 4317 }
-              - { name: otlp-http, containerPort: 4318 }
-              - { name: metrics, containerPort: 8888 }
-            resources: {{- toYaml $c.resources | nindent 14 }}
-            securityContext: {{- include "nexora.containerSecurity" . | nindent 14 }}
-            volumeMounts:
-              - { name: config, mountPath: /etc/otelcol, readOnly: true }
-        volumes:
-          - name: config
-            configMap: { name: {{ $f }}-otel-collector }
-  ---
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: {{ $f }}-otel-collector
-    labels:
-      {{- include "nexora.labels" (dict "root" . "component" "otel-collector") | nindent 4 }}
-      nexora.io/metrics: "true"
-  spec:
-    selector: {{- include "nexora.selectorLabels" (dict "root" . "component" "otel-collector") | nindent 4 }}
-    ports:
-      - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
-      - { name: otlp-http, port: 4318, targetPort: otlp-http }
-      - { name: otel-metrics, port: 8888, targetPort: metrics }
-  {{- end }}
-  ```
-- [ ] Create `deploy/helm/nexora/templates/servicemonitor.yaml` and `prometheusrule.yaml`:
-  ```yaml
-  {{- if .Values.metrics.serviceMonitor.enabled }}
-  apiVersion: monitoring.coreos.com/v1
-  kind: ServiceMonitor
-  metadata:
-    name: {{ include "nexora.fullname" . }}
-    namespace: {{ default .Release.Namespace .Values.metrics.serviceMonitor.namespace }}
-    labels:
-      {{- include "nexora.labels" (dict "root" . "component" "metrics") | nindent 4 }}
-      {{- with .Values.metrics.serviceMonitor.labels }}
-      {{- toYaml . | nindent 4 }}
-      {{- end }}
-  spec:
-    namespaceSelector:
-      matchNames: [{{ .Release.Namespace }}]
-    selector:
-      matchLabels:
-        app.kubernetes.io/instance: {{ .Release.Name }}
-        nexora.io/metrics: "true"
-    endpoints:
-      - { port: http, path: /metrics, interval: {{ .Values.metrics.serviceMonitor.interval }} }
-      - { port: metrics, path: /metrics, interval: {{ .Values.metrics.serviceMonitor.interval }} }
-      - { port: otel-metrics, path: /metrics, interval: {{ .Values.metrics.serviceMonitor.interval }} }
-  {{- end }}
-  ```
+  (`node_name` is always replaced by `NEXORA_ENGINE_NODE_NAME`.)
+- [ ] Create `templates/engine-workloads.yaml`: for each group a `{{ .Values.engine.kind }}` named `<workload>` (Deployment: `replicas`, `maxSurge: 0`, `maxUnavailable: 1`; DaemonSet: `RollingUpdate maxUnavailable: 1`), selector labels `app.kubernetes.io/name: nexora-engine`, `app.kubernetes.io/instance`, `nexora.io/engine-group: <name>`, annotation `checksum/config` of the rendered ConfigMap; pod `securityContext` `runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile RuntimeDefault, sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]`; `affinity.nodeAffinity` from the group's `nodeAffinity`; `tolerations` from `engine.tolerations`; with `stateDir.type: hostPath` an init container `state-owner` (`engine.initImage`, `command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]`, `securityContext: { runAsNonRoot: false, runAsUser: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL], add: [CHOWN, FOWNER] } }`); container `engine` (`args: ["--config", "/etc/nexora/engine.toml"]`, env `K8S_NODE_NAME` from `spec.nodeName` and `NEXORA_ENGINE_NODE_NAME` = `<nodeNamePrefix>$(K8S_NODE_NAME)`, ports `dns-udp`/`dns-tcp`/`metrics` plus `dot` (TCP), `doh` (TCP), `doq` (UDP) when non-zero, readiness `tcpSocket dns-tcp` 5 s, liveness `httpGet /metrics` on `metrics` 10 s, `nexora.containerSecurity`, mounts `config` at `/etc/nexora/engine.toml` (`subPath: engine.toml`), `join` at `/etc/nexora/join` read-only, `state` at `/var/lib/nexora`); volumes `config` (ConfigMap `<workload>`), `join` (secret `required (printf "engine.groups[%s].joinTokenSecret is required" .name)`, `defaultMode: 0440`), `state` (`hostPath: { path: <hostPathPrefix>/<workload>, type: DirectoryOrCreate }` or `emptyDir: {}`).
+- [ ] Create `templates/engine-services.yaml`: `<prefix>-engine-metrics` (ClusterIP, selector `app.kubernetes.io/name: nexora-engine` and instance, port `metrics`, label `nexora.io/metrics: "true"`) and, per group, Service `service.name` or `<prefix>-dns-<name>` (`type`, `loadBalancerIP` when set, `externalTrafficPolicy` unless `ClusterIP`, selector including `nexora.io/engine-group`, ports `dns-udp` 53/UDP, `dns-tcp` 53/TCP, and when enabled `dot` 853/TCP, `doq` 853/UDP, `doh` 443/TCP targeting the named container ports).
+- [ ] Create `templates/database-cnpg.yaml` (cnpg mode: `postgresql.cnpg.io/v1` `Cluster` `clusterName` with `instances`, `imageName`, `bootstrap.initdb` database and owner `nexora`, `storage.size` and `storageClass` when set), `templates/servicemonitor.yaml` (when enabled: `monitoring.coreos.com/v1` `ServiceMonitor` `<prefix>` in `metrics.serviceMonitor.namespace` or the release namespace, labels from values, `namespaceSelector.matchNames: [<release namespace>]`, selector `app.kubernetes.io/instance` plus `nexora.io/metrics: "true"` (added to the `<prefix>-mgmt` Service and the metrics Service), endpoints `{ port: http, path: /metrics }` and `{ port: metrics, path: /metrics }` at `interval`), `templates/prometheusrule.yaml`:
   ```yaml
   {{- if .Values.metrics.prometheusRule.enabled }}
   apiVersion: monitoring.coreos.com/v1
   kind: PrometheusRule
   metadata:
-    name: {{ include "nexora.fullname" . }}
+    name: {{ include "nexora.prefix" . }}
     namespace: {{ default .Release.Namespace .Values.metrics.prometheusRule.namespace }}
     labels:
-      {{- include "nexora.labels" (dict "root" . "component" "metrics") | nindent 4 }}
+      {{- include "nexora.labels" (dict "root" . "name" "nexora") | nindent 4 }}
       {{- with .Values.metrics.prometheusRule.labels }}
       {{- toYaml . | nindent 4 }}
       {{- end }}
@@ -6039,253 +4971,162 @@ Interfaces: resource names for release `R`: `F` = `R` when `R` contains `nexora`
         rules:
           - alert: NexoraEngineDisconnected
             expr: max(nexora_mgmt_engines_disconnected{namespace="{{ .Release.Namespace }}"}) > 0
-            for: 0m
+            for: 2m
             labels: { severity: warning }
             annotations:
-              summary: "{{ `{{ $value }}` }} Nexora engine(s) not seen by the management plane for more than 60 seconds"
+              summary: "{{ `{{ $value }}` }} Nexora engine(s) without a control stream for more than 60 seconds"
           - alert: NexoraRolloutHalted
-            expr: max(nexora_mgmt_rollouts{namespace="{{ .Release.Namespace }}",state="halted"}) > 0
-            for: 0m
+            expr: max(nexora_mgmt_rollouts{state="halted",namespace="{{ .Release.Namespace }}"}) > 0
             labels: { severity: warning }
             annotations:
-              summary: A Nexora config rollout halted on its health gate; roll back or fix forward
+              summary: A Nexora configuration rollout halted on its health gate; roll back or fix forward
           - alert: NexoraManagementPlaneDown
-            expr: absent(up{namespace="{{ .Release.Namespace }}",service="{{ include "nexora.fullname" . }}-mgmt"} == 1)
+            expr: absent(up{namespace="{{ .Release.Namespace }}",service="{{ include "nexora.prefix" . }}-mgmt"} == 1)
             for: 2m
             labels: { severity: critical }
             annotations:
               summary: No Nexora management plane instance is being scraped
   {{- end }}
   ```
-- [ ] Create `deploy/helm/nexora/templates/NOTES.txt`:
-  ```text
-  Nexora {{ .Chart.AppVersion }} installed as {{ include "nexora.fullname" . }} in {{ .Release.Namespace }}.
-
-  First admin (no default password exists):
-    kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "nexora.fullname" . }}-mgmt -c mgmt -- nexora-mgmt user create --admin --username admin --password-file /dev/stdin
-
-  Engines join with a per-group token stored in the secret named by engine.groups[].joinTokenSecret:
-    kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "nexora.fullname" . }}-mgmt -c mgmt -- nexora-mgmt join-token create --group <group> --ttl 1h --max-uses <replicas>
-  ```
+  and `templates/NOTES.txt` (the release prefix, that the first admin is created through `/setup` with the setup token logged by `nexora-mgmt`, and that each engine group needs a join token secret: `kubectl exec deploy/<prefix>-mgmt -c mgmt -- /nexora-mgmt join-token create --engine-group <group> --ttl 24h` with `NEXORA_DATABASE_URL` and `NEXORA_CA_CERT_FILE` already set in that container).
 - [ ] Create `deploy/helm/nexora/ci/lint-values.yaml`:
   ```yaml
   mgmt:
     ca: { existingSecret: nexora-ca }
   database:
     mode: external
-    external: { existingSecret: nexora-db, key: url }
+    external: { existingSecret: nexora-db, key: uri }
   engine:
     groups:
       - name: default
-        replicas: 1
         joinTokenSecret: nexora-join-default
-  otelCollector:
-    enabled: true
-    traces: { otlpEndpoint: collector.example:4317 }
   ```
 - [ ] Create `deploy/kw/values-kw.yaml`:
   ```yaml
-  # kw release: helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
+  # kw release (scripts/kw-deploy.sh): helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
   image:
-    registry: 192.168.10.131
-    repository: azrtydxb
+    registry: 192.168.10.131/azrtydxb
+    pullPolicy: Always # kw tags are rebuilt in place
   mgmt:
     replicas: 2
     publicURL: https://nexora.kw.local
+    secureCookies: true
+    grpcServerNames: [nexora-mgmt-grpc.nexora.svc]
+    otlpEndpoint: http://nexora-otelcol.nexora.svc.cluster.local:4317
     ca: { existingSecret: nexora-ca }
+    kek: { existingSecret: nexora-kek }
+    dnsTLS: { existingSecret: nexora-dns-tls, reloadInterval: 30s }
     querylog:
       backend: opensearch
       opensearch:
-        url: http://opensearch.nexora.svc:9200
-        index: nexora-querylog-*
-    grpcService:
-      type: LoadBalancer
-      loadBalancerIP: 192.168.10.135
+        {
+          url: "http://opensearch.nexora.svc.cluster.local:9200",
+          index: "nexora-querylog-*",
+        }
+    grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
     ingress:
       enabled: true
+      name: nexora
       className: nginx
       host: nexora.kw.local
       clusterIssuer: cluster-ca
+      tlsSecretName: nexora-ingress-tls
   database:
-    mode: cnpg
-    cnpg:
-      clusterName: nexora-db
-      instances: 2
-      storageClass: longhorn-single
-      size: 10Gi
+    mode: external
+    external: { existingSecret: nexora-db-app, key: uri }
   engine:
-    kind: Deployment
-    hostNetwork: false
+    kind: DaemonSet
+    workers: 2
+    initImage: 192.168.10.131/library/busybox:1.37
     ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
-    extraToml: |
-      listen_dot = ["0.0.0.0:853"]
-      listen_doh = ["0.0.0.0:443"]
-      listen_doq = ["0.0.0.0:853"]
     stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
-    spreadAcrossNodes: true
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-          - matchExpressions:
-              - { key: node-role.kubernetes.io/control-plane, operator: DoesNotExist }
+    # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
+    # node must run a default-group engine.
+    tolerations:
+      - {
+          key: node-role.kubernetes.io/control-plane,
+          operator: Exists,
+          effect: NoSchedule,
+        }
+      - {
+          key: node-role.kubernetes.io/master,
+          operator: Exists,
+          effect: NoSchedule,
+        }
     groups:
-      - name: edge-a
-        replicas: 2
-        joinTokenSecret: nexora-join-edge-a
-        service: { type: LoadBalancer, loadBalancerIP: 192.168.10.136, externalTrafficPolicy: Local }
+      - name: default
+        workloadName: nexora-engine
+        nodeNamePrefix: ""
+        joinTokenSecret: nexora-join-token
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {
+                      key: nexora.io/engine-group,
+                      operator: NotIn,
+                      values: [edge-b],
+                    }
+        service:
+          {
+            name: nexora-dns,
+            type: LoadBalancer,
+            loadBalancerIP: 192.168.10.136,
+            externalTrafficPolicy: Local,
+          }
       - name: edge-b
-        replicas: 1
-        joinTokenSecret: nexora-join-edge-b
-        service: { type: LoadBalancer, loadBalancerIP: 192.168.10.137, externalTrafficPolicy: Local }
-  otelCollector:
-    enabled: true
-    traces: { otlpEndpoint: jaeger.observability:4317, insecure: true }
-    logs:
-      opensearch: { url: http://opensearch.nexora.svc:9200 }
+        workloadName: nexora-engine-edge-b
+        nodeNamePrefix: edge-b-
+        joinTokenSecret: nexora-join-token-edge-b
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {
+                      key: nexora.io/engine-group,
+                      operator: In,
+                      values: [edge-b],
+                    }
+        # The kube-vip node runs no edge-b engine, so Local would drop external traffic to .137.
+        service:
+          {
+            name: nexora-dns-edge-b,
+            type: LoadBalancer,
+            loadBalancerIP: 192.168.10.137,
+            externalTrafficPolicy: Cluster,
+          }
   metrics:
     serviceMonitor:
-      enabled: true
-      namespace: monitoring
-      labels: { release: kps }
+      {
+        enabled: true,
+        namespace: monitoring,
+        labels: { release: kps },
+        interval: 30s,
+      }
     prometheusRule:
-      enabled: true
-      namespace: monitoring
-      labels: { release: kps }
+      { enabled: true, namespace: monitoring, labels: { release: kps } }
   ```
-  `listen_dot`, `listen_doh`, `listen_doq` are the M2 bootstrap keys for encrypted listeners; use M2's spelling if it differs.
+- [ ] Change `Makefile`: `GO_PKGS := $(foreach d,mgmt gen bench deploy,$(if $(wildcard $(d)),./$(d)/...))` so `make mgmt-test` (and the CI `mgmt` job) runs `deploy/deploytest`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./deploy/deploytest/ -count=1 -v'` and expect `--- PASS: TestHelmTemplate`, `--- PASS: TestImagesWorkflow`, `--- PASS: TestComposeExample`.
-- [ ] Commit: `git add deploy/helm/nexora deploy/kw/values-kw.yaml deploy/deploytest/helm_test.go && git commit -m "feat(helm): finalise chart (groups, CNPG, collector, monitoring, schema)"`.
+- [ ] Commit: `git add deploy/helm/nexora deploy/kw/values-kw.yaml deploy/deploytest/helm_test.go Makefile && git commit -m "feat(helm): chart with engine-group workloads, CNPG or external database, monitoring"`.
 
 ## Task 14: Final kw deployment and TestKwFullProduct
 
-Files: `deploy/kw/opensearch.yaml` (single-node query-log store), `deploy/kw/fixture-http.yaml` (static blocklist fixture), `scripts/kw-deploy.sh` (install/upgrade), `scripts/kw-acceptance.sh` (runs the acceptance test with live addresses), `e2e/kw_bodies.go` (request bodies for M1–M4 resources used on kw), `e2e/kw_bodies_test.go` (`TestKwBodiesMatchOpenAPI`), `e2e/kw_full_test.go` (`TestKwFullProduct`), the M1 manifests under `deploy/kw/` that the chart replaces (removed)
-Interfaces: environment read by `TestKwFullProduct`: `NEXORA_KW_API_URL`, `NEXORA_KW_API_TOKEN`, `NEXORA_KW_MGMT_ADDRS` (`ip:8080,...`), `NEXORA_KW_ENGINES` (`group=podIP@node,...`), `NEXORA_KW_GROUP_DNS` (`edge-a=192.168.10.136:53,edge-b=192.168.10.137:53`), `NEXORA_KW_INGRESS_IP`, `NEXORA_KW_FIXTURE_URL`, `NEXORA_KW_JAEGER_QUERY_URL`, `NEXORA_KW_PROMETHEUS_URL`; M2 harness `harness.ExchangeDoQ(addr, name string, qtype uint16) (*dns.Msg, error)`.
+Files: `scripts/kw-deploy.sh` (node labels, one-time removal of the kubectl-applied mgmt/engine objects, two-phase Helm install, printed environment), `deploy/kw/bootstrap.sh` (engine group `edge-b`, its join token secret, pruning of pre-M5 engine rows), `deploy/kw/mgmt.yaml` and `deploy/kw/engine.yaml` (removed; the chart replaces them), `deploy/kw/README.md` (chart-based deployment, addresses, engine groups, known limits), `scripts/kw-acceptance.sh` (copies the CA files and password into the dev pod, restarts the `edge-b` engines, runs the kw tests), `e2e/kw_full_product_test.go` (`TestKwFullProduct`)
+Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s: `NEXORA_KW_EDGE_B_DNS_ADDR` (`192.168.10.137:53`), `NEXORA_KW_EDGE_B_ENGINE_IPS` (comma-separated pod IPs of `nexora-engine-edge-b`), `NEXORA_KW_PROMETHEUS_URL` (default `http://kps-prometheus.monitoring.svc:9090`); reuses `loadKwEnv`, `kwLogin`, `kwUniqueName`, `kwWaitApplied`, `aValues` and the Task 7 harness helpers.
 
-- [ ] Write the failing body contract test `e2e/kw_bodies_test.go`:
+- [ ] Write `e2e/kw_full_product_test.go`:
   ```go
   package e2e
 
   import (
-  	"bytes"
-  	"encoding/json"
-  	"net/http/httptest"
-  	"os"
-  	"testing"
-
-  	"github.com/pb33f/libopenapi"
-  	validator "github.com/pb33f/libopenapi-validator"
-  )
-
-  func TestKwBodiesMatchOpenAPI(t *testing.T) {
-  	spec, err := os.ReadFile("../mgmt/api/openapi.yaml")
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	doc, err := libopenapi.NewDocument(spec)
-  	if err != nil {
-  		t.Fatal(err)
-  	}
-  	v, errs := validator.NewValidator(doc)
-  	if len(errs) > 0 {
-  		t.Fatal(errs)
-  	}
-  	id := "00000000-0000-0000-0000-000000000001"
-  	cases := []struct {
-  		method, path string
-  		body         any
-  	}{
-  		{"POST", "/api/v1/upstreams", upstreamReq("kw-cloudflare", "1.1.1.1:53", nil)},
-  		{"POST", "/api/v1/filter-lists", filterListReq("kw-hosts", "http://fixture/hosts.txt", "block", nil)},
-  		{"POST", "/api/v1/client-policies", clientPolicyReq("kw-policy", "10.42.0.9/32", []string{id}, true, &id)},
-  		{"POST", "/api/v1/zones", zoneReq("kw.nexora.test", "primary", nil, false, []string{"10.42.0.0/16"}, nil, []string{"kw-tsig"})},
-  		{"POST", "/api/v1/zones", zoneReq("xfr.nexora.test", "secondary", &id, false, nil, []string{"192.168.10.136:53"}, nil)},
-  		{"POST", "/api/v1/zones/" + id + "/records", recordReq("www", "A", 60, "192.0.2.80")},
-  		{"POST", "/api/v1/tsig-keys", tsigKeyReq("kw-tsig")},
-  		{"POST", "/api/v1/rpz-zones", rpzReq("kw-rpz", "$TTL 60\n@ SOA . . 1 1 1 1 1\nblocked-by-rpz.kw.test CNAME .\n")},
-  		{"POST", "/api/v1/api-tokens", apiTokenReq("kw-viewer", "viewer")},
-  		{"PUT", "/api/v1/settings/telemetry", telemetryReq("http://nexora-otel-collector.nexora.svc:4317", 100, 1)},
-  	}
-  	for _, c := range cases {
-  		raw, _ := json.Marshal(c.body)
-  		req := httptest.NewRequest(c.method, "http://nexora.test"+c.path, bytes.NewReader(raw))
-  		req.Header.Set("Content-Type", "application/json")
-  		if ok, verrs := v.ValidateHttpRequest(req); !ok {
-  			for _, e := range verrs {
-  				t.Errorf("%s %s: %s", c.method, c.path, e.Message)
-  			}
-  		}
-  	}
-  }
-  ```
-- [ ] Run `scripts/dev-exec.sh go test ./e2e/ -run TestKwBodiesMatchOpenAPI -count=1` and expect FAIL with `undefined: upstreamReq`.
-- [ ] Create `e2e/kw_bodies.go`; each builder mirrors one M1–M4 request schema (when the validator reports a mismatch, change the builder's field names to the schema's, not the schema):
-  ```go
-  package e2e
-
-  func upstreamReq(name, address string, groupID *string) map[string]any {
-  	return map[string]any{"name": name, "address": address, "protocol": "udp", "group_id": groupID}
-  }
-
-  func filterListReq(name, url, kind string, groupID *string) map[string]any {
-  	return map[string]any{"name": name, "url": url, "format": "hosts", "kind": kind, "enabled": true, "refresh_interval_seconds": 3600, "group_id": groupID}
-  }
-
-  func clientPolicyReq(name, cidr string, listIDs []string, safeSearch bool, groupID *string) map[string]any {
-  	return map[string]any{"name": name, "client_cidrs": []string{cidr}, "filter_list_ids": listIDs, "safe_search": safeSearch, "group_id": groupID}
-  }
-
-  func zoneReq(name, kind string, groupID *string, signing bool, allowTransfer, primaries, updateKeys []string) map[string]any {
-  	b := map[string]any{"name": name, "kind": kind, "group_id": groupID, "dnssec_signing": signing}
-  	if allowTransfer != nil {
-  		b["allow_transfer_cidrs"] = allowTransfer
-  	}
-  	if primaries != nil {
-  		b["primaries"] = primaries
-  	}
-  	if updateKeys != nil {
-  		b["update_tsig_keys"] = updateKeys
-  	}
-  	return b
-  }
-
-  func recordReq(name, typ string, ttl int, data string) map[string]any {
-  	return map[string]any{"name": name, "type": typ, "ttl": ttl, "data": data}
-  }
-
-  func tsigKeyReq(name string) map[string]any {
-  	return map[string]any{"name": name, "algorithm": "hmac-sha256"}
-  }
-
-  func rpzReq(name, content string) map[string]any {
-  	return map[string]any{"name": name, "source": "inline", "content": content, "policy": "given"}
-  }
-
-  func apiTokenReq(name, role string) map[string]any {
-  	return map[string]any{"name": name, "role": role, "ttl_seconds": 7200}
-  }
-
-  func telemetryReq(otlp string, sampleOneIn int, revision int64) map[string]any {
-  	return map[string]any{"otlp_endpoint": otlp, "trace_sample_one_in": sampleOneIn, "trace_slow_threshold_us": 50000, "revision": revision}
-  }
-  ```
-  Run `scripts/dev-exec.sh go test ./e2e/ -run TestKwBodiesMatchOpenAPI -count=1` and expect `ok` (after aligning any reported field).
-- [ ] Write `e2e/kw_full_test.go`:
-  ```go
-  package e2e
-
-  import (
-  	"bytes"
-  	"crypto/tls"
-  	"encoding/base64"
   	"encoding/json"
   	"fmt"
-  	"io"
   	"net"
   	"net/http"
   	"net/url"
   	"os"
-  	"slices"
-  	"sort"
+  	"regexp"
   	"strings"
   	"sync"
   	"testing"
@@ -6296,556 +5137,154 @@ Interfaces: environment read by `TestKwFullProduct`: `NEXORA_KW_API_URL`, `NEXOR
   	"github.com/piwi3910/nexora/e2e/harness"
   )
 
-  type kwEngine struct{ Group, IP, Node string }
-
-  func (e kwEngine) Addr() string { return net.JoinHostPort(e.IP, "53") }
-
-  type kwEnv struct {
-  	api                                          *harness.API
-  	mgmtAddrs                                    []string
-  	engines                                      []kwEngine
-  	groupDNS                                     map[string]string
-  	ingressIP, fixtureURL, jaegerURL, promURL, token string
-  }
-
-  func splitList(v string) []string {
-  	var out []string
-  	for _, p := range strings.Split(v, ",") {
-  		if p = strings.TrimSpace(p); p != "" {
-  			out = append(out, p)
-  		}
+  func kwQueryA(addr, name string) ([]string, bool, error) {
+  	m := new(dns.Msg)
+  	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
+  	r, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(m, addr)
+  	if err != nil {
+  		return nil, false, err
   	}
-  	return out
+  	return aValues(r), r.Authoritative, nil
   }
 
-  func loadKwEnv(t *testing.T) *kwEnv {
+  func kwEngineGroupByName(t *testing.T, api *harness.API, name string) harness.EngineGroupView {
   	t.Helper()
-  	base := os.Getenv("NEXORA_KW_API_URL")
-  	if base == "" {
-  		t.Skip("NEXORA_KW_* not set; run scripts/kw-acceptance.sh")
-  	}
-  	k := &kwEnv{
-  		api: harness.NewAPI(base, os.Getenv("NEXORA_KW_API_TOKEN")), token: os.Getenv("NEXORA_KW_API_TOKEN"),
-  		mgmtAddrs: splitList(os.Getenv("NEXORA_KW_MGMT_ADDRS")), groupDNS: map[string]string{},
-  		ingressIP: os.Getenv("NEXORA_KW_INGRESS_IP"), fixtureURL: os.Getenv("NEXORA_KW_FIXTURE_URL"),
-  		jaegerURL: os.Getenv("NEXORA_KW_JAEGER_QUERY_URL"), promURL: os.Getenv("NEXORA_KW_PROMETHEUS_URL"),
-  	}
-  	for _, e := range splitList(os.Getenv("NEXORA_KW_ENGINES")) {
-  		group, rest, _ := strings.Cut(e, "=")
-  		ip, node, _ := strings.Cut(rest, "@")
-  		k.engines = append(k.engines, kwEngine{group, ip, node})
-  	}
-  	for _, g := range splitList(os.Getenv("NEXORA_KW_GROUP_DNS")) {
-  		name, addr, _ := strings.Cut(g, "=")
-  		k.groupDNS[name] = addr
-  	}
-  	return k
-  }
-
-  func (k *kwEnv) group(g string) []kwEngine {
-  	var out []kwEngine
-  	for _, e := range k.engines {
-  		if e.Group == g {
-  			out = append(out, e)
-  		}
-  	}
-  	return out
-  }
-
-  // ensure returns the id of the item at listPath whose field equals value, creating it from body when absent.
-  func (k *kwEnv) ensure(t *testing.T, listPath, field, value string, body map[string]any) string {
-  	t.Helper()
-  	var items []map[string]any
-  	k.api.Must(t, "GET", listPath, nil, &items, http.StatusOK)
-  	for _, it := range items {
-  		if it[field] == value {
-  			return it["id"].(string)
-  		}
-  	}
-  	var created map[string]any
-  	k.api.Must(t, "POST", listPath, body, &created, http.StatusCreated)
-  	return created["id"].(string)
-  }
-
-  func (k *kwEnv) groupByName(t *testing.T, name string) harness.EngineGroup {
-  	t.Helper()
-  	var gs []harness.EngineGroup
-  	k.api.Must(t, "GET", "/api/v1/engine-groups", nil, &gs, http.StatusOK)
-  	for _, g := range gs {
+  	var groups []harness.EngineGroupView
+  	api.Must(http.MethodGet, "/engine-groups", nil, &groups, http.StatusOK)
+  	for _, g := range groups {
   		if g.Name == name {
   			return g
   		}
   	}
-  	t.Fatalf("group %s missing", name)
-  	return harness.EngineGroup{}
+  	t.Fatalf("engine group %s missing (created by deploy/kw/bootstrap.sh)", name)
+  	return harness.EngineGroupView{}
   }
 
-  // settle waits until every engine is connected, in sync, and no rollout is open.
-  func (k *kwEnv) settle(t *testing.T, timeout time.Duration) {
-  	t.Helper()
-  	harness.Eventually(t, timeout, func() error {
-  		for _, e := range k.api.Engines(t) {
-  			if e.ConnectionState != "connected" || e.Drift != "in_sync" {
-  				return fmt.Errorf("%s is %s/%s", e.Name, e.ConnectionState, e.Drift)
-  			}
-  		}
-  		var open []harness.Rollout
-  		for _, s := range []string{"pending", "canary", "verifying", "rolling"} {
-  			var rs []harness.Rollout
-  			k.api.Must(t, "GET", "/api/v1/rollouts?state="+s, nil, &rs, http.StatusOK)
-  			open = append(open, rs...)
-  		}
-  		if len(open) > 0 {
-  			return fmt.Errorf("%d rollouts still open", len(open))
-  		}
-  		return nil
-  	})
-  }
-
-  func query(addr, name string, qtype uint16, network string, do bool, bufsize uint16) (*dns.Msg, error) {
-  	m := new(dns.Msg)
-  	m.SetQuestion(dns.Fqdn(name), qtype)
-  	if bufsize > 0 || do {
-  		m.SetEdns0(max(bufsize, 512), do)
-  	}
-  	c := &dns.Client{Net: network, Timeout: 5 * time.Second}
-  	if network == "tcp-tls" {
-  		c.TLSConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // engine certificate trust is covered by TestEncryptedTransports
-  	}
-  	r, _, err := c.Exchange(m, addr)
-  	return r, err
-  }
-
-  func aValues(r *dns.Msg) []string {
-  	var out []string
-  	for _, rr := range r.Answer {
-  		if a, ok := rr.(*dns.A); ok {
-  			out = append(out, a.A.String())
-  		}
-  	}
-  	return out
-  }
-
-  func getJSON(t *testing.T, rawURL string, out any) {
-  	t.Helper()
-  	resp, err := http.Get(rawURL)
-  	if err != nil {
-  		t.Fatalf("GET %s: %v", rawURL, err)
-  	}
-  	defer resp.Body.Close()
-  	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-  		t.Fatalf("decode %s: %v", rawURL, err)
-  	}
-  }
-
+  // TestKwFullProduct checks the M5 fleet on kw: the per-node engine topology in two engine groups,
+  // engine-group-scoped rewrites and zones, identities that survive pod restarts, a canary rollout
+  // with rollback and resume on edge-b, certificate rotation, and the fleet metrics and alerts.
   func TestKwFullProduct(t *testing.T) {
-  	k := loadKwEnv(t)
-  	edgeA, edgeB := k.groupDNS["edge-a"], k.groupDNS["edge-b"]
-  	ga, gb := k.groupByName(t, "edge-a"), k.groupByName(t, "edge-b")
-
-  	// Baseline configuration, idempotent across runs.
-  	k.ensure(t, "/api/v1/upstreams", "name", "kw-cloudflare", upstreamReq("kw-cloudflare", "1.1.1.1:53", nil))
-  	k.ensure(t, "/api/v1/upstreams", "name", "kw-quad9", upstreamReq("kw-quad9", "9.9.9.9:53", nil))
-  	if gb.UpstreamMode != "override" {
-  		k.api.Must(t, "PUT", "/api/v1/engine-groups/"+gb.ID, map[string]any{"name": "edge-b", "revision": gb.Revision, "upstream_mode": "override"}, nil, http.StatusOK)
+  	env := loadKwEnv(t)
+  	edgeAddr := os.Getenv("NEXORA_KW_EDGE_B_DNS_ADDR")
+  	var edgeIPs []string
+  	for _, ip := range strings.Split(os.Getenv("NEXORA_KW_EDGE_B_ENGINE_IPS"), ",") {
+  		if ip = strings.TrimSpace(ip); ip != "" {
+  			edgeIPs = append(edgeIPs, ip)
+  		}
   	}
-  	var tel map[string]any
-  	k.api.Must(t, "GET", "/api/v1/settings/telemetry", nil, &tel, http.StatusOK)
-  	k.api.Must(t, "PUT", "/api/v1/settings/telemetry", telemetryReq("http://nexora-otel-collector.nexora.svc:4317", 100, int64(tel["revision"].(float64))), nil, http.StatusOK)
-  	k.settle(t, 3*time.Minute)
+  	if edgeAddr == "" || len(edgeIPs) != 2 {
+  		t.Fatalf("NEXORA_KW_EDGE_B_DNS_ADDR and two NEXORA_KW_EDGE_B_ENGINE_IPS are required (printed by scripts/kw-deploy.sh), got %q %v", edgeAddr, edgeIPs)
+  	}
+  	promURL := os.Getenv("NEXORA_KW_PROMETHEUS_URL")
+  	if promURL == "" {
+  		promURL = "http://kps-prometheus.monitoring.svc:9090"
+  	}
+  	api := kwLogin(t, env)
+  	edge := kwEngineGroupByName(t, api, "edge-b")
+  	t.Cleanup(func() {
+  		g := api.EngineGroup(edge.ID)
+  		if g.RolloutsPaused {
+  			api.Must(http.MethodPost, "/engine-groups/"+edge.ID+"/resume-rollouts", nil, nil, http.StatusAccepted)
+  			g = api.EngineGroup(edge.ID)
+  		}
+  		api.Must(http.MethodPut, "/engine-groups/"+edge.ID, map[string]any{"name": "edge-b", "revision": g.Revision,
+  			"description": g.Description, "rollout_strategy": "all_at_once"}, nil, http.StatusOK)
+  	})
 
-  	t.Run("M5/topology", func(t *testing.T) {
-  		nodes := map[string]bool{}
-  		for _, e := range k.engines {
-  			nodes[e.Node] = true
-  		}
-  		if len(k.engines) != 3 || len(nodes) != 3 || len(k.group("edge-a")) != 2 || len(k.group("edge-b")) != 1 {
-  			t.Fatalf("engines %+v, want 3 on distinct nodes: 2 in edge-a, 1 in edge-b", k.engines)
-  		}
-  		names := map[string]string{}
-  		for _, e := range k.api.Engines(t) {
-  			names[e.Name] = e.GroupName
-  		}
-  		for _, e := range k.engines {
-  			if names[e.Group+"-"+e.Node] != e.Group {
-  				t.Errorf("engine %s-%s not registered in %s: %v", e.Group, e.Node, e.Group, names)
+  	var engines []harness.EngineView
+  	api.Must(http.MethodGet, "/engines", nil, &engines, http.StatusOK)
+
+  	t.Run("topology", func(t *testing.T) {
+  		nodeName := regexp.MustCompile(`^(edge-b-)?(master|worker)-[0-9]+$`)
+  		perNode := map[string]int{}
+  		edgeCount, connected := 0, 0
+  		for _, e := range engines {
+  			if !nodeName.MatchString(e.NodeName) {
+  				t.Errorf("engine %s is not named after its Kubernetes node", e.NodeName)
   			}
+  			perNode[e.NodeName]++
+  			if e.Connected {
+  				connected++
+  			}
+  			if strings.HasPrefix(e.NodeName, "edge-b-") != (e.EngineGroupID == edge.ID) {
+  				t.Errorf("engine %s is in engine group %s", e.NodeName, e.EngineGroupName)
+  			}
+  			if e.EngineGroupID == edge.ID {
+  				edgeCount++
+  			}
+  		}
+  		for node, n := range perNode {
+  			if n != 1 {
+  				t.Errorf("node %s has %d engine records; a restarted pod enrolled again", node, n)
+  			}
+  		}
+  		if connected != env.engines || edgeCount != 2 {
+  			t.Fatalf("connected engines %d (want %d), edge-b engines %d (want 2)", connected, env.engines, edgeCount)
   		}
   	})
 
-  	t.Run("M1/mgmt_ha_and_ingress", func(t *testing.T) {
-  		if len(k.mgmtAddrs) != 2 {
-  			t.Fatalf("mgmt instances %v, want 2", k.mgmtAddrs)
+  	t.Run("engine-group-scoped-rewrite", func(t *testing.T) {
+  		name := kwUniqueName("kw-fleet")
+  		var rw struct {
+  			ID       string `json:"id"`
+  			Revision int64  `json:"revision"`
   		}
-  		for _, a := range k.mgmtAddrs {
-  			harness.NewAPI("http://"+a, k.token).Must(t, "GET", "/api/v1/fleet/summary", nil, nil, http.StatusOK)
+  		api.Must(http.MethodPost, "/rewrites", map[string]any{"name": name, "type": "A", "value": "192.0.2.77", "engine_group_id": edge.ID}, &rw, http.StatusCreated)
+  		t.Cleanup(func() { api.Must(http.MethodDelete, fmt.Sprintf("/rewrites/%s?revision=%d", rw.ID, rw.Revision), nil, nil, http.StatusNoContent) })
+  		kwWaitApplied(t, api, env.engines)
+  		for _, ip := range edgeIPs {
+  			if got, _, err := kwQueryA(net.JoinHostPort(ip, "53"), name); err != nil || len(got) != 1 || got[0] != "192.0.2.77" {
+  				t.Fatalf("edge-b engine %s: %v %v", ip, got, err)
+  			}
   		}
-  		hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{ServerName: "nexora.kw.local", InsecureSkipVerify: true}}} //nolint:gosec
-  		req, _ := http.NewRequest("GET", "https://"+k.ingressIP+"/api/v1/fleet/summary", nil)
-  		req.Host = "nexora.kw.local"
-  		req.Header.Set("Authorization", "Bearer "+k.token)
-  		resp, err := hc.Do(req)
-  		if err != nil || resp.StatusCode != http.StatusOK {
-  			t.Fatalf("ingress: %v %v", resp, err)
+  		if got, _, err := kwQueryA(edgeAddr, name); err != nil || len(got) != 1 || got[0] != "192.0.2.77" {
+  			t.Fatalf("edge-b load balancer: %v %v", got, err)
   		}
-  		resp.Body.Close()
-  	})
-
-  	t.Run("M1/forward_cache_ttl", func(t *testing.T) {
-  		first, err := query(edgeA, "example.org", dns.TypeA, "udp", false, 0)
-  		if err != nil || len(first.Answer) == 0 {
-  			t.Fatalf("first: %v %v", first, err)
-  		}
-  		time.Sleep(2 * time.Second)
-  		for _, e := range k.group("edge-a") {
-  			_, _ = query(e.Addr(), "example.org", dns.TypeA, "udp", false, 0)
-  		}
-  		second, err := query(edgeA, "example.org", dns.TypeA, "udp", false, 0)
-  		if err != nil || len(second.Answer) == 0 || second.Answer[0].Header().Ttl >= first.Answer[0].Header().Ttl {
-  			t.Fatalf("TTL %d then %v (%v), want a decremented cached TTL", first.Answer[0].Header().Ttl, second, err)
+  		if got, _, err := kwQueryA(env.dnsAddr, name); err != nil || (len(got) > 0 && got[0] == "192.0.2.77") {
+  			t.Fatalf("the default group served an edge-b rewrite: %v %v", got, err)
   		}
   	})
 
-  	t.Run("M1/blocklist_allowlist", func(t *testing.T) {
-  		k.ensure(t, "/api/v1/filter-lists", "name", "kw-hosts", filterListReq("kw-hosts", k.fixtureURL+"/hosts.txt", "block", nil))
-  		k.ensure(t, "/api/v1/filter-lists", "name", "kw-allow", filterListReq("kw-allow", k.fixtureURL+"/allow.txt", "allow", nil))
-  		harness.Eventually(t, 2*time.Minute, func() error {
-  			for _, e := range k.engines {
-  				r, err := query(e.Addr(), "blocked.kw-acceptance.test", dns.TypeA, "udp", false, 0)
-  				if err != nil || !slices.Equal(aValues(r), []string{"0.0.0.0"}) {
-  					return fmt.Errorf("%s not blocked on %s: %v %v", "blocked.kw-acceptance.test", e.IP, r, err)
-  				}
-  			}
-  			return nil
-  		})
-  		for _, e := range k.engines {
-  			if r, err := query(e.Addr(), "allowed.kw-acceptance.test", dns.TypeA, "udp", false, 0); err != nil || slices.Contains(aValues(r), "0.0.0.0") {
-  				t.Fatalf("allowlisted name blocked on %s: %v %v", e.IP, r, err)
-  			}
-  		}
-  	})
-
-  	var zoneID string
-  	t.Run("M4/authoritative_propagation", func(t *testing.T) {
-  		zoneID = k.ensure(t, "/api/v1/zones", "name", "kw.nexora.test", zoneReq("kw.nexora.test", "primary", nil, false, []string{"10.42.0.0/16"}, nil, nil))
-  		stamp := fmt.Sprintf("192.0.2.%d", time.Now().Second()%200+10)
-  		k.api.Must(t, "POST", "/api/v1/zones/"+zoneID+"/records", recordReq(fmt.Sprintf("p%d", time.Now().UnixNano()), "A", 60, stamp), nil, http.StatusCreated)
-  		k.api.Do(t, "POST", "/api/v1/zones/"+zoneID+"/records", recordReq("big", "TXT", 60, strings.Repeat("\"nexora-large-answer-padding-0123456789\" ", 40)), nil) // 201, or 409 on a rerun
-  		start := time.Now()
-  		harness.Eventually(t, 5*time.Second, func() error {
-  			for _, e := range k.engines {
-  				r, err := query(e.Addr(), "kw.nexora.test", dns.TypeSOA, "udp", false, 0)
-  				if err != nil || !r.Authoritative {
-  					return fmt.Errorf("%s not authoritative: %v", e.IP, err)
-  				}
-  			}
-  			return nil
-  		})
-  		t.Logf("zone authoritative on all engines after %s", time.Since(start))
-  	})
-
-  	t.Run("M1/edns_truncation_tcp", func(t *testing.T) {
-  		udp, err := query(edgeA, "big.kw.nexora.test", dns.TypeTXT, "udp", false, 512)
-  		if err != nil || !udp.Truncated {
-  			t.Fatalf("UDP with 512 buffer: TC=%v err %v", udp != nil && udp.Truncated, err)
-  		}
-  		tcp, err := query(edgeA, "big.kw.nexora.test", dns.TypeTXT, "tcp", false, 0)
-  		if err != nil || tcp.Truncated || len(tcp.Answer) == 0 {
-  			t.Fatalf("TCP: %v %v", tcp, err)
-  		}
-  	})
-
-  	t.Run("M2/encrypted_transports", func(t *testing.T) {
-  		host, _, _ := net.SplitHostPort(edgeA)
-  		want := "192.0.2.53"
-  		k.ensure(t, "/api/v1/rewrites", "domain", "kw-rewrite.kw.test", map[string]any{"domain": "kw-rewrite.kw.test", "type": "A", "value": want, "group_id": nil})
-  		k.settle(t, time.Minute)
-  		dot, err := query(net.JoinHostPort(host, "853"), "kw-rewrite.kw.test", dns.TypeA, "tcp-tls", false, 0)
-  		if err != nil || !slices.Equal(aValues(dot), []string{want}) {
-  			t.Fatalf("DoT: %v %v", dot, err)
-  		}
-  		m := new(dns.Msg)
-  		m.SetQuestion("kw-rewrite.kw.test.", dns.TypeA)
-  		wire, _ := m.Pack()
-  		hc := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true}} //nolint:gosec
-  		for _, method := range []string{"GET", "POST"} {
-  			var req *http.Request
-  			if method == "GET" {
-  				req, _ = http.NewRequest("GET", "https://"+host+"/dns-query?dns="+base64.RawURLEncoding.EncodeToString(wire), nil)
-  			} else {
-  				req, _ = http.NewRequest("POST", "https://"+host+"/dns-query", bytes.NewReader(wire))
-  				req.Header.Set("Content-Type", "application/dns-message")
-  			}
-  			req.Header.Set("Accept", "application/dns-message")
-  			resp, err := hc.Do(req)
-  			if err != nil {
-  				t.Fatalf("DoH %s: %v", method, err)
-  			}
-  			body, _ := io.ReadAll(resp.Body)
-  			resp.Body.Close()
-  			var r dns.Msg
-  			if err := r.Unpack(body); err != nil || !slices.Equal(aValues(&r), []string{want}) {
-  				t.Fatalf("DoH %s: status %d %v %v", method, resp.StatusCode, r.Answer, err)
-  			}
-  		}
-  		doq, err := harness.ExchangeDoQ(net.JoinHostPort(host, "853"), "kw-rewrite.kw.test", dns.TypeA)
-  		if err != nil || !slices.Equal(aValues(doq), []string{want}) {
-  			t.Fatalf("DoQ: %v %v", doq, err)
-  		}
-  	})
-
-  	t.Run("M2/per_client_policy_safe_search_scoped_to_group", func(t *testing.T) {
-  		conn, err := net.Dial("udp", edgeA)
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		myIP := conn.LocalAddr().(*net.UDPAddr).IP.String()
-  		conn.Close()
-  		listID := k.ensure(t, "/api/v1/filter-lists", "name", "kw-policy-list", filterListReq("kw-policy-list", k.fixtureURL+"/policy.txt", "block", &ga.ID))
-  		k.ensure(t, "/api/v1/client-policies", "name", "kw-dev-pod", clientPolicyReq("kw-dev-pod", myIP+"/32", []string{listID}, true, &ga.ID))
-  		harness.Eventually(t, 2*time.Minute, func() error {
-  			r, err := query(edgeA, "policy-block.kw-acceptance.test", dns.TypeA, "udp", false, 0)
-  			if err != nil || !slices.Equal(aValues(r), []string{"0.0.0.0"}) {
-  				return fmt.Errorf("edge-a policy not applied: %v %v", r, err)
-  			}
-  			return nil
-  		})
-  		if r, err := query(edgeB, "policy-block.kw-acceptance.test", dns.TypeA, "udp", false, 0); err != nil || slices.Contains(aValues(r), "0.0.0.0") {
-  			t.Fatalf("edge-b applied a policy scoped to edge-a: %v %v", r, err)
-  		}
-  		safe, err := query(edgeA, "www.google.com", dns.TypeA, "udp", false, 0)
-  		if err != nil || !slices.Contains(aValues(safe), "216.239.38.120") {
-  			t.Fatalf("safe search on edge-a: %v %v", safe, err)
-  		}
-  		plain, err := query(edgeB, "www.google.com", dns.TypeA, "udp", false, 0)
-  		if err != nil || slices.Contains(aValues(plain), "216.239.38.120") {
-  			t.Fatalf("safe search leaked to edge-b: %v %v", plain, err)
-  		}
-  	})
-
-  	t.Run("M3/recursion_and_dnssec_validation", func(t *testing.T) {
-  		secure, err := query(edgeB, "isc.org", dns.TypeA, "udp", true, 1232)
-  		if err != nil || secure.Rcode != dns.RcodeSuccess || !secure.AuthenticatedData {
-  			t.Fatalf("isc.org via recursion: %v %v", secure, err)
-  		}
-  		bogus, err := query(edgeB, "dnssec-failed.org", dns.TypeA, "udp", true, 1232)
-  		if err != nil || bogus.Rcode != dns.RcodeServerFailure {
-  			t.Fatalf("dnssec-failed.org: %v %v", bogus, err)
-  		}
-  	})
-
-  	t.Run("M3/rpz", func(t *testing.T) {
-  		k.ensure(t, "/api/v1/rpz-zones", "name", "kw-rpz", rpzReq("kw-rpz", "$TTL 60\n@ SOA . . 1 3600 600 86400 60\nblocked-by-rpz.kw.test CNAME .\n"))
-  		harness.Eventually(t, time.Minute, func() error {
-  			for _, g := range []string{edgeA, edgeB} {
-  				r, err := query(g, "blocked-by-rpz.kw.test", dns.TypeA, "udp", false, 0)
-  				if err != nil || r.Rcode != dns.RcodeNameError {
-  					return fmt.Errorf("rpz not applied at %s: %v %v", g, r, err)
-  				}
-  			}
-  			return nil
-  		})
-  	})
-
-  	t.Run("M4/axfr_out_and_secondary_via_notify", func(t *testing.T) {
-  		tr := new(dns.Transfer)
-  		m := new(dns.Msg)
-  		m.SetAxfr("kw.nexora.test.")
-  		env, err := tr.In(m, k.group("edge-a")[0].Addr())
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		n := 0
-  		for e := range env {
-  			if e.Error != nil {
-  				t.Fatal(e.Error)
-  			}
-  			n += len(e.RR)
-  		}
-  		if n < 3 {
-  			t.Fatalf("AXFR returned %d records", n)
-  		}
-
-  		primary := k.ensure(t, "/api/v1/zones?group_id="+ga.ID, "name", "xfr.nexora.test", zoneReq("xfr.nexora.test", "primary", &ga.ID, false, []string{"10.42.0.0/16", "192.168.10.0/24"}, nil, nil))
-  		k.ensure(t, "/api/v1/zones?group_id="+gb.ID, "name", "xfr.nexora.test", zoneReq("xfr.nexora.test", "secondary", &gb.ID, false, nil, []string{edgeA}, nil))
-  		label := fmt.Sprintf("n%d", time.Now().UnixNano())
-  		k.api.Must(t, "POST", "/api/v1/zones/"+primary+"/records", recordReq(label, "A", 60, "192.0.2.44"), nil, http.StatusCreated)
-  		harness.Eventually(t, time.Minute, func() error {
-  			r, err := query(edgeB, label+".xfr.nexora.test", dns.TypeA, "udp", false, 0)
-  			if err != nil || !slices.Equal(aValues(r), []string{"192.0.2.44"}) {
-  				return fmt.Errorf("secondary on edge-b has not picked up %s: %v %v", label, r, err)
-  			}
-  			return nil
-  		})
-  	})
-
-  	t.Run("M4/dynamic_update_tsig", func(t *testing.T) {
-  		run := time.Now().Unix()
-  		keyName := fmt.Sprintf("kw-tsig-%d", run)
-  		zone := fmt.Sprintf("u%d.nexora.test", run)
-  		var key struct {
-  			ID     string `json:"id"`
-  			Secret string `json:"secret"`
-  		}
-  		k.api.Must(t, "POST", "/api/v1/tsig-keys", tsigKeyReq(keyName), &key, http.StatusCreated)
+  	t.Run("zone-scoped-to-edge-b", func(t *testing.T) {
+  		zone := kwUniqueName("zone")
   		var z struct {
   			ID string `json:"id"`
   		}
-  		k.api.Must(t, "POST", "/api/v1/zones", zoneReq(zone, "primary", nil, false, nil, nil, []string{keyName}), &z, http.StatusCreated)
-  		defer func() {
-  			k.api.Do(t, "DELETE", "/api/v1/zones/"+z.ID, nil, nil)
-  			k.api.Do(t, "DELETE", "/api/v1/tsig-keys/"+key.ID, nil, nil)
-  		}()
-  		k.settle(t, time.Minute)
-  		target := k.group("edge-a")[0].Addr()
-  		name := "dyn." + zone + "."
-  		rr, _ := dns.NewRR(name + " 60 IN A 192.0.2.66")
-
-  		signed := new(dns.Msg)
-  		signed.SetUpdate(zone + ".")
-  		signed.Insert([]dns.RR{rr})
-  		signed.SetTsig(keyName+".", dns.HmacSHA256, 300, time.Now().Unix())
-  		c := &dns.Client{TsigSecret: map[string]string{keyName + ".": key.Secret}}
-  		if r, _, err := c.Exchange(signed, target); err != nil || r.Rcode != dns.RcodeSuccess {
-  			t.Fatalf("signed update: %v %v", r, err)
-  		}
-  		harness.Eventually(t, 10*time.Second, func() error {
-  			for _, e := range k.engines {
-  				r, err := query(e.Addr(), name, dns.TypeA, "udp", false, 0)
-  				if err != nil || !slices.Equal(aValues(r), []string{"192.0.2.66"}) {
-  					return fmt.Errorf("%s lacks updated record: %v %v", e.IP, r, err)
-  				}
+  		api.Must(http.MethodPost, "/zones", map[string]any{"name": zone, "kind": "primary", "default_ttl": 60, "engine_group_id": edge.ID,
+  			"soa": map[string]any{"mname": "ns1." + zone, "rname": "hostmaster." + zone}, "nameservers": []string{"ns1." + zone}}, &z, http.StatusCreated)
+  		t.Cleanup(func() {
+  			var cur struct {
+  				Revision int64 `json:"revision"`
   			}
-  			return nil
+  			api.Must(http.MethodGet, "/zones/"+z.ID, nil, &cur, http.StatusOK)
+  			api.Must(http.MethodDelete, fmt.Sprintf("/zones/%s?revision=%d", z.ID, cur.Revision), nil, nil, http.StatusNoContent)
   		})
-  		rr2, _ := dns.NewRR("unsigned." + zone + ". 60 IN A 192.0.2.67")
-  		unsigned := new(dns.Msg)
-  		unsigned.SetUpdate(zone + ".")
-  		unsigned.Insert([]dns.RR{rr2})
-  		if r, _, err := new(dns.Client).Exchange(unsigned, target); err != nil || r.Rcode != dns.RcodeRefused {
-  			t.Fatalf("unsigned update: %v %v, want REFUSED", r, err)
+  		kwWaitApplied(t, api, env.engines)
+  		for _, ip := range edgeIPs {
+  			m := new(dns.Msg)
+  			m.SetQuestion(zone, dns.TypeSOA)
+  			r, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(m, net.JoinHostPort(ip, "53"))
+  			if err != nil || !r.Authoritative {
+  				t.Fatalf("edge-b engine %s is not authoritative for %s: %v %v", ip, zone, r, err)
+  			}
+  		}
+  		m := new(dns.Msg)
+  		m.SetQuestion(zone, dns.TypeSOA)
+  		if r, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(m, env.dnsAddr); err == nil && r.Authoritative {
+  			t.Fatalf("the default group serves the edge-b zone %s", zone)
   		}
   	})
 
-  	t.Run("M4/dnssec_signing", func(t *testing.T) {
-  		signedZone := k.ensure(t, "/api/v1/zones", "name", "signed.nexora.test", zoneReq("signed.nexora.test", "primary", nil, true, nil, nil, nil))
-  		k.api.Do(t, "POST", "/api/v1/zones/"+signedZone+"/records", recordReq("www", "A", 60, "192.0.2.90"), nil)
-  		var keys *dns.Msg
-  		harness.Eventually(t, time.Minute, func() error {
-  			var err error
-  			keys, err = query(edgeA, "signed.nexora.test", dns.TypeDNSKEY, "tcp", true, 4096)
-  			if err != nil || len(keys.Answer) == 0 {
-  				return fmt.Errorf("no DNSKEY yet: %v", err)
-  			}
-  			return nil
-  		})
-  		ans, err := query(edgeA, "www.signed.nexora.test", dns.TypeA, "tcp", true, 4096)
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		var rrset []dns.RR
-  		var sig *dns.RRSIG
-  		for _, rr := range ans.Answer {
-  			switch v := rr.(type) {
-  			case *dns.RRSIG:
-  				sig = v
-  			default:
-  				rrset = append(rrset, rr)
-  			}
-  		}
-  		if sig == nil || len(rrset) == 0 {
-  			t.Fatalf("answer lacks RRSIG: %v", ans)
-  		}
-  		for _, rr := range keys.Answer {
-  			if key, ok := rr.(*dns.DNSKEY); ok && key.KeyTag() == sig.KeyTag {
-  				if err := sig.Verify(key, rrset); err != nil {
-  					t.Fatalf("RRSIG does not verify: %v", err)
-  				}
-  				return
-  			}
-  		}
-  		t.Fatalf("no DNSKEY with tag %d", sig.KeyTag)
-  	})
-
-  	t.Run("M4/zone_file_round_trip", func(t *testing.T) {
-  		zone := fmt.Sprintf("rt%d.nexora.test.", time.Now().Unix())
-  		src := "$ORIGIN " + zone + "\n$TTL 300\n@ IN SOA ns1 hostmaster 1 3600 600 86400 300\n@ IN NS ns1\nns1 IN A 192.0.2.1\nwww IN A 192.0.2.2\nmail IN MX 10 www\ntxt IN TXT \"a b\"\n"
-  		id := k.ensure(t, "/api/v1/zones", "name", strings.TrimSuffix(zone, "."), zoneReq(strings.TrimSuffix(zone, "."), "primary", nil, false, nil, nil, nil))
-  		req, _ := http.NewRequest("POST", k.api.Base+"/api/v1/zones/"+id+"/import", strings.NewReader(src))
-  		req.Header.Set("Authorization", "Bearer "+k.token)
-  		req.Header.Set("Content-Type", "text/dns")
-  		if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode >= 300 {
-  			t.Fatalf("import: %v %v", resp, err)
-  		}
-  		req, _ = http.NewRequest("GET", k.api.Base+"/api/v1/zones/"+id+"/export", nil)
-  		req.Header.Set("Authorization", "Bearer "+k.token)
-  		resp, err := http.DefaultClient.Do(req)
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		out, _ := io.ReadAll(resp.Body)
-  		resp.Body.Close()
-  		norm := func(text string) []string {
-  			var rrs []string
-  			zp := dns.NewZoneParser(strings.NewReader(text), zone, "")
-  			for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
-  				if rr.Header().Rrtype == dns.TypeSOA {
-  					continue // serial changes on import
-  				}
-  				rrs = append(rrs, strings.ToLower(rr.String()))
-  			}
-  			sort.Strings(rrs)
-  			return rrs
-  		}
-  		if a, b := norm(src), norm(string(out)); !slices.Equal(a, b) {
-  			t.Fatalf("round trip differs:\nimported %v\nexported %v", a, b)
-  		}
-  	})
-
-  	t.Run("M1/query_log_opensearch", func(t *testing.T) {
-  		name := fmt.Sprintf("ql%d.kw-rewrite.kw.test", time.Now().UnixNano())
-  		_, _ = query(edgeA, name, dns.TypeA, "udp", false, 0)
-  		harness.Eventually(t, 10*time.Second, func() error {
-  			var page struct {
-  				Items []map[string]any `json:"items"`
-  			}
-  			k.api.Must(t, "GET", "/api/v1/query-log?name="+url.QueryEscape(name)+"&limit=5", nil, &page, http.StatusOK)
-  			if len(page.Items) == 0 {
-  				return fmt.Errorf("query %s not in the query log yet", name)
-  			}
-  			return nil
-  		})
-  	})
-
-  	t.Run("M1/auth_viewer_forbidden_and_audit", func(t *testing.T) {
-  		var tok struct {
-  			Token string `json:"token"`
-  		}
-  		k.api.Must(t, "POST", "/api/v1/api-tokens", apiTokenReq(fmt.Sprintf("kw-viewer-%d", time.Now().Unix()), "viewer"), &tok, http.StatusCreated)
-  		viewer := harness.NewAPI(k.api.Base, tok.Token)
-  		viewer.Must(t, "GET", "/api/v1/engines", nil, nil, http.StatusOK)
-  		if code := viewer.Do(t, "POST", "/api/v1/engine-groups", map[string]any{"name": "viewer-attempt"}, nil); code != http.StatusForbidden {
-  			t.Fatalf("viewer createEngineGroup = %d, want 403", code)
-  		}
-  		var audit []map[string]any
-  		k.api.Must(t, "GET", "/api/v1/audit?limit=200", nil, &audit, http.StatusOK)
-  		found := false
-  		for _, a := range audit {
-  			found = found || a["operation_id"] == "createApiToken"
-  		}
-  		if !found {
-  			t.Fatal("token creation has no audit entry")
-  		}
-  	})
-
-  	t.Run("M5/canary_rollout_and_rollback", func(t *testing.T) {
-  		g := k.groupByName(t, "edge-a")
-  		k.api.Must(t, "PUT", "/api/v1/engine-groups/"+g.ID, map[string]any{"name": "edge-a", "revision": g.Revision,
-  			"rollout_strategy": "canary", "canary_count": 1, "health_window_seconds": 30, "ack_timeout_seconds": 60,
+  	t.Run("canary-rollout-rollback-resume", func(t *testing.T) {
+  		g := api.EngineGroup(edge.ID)
+  		api.Must(http.MethodPut, "/engine-groups/"+edge.ID, map[string]any{"name": "edge-b", "revision": g.Revision, "description": g.Description,
+  			"rollout_strategy": "canary", "canary_count": 1, "health_window_seconds": 20, "ack_timeout_seconds": 60,
   			"max_servfail_ratio": 0.05, "min_health_queries": 20}, nil, http.StatusOK)
+  		first := api.EngineByNode("edge-b-worker-24")
+  		api.PatchEngine(first.NodeName, map[string]any{"labels": map[string]string{"nexora.io/canary": "true"}})
   		stop := make(chan struct{})
   		var wg sync.WaitGroup
-  		for _, e := range k.group("edge-a") {
+  		for _, ip := range edgeIPs {
   			wg.Add(1)
   			go func(addr string) {
   				defer wg.Done()
@@ -6853,63 +5292,70 @@ Interfaces: environment read by `TestKwFullProduct`: `NEXORA_KW_API_URL`, `NEXOR
   					select {
   					case <-stop:
   						return
-  					case <-time.After(50 * time.Millisecond):
-  						_, _ = query(addr, "kw-rewrite.kw.test", dns.TypeA, "udp", false, 0)
+  					case <-time.After(20 * time.Millisecond):
+  						_, _, _ = kwQueryA(addr, "example.com")
   					}
   				}
-  			}(e.Addr())
+  			}(net.JoinHostPort(ip, "53"))
   		}
   		defer func() { close(stop); wg.Wait() }()
 
-  		before := stableOf(k.groupByName(t, "edge-b"))
-  		value := fmt.Sprintf("192.0.2.%d", time.Now().Unix()%200+20)
-  		k.api.Must(t, "POST", "/api/v1/rewrites", map[string]any{"domain": fmt.Sprintf("canary%d.kw.test", time.Now().Unix()), "type": "A", "value": value, "group_id": g.ID}, nil, http.StatusCreated)
-  		var rs []harness.Rollout
-  		k.api.Must(t, "GET", "/api/v1/rollouts?limit=1&group_id="+g.ID, nil, &rs, http.StatusOK)
-  		done := k.api.WaitRollout(t, g.ID, rs[0].Version, 4*time.Minute, "completed")
-  		if done.Strategy != "canary" || len(done.CanaryEngineIDs) != 1 {
-  			t.Fatalf("rollout %+v", done)
+  		name := kwUniqueName("kw-canary")
+  		var rw struct {
+  			ID       string `json:"id"`
+  			Revision int64  `json:"revision"`
   		}
-  		if after := stableOf(k.groupByName(t, "edge-b")); after != before {
-  			t.Fatalf("edge-a change moved edge-b from %d to %d", before, after)
+  		api.Must(http.MethodPost, "/rewrites", map[string]any{"name": name, "type": "A", "value": "192.0.2.78", "engine_group_id": edge.ID}, &rw, http.StatusCreated)
+  		var newest []harness.RolloutView
+  		api.Must(http.MethodGet, "/rollouts?limit=1&engine_group_id="+edge.ID, nil, &newest, http.StatusOK)
+  		done := api.WaitRollout(edge.ID, newest[0].Version, 4*time.Minute, "completed")
+  		if done.Strategy != "canary" || len(done.CanaryEngineIDs) != 1 || done.CanaryEngineIDs[0] != first.ID {
+  			t.Fatalf("rollout %+v, want canary strategy with %s as canary", done, first.NodeName)
   		}
-  		prev := done.Version
-  		var list []harness.Rollout
-  		k.api.Must(t, "GET", "/api/v1/rollouts?limit=10&group_id="+g.ID+"&state=completed", nil, &list, http.StatusOK)
-  		for _, r := range list {
+  		var completed []harness.RolloutView
+  		api.Must(http.MethodGet, "/rollouts?limit=20&state=completed&engine_group_id="+edge.ID, nil, &completed, http.StatusOK)
+  		var prev uint64
+  		for _, r := range completed {
   			if r.Version < done.Version {
   				prev = r.Version
   				break
   			}
   		}
-  		var rb harness.Rollout
-  		k.api.Must(t, "POST", "/api/v1/engine-groups/"+g.ID+"/rollback", map[string]any{"to_version": prev}, &rb, http.StatusAccepted)
-  		k.api.WaitRollout(t, g.ID, rb.Version, 2*time.Minute, "completed")
-  		var resumed harness.Rollout
-  		k.api.Must(t, "POST", "/api/v1/engine-groups/"+g.ID+"/resume-rollouts", nil, &resumed, http.StatusAccepted)
-  		k.api.WaitRollout(t, g.ID, resumed.Version, 4*time.Minute, "completed")
-  	})
-
-  	t.Run("M5/certificate_rotation", func(t *testing.T) {
-  		var target harness.EngineInfo
-  		for _, e := range k.api.Engines(t) {
-  			if e.GroupName == "edge-b" {
-  				target = e
+  		if prev == 0 {
+  			t.Fatalf("no completed edge-b rollout older than %d", done.Version)
+  		}
+  		var rb harness.RolloutView
+  		api.Must(http.MethodPost, "/engine-groups/"+edge.ID+"/rollback", map[string]any{"to_version": prev}, &rb, http.StatusAccepted)
+  		api.WaitRollout(edge.ID, rb.Version, 2*time.Minute, "completed")
+  		for _, ip := range edgeIPs {
+  			if got, _, _ := kwQueryA(net.JoinHostPort(ip, "53"), name); len(got) > 0 && got[0] == "192.0.2.78" {
+  				t.Fatalf("edge-b engine %s still serves the rolled-back rewrite", ip)
   			}
   		}
-  		old := target.Certificate.Serial
-  		k.api.Must(t, "POST", "/api/v1/engines/"+target.ID+"/rotate-certificate", nil, nil, http.StatusAccepted)
-  		harness.Eventually(t, time.Minute, func() error {
-  			e := k.api.EngineByName(t, target.Name)
-  			if e.Certificate == nil || e.Certificate.Serial == old || e.ConnectionState != "connected" {
-  				return fmt.Errorf("%s not rotated yet", target.Name)
+  		api.Must(http.MethodDelete, fmt.Sprintf("/rewrites/%s?revision=%d", rw.ID, rw.Revision), nil, nil, http.StatusNoContent)
+  		var resumed harness.RolloutView
+  		api.Must(http.MethodPost, "/engine-groups/"+edge.ID+"/resume-rollouts", nil, &resumed, http.StatusAccepted)
+  		api.WaitRollout(edge.ID, resumed.Version, 4*time.Minute, "completed")
+  	})
+
+  	t.Run("certificate-rotation", func(t *testing.T) {
+  		target := api.EngineByNode("edge-b-worker-25")
+  		api.Must(http.MethodPost, "/engines/"+target.ID+"/rotate-certificate", nil, nil, http.StatusAccepted)
+  		harness.Eventually(t, 90*time.Second, func() error {
+  			if e := api.EngineByNode(target.NodeName); e.CertificateSerial == target.CertificateSerial || !e.Connected {
+  				return fmt.Errorf("%s not rotated yet", target.NodeName)
   			}
   			return nil
   		})
   	})
 
-  	t.Run("observability/prometheus_and_jaeger", func(t *testing.T) {
-  		promQuery := func(q string) float64 {
+  	t.Run("fleet-metrics-and-alerts", func(t *testing.T) {
+  		promQuery := func(q string) (float64, bool) {
+  			resp, err := http.Get(promURL + "/api/v1/query?query=" + url.QueryEscape(q))
+  			if err != nil {
+  				t.Fatal(err)
+  			}
+  			defer resp.Body.Close()
   			var out struct {
   				Data struct {
   					Result []struct {
@@ -6917,232 +5363,148 @@ Interfaces: environment read by `TestKwFullProduct`: `NEXORA_KW_API_URL`, `NEXOR
   					} `json:"result"`
   				} `json:"data"`
   			}
-  			getJSON(t, k.promURL+"/api/v1/query?query="+url.QueryEscape(q), &out)
-  			if len(out.Data.Result) == 0 {
-  				return -1
+  			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || len(out.Data.Result) == 0 {
+  				return 0, false
   			}
   			var v float64
-  			fmt.Sscan(out.Data.Result[0].Value[1].(string), &v)
-  			return v
+  			_, _ = fmt.Sscan(out.Data.Result[0].Value[1].(string), &v)
+  			return v, true
   		}
-  		harness.Eventually(t, 2*time.Minute, func() error {
-  			if v := promQuery(`count(up{namespace="nexora",service="nexora-engine-metrics"} == 1)`); v != 3 {
-  				return fmt.Errorf("engine targets up = %v, want 3", v)
+  		harness.Eventually(t, 3*time.Minute, func() error {
+  			if v, ok := promQuery(`max(nexora_mgmt_engines_disconnected{namespace="nexora"})`); !ok || v != 0 {
+  				return fmt.Errorf("nexora_mgmt_engines_disconnected = %v (scraped %v), want 0", v, ok)
   			}
-  			if v := promQuery(`max(nexora_mgmt_engines_disconnected{namespace="nexora"})`); v != 0 {
-  				return fmt.Errorf("nexora_mgmt_engines_disconnected = %v, want 0", v)
+  			if v, ok := promQuery(`max(sum by (engine_group) (nexora_mgmt_engines{namespace="nexora",engine_group="edge-b",status="current"}))`); !ok || v != 2 {
+  				return fmt.Errorf("current edge-b engines = %v (scraped %v), want 2", v, ok)
   			}
-  			if v := promQuery(`sum(nexora_queries_total{namespace="nexora"})`); v <= 0 {
-  				return fmt.Errorf("nexora_queries_total = %v", v)
-  			}
-  			return nil
-  		})
-  		_, _ = query(edgeB, "dnssec-failed.org", dns.TypeA, "udp", true, 1232)
-  		harness.Eventually(t, 90*time.Second, func() error {
-  			var traces struct {
-  				Data []any `json:"data"`
-  			}
-  			tags := url.QueryEscape(`{"dns.response.code":"SERVFAIL"}`)
-  			getJSON(t, k.jaegerURL+"/api/traces?service=nexora-engine&lookback=15m&limit=5&tags="+tags, &traces)
-  			if len(traces.Data) == 0 {
-  				return fmt.Errorf("no SERVFAIL trace in Jaeger yet")
+  			if _, firing := promQuery(`ALERTS{alertname="NexoraRolloutHalted",alertstate="firing"}`); firing {
+  				return fmt.Errorf("NexoraRolloutHalted is firing")
   			}
   			return nil
   		})
+  		resp, err := http.Get(promURL + "/api/v1/rules")
+  		if err != nil {
+  			t.Fatal(err)
+  		}
+  		defer resp.Body.Close()
+  		var rules struct {
+  			Data json.RawMessage `json:"data"`
+  		}
+  		if err := json.NewDecoder(resp.Body).Decode(&rules); err != nil || !strings.Contains(string(rules.Data), "NexoraEngineDisconnected") {
+  			t.Fatalf("PrometheusRule not loaded: %v", err)
+  		}
   	})
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go vet ./e2e/ && go test ./e2e/ -run TestKwFullProduct -count=1 -v'` without the `NEXORA_KW_*` variables and expect `--- SKIP: TestKwFullProduct` with `NEXORA_KW_* not set; run scripts/kw-acceptance.sh`.
-- [ ] Create `deploy/kw/opensearch.yaml`:
-  ```yaml
-  apiVersion: apps/v1
-  kind: StatefulSet
-  metadata:
-    name: opensearch
-    namespace: nexora
-    labels: { app: opensearch }
-  spec:
-    serviceName: opensearch
-    replicas: 1
-    selector: { matchLabels: { app: opensearch } }
-    template:
-      metadata: { labels: { app: opensearch } }
-      spec:
-        securityContext: { fsGroup: 1000, runAsUser: 1000, runAsNonRoot: true }
-        containers:
-          - name: opensearch
-            image: opensearchproject/opensearch:3.2.0
-            env:
-              - { name: discovery.type, value: single-node }
-              - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
-              - { name: DISABLE_INSTALL_DEMO_CONFIG, value: "true" }
-              - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
-              - { name: node.store.allow_mmap, value: "false" }
-              - { name: bootstrap.memory_lock, value: "false" }
-            ports: [{ name: http, containerPort: 9200 }]
-            readinessProbe:
-              httpGet: { path: /_cluster/health?local=true, port: http }
-              periodSeconds: 10
-              failureThreshold: 30
-            resources:
-              requests: { cpu: 500m, memory: 2Gi }
-              limits: { memory: 2Gi }
-            volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
-    volumeClaimTemplates:
-      - metadata: { name: data }
-        spec:
-          accessModes: [ReadWriteOnce]
-          storageClassName: longhorn-single
-          resources: { requests: { storage: 20Gi } }
-  ---
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: opensearch
-    namespace: nexora
-  spec:
-    selector: { app: opensearch }
-    ports: [{ name: http, port: 9200, targetPort: http }]
-  ```
-- [ ] Create `deploy/kw/fixture-http.yaml`:
-  ```yaml
-  apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: kw-fixture-http
-    namespace: nexora
-  data:
-    hosts.txt: |
-      # kw acceptance blocklist
-      0.0.0.0 blocked.kw-acceptance.test
-      0.0.0.0 allowed.kw-acceptance.test
-    allow.txt: |
-      allowed.kw-acceptance.test
-    policy.txt: |
-      policy-block.kw-acceptance.test
-  ---
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: kw-fixture-http
-    namespace: nexora
-    labels: { app: kw-fixture-http }
-  spec:
-    replicas: 1
-    selector: { matchLabels: { app: kw-fixture-http } }
-    template:
-      metadata: { labels: { app: kw-fixture-http } }
-      spec:
-        securityContext: { runAsNonRoot: true, runAsUser: 101 }
-        containers:
-          - name: nginx
-            image: nginxinc/nginx-unprivileged:1.29-alpine
-            ports: [{ name: http, containerPort: 8080 }]
-            securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
-            resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
-            volumeMounts:
-              - { name: content, mountPath: /usr/share/nginx/html, readOnly: true }
-              - { name: tmp, mountPath: /tmp }
-        volumes:
-          - name: content
-            configMap: { name: kw-fixture-http }
-          - name: tmp
-            emptyDir: {}
-  ---
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: kw-fixture-http
-    namespace: nexora
-  spec:
-    selector: { app: kw-fixture-http }
-    ports: [{ name: http, port: 8080, targetPort: http }]
-  ```
-- [ ] Create `scripts/kw-deploy.sh` (mode 0755):
+- [ ] Run `scripts/dev-exec.sh 'go vet ./e2e/ && go test ./e2e/ -run TestKwFullProduct -count=1 -v'` without the kw variables and expect `--- SKIP: TestKwFullProduct` with `NEXORA_KW_DNS_ADDR and NEXORA_KW_API_URL are not set`.
+- [ ] Change `deploy/kw/bootstrap.sh`: after the RPZ block and before the join token block, add
   ```bash
-  #!/usr/bin/env bash
-  # Install or upgrade the Nexora kw deployment from the Helm chart.
-  #   scripts/kw-deploy.sh <image-tag>        e.g. sha-1a2b3c4
-  set -euo pipefail
-  tag=${1:?usage: scripts/kw-deploy.sh <image-tag>}
-  root=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
-  k() { kubectl --context kw -n nexora "$@"; }
-  mgmt() { k exec -i deploy/nexora-mgmt -c mgmt -- nexora-mgmt "$@"; }
+  edge=$(call "$api/api/v1/engine-groups" | jq -r '.[] | select(.name=="edge-b") | .id')
+  if [ -z "$edge" ]; then
+  	edge=$(call -d '{"name":"edge-b","description":"engines on nodes labelled nexora.io/engine-group=edge-b"}' "$api/api/v1/engine-groups" | jq -r .id)
+  	echo "engine group edge-b created"
+  fi
+  ```
+  after the existing `nexora-join-token` block add
+  ```bash
+  if ! k get secret nexora-join-token-edge-b >/dev/null 2>&1; then
+  	jq -n --arg g "$edge" '{name:"kw-engines-edge-b", ttl_seconds:31536000, engine_group_id:$g}' |
+  		call -d @- "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token-edge-b"
+  	k create secret generic nexora-join-token-edge-b --from-file=join-token="$tmp/join-token-edge-b"
+  fi
+
+  # Engines enrolled before M5 were named after their (emptyDir) pods and never reconnect.
+  call "$api/api/v1/engines" |
+  	jq -r '.[] | select(.connected | not) | select(.node_name | test("^(edge-b-)?(master|worker)-[0-9]+$") | not) | .id' |
+  	while read -r id; do
+  		call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed pre-M5 engine $id"
+  	done
+  ```
+- [ ] Replace the mgmt and engine part of `scripts/kw-deploy.sh` (from `sed "s/NEXORA_TAG/$tag/" "$kw/mgmt.yaml"` to the end) with:
+  ```bash
+  kubectl --context "$ctx" label node worker-24 worker-25 nexora.io/engine-group=edge-b --overwrite
+
+  # One-time switch from the kubectl-applied M1-M4 manifests to the chart: remove objects Helm does not own.
+  if k get deployment nexora-mgmt >/dev/null 2>&1 &&
+  	[ "$(k get deployment nexora-mgmt -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')" != Helm ]; then
+  	k delete deployment/nexora-mgmt daemonset/nexora-engine service/nexora-mgmt service/nexora-mgmt-grpc \
+  		service/nexora-mgmt-lb service/nexora-dns service/nexora-engine-metrics ingress/nexora \
+  		configmap/nexora-engine-config --ignore-not-found
+  fi
+
   release() {
-  	helm --kube-context kw -n nexora upgrade --install nexora "$root/deploy/helm/nexora" \
-  		-f "$root/deploy/kw/values-kw.yaml" --set image.tag="$tag" --wait --timeout 15m "$@"
+  	helm --kube-context "$ctx" -n "$ns" upgrade --install nexora "$root/deploy/helm/nexora" \
+  		-f "$kw/values-kw.yaml" --set image.tag="$tag" --wait --timeout 15m "$@"
   }
 
-  kubectl --context kw create namespace nexora --dry-run=client -o yaml | kubectl --context kw apply -f -
-  k apply -f "$root/deploy/kw/opensearch.yaml" -f "$root/deploy/kw/fixture-http.yaml"
-  k rollout status statefulset/opensearch --timeout 10m
-  k rollout status deploy/kw-fixture-http --timeout 5m
-
-  if ! k get secret nexora-ca >/dev/null 2>&1; then
-  	work=$(mktemp -d)
-  	trap 'rm -rf "$work"' EXIT
-  	"$root/scripts/dev-exec.sh" 'rm -rf /tmp/nexora-ca && go run ./mgmt/cmd/nexora-mgmt ca init --out /tmp/nexora-ca >&2 && tar -C /tmp/nexora-ca -cf - ca.crt ca.key' >"$work/ca.tar"
-  	tar -C "$work" -xf "$work/ca.tar"
-  	k create secret generic nexora-ca --from-file=ca.crt="$work/ca.crt" --from-file=ca.key="$work/ca.key"
-  fi
-
-  # Phase 1: database and management plane; engines need join tokens from it.
+  # Phase 1: the management plane; the engine join tokens come from its API.
   release --set engine.enabled=false
-  k rollout status deploy/nexora-mgmt --timeout 10m
+  k rollout status deployment/nexora-mgmt --timeout=10m
+  k rollout status deployment/nexora-otelcol --timeout=5m
+  k rollout status deployment/nexora-blocklist --timeout=5m
+  "$kw/bootstrap.sh"
 
-  if ! k get secret nexora-admin >/dev/null 2>&1; then
-  	password=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
-  	printf '%s' "$password" | mgmt user create --admin --username admin --password-file /dev/stdin
-  	k create secret generic nexora-admin --from-literal=username=admin --from-literal=password="$password"
-  fi
-
-  for group in edge-a edge-b; do
-  	mgmt group create --name "$group" --if-missing >/dev/null
-  	if ! k get secret "nexora-join-$group" >/dev/null 2>&1; then
-  		token=$(mgmt join-token create --group "$group" --ttl 24h --max-uses 4)
-  		k create secret generic "nexora-join-$group" --from-literal=token="$token"
-  	fi
-  done
-
-  # Phase 2: engines.
+  # Phase 2: engines of both engine groups.
   release
-  k rollout status deploy/nexora-engine-edge-a --timeout 10m
-  k rollout status deploy/nexora-engine-edge-b --timeout 10m
-  k get pods -o wide -l app.kubernetes.io/component=engine
+  k rollout status daemonset/nexora-engine --timeout=15m
+  k rollout status daemonset/nexora-engine-edge-b --timeout=15m
+  "$kw/bootstrap.sh"
+
+  dns_ip=$(k get service nexora-dns -o jsonpath='{.spec.loadBalancerIP}')
+  edge_ip=$(k get service nexora-dns-edge-b -o jsonpath='{.spec.loadBalancerIP}')
+  mgmt_ip=$(k get service nexora-mgmt-lb -o jsonpath='{.spec.loadBalancerIP}')
+  engines=$(($(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}') + \
+  	$(k get daemonset nexora-engine-edge-b -o jsonpath='{.status.desiredNumberScheduled}')))
+  edge_ips=$(k get pods -l nexora.io/engine-group=edge-b -o jsonpath='{range .items[*]}{.status.podIP}{","}{end}')
+  echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
+  echo "NEXORA_KW_EDGE_B_DNS_ADDR=${edge_ip}:53"
+  echo "NEXORA_KW_EDGE_B_ENGINE_IPS=${edge_ips%,}"
+  echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.local}"
+  echo "NEXORA_KW_ENCRYPTED_ADDR=${dns_ip}"
+  echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local"
+  echo "NEXORA_KW_ENGINES=${engines}"
+  echo "NEXORA_KW_MGMT_LB_IP=${mgmt_ip}"
   ```
+  and add `192.168.10.137` to the `--names` of the `nexora-dns-tls` issuance (`dns.nexora.kw.local,192.168.10.136,192.168.10.137`; an existing secret is replaced by deleting it once: `kubectl --context kw -n nexora delete secret nexora-dns-tls` before the deploy). Then `git rm deploy/kw/mgmt.yaml deploy/kw/engine.yaml`.
 - [ ] Create `scripts/kw-acceptance.sh` (mode 0755):
   ```bash
   #!/usr/bin/env bash
-  # Run TestKwFullProduct in the dev pod against the live kw deployment.
+  # Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct) in the dev pod against
+  # the live deployment. The edge-b engines are restarted first, so TestKwFullProduct proves that
+  # engine identities survive pod restarts (hostPath state).
   set -euo pipefail
-  k() { kubectl --context kw -n nexora "$@"; }
-  token=$(k exec deploy/nexora-mgmt -c mgmt -- nexora-mgmt api-token create --user admin --name "kw-acceptance-$(date +%s)" --ttl 2h)
-  engines=$(k get pods -l app.kubernetes.io/component=engine --field-selector=status.phase=Running \
-  	-o jsonpath='{range .items[*]}{.metadata.labels.nexora\.io/group}={.status.podIP}@{.spec.nodeName},{end}')
-  mgmts=$(k get pods -l app.kubernetes.io/component=mgmt --field-selector=status.phase=Running \
-  	-o jsonpath='{range .items[*]}{.status.podIP}:8080,{end}')
-  exec "$(dirname "$0")/dev-exec.sh" \
-  	NEXORA_KW_API_URL=http://nexora-mgmt.nexora.svc:8080 \
-  	NEXORA_KW_API_TOKEN="$token" \
-  	NEXORA_KW_MGMT_ADDRS="${mgmts%,}" \
-  	NEXORA_KW_ENGINES="${engines%,}" \
-  	NEXORA_KW_GROUP_DNS=edge-a=192.168.10.136:53,edge-b=192.168.10.137:53 \
-  	NEXORA_KW_INGRESS_IP=192.168.10.120 \
-  	NEXORA_KW_FIXTURE_URL=http://kw-fixture-http.nexora.svc:8080 \
-  	NEXORA_KW_JAEGER_QUERY_URL=http://jaeger.observability.svc:16686 \
+  ctx="${NEXORA_KW_CONTEXT:-kw}"
+  k() { kubectl --context "$ctx" -n nexora "$@"; }
+  pod() { kubectl --context "$ctx" -n nexora-dev exec -i deploy/toolbox -c toolbox -- sh -c "$1"; }
+  k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-ca.crt'
+  k get secret nexora-ingress-tls -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-cluster-ca.crt'
+  k get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d | pod 'umask 077; cat > /work/kw-admin-password'
+
+  k rollout restart daemonset/nexora-engine-edge-b
+  k rollout status daemonset/nexora-engine-edge-b --timeout=10m
+  engines=$(($(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}') + \
+  	$(k get daemonset nexora-engine-edge-b -o jsonpath='{.status.desiredNumberScheduled}')))
+  edge_ips=$(k get pods -l nexora.io/engine-group=edge-b --field-selector=status.phase=Running \
+  	-o jsonpath='{range .items[*]}{.status.podIP}{","}{end}')
+
+  exec "$(dirname "$0")/dev-exec.sh" env \
+  	NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53 \
+  	NEXORA_KW_EDGE_B_ENGINE_IPS="${edge_ips%,}" NEXORA_KW_API_URL=https://nexora.kw.local \
+  	NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
+  	NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES="$engines" \
+  	NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
   	NEXORA_KW_PROMETHEUS_URL=http://kps-prometheus.monitoring.svc:9090 \
-  	go test ./e2e/ -run TestKwFullProduct -count=1 -v -timeout 45m
+  	go test -count=1 -v -timeout 45m -run 'TestKwSmoke|TestKwFullProduct' ./e2e/
   ```
-- [ ] Retire the M1 kw manifests: run `git ls-files deploy/kw`; for every file other than `values-kw.yaml`, `opensearch.yaml` and `fixture-http.yaml`, run `kubectl --context kw -n nexora delete -f <file> --ignore-not-found` except for the CNPG `Cluster` (keep its data and let Helm adopt it with `kubectl --context kw -n nexora annotate cluster.postgresql.cnpg.io/nexora-db meta.helm.sh/release-name=nexora meta.helm.sh/release-namespace=nexora --overwrite && kubectl --context kw -n nexora label cluster.postgresql.cnpg.io/nexora-db app.kubernetes.io/managed-by=Helm --overwrite`), then `git rm <file>`. Expect `git ls-files deploy/kw` to list exactly the three files.
-- [ ] Build and push arm64 images for the current commit: `tag=sha-$(git rev-parse --short=7 HEAD); scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" && scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag"` and expect two `pull as 192.168.10.131/azrtydxb/...:sha-...` lines.
-- [ ] Deploy: `scripts/kw-deploy.sh "$tag"` and expect the final pod listing to show three `nexora-engine-*` pods `Running` on three different worker nodes; then `kubectl --context kw -n nexora get svc nexora-mgmt-grpc nexora-engine-edge-a nexora-engine-edge-b -o jsonpath='{range .items[*]}{.metadata.name}={.status.loadBalancer.ingress[0].ip}{"\n"}{end}'` and expect `nexora-mgmt-grpc=192.168.10.135`, `nexora-engine-edge-a=192.168.10.136`, `nexora-engine-edge-b=192.168.10.137`; then `kubectl --context kw -n nexora exec statefulset/opensearch -- curl -s localhost:9200/_cat/indices/nexora-querylog-*` after a few queries and expect at least one `nexora-querylog-YYYY.MM.DD` index.
-- [ ] Run the acceptance: `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwFullProduct` with every subtest `--- PASS` (engines need outbound DNS to the internet for the forwarding, recursion and DNSSEC subtests).
-- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh scripts/kw-acceptance.sh e2e/kw_bodies.go e2e/kw_bodies_test.go e2e/kw_full_test.go && git commit -m "feat(kw): final fleet deployment from the chart and TestKwFullProduct"`.
+- [ ] Update `deploy/kw/README.md`: the deploy command stays `scripts/kw-deploy.sh [--tag sha-<7>] [--skip-build]`, now followed by `scripts/kw-acceptance.sh`; the file table replaces `mgmt.yaml` and `engine.yaml` with `values-kw.yaml` (Helm release `nexora` from `deploy/helm/nexora`) and adds `nexora-join-token-edge-b` under "Secrets"; "Addresses" adds `192.168.10.137` (engine group `edge-b`, `externalTrafficPolicy: Cluster`, engines see node addresses there) and the node label `nexora.io/engine-group=edge-b` on `worker-24` and `worker-25`; "Known limits" replaces the `emptyDir` entry with "engine state is hostPath `/var/lib/nexora/<workload>`; a restarted pod keeps its engine id; removing that directory and the pod re-enrolls it as a new engine".
+- [ ] Build and deploy the current commit: run `scripts/kw-deploy.sh` and expect `helm` to report `STATUS: deployed` twice, `daemon set "nexora-engine" successfully rolled out`, `daemon set "nexora-engine-edge-b" successfully rolled out`, and the printed `NEXORA_KW_ENGINES=8` and `NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53`; then `kubectl --context kw -n nexora get svc nexora-mgmt-lb nexora-dns nexora-dns-edge-b -o jsonpath='{range .items[*]}{.metadata.name}={.status.loadBalancer.ingress[0].ip}{"\n"}{end}'` and expect `nexora-mgmt-lb=192.168.10.135`, `nexora-dns=192.168.10.136`, `nexora-dns-edge-b=192.168.10.137`.
+- [ ] Run `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwSmoke`, `--- PASS: TestKwSmokeM4` and `--- PASS: TestKwFullProduct` with every subtest passing (`TestKwSmoke/recursion` skips itself on kw as documented).
+- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh scripts/kw-acceptance.sh e2e/kw_full_product_test.go && git commit -m "feat(kw): fleet deployment from the Helm chart with two engine groups; TestKwFullProduct"`.
 
 ## Task 15: Operations documentation and README
 
 Files: `docs/operations.md` (install, upgrade, backup/restore, rollouts, lifecycle, monitoring, kw), `README.md` (product overview and quick start), `deploy/deploytest/docs_test.go` (`TestOperationsDoc`)
-Interfaces: headings listed in the test; every repository path the docs mention must exist.
+Interfaces: headings listed in the test; every repository path the documents mention in backticks must exist.
 
 - [ ] Write the failing test `deploy/deploytest/docs_test.go`:
   ```go
@@ -7199,210 +5561,198 @@ Interfaces: headings listed in the test; every repository path the docs mention 
 
   ## Install with Helm
 
-  Prerequisites: Kubernetes 1.28+, Helm 3.14+ or 4, and either the
-  CloudNativePG operator (`database.mode=cnpg`) or a PostgreSQL 15+ URL in a
-  secret (`database.mode=external`). Prometheus Operator CRDs are needed only
-  when `metrics.serviceMonitor` or `metrics.prometheusRule` is enabled.
+  Prerequisites: Kubernetes 1.28+, Helm 3.14+, and either the CloudNativePG
+  operator (`database.mode=cnpg`) or a PostgreSQL 15+ connection URL in a
+  secret (`database.mode=external`, key `uri` by default). Prometheus Operator
+  CRDs are needed only when `metrics.serviceMonitor` or `metrics.prometheusRule`
+  is enabled. Every value is validated by `deploy/helm/nexora/values.schema.json`.
 
-  1. Create the engine CA once and keep a copy offline; losing it means
-     re-enrolling every engine.
+  1. Create the engine CA once and keep an offline copy; losing it means
+     re-enrolling every engine:
      ```sh
      nexora-mgmt ca init --out ./nexora-ca
      kubectl -n nexora create secret generic nexora-ca --from-file=./nexora-ca/ca.crt --from-file=./nexora-ca/ca.key
      ```
+     Optionally create a key-encryption key secret (`kek`: `openssl rand -base64 32`)
+     for TSIG, RPZ TSIG and DNSSEC keys (`mgmt.kek.existingSecret`) and a
+     `kubernetes.io/tls` secret for DoT/DoH/DoQ (`mgmt.dnsTLS.existingSecret`,
+     issued with `nexora-mgmt ca issue-dns`).
   2. Install the management plane without engines:
      ```sh
      helm upgrade --install nexora deploy/helm/nexora -n nexora \
        --set mgmt.ca.existingSecret=nexora-ca --set engine.enabled=false --wait
      ```
-  3. Create the first admin (there is no default password):
+  3. Complete first-run setup in the GUI at `/setup` with the setup token the
+     first instance logs (`kubectl -n nexora logs deploy/nexora-mgmt | grep "setup token"`).
+  4. Create an engine group (GUI `/engines` or the API) and a join token per
+     engine workload, stored as a secret with key `join-token`:
      ```sh
-     kubectl -n nexora exec -i deploy/nexora-mgmt -c mgmt -- \
-       nexora-mgmt user create --admin --username admin --password-file /dev/stdin
+     kubectl -n nexora exec deploy/nexora-mgmt -c mgmt -- /nexora-mgmt engine-group create --name edge --if-missing
+     kubectl -n nexora exec deploy/nexora-mgmt -c mgmt -- /nexora-mgmt join-token create --engine-group edge --ttl 8760h \
+       | kubectl -n nexora create secret generic nexora-join-edge --from-file=join-token=/dev/stdin
      ```
-  4. Create a group and a join token per engine workload, stored as a secret:
-     ```sh
-     kubectl -n nexora exec deploy/nexora-mgmt -c mgmt -- nexora-mgmt group create --name edge --if-missing
-     token=$(kubectl -n nexora exec deploy/nexora-mgmt -c mgmt -- nexora-mgmt join-token create --group edge --ttl 24h --max-uses 4)
-     kubectl -n nexora create secret generic nexora-join-edge --from-literal=token="$token"
-     ```
-     `--max-uses` must cover every pod that may enroll before the token
-     expires (replicas plus rescheduling); an enrolled engine never needs the
-     token again because its identity lives under the state directory.
-  5. Enable engines with `engine.groups[].joinTokenSecret` set and run the same
-     `helm upgrade` without `engine.enabled=false`.
+     A token without `--max-uses` can enroll every pod of a DaemonSet; an
+     enrolled engine never needs it again because its identity lives in the
+     state directory.
+  5. Add the group to `engine.groups` (name, `joinTokenSecret`, node affinity,
+     DNS Service) and run the same `helm upgrade` without `engine.enabled=false`.
 
-  Engine state: `engine.stateDir.type=hostPath` (default) keeps identity and
-  last snapshot across pod restarts; `emptyDir` enrolls a new engine on every
-  restart. `engine.kind=DaemonSet` with `engine.hostNetwork=true` serves DNS
-  on each node's addresses. All values are validated by
-  `deploy/helm/nexora/values.schema.json`.
+  Engine state: `engine.stateDir.type=hostPath` (default) keeps the identity and
+  the last snapshot across pod restarts under `<hostPathPrefix>/<workload>`;
+  `emptyDir` enrolls a new engine on every restart. The engine name is
+  `<nodeNamePrefix><Kubernetes node name>`.
 
   ## Install with Docker Compose
 
   ```sh
   cd deploy/compose
-  cp .env.example .env            # set POSTGRES_PASSWORD and NEXORA_TAG
-  docker compose up -d            # postgres, CA, migrations, mgmt
-  docker compose exec -T mgmt nexora-mgmt user create --admin --username admin --password-file /dev/stdin <<<"choose-a-password"
-  docker compose exec -T mgmt nexora-mgmt join-token create --group default --ttl 1h > secrets/join-token
+  cp .env.example .env                                   # set NEXORA_TAG
+  openssl rand -hex 24 > secrets/postgres-password
+  printf 'postgres:5432:nexora:nexora:%s\n' "$(cat secrets/postgres-password)" > secrets/pgpass
+  chmod 0644 secrets/postgres-password secrets/pgpass    # read by the postgres and nexora-mgmt users
+  docker compose up -d                                   # postgres, CA, migrations, mgmt
+  docker compose logs mgmt | grep "setup token"          # complete /setup at NEXORA_PUBLIC_URL
+  docker compose run --rm mgmt join-token create --engine-group default --ttl 1h > secrets/join-token
   docker compose --profile engine up -d
-  docker compose --profile otel up -d   # optional collector (config: otel-collector.yaml)
+  docker compose --profile otel up -d                    # optional collector (otel-collector.yaml)
   ```
 
   ## Upgrade
 
-  1. Read the release notes for migration notes.
+  1. Back up PostgreSQL (next section).
   2. `helm upgrade` with the new `image.tag`. Every mgmt pod runs
-     `nexora-mgmt migrate` as an init container; migrations take a Postgres
-     session lock, so replicas never migrate concurrently. Management-plane
-     pods roll one at a time (PodDisruptionBudget `minAvailable: 1`); engines
-     keep serving and reconnect to a surviving instance.
-  3. Engines roll with `maxUnavailable: 1` per group. During an engine upgrade
-     the group's DNS Service keeps the other replicas in rotation.
-  4. Check `/engines` (drift column) or
-     `kubectl -n nexora exec deploy/nexora-mgmt -c mgmt -- wget -qO- localhost:8080/metrics | grep nexora_mgmt_engines_disconnected`.
+     `nexora-mgmt migrate` as an init container; migrations take a PostgreSQL
+     advisory lock, so replicas never migrate concurrently. Management pods roll
+     one at a time (PodDisruptionBudget `minAvailable: 1`); engines keep serving
+     and reconnect to a surviving instance.
+  3. Engine workloads roll with `maxUnavailable: 1`; with hostPath state a
+     restarted engine keeps its identity and last snapshot.
+  4. Check `/engines` (status column) or the metric
+     `nexora_mgmt_engines_disconnected`.
 
-  Rolling back the chart: `helm rollback nexora <revision>`. Migrations are
-  forward-only in production; restore the pre-upgrade backup to go back past a
-  migration.
+  Migrations are forward-only in production; to go back past one, restore the
+  pre-upgrade backup.
 
   ## Backup and restore PostgreSQL
 
   Everything except query logs lives in PostgreSQL. Back up before every
-  upgrade and on a schedule.
+  upgrade and on a schedule (CNPG `ScheduledBackup` with
+  `spec.backup.barmanObjectStore` for continuous backups).
 
-  Backup (CNPG primary, custom format):
   ```sh
   primary=$(kubectl -n nexora get cluster nexora-db -o jsonpath='{.status.currentPrimary}')
-  kubectl -n nexora exec "$primary" -c postgres -- pg_dump -Fc -d nexora > nexora-$(date +%F).dump
+  kubectl -n nexora exec "$primary" -c postgres -- pg_dump -Fc -d nexora > nexora-backup.dump
   ```
-  For continuous backups configure CNPG `spec.backup.barmanObjectStore` and a
-  `ScheduledBackup` against your object store.
 
-  Restore:
+  Restore with the management plane stopped:
+
   ```sh
   kubectl -n nexora scale deploy/nexora-mgmt --replicas=0
-  kubectl -n nexora exec -i "$primary" -c postgres -- pg_restore --clean --if-exists -d nexora < nexora-2026-09-13.dump
-  ```
-  Engines may now run config versions newer than the restored database.
-  Before starting the management plane, move the version sequence past every
-  version an engine reports (`max(nexora_config_version)` in Prometheus):
-  ```sh
-  kubectl -n nexora exec -i "$primary" -c postgres -- psql -d nexora <<'SQL'
-  SELECT setval(pg_get_serial_sequence('config_versions', 'version'),
-                GREATEST((SELECT max(version) FROM config_versions), 12345) + 1);
-  UPDATE engine_groups SET rollouts_paused = true;
-  SQL
+  kubectl -n nexora exec -i "$primary" -c postgres -- pg_restore --clean --if-exists -d nexora < nexora-backup.dump
   kubectl -n nexora scale deploy/nexora-mgmt --replicas=2
   ```
-  (replace `12345` with the reported maximum), then call
-  `POST /api/v1/engine-groups/{id}/resume-rollouts` for each group: it
-  publishes the restored configuration as a new, higher version and the
-  engines flagged `ahead` return to `in_sync`.
+
+  Engines that ran newer configuration versions than the restored database are
+  flagged `ahead` and are not downgraded. To bring them back:
+
+  1. In `psql`, pause every group: `update engine_groups set rollouts_paused = true;`
+  2. Call `POST /api/v1/engine-groups/{id}/resume-rollouts` for each group; each
+     call publishes the restored configuration as a new version. Repeat steps 1
+     and 2 until the newest version (`GET /api/v1/config-versions?limit=1`) is above the
+     highest `nexora_config_version` the engines report. `ahead` engines then
+     return to `current`.
 
   ## Engine groups and staged rollouts
 
-  - Every engine is in one group; config resources are global or belong to one
-    group (Scope field in the GUI, `group_id` in the API). Upstreams follow the
-    group's upstream mode (`inherit` or `override`).
-  - A config change creates a pending version per affected group. Strategy
+  - Every engine is in one engine group; upstreams, filter lists, policy
+    groups, global rewrites, forward zones, zones and RPZ zones apply to every
+    group or to one ("Engine group" field in the GUI, `engine_group_id` in the
+    API). Engine groups are server-side; policy groups still select clients.
+  - Every change publishes one version with a snapshot per engine group. A
+    group whose content did not change applies it at once. Strategy
     `all_at_once` pushes to every engine; `canary` pushes to
     max(`canary_count`, `canary_percent`) engines (label
-    `nexora.io/canary=true` first), waits until they apply it within
+    `nexora.io/canary=true` first), waits for them to apply within
     `ack_timeout_seconds`, watches their SERVFAIL ratio for
     `health_window_seconds` (ignored below `min_health_queries` queries), then
     rolls to the rest.
   - A rejection, an ack timeout, a canary that stops reporting, or a SERVFAIL
-    ratio above `max_servfail_ratio` halts the rollout; the canaries keep the
-    new version and everyone else stays on the stable one. Alert
-    `NexoraRolloutHalted` fires.
-  - Fix forward by making another change (it supersedes the halted rollout), or
-    roll back: `/engines/groups/<group>` -> `Roll back`, or
-    `POST /api/v1/engine-groups/{id}/rollback {"to_version": N}`. Rollback
-    republishes version N's snapshot as a new version to every engine at once
-    and pauses change rollouts for the group, because the configuration rows
-    still contain the rolled-back change. Correct the configuration, then
-    `Resume rollouts` (`POST .../resume-rollouts`) to publish it.
-  - Moving an engine to another group republishes that group's stable snapshot.
+    ratio above `max_servfail_ratio` halts the rollout: the canaries keep the new
+    version, everyone else stays on the stable one, and `NexoraRolloutHalted`
+    fires.
+  - Fix forward with another change (it supersedes the halted rollout), or roll
+    back (`/engines/groups/<id>` "Roll back", or
+    `POST /api/v1/engine-groups/{id}/rollback` with `{"to_version": N}`). A
+    rollback republishes version N to the group at once and pauses change
+    rollouts, because the configuration rows still contain the rolled-back
+    change; correct them, then "Resume rollouts".
+  - Moving an engine to another group republishes that group's stable snapshot
+    as a new version.
 
   ## Engine lifecycle
 
-  - Join tokens (`/engines/groups/<group>` -> `New join token`, or
-    `nexora-mgmt join-token create`) carry the group, labels, expiry (default
-    24 h) and a use count (default 1). Revoke unused tokens.
+  - Join tokens carry the engine group, labels, an expiry and optionally a use
+    limit; revoke unused tokens under `/engines`.
   - Engine certificates live for `NEXORA_ENGINE_CERT_TTL` (default 90 days) and
     renew automatically from 2/3 of their lifetime over the control stream.
-  - `Rotate certificate` forces a renewal now; the old serial is marked
-    superseded once the engine reconnects with the new one.
-  - `Revoke engine` rejects the engine's certificates on every management plane
-    instance immediately; the engine keeps serving its last configuration and
-    retries every 5 minutes. To re-admit the host, delete
-    `/var/lib/nexora/<release>-<group>/identity` (hostPath) and give it a new
-    join token; it enrolls as a new engine. `Delete engine` removes the record
-    after revoking it.
+  - "Rotate certificate" forces a renewal now; the old serial is marked
+    superseded when the engine reconnects with the new one.
+  - "Revoke engine" rejects the engine's certificates on every management
+    instance at once; the engine keeps serving its last configuration and
+    retries every 5 minutes. To re-admit the host, remove its state directory
+    (`/var/lib/nexora/<workload>` with hostPath) and give it a join token; it
+    enrolls as a new engine. "Delete engine" revokes and removes the record.
 
   ## Monitoring and alerts
 
-  - Scrape `/metrics` on mgmt (port `http`), engines (port `metrics`, headless
-    Service `nexora-engine-metrics`) and the collector (`otel-metrics`); the
-    chart's ServiceMonitor does this when `metrics.serviceMonitor.enabled`.
-  - Fleet metrics: `nexora_mgmt_engines_disconnected`,
-    `nexora_mgmt_engines{group,state}`, `nexora_mgmt_engine_drift{group,drift}`,
-    `nexora_mgmt_rollouts{state}`; engine metrics are listed in
+  - Scrape `/metrics` on the mgmt `http` port and on the engines' `metrics`
+    port; the chart's ServiceMonitor does both when enabled.
+  - Fleet metrics: `nexora_mgmt_engines{engine_group,status}`,
+    `nexora_mgmt_engines_disconnected`, `nexora_mgmt_rollouts{engine_group,state}`;
+    engine `nexora_control_connected`, `nexora_control_revoked`,
+    `nexora_control_cert_renewals_total`; the rest are listed in
     `docs/architecture.md`.
-  - Alerts (`metrics.prometheusRule.enabled`): `NexoraEngineDisconnected`
-    (an engine unseen for more than 60 s), `NexoraRolloutHalted`,
-    `NexoraManagementPlaneDown`.
-  - Traces and query logs go to the OpenTelemetry Collector
-    (`otelCollector.traces.otlpEndpoint`, `otelCollector.logs.opensearch.url`).
+  - Alerts (`metrics.prometheusRule.enabled`): `NexoraEngineDisconnected`,
+    `NexoraRolloutHalted`, `NexoraManagementPlaneDown`.
 
   ## kw deployment
 
-  The lab deployment is `deploy/kw/values-kw.yaml` plus
-  `deploy/kw/opensearch.yaml` and `deploy/kw/fixture-http.yaml`:
+  The lab deployment is described in `deploy/kw/README.md`:
+  `scripts/kw-deploy.sh` installs `deploy/helm/nexora` with
+  `deploy/kw/values-kw.yaml`, and `scripts/kw-acceptance.sh` runs
+  `TestKwSmoke`, `TestKwSmokeM4` and `TestKwFullProduct`.
 
-  | Component | Address |
-  | --- | --- |
-  | GUI and API | `https://nexora.kw.local` (ingress-nginx, ClusterIssuer `cluster-ca`) |
-  | Engine gRPC | `192.168.10.135:9443` |
-  | DNS group `edge-a` (2 engines) | `192.168.10.136` |
-  | DNS group `edge-b` (1 engine, recursive) | `192.168.10.137` |
-  | Traces | Jaeger `jaeger.observability:4317` |
-  | Metrics | kube-prometheus-stack (`release: kps`) |
-
-  ```sh
-  tag=sha-$(git rev-parse --short=7 HEAD)
-  scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag"
-  scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag"
-  scripts/kw-deploy.sh "$tag"
-  scripts/kw-acceptance.sh     # TestKwFullProduct against the live deployment
-  ```
-  The admin password is in secret `nexora-admin`.
+  | Component                                             | Address                                                         |
+  | ----------------------------------------------------- | --------------------------------------------------------------- |
+  | GUI and API                                           | `https://nexora.kw.local` (ingress, ClusterIssuer `cluster-ca`) |
+  | Engine gRPC                                           | `192.168.10.135:9443`                                           |
+  | DNS, engine group `default` (6 engines)               | `192.168.10.136` (53, DoT 853, DoH 443, DoQ 853)                |
+  | DNS, engine group `edge-b` (`worker-24`, `worker-25`) | `192.168.10.137`                                                |
+  | Traces                                                | Jaeger `jaeger.observability:4317`                              |
+  | Metrics                                               | kube-prometheus-stack (`release: kps`)                          |
   ````
-- [ ] Rewrite `README.md` with these sections, keeping any M1–M4 badge lines at the top:
+- [ ] Rewrite `README.md` with these sections, keeping any existing badge lines at the top:
   ```markdown
   # Nexora
 
-  A fast, feature-complete DNS server: a Rust engine (forwarding, full
-  recursion, DNSSEC validation and signing, authoritative zones with
-  transfers and dynamic updates, blocklists, per-client policy, RPZ, DoT/DoH/DoQ)
-  managed by a stateless Go management plane with a React GUI, from one box to
-  a fleet of engines with staged, health-gated config rollouts.
+  A fast DNS server: a Rust engine (forwarding, recursion, DNSSEC validation and
+  signing, authoritative zones with transfers and dynamic updates, blocklists,
+  per-client policy, RPZ, DoT/DoH/DoQ) managed by a stateless Go management plane
+  with a React GUI, from one host to a fleet of engines in engine groups with
+  staged, health-gated configuration rollouts.
 
   ## Quick start
 
-  Docker Compose (single host): see `deploy/compose` and
-  "Install with Docker Compose" in `docs/operations.md`.
+  Docker Compose (single host): `deploy/compose` and "Install with Docker
+  Compose" in `docs/operations.md`.
 
   Kubernetes: the Helm chart in `deploy/helm/nexora`; see "Install with Helm" in
   `docs/operations.md`.
 
   ## Documentation
 
-  - `docs/operations.md` — install, upgrade, backup and restore, rollouts, engine lifecycle, monitoring
-  - `docs/architecture.md` — how Nexora is built
-  - `.procoder/specs/nexora-v1.md` — what v1 delivers and why
+  - `docs/operations.md`: install, upgrade, backup and restore, rollouts, engine lifecycle, monitoring
+  - `docs/architecture.md`: how Nexora is built
 
   ## Development
 
@@ -7410,7 +5760,6 @@ Interfaces: headings listed in the test; every repository path the docs mention 
   `scripts/dev-exec.sh make build`, `scripts/dev-exec.sh make e2e`.
   Release images are built by `.github/workflows/images.yml`.
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -count=1 -v` and expect `--- PASS` for `TestOperationsDoc`, `TestHelmTemplate`, `TestImagesWorkflow`, `TestComposeExample`.
-- [ ] Run the whole milestone gate once more: `scripts/dev-exec.sh 'make lint && make engine-test && make mgmt-test && make web-test && go test ./e2e/ -run "TestFleetRolloutAndPartition|TestMgmtStatelessHA|TestCanaryRolloutHaltsOnFailure|TestEngineCertRevocation|TestGroupScopedConfig|TestJoinTokenGroupAndExpiry|TestFleetAPI|TestMgmtCLIFleet|TestGUIFleet|TestGUICoverage" -count=1 -timeout 60m'` and expect every target and test to pass; then `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwFullProduct`.
+- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -count=1 -v` and expect `--- PASS` for `TestOperationsDoc`, `TestHelmTemplate`, `TestImagesWorkflow` and `TestComposeExample`.
+- [ ] Run the milestone gate: `scripts/dev-exec.sh 'make lint && make engine-test && make mgmt-test && make web-test && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestFleetRolloutAndPartition|TestEngineGroupScopedConfig|TestJoinTokenGroupAndExpiry|TestCanaryRolloutHaltsOnFailure|TestEngineCertRevocation|TestFleetAPI|TestMgmtCLIFleet|TestGUICoverage|TestMgmtStatelessHA|TestInvalidSnapshotRejected" -count=1 -timeout 90m'` and expect every target and test to pass; then `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwFullProduct`.
 - [ ] Commit: `git add docs/operations.md README.md deploy/deploytest/docs_test.go && git commit -m "docs: operations guide and README for the fleet release"`.
-

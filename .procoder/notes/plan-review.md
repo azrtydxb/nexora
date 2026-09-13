@@ -44,4 +44,9 @@
 - toolbox pod lacks env vars declared in deploy/dev/dev-pod.yaml (NEXORA_E2E_OPENSEARCH_URL/JAEGER): re-apply dev-pod.yaml when no agent is running tests.
 - M4 Task 16 must build nexora-mgmt with CGO_ENABLED=1 on a glibc base (PKCS#11 needs cgo; current Dockerfile is CGO_ENABLED=0) and run TestKeyStorageBackends-equivalent smoke with SoftHSM in the image or document HSM module mounting.
 - RESOLVED (M4 Task 13, KeyRing::wait_for): Engine NOTIFY after restart: targets needing TSIG count as 'nokey' if the persisted snapshot loads before KeyMaterial arrives. Fix: queue NOTIFYs that lack a key and send when KeyMaterial containing it is applied (bounded wait, then count nokey). Assign to M4 engine Task 13 agent.
-- GAP (M4): engine cannot bind a signed incoming NOTIFY to a specific primary's TSIG key because the zone config sent to engines lacks per-primary key names; NOTIFY is accepted by source IP (+ any valid key). Fix before M4 closes: add per-primary tsig key name to the zone config in the snapshot (M4 field range) and require the matching key when configured; engine test + e2e assertion that a NOTIFY signed with a different valid key is refused.
+- RESOLVED (M4 Task 14, AuthZone.primary_tsig_keys = 200): engine cannot bind a signed incoming NOTIFY to a specific primary's TSIG key because the zone config sent to engines lacks per-primary key names; NOTIFY is accepted by source IP (+ any valid key). Fix before M4 closes: add per-primary tsig key name to the zone config in the snapshot (M4 field range) and require the matching key when configured; engine test + e2e assertion that a NOTIFY signed with a different valid key is refused.
+
+## M5 reconciliation review (2026-09-14)
+
+- Accepted with documented limitation: kw `edge-b` engine group LB 192.168.10.137 uses externalTrafficPolicy Cluster (kube-vip may place the VIP on a node without an edge-b engine), so edge-b sees node IPs; per-client policy is verified on the `default` group (.136, Local). README and operations docs must state this.
+- The gate's "credential-looking string" in `mgmt/internal/api/gen.go` is oapi-codegen's embedded base64 swagger spec, not a secret.
