@@ -2617,7 +2617,7 @@ func TestHarnessOtelcolStarts(t *testing.T) {
 - [ ] Implement `oidc.go`: RSA-2048 signing key generated at start; `GET /.well-known/openid-configuration` (issuer = `http://<listen>`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `userinfo_endpoint`, `code_challenge_methods_supported: ["S256"]`); `GET /jwks`; `GET /authorize` renders an HTML page with one `<button name="user" value="<username>">Sign in as <username></button>` per user inside a form that posts to `/authorize` carrying `client_id`, `redirect_uri`, `state`, `nonce`, `code_challenge`; `POST /authorize` issues a one-time code bound to the user, nonce and challenge and redirects to `redirect_uri?code=..&state=..`; `POST /token` checks `client_secret` (basic or form), the PKCE verifier (`base64url(sha256(verifier)) == challenge`), and returns `id_token` (RS256 JWT via `github.com/go-jose/go-jose/v4` with `iss`, `aud`, `sub`, `email`, `preferred_username`, `groups`, `nonce`, `exp`), `access_token`, `token_type: Bearer`; `GET /userinfo`. Users come from `--users-file` JSON `[{"username":..,"email":..,"groups":[..]}]`.
 - [ ] Implement `main.go`: `flag.NewFlagSet` per subcommand, start, print `fixture ready`, block until SIGTERM.
 - [ ] Implement `harness.go`: `New` creates `t.TempDir()`, registers `t.Cleanup` that stops every started `Proc` in reverse order and, when the test failed, prints the last 200 lines of each log with `t.Logf`; `FreePort` binds TCP and UDP on the same `127.0.0.1` port to confirm both are free; `Start` runs the binary with stdout/stderr to `<Dir>/<name>.log` and `Setpgid: true`; `WaitLog` polls the log file every 50 ms; `Eventually` retries `cond` every 100 ms until nil or `t.Fatalf` with the last error.
-- [ ] Implement `fixture.go`: `StartDNSFixture` picks five ports, starts `nexora-fixture dns ...` with `--cert-dir <Dir>/fixture-<n>`, waits for `fixture ready`, reads `ca.pem` into `CACertPEM`, sets `TLSName = "fixture.nexora.test"`; `Count`/`Total` GET `/stats`; the HTTP and OIDC fixtures are analogous (`StartOIDCFixture` writes the users file and a random client secret file, `ClientID = "nexora"`).
+- [ ] Implement `fixture.go`: `StartDNSFixture` picks four ports (UDP and TCP share one, as on a real server, because the engine retries a truncated UDP reply over TCP to the same address), starts `nexora-fixture dns ...` with `--cert-dir <Dir>/fixture-<n>`, waits for `fixture ready`, reads `ca.pem` into `CACertPEM`, sets `TLSName = "fixture.nexora.test"`; `Count`/`Total` GET `/stats`; the HTTP and OIDC fixtures are analogous (`StartOIDCFixture` writes the users file and a random client secret file, `ClientID = "nexora"`).
 - [ ] Implement `snapshot.go`:
 
 ```go
@@ -2750,14 +2750,15 @@ Interfaces:
 package e2e
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 
-	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/e2e/harness"
+	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 )
 
 func TestForwardCacheTTL(t *testing.T) {
@@ -2836,7 +2837,11 @@ func TestUpstreamFailover(t *testing.T) {
 func TestDedupAllWaitersAnswered(t *testing.T) {
 	env := harness.New(t)
 	fx := env.StartDNSFixture()
-	eng := env.StartStandaloneEngine(harness.BaseSnapshot(1, harness.UDPUpstream("fx", fx.UDP)), nil)
+	// The per-attempt timeout must exceed the injected delay, or the one upstream query
+	// times out by design (architecture: per-attempt timeout = timeout_ms).
+	up := harness.UDPUpstream("fx", fx.UDP)
+	up.TimeoutMs = 1500
+	eng := env.StartStandaloneEngine(harness.BaseSnapshot(1, up), nil)
 	fx.SetDelay(t, 500*time.Millisecond)
 	name := harness.UniqueName("herd")
 
@@ -2855,7 +2860,7 @@ func TestDedupAllWaitersAnswered(t *testing.T) {
 				return
 			}
 			if r.Rcode != dns.RcodeSuccess || len(r.Answer) != 1 {
-				errs <- &dns.Error{}
+				errs <- fmt.Errorf("rcode=%s answers=%d", dns.RcodeToString[r.Rcode], len(r.Answer))
 			}
 		}()
 	}
@@ -2987,7 +2992,7 @@ func TestMain(m *testing.M) {
 }
 ```
 
-- [ ] Prove the tests fail against a broken engine (mutation check; the engine from Tasks 3–9 already exists, so red is demonstrated by breaking it): in `engine/src/server/mod.rs` change the leader/follower join in `resolve_miss` to `let join = crate::inflight::InFlight::new().join(job.key);` (every miss leads) and skip the `rt.cache.insert(...)` call, then run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestForwardCacheTTL|TestDedupAllWaitersAnswered|TestEDNSTruncationTCP" ./e2e/'` — expect FAIL with `second query reached the upstream`, `upstream queries = ` (a count above 1) and `big answer fetched`. Restore the file with `git checkout engine/src/server/mod.rs`.
+- [ ] Prove the tests fail against a broken engine (mutation check; the engine from Tasks 3–9 already exists, so red is demonstrated by breaking it): in `engine/src/server/mod.rs` change the leader/follower join in `resolve_miss` to `let join = crate::inflight::InFlight::new().join(job.key);` (every miss leads) and skip the `rt.cache.insert(...)` call, then run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestForwardCacheTTL|TestDedupAllWaitersAnswered|TestEDNSTruncationTCP" ./e2e/'` — expect FAIL with `second query reached the upstream`, `upstream queries = ` (a count above 1) and `big answer fetched`. Restore the file with `git checkout engine/src/server/mod.rs`. (As built: the mutants were compiled from a throwaway copy of the workspace in the pod with its own `CARGO_TARGET_DIR` and run with `NEXORA_E2E_BIN_DIR`, so the shared checkout and `bin/` were never mutated for concurrent agents.)
 - [ ] Prove `TestUpstreamFailover` bites: in `engine/src/upstream/mod.rs` make `forward` return the first attempt's error instead of trying the next candidate, run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run TestUpstreamFailover ./e2e/'` — expect FAIL with `got SERVFAIL while secondary is healthy`; restore with `git checkout engine/src/upstream/mod.rs`.
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestForwardCacheTTL|TestUpstreamFailover|TestDedupAllWaitersAnswered|TestEDNSTruncationTCP" -v ./e2e/'` — expect PASS: `--- PASS: TestForwardCacheTTL/udp`, `/dot`, `/doh`, `--- PASS: TestUpstreamFailover`, `--- PASS: TestDedupAllWaitersAnswered`, `--- PASS: TestEDNSTruncationTCP`.
 - [ ] Commit: `git add e2e/forward_test.go e2e/edns_test.go e2e/main_test.go && git commit -m "e2e: forwarding, failover, dedup and EDNS truncation acceptance tests"`.

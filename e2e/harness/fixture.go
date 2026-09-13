@@ -78,7 +78,10 @@ func (e *Env) StartDNSFixture() *DNSFixture {
 		e.T.Fatal(err)
 	}
 	addr := func() string { return fmt.Sprintf("127.0.0.1:%d", e.FreePort()) }
-	fx := &DNSFixture{UDP: addr(), TCP: addr(), DoT: addr(), DoH: addr(), TLSName: "fixture.nexora.test"}
+	// UDP and TCP share one port, as on a real DNS server: the engine retries a truncated
+	// UDP reply over TCP to the same address.
+	plain := addr()
+	fx := &DNSFixture{UDP: plain, TCP: plain, DoT: addr(), DoH: addr(), TLSName: "fixture.nexora.test"}
 	control := addr()
 	fx.Control = "http://" + control
 	p := e.Start("nexora-fixture", []string{"dns", "--udp", fx.UDP, "--tcp", fx.TCP, "--dot", fx.DoT,

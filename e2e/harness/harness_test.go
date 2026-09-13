@@ -58,9 +58,12 @@ func TestHarnessFixtureClients(t *testing.T) {
 	env := harness.New(t)
 	fx := env.StartDNSFixture()
 	name := harness.UniqueName("client")
-	for server, o := range map[string]harness.QueryOpts{fx.UDP: {EDNSSize: 1232, Cookie: []byte("12345678")}, fx.TCP: {TCP: true}} {
-		if r := harness.MustQuery(t, server, name, dns.TypeA, o); len(r.Answer) != 1 {
-			t.Fatalf("answer with %+v: %v", o, r)
+	for _, c := range []struct {
+		server string
+		o      harness.QueryOpts
+	}{{fx.UDP, harness.QueryOpts{EDNSSize: 1232, Cookie: []byte("12345678")}}, {fx.TCP, harness.QueryOpts{TCP: true}}} {
+		if r := harness.MustQuery(t, c.server, name, dns.TypeA, c.o); len(r.Answer) != 1 {
+			t.Fatalf("answer with %+v: %v", c.o, r)
 		}
 	}
 	if got := fx.Count(t, name, dns.TypeA); got != 2 {
