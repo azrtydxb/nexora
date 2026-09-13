@@ -2444,20 +2444,20 @@ Files:
 - `e2e/harness/dnsclient.go` (create) — miekg/dns query helpers
 - `e2e/harness/postgres.go` (create) — `initdb`/`pg_ctl` into a temp dir
 - `e2e/harness/otelcol.go` (create) — `otelcol-contrib` with generated config
-- `e2e/harness/harness_test.go` (create)
+- `e2e/harness/harness_test.go` (create) — the three tests below plus `TestHarnessFixtureClients` (exercises the typed DNS and HTTP fixture clients without the engine)
 
 Interfaces (produced; consumed by Tasks 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
 
-- `harness.New(t *testing.T) *Env`; `type Env struct { T *testing.T; Dir string }`; `func (e *Env) FreePort() int`; `func (e *Env) Bin(name string) string` (looks in `NEXORA_E2E_BIN_DIR`, then `<repo>/bin`, then `<repo>/target/release`, then `$CARGO_TARGET_DIR/release`; `t.Fatal` when missing); `func (e *Env) Start(name string, args, env []string) *Proc`; `type Proc struct { Name string; Cmd *exec.Cmd; LogPath string }`; `func (p *Proc) Stop()` (SIGTERM, 5 s, SIGKILL); `func (p *Proc) Kill()`; `func (p *Proc) Signal(sig os.Signal)`; `func (p *Proc) WaitLog(re *regexp.Regexp, timeout time.Duration) []string`; `func Eventually(t *testing.T, timeout time.Duration, cond func() error)`.
+- `harness.New(t *testing.T) *Env`; `type Env struct { T *testing.T; Dir string }`; `func (e *Env) FreePort() int`; `func (e *Env) Bin(name string) string` (looks in `NEXORA_E2E_BIN_DIR`, then `<repo>/bin`, then `<repo>/target/release`, then `$CARGO_TARGET_DIR/release`, then `$PATH` for tools such as `otelcol-contrib`; `t.Fatal` when missing); `func (e *Env) Start(name string, args, env []string) *Proc`; `type Proc struct { Name string; Cmd *exec.Cmd; LogPath string }`; `func (p *Proc) Stop()` (SIGTERM, 5 s, SIGKILL); `func (p *Proc) Kill()`; `func (p *Proc) Signal(sig os.Signal)`; `func (p *Proc) WaitLog(re *regexp.Regexp, timeout time.Duration) []string`; `func Eventually(t *testing.T, timeout time.Duration, cond func() error)`.
 - `type DNSFixture struct { UDP, TCP, DoT, DoH, Control, CACertPEM, TLSName string }`; `func (e *Env) StartDNSFixture() *DNSFixture`; `func (f *DNSFixture) Count(t *testing.T, name string, qtype uint16) int`; `func (f *DNSFixture) Total(t *testing.T) int`; `func (f *DNSFixture) SetMode(t *testing.T, mode string)` (`normal|blackhole|servfail`); `func (f *DNSFixture) SetDelay(t *testing.T, d time.Duration)`; `func (f *DNSFixture) Reset(t *testing.T)`.
 - `type HTTPFixture struct { Base string }`; `func (e *Env) StartHTTPFixture() *HTTPFixture`; `func (f *HTTPFixture) SetList(t *testing.T, name, body string)`; `func (f *HTTPFixture) SetFailing(t *testing.T, name string, failing bool)`; `func (f *HTTPFixture) Hits(t *testing.T, name string) int`; `func (f *HTTPFixture) URL(name string) string`.
 - `type OIDCUser struct { Username, Email string; Groups []string }`; `type OIDCFixture struct { Issuer, ClientID, ClientSecretFile string; Proc *Proc }`; `func (e *Env) StartOIDCFixture(users ...OIDCUser) *OIDCFixture`.
-- `type Engine struct { DNS, Metrics, StateDir, ConfigPath string; Proc *Proc }`; `func (e *Env) StartStandaloneEngine(snap *controlv1.ConfigSnapshot, blobs map[string][]byte) *Engine`; `func (en *Engine) Reload(t *testing.T, snap *controlv1.ConfigSnapshot, blobs map[string][]byte)`; `func (en *Engine) Metric(t *testing.T, name string, labels map[string]string) float64`; `func (en *Engine) WaitVersion(t *testing.T, v uint64)`.
+- `type Engine struct { DNS, Metrics, StateDir, ConfigPath string; Proc *Proc }`; `func (e *Env) StartStandaloneEngine(snap *controlv1.ConfigSnapshot, blobs map[string][]byte) *Engine`; `func (en *Engine) Reload(t *testing.T, snap *controlv1.ConfigSnapshot, blobs map[string][]byte)`; `func (en *Engine) Metric(t *testing.T, name string, labels map[string]string) float64`; `func (en *Engine) WaitVersion(t *testing.T, v uint64)` (waits 10 s for the Task 8 stderr line `nexora-engine: serving version {v}`, so it works before the Task 9 metrics endpoint exists).
 - `func BaseSnapshot(version uint64, ups ...*controlv1.Upstream) *controlv1.ConfigSnapshot`; `func UDPUpstream(id, addr string) *controlv1.Upstream`; `func DoTUpstream(id string, f *DNSFixture) *controlv1.Upstream`; `func DoHUpstream(id string, f *DNSFixture) *controlv1.Upstream`; `func BlocklistBlob(name string, domains ...string) (*controlv1.BlobRef, []byte)`.
 - `type QueryOpts struct { TCP bool; EDNSSize uint16; Cookie []byte; Timeout time.Duration }`; `func Query(t *testing.T, server, name string, qtype uint16, o QueryOpts) (*dns.Msg, time.Duration, error)` (never calls `t.Fatal`, safe from goroutines); `func MustQuery(t *testing.T, server, name string, qtype uint16, o QueryOpts) *dns.Msg`; `func UniqueName(prefix string) string` (`<prefix>-<12 hex>.example.`).
 - `type Postgres struct { URL, Dir string; Port int }`; `func (e *Env) StartPostgres() *Postgres`.
 - `type OtelcolConfig struct { OpenSearchURL, JaegerOTLP string; DebugFile string }`; `type Otelcol struct { OTLPGRPC string; Proc *Proc; ConfigPath string }`; `func (e *Env) StartOtelcol(cfg OtelcolConfig) *Otelcol`; `func (o *Otelcol) Stop()`; `func (o *Otelcol) Restart(e *Env)`.
-- Fixture DNS behaviour by first label prefix: default -> one A `192.0.2.1` TTL 300 (AAAA `2001:db8::1`); `big-*` -> 100 A records TTL 300; `tc-*` -> over UDP an empty reply with TC=1, over TCP/DoT/DoH 100 A records; `nx-*` -> NXDOMAIN with SOA `example. 900 SOA ns.example. h.example. 1 2 3 4 120`; `zero-*` -> one A with TTL 0; `cloak-*` -> CNAME to `cdn.tracker.blocked.test.` plus A `192.0.2.9`. Control API (JSON over HTTP on `--control`): `GET /stats` -> `{"total": n, "queries": {"<lowercase name>|<type number>": n}}`; `POST /reset`; `POST /mode` `{"mode": "normal|blackhole|servfail"}`; `POST /delay` `{"ms": n}`.
+- Fixture DNS behaviour by first label prefix: default -> one A `192.0.2.1` TTL 300 (AAAA `2001:db8::1`); `big-*` -> 100 A records TTL 300; `tc-*` -> over UDP an empty reply with TC=1, over TCP/DoT/DoH 100 A records; `nx-*` -> NXDOMAIN with SOA `example. 900 SOA ns.example. h.example. 1 2 3 4 120`; `zero-*` -> one A with TTL 0; `cloak-*` -> CNAME to `cdn.tracker.blocked.test.` plus A `192.0.2.9`; default names with a qtype other than A/AAAA -> NOERROR with no answers; `blackhole` over DoH holds the request until the client gives up. Control API (JSON over HTTP on `--control`): `GET /stats` -> `{"total": n, "queries": {"<lowercase name>|<type number>": n}}`; `POST /reset`; `POST /mode` `{"mode": "normal|blackhole|servfail"}`; `POST /delay` `{"ms": n}`.
 - Fixture CLI: `nexora-fixture dns --udp ADDR --tcp ADDR --dot ADDR --doh ADDR --control ADDR --cert-dir DIR`; `nexora-fixture http --listen ADDR`; `nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F`. Each prints `fixture ready` to stdout once listening. The DoT/DoH certificate is for `fixture.nexora.test` and IP `127.0.0.1`, CA at `<cert-dir>/ca.pem`.
 
 - [ ] Write the failing fixture test `e2e/fixtures/cmd/nexora-fixture/dns_test.go`:
@@ -2613,7 +2613,7 @@ func TestHarnessOtelcolStarts(t *testing.T) {
 - [ ] Run `scripts/dev-exec.sh go test ./e2e/fixtures/... ./e2e/harness/...` — expect FAIL with `undefined: startDNSFixture` and `no required module provides package github.com/piwi3910/nexora/e2e/harness`.
 - [ ] Implement `certs.go`: `func writeCerts(dir string) (caPEM []byte, cert tls.Certificate, err error)` creating an ECDSA P-256 CA (`CN=nexora-fixture-ca`, 1 day) and a server certificate with DNS SAN `fixture.nexora.test` and IP SAN `127.0.0.1`, writing `ca.pem`, `server.pem`, `server-key.pem`.
 - [ ] Implement `dns.go`: `type dnsConfig struct { UDP, TCP, DoT, DoH, Control, CertDir string }`; `func startDNSFixture(cfg dnsConfig) (*dnsFixture, error)` starting `dns.Server{Net: "udp"}`, `{Net: "tcp"}`, `{Net: "tcp-tls", TLSConfig}` with one handler, plus an `http.Server` with `TLSConfig{NextProtos: ["h2"]}` serving `POST /dns-query` (and `GET ?dns=` base64url) and the control `http.Server`. The handler increments `counts[strings.ToLower(name)+"|"+qtype]` under a mutex before applying `mode` (`blackhole` returns without writing; `servfail` replies SERVFAIL) and `delay` (`time.Sleep`), then answers by prefix per the table above; the UDP path of `tc-*` writes a reply with `Truncated=true` and no answers. `func (f *dnsFixture) count(name string, qtype uint16) int`, `setMode(string)`, `Close()`.
-- [ ] Implement `http.go`: `PUT /lists/{name}` stores the body; `GET /lists/{name}` returns it (`text/plain`) or 500 when failing, increments hits; `POST /lists/{name}/fail` with `{"failing": bool}`; `GET /hits/{name}` -> `{"hits": n}`.
+- [ ] Implement `http.go`: `PUT /lists/{name}` stores the body; `GET /lists/{name}` returns it (`text/plain`) or 500 when failing, increments hits; `POST /lists/{name}/fail` with `{"failing": bool}`; `GET /hits/{name}` -> `{"hits": n}`; a list never uploaded answers 404.
 - [ ] Implement `oidc.go`: RSA-2048 signing key generated at start; `GET /.well-known/openid-configuration` (issuer = `http://<listen>`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `userinfo_endpoint`, `code_challenge_methods_supported: ["S256"]`); `GET /jwks`; `GET /authorize` renders an HTML page with one `<button name="user" value="<username>">Sign in as <username></button>` per user inside a form that posts to `/authorize` carrying `client_id`, `redirect_uri`, `state`, `nonce`, `code_challenge`; `POST /authorize` issues a one-time code bound to the user, nonce and challenge and redirects to `redirect_uri?code=..&state=..`; `POST /token` checks `client_secret` (basic or form), the PKCE verifier (`base64url(sha256(verifier)) == challenge`), and returns `id_token` (RS256 JWT via `github.com/go-jose/go-jose/v4` with `iss`, `aud`, `sub`, `email`, `preferred_username`, `groups`, `nonce`, `exp`), `access_token`, `token_type: Bearer`; `GET /userinfo`. Users come from `--users-file` JSON `[{"username":..,"email":..,"groups":[..]}]`.
 - [ ] Implement `main.go`: `flag.NewFlagSet` per subcommand, start, print `fixture ready`, block until SIGTERM.
 - [ ] Implement `harness.go`: `New` creates `t.TempDir()`, registers `t.Cleanup` that stops every started `Proc` in reverse order and, when the test failed, prints the last 200 lines of each log with `t.Logf`; `FreePort` binds TCP and UDP on the same `127.0.0.1` port to confirm both are free; `Start` runs the binary with stdout/stderr to `<Dir>/<name>.log` and `Setpgid: true`; `WaitLog` polls the log file every 50 ms; `Eventually` retries `cond` every 100 ms until nil or `t.Fatalf` with the last error.
@@ -6638,10 +6638,12 @@ Files:
 - `web/src/auth/permissions.ts` (create) — operationId -> minimum role, mirroring `mgmt/internal/auth/permissions.go`
 - `web/src/components/ui/{alert,badge,button,card,dialog,input,label,select,separator,switch,table,tabs,textarea,tooltip}.tsx` (create, ported from `~/Development/nexora-reference/Nexora/components/ui`)
 - `web/src/components/layout/AppShell.tsx` (create) — sidebar navigation, health badge, user menu
-- `web/src/pages/LoginPage.tsx`, `web/src/pages/SetupPage.tsx`, `web/src/pages/UpstreamsPage.tsx`, `web/src/pages/AuditPage.tsx` (create)
+- `web/src/pages/LoginPage.tsx`, `web/src/pages/SetupPage.tsx`, `web/src/pages/UpstreamsPage.tsx`, `web/src/pages/AuditPage.tsx`, `web/src/pages/AuthLayout.tsx` (create; AuthLayout is the shared signed-out frame)
+- `web/src/lib/theme.ts` (create) — light/dark toggle stored in `localStorage` `nexora-theme` (applied before paint by `index.html`)
 - `web/playwright.config.ts`, `web/e2e/fixtures.ts`, `web/e2e/auth.spec.ts`, `web/e2e/auth-oidc-down.spec.ts` (create)
 - `web/scripts/check-permissions.mjs` (create) — fails when `permissions.ts` and `permissions.go` differ
-- `e2e/harness/playwright.go` (create) — `RunPlaywright`
+- `e2e/harness/web.go` (create) — `RunPlaywright`, plus the Task 16 harness interface this test needs first (`CA`, `InitCA`, `MgmtOptions`, `Mgmt`, `StartMgmt`, `SetupToken`, `API`, `NewAPI`, `Do`, `Must`, `Bootstrap`, signatures exactly as Task 16 lists them; Task 16 moves them to `mgmt.go` when it adds join tokens and managed engines). Built here instead of `playwright.go` because `e2e/**` other files were owned by the concurrent Task 10 work.
+- `mgmt/internal/auth/oidc.go`, `mgmt/internal/auth/service_test.go` (modify) — `Start` probes the provider's discovery document on every login start, so an instance that discovered the provider earlier still answers 503 `identity provider unavailable` once it is down (without it `auth-oidc-down.spec.ts` got a redirect to the dead provider); `TestOIDCLoginAndProviderDown` asserts this on the already-discovered instance.
 - `e2e/auth_test.go` (create) — `TestAuthRBACAuditOIDC`
 
 Interfaces:
@@ -6651,9 +6653,9 @@ Interfaces:
 - `web/src/auth/AuthProvider.tsx`: `export function useCurrentUser(): { user: components["schemas"]["User"] | null; loading: boolean }`; `export function RequireAuth({ children }: { children: React.ReactNode })` (redirects to `/setup` when `getSetupStatus.required`, else `/login?return_to=<path>` on 401); `export function useCan(operationId: OperationId): boolean`.
 - Routes (react-router 7 data router): `/login`, `/setup`, and inside `AppShell`: `/` (dashboard), `/query-log`, `/upstreams`, `/access-control`, `/filtering`, `/engines`, `/users`, `/api-tokens`, `/audit`, `/settings`. This task implements `/login`, `/setup`, `/upstreams`, `/audit`; Task 20 implements the rest (until then `router.tsx` lists only the four routes plus `/` redirecting to `/upstreams`).
 - Test ids used by Playwright specs (must exist exactly): `nav-<route>` links (`nav-upstreams`, `nav-audit`, `nav-dashboard`, `nav-query-log`, `nav-access-control`, `nav-filtering`, `nav-engines`, `nav-users`, `nav-api-tokens`, `nav-settings`), `user-menu`, `logout`, `login-username`, `login-password`, `login-submit`, `login-oidc`, `login-error`, `setup-token`, `setup-username`, `setup-email`, `setup-password`, `setup-submit`, `upstream-add`, `upstream-name`, `upstream-protocol`, `upstream-address`, `upstream-doh-url`, `upstream-tls-name`, `upstream-timeout`, `upstream-save`, `upstream-row-<name>`, `upstream-edit-<name>`, `upstream-delete-<name>`, `confirm-delete`, `audit-row` (one per event, with `data-action` and `data-actor` attributes), `audit-diff-<id>`, `health-badge`.
-- `harness.RunPlaywright(t *testing.T, specs []string, env map[string]string) string` — runs `pnpm exec playwright test <specs...>` in `<repo>/web` with `env` plus `NEXORA_E2E_COVERAGE_DIR` (taken from `env` when present, otherwise a new temp dir), streams output to `<Dir>/playwright.log`, `t.Fatal`s on non-zero exit, returns the coverage directory.
+- `harness.RunPlaywright(t *testing.T, specs []string, env map[string]string) string` — runs `pnpm exec playwright test <specs...>` in `<repo>/web` with `env` plus `NEXORA_E2E_COVERAGE_DIR` (taken from `env` when present, otherwise a new temp dir), logs the combined output with `t.Logf`, `t.Fatal`s on non-zero exit, returns the coverage directory.
 
-- [ ] Write `web/package.json`:
+- [x] Write `web/package.json` (`react-router` raised from `~7.13.0` to `^7.18.2`: 7.13 has known high-severity advisories that block the commit gate):
 
 ```json
 {
@@ -6684,7 +6686,7 @@ Interfaces:
     "openapi-fetch": "~0.17.0",
     "react": "~19.3.0",
     "react-dom": "~19.3.0",
-    "react-router": "~7.13.0",
+    "react-router": "^7.18.2",
     "recharts": "~3.10.0",
     "tailwind-merge": "^3.3.1"
   },
@@ -6708,7 +6710,7 @@ Interfaces:
 }
 ```
 
-- [ ] Write `web/vite.config.ts` and `web/playwright.config.ts`:
+- [x] Write `web/vite.config.ts` and `web/playwright.config.ts`:
 
 ```ts
 // web/vite.config.ts
@@ -6745,7 +6747,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] Write `web/e2e/fixtures.ts` (request recorder used for coverage, and login helpers):
+- [x] Write `web/e2e/fixtures.ts` (request recorder used for coverage, and login helpers):
 
 ```ts
 import { test as base, expect, type Page } from "@playwright/test";
@@ -6800,7 +6802,7 @@ export async function logout(page: Page) {
 }
 ```
 
-- [ ] Write the failing spec `web/e2e/auth.spec.ts`:
+- [x] Write the failing spec `web/e2e/auth.spec.ts`:
 
 ```ts
 import { test, expect, env, login, logout } from "./fixtures";
@@ -6888,7 +6890,7 @@ test("OIDC login works", async ({ page }) => {
 });
 ```
 
-- [ ] Write the failing spec `web/e2e/auth-oidc-down.spec.ts`:
+- [x] Write the failing spec `web/e2e/auth-oidc-down.spec.ts`:
 
 ```ts
 import { test, expect, env, login, logout } from "./fixtures";
@@ -6910,7 +6912,7 @@ test("local login still works while the OIDC provider is down", async ({
 });
 ```
 
-- [ ] Write the failing Go wrapper `e2e/auth_test.go`:
+- [x] Write the failing Go wrapper `e2e/auth_test.go`:
 
 ```go
 package e2e
@@ -6993,19 +6995,19 @@ func TestAuthRBACAuditOIDC(t *testing.T) {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run TestAuthRBACAuditOIDC ./e2e/'` — expect FAIL with `undefined: harness.RunPlaywright`.
-- [ ] Scaffold and install: write `web/tsconfig.json` (`"strict": true`, `"jsx": "react-jsx"`, `"moduleResolution": "bundler"`, `"paths": {"@/*": ["./src/*"]}`, `"types": ["node"]`), `web/index.html` (`<div id="root">`, `<script type="module" src="/src/main.tsx">`), `web/src/index.css` (`@import "tailwindcss";` plus the CSS variables `--background`, `--foreground`, `--primary`, `--primary-foreground`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--accent`, `--accent-foreground`, `--muted`, `--muted-foreground` mapped via `@theme inline` so the ported component classes such as `bg-primary` resolve), `web/eslint.config.js` (`@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks`), then run `scripts/dev-exec.sh bash -c 'cd web && pnpm install && pnpm run gen:api'` and copy `web/pnpm-lock.yaml` and `web/src/api/schema.d.ts` back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - web/pnpm-lock.yaml web/src/api/schema.d.ts | tar -xf -`.
-- [ ] Port the UI components: copy `alert, badge, button, card, dialog, input, label, select, separator, switch, table, tabs, textarea, tooltip` from `~/Development/nexora-reference/Nexora/components/ui/*.tsx` into `web/src/components/ui/`, removing any `"use client"` directives and keeping the `@/lib/utils` import; write `web/src/lib/utils.ts` as `export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }`.
-- [ ] Write `web/src/auth/permissions.ts` exporting `export type Role = "viewer" | "operator" | "admin"` and `export const permissions: Record<string, Role | "public">` with exactly the operationIds and roles listed in Task 14, and `web/scripts/check-permissions.mjs` that parses `mgmt/internal/auth/permissions.go` with the regex `/"(\w+)":\s*Role(Viewer|Operator|Admin)/g` and the `Public` map with `/"(\w+)":\s*true/g`, reads `web/src/auth/permissions.ts` as text with `/(\w+):\s*"(viewer|operator|admin|public)"/g`, compares the two maps in both directions, and exits 1 listing every mismatch.
-- [ ] Implement `client.ts`, `AuthProvider.tsx` (`useQuery({ queryKey: ["me"], queryFn: () => api.GET("/auth/me") })`; `useCan(op)` compares the user's role with `permissions[op]` using viewer < operator < admin), `router.tsx` (`createBrowserRouter`), `main.tsx` (`QueryClientProvider` with `retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2`), `AppShell.tsx` (sidebar links carrying `data-testid="nav-<route>"` rendered only when `useCan` of that screen's list operation holds — `listUsers`, `listApiTokens`, `listAuditEvents`, `listJoinTokens` gate users, API tokens, audit and the join-token panel; a `health-badge` fed by `getHealth` every 15 s showing `ok` or `degraded`; `user-menu` showing the username with a `logout` item calling `POST /auth/logout`).
-- [ ] Implement `LoginPage.tsx`: username/password form (`login-*` test ids) posting `/auth/login` then navigating to `return_to` or `/`; `listAuthProviders` decides whether `login-oidc` renders; clicking it first calls `fetch("/api/v1/auth/oidc/start?return_to=/", { redirect: "manual" })` — an `opaqueredirect` response navigates `window.location` to the same URL, a 503 shows `login-error` with the API message (`identity provider unavailable`); errors from login show `login-error` with `Invalid username or password`.
-- [ ] Implement `SetupPage.tsx`: `setup-token`, `setup-username`, `setup-email`, `setup-password` fields posting `completeSetup`, then navigating to `/`; `/setup` redirects to `/login` when `getSetupStatus.required` is false.
-- [ ] Implement `UpstreamsPage.tsx`: table of `listUpstreams` ordered by position with rows `upstream-row-<name>` showing protocol, address/URL, timeout and enabled; `upstream-add` and per-row `upstream-edit-<name>`/`upstream-delete-<name>` rendered only when `useCan("createUpstream")`/`useCan("updateUpstream")`/`useCan("deleteUpstream")`; a dialog form with `upstream-name`, `upstream-protocol` (select udp/tcp/dot/doh), `upstream-address` (udp/tcp/dot), `upstream-tls-name` (dot), `upstream-doh-url` (doh), `upstream-timeout` (default 250), `upstream-save`; create posts `UpstreamInput` with `position = rows.length`, edit PUTs with the row's `revision`; a 409 shows `This upstream was changed by someone else — reload to see the latest version`; delete opens a confirm dialog with `confirm-delete` and sends `revision`.
-- [ ] Implement `AuditPage.tsx`: `listAuditEvents` newest first, each row `data-testid="audit-row"` with `data-action` and `data-actor` attributes showing time, actor, action, target; clicking a row expands `audit-diff-<id>` containing `JSON.stringify(diff, null, 2)` in a `<pre>`; a "Load older" button pages with `before_id`.
-- [ ] Implement `e2e/harness/playwright.go` per the interface (working directory `<repo>/web`, `exec.CommandContext` with a 15-minute timeout, `CI=1`).
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run TestAuthRBACAuditOIDC ./e2e/'` — expect PASS: Playwright prints `3 passed` across the two runs and Go prints `--- PASS: TestAuthRBACAuditOIDC`.
-- [ ] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, eslint, permission parity, build).
-- [ ] Commit: `git add web e2e/harness/playwright.go e2e/auth_test.go && git commit -m "web: GUI foundation, login/setup/upstreams/audit screens; e2e auth, RBAC, audit and OIDC test"`.
+- [x] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run TestAuthRBACAuditOIDC ./e2e/'` — expect FAIL to compile: `env.InitCA undefined` (the Task 16 harness did not exist yet), then `harness.RunPlaywright` undefined.
+- [x] Scaffold and install: write `web/tsconfig.json` (`"strict": true`, `"jsx": "react-jsx"`, `"moduleResolution": "bundler"`, `"paths": {"@/*": ["./src/*"]}`, `"types": ["node"]`), `web/index.html` (`<div id="root">`, `<script type="module" src="/src/main.tsx">`), `web/src/index.css` (`@import "tailwindcss";` plus the CSS variables `--background`, `--foreground`, `--primary`, `--primary-foreground`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--accent`, `--accent-foreground`, `--muted`, `--muted-foreground` mapped via `@theme inline` so the ported component classes such as `bg-primary` resolve), `web/eslint.config.js` (`@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks` `recommended-latest` scoped to `src/`, Node globals for `scripts/*.mjs`), then run `cd web && pnpm install && pnpm run gen:api` on the laptop (pnpm is installed locally) and commit `web/pnpm-lock.yaml` and `web/src/api/schema.d.ts`.
+- [x] Port the UI components: copy `alert, badge, button, card, dialog, input, label, select, separator, switch, table, tabs, textarea, tooltip` from `~/Development/nexora-reference/Nexora/components/ui/*.tsx` into `web/src/components/ui/`, removing any `"use client"` directives and keeping the `@/lib/utils` import; write `web/src/lib/utils.ts` as `export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }`.
+- [x] Write `web/src/auth/permissions.ts` exporting `export type Role = "viewer" | "operator" | "admin"` and `export const permissions: Record<string, Role | "public">` with exactly the operationIds and roles listed in Task 14, and `web/scripts/check-permissions.mjs` that parses `mgmt/internal/auth/permissions.go` with the regex `/"(\w+)":\s*Role(Viewer|Operator|Admin)/g` and the `Public` map with `/"(\w+)":\s*true/g`, reads `web/src/auth/permissions.ts` as text with `/(\w+):\s*"(viewer|operator|admin|public)"/g`, compares the two maps in both directions, and exits 1 listing every mismatch.
+- [x] Implement `client.ts`, `AuthProvider.tsx` (`useQuery({ queryKey: ["me"], queryFn: () => api.GET("/auth/me") })`; `useCan(op)` compares the user's role with `permissions[op]` using viewer < operator < admin), `router.tsx` (`createBrowserRouter`), `main.tsx` (`QueryClientProvider` with `retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2`), `AppShell.tsx` (sidebar links, listed only for screens that exist — `upstreams` and `audit` now, Task 20 adds the rest — carrying `data-testid="nav-<route>"` rendered only when `useCan` of that screen's list operation holds — `listUsers`, `listApiTokens`, `listAuditEvents`, `listJoinTokens` gate users, API tokens, audit and the join-token panel (Task 20's screens); the user menu also holds the light/dark theme toggle; a `health-badge` fed by `getHealth` every 15 s showing `ok` or `degraded`; `user-menu` showing the username with a `logout` item calling `POST /auth/logout`).
+- [x] Implement `LoginPage.tsx`: username/password form (`login-*` test ids) posting `/auth/login` then navigating to `return_to` or `/`; `listAuthProviders` decides whether `login-oidc` renders; clicking it first calls `fetch("/api/v1/auth/oidc/start?return_to=/", { redirect: "manual" })` — an `opaqueredirect` response navigates `window.location` to the same URL, a 503 shows `login-error` with the API message (`identity provider unavailable`); errors from login show `login-error` with `Invalid username or password`.
+- [x] Implement `SetupPage.tsx`: `setup-token`, `setup-username`, `setup-email`, `setup-password` fields posting `completeSetup`, then navigating to `/`; `/setup` redirects to `/login` when `getSetupStatus.required` is false.
+- [x] Implement `UpstreamsPage.tsx`: table of `listUpstreams` ordered by position with rows `upstream-row-<name>` showing protocol, address/URL, timeout and enabled; `upstream-add` and per-row `upstream-edit-<name>`/`upstream-delete-<name>` rendered only when `useCan("createUpstream")`/`useCan("updateUpstream")`/`useCan("deleteUpstream")`; a dialog form with `upstream-name`, `upstream-protocol` (select udp/tcp/dot/doh), `upstream-address` (udp/tcp/dot), `upstream-tls-name` (dot), `upstream-doh-url` (doh), `upstream-timeout` (default 250), `upstream-save`; create posts `UpstreamInput` with `position = rows.length`, edit PUTs with the row's `revision`; a 409 shows `This upstream was changed by someone else — reload to see the latest version`; delete opens a confirm dialog with `confirm-delete` and sends `revision`.
+- [x] Implement `AuditPage.tsx`: `listAuditEvents` newest first, each row `data-testid="audit-row"` with `data-action` and `data-actor` attributes showing time, actor, action, target; clicking a row expands `audit-diff-<id>` containing `JSON.stringify(diff, null, 2)` in a `<pre>`; a "Load older" button pages with `before_id`.
+- [x] Implement `RunPlaywright` in `e2e/harness/web.go` per the interface (working directory `<repo>/web`, `exec.CommandContext` with a 15-minute timeout, `CI=1`).
+- [x] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run TestAuthRBACAuditOIDC ./e2e/'` — expect PASS: Playwright prints `3 passed` across the two runs and Go prints `--- PASS: TestAuthRBACAuditOIDC`.
+- [x] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, eslint, permission parity, build).
+- [x] Commit: `git add web e2e/harness/web.go e2e/auth_test.go mgmt/internal/auth/oidc.go mgmt/internal/auth/service_test.go && git commit -m "M1 Task 19: ..."` (the manifest and lockfile were committed first, on their own, to unblock the shared commit gate).
 
 ## Task 20: Remaining GUI screens, `TestGUICoverage` and `TestQueryLogBackends`
 
