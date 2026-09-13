@@ -17,6 +17,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -196,10 +200,24 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	} else if created {
 		log.Printf("setup token: %s", token)
 	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		stats.NewCollector(st))
+	var queryLog querylog.Backend
+	var builtinLog *querylog.Builtin
+	if cfg.QueryLogBackend == "opensearch" {
+		if queryLog, err = querylog.NewOpenSearch(cfg.OpenSearch); err != nil {
+			return err
+		}
+	} else {
+		builtinLog = querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)
+		queryLog = builtinLog
+	}
 	httpSrv := &http.Server{
 		Handler: api.NewHandler(api.Deps{
 			Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
-			QueryLog: querylog.Noop{}, InstanceID: instanceID, PublicURL: cfg.PublicURL,
+			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
+			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -221,6 +239,9 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		_ = stats.Record(ctx, st, engineID, s)
 	}
 	controlv1.RegisterEngineControlServer(srv, controlServer)
+	if builtinLog != nil {
+		collogspb.RegisterLogsServiceServer(srv, builtinLog)
+	}
 	lis, err := net.Listen("tcp", cfg.GRPCListen)
 	if err != nil {
 		_ = httpLis.Close()
