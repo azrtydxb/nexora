@@ -1,0 +1,46 @@
+package config_test
+
+import (
+	"testing"
+
+	"github.com/piwi3910/nexora/mgmt/internal/config"
+)
+
+func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+func TestLoadDefaults(t *testing.T) {
+	c, err := config.Load(env(map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/ca.crt", "NEXORA_CA_KEY_FILE": "/ca.key"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HTTPListen != ":8080" || c.GRPCListen != ":9443" || !c.SecureCookies || c.QueryLogBackend != "builtin" || c.QueryLogBuiltinCapacity != 200000 || c.OpenSearch.Index != "nexora-querylog-*" {
+		t.Fatalf("defaults wrong: %+v", c)
+	}
+	if c.OIDC.Enabled() {
+		t.Fatal("OIDC must be disabled without an issuer")
+	}
+}
+
+func TestLoadValidation(t *testing.T) {
+	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k"}
+	for name, mutate := range map[string]func(m map[string]string){
+		"missing db":        func(m map[string]string) { delete(m, "NEXORA_DATABASE_URL") },
+		"bad backend":       func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "loki" },
+		"opensearch no url": func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "opensearch" },
+		"bad cookies":       func(m map[string]string) { m["NEXORA_SECURE_COOKIES"] = "maybe" },
+		"oidc no client":    func(m map[string]string) { m["NEXORA_OIDC_ISSUER"] = "https://idp" },
+	} {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		mutate(m)
+		if _, err := config.Load(env(m)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	c, err := config.Load(env(map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k", "NEXORA_GRPC_SERVER_NAMES": "mgmt, 10.0.0.5"}))
+	if err != nil || len(c.GRPCServerNames) != 2 || c.GRPCServerNames[1] != "10.0.0.5" {
+		t.Fatalf("server names: %v %v", c.GRPCServerNames, err)
+	}
+}
