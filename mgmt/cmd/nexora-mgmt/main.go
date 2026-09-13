@@ -33,6 +33,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/blocklist"
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
+	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
@@ -287,7 +288,8 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	fetcher := blocklist.NewFetcher(st, build, &http.Client{})
 	go fetcher.Run(ctx)
 
-	zones := &zone.Service{Store: st, Build: build, Now: time.Now}
+	zones := &zone.Service{Store: st, Build: build, Signer: &dnssec.Store{Box: box}, Now: time.Now}
+	go func() { _ = (&dnssec.Maintainer{Store: st, Zones: zones, Tick: 5 * time.Second}).Run(ctx) }()
 	tsigKeys := &tsigkey.Service{Store: st, Build: build, Box: box}
 	refresher := &xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}
 	scheduler := &xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}

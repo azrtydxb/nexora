@@ -42,10 +42,13 @@ type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-const zoneColumns = `id, name, kind, revision, serial, default_ttl, soa_mname, soa_rname, soa_refresh, soa_retry,
-	soa_expire, soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids,
-	primaries, current_seq, image_seq, loaded, expired, last_refresh_at, last_success_at, next_refresh_at, expires_at,
-	last_error, last_trigger, created_at, updated_at`
+// zoneColumns are selected FROM zoneFrom; DNSSECEnabled comes from zone_dnssec (Task 12).
+const zoneColumns = `z.id, z.name, z.kind, z.revision, z.serial, z.default_ttl, z.soa_mname, z.soa_rname, z.soa_refresh,
+	z.soa_retry, z.soa_expire, z.soa_minimum, z.soa_ttl, z.transfer_allow_cidrs, z.transfer_tsig_key_id, z.notify_targets,
+	z.update_tsig_key_ids, z.primaries, z.current_seq, z.image_seq, z.loaded, z.expired, z.last_refresh_at, z.last_success_at,
+	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at`
+
+const zoneFrom = " FROM zones z LEFT JOIN zone_dnssec d ON d.zone_id = z.id"
 
 func scanZone(row pgx.Row) (*Zone, error) {
 	var z Zone
@@ -54,7 +57,7 @@ func scanZone(row pgx.Row) (*Zone, error) {
 	err := row.Scan(&z.ID, &z.Name, &z.Kind, &z.Revision, &serial, &ttl, &z.SOA.MName, &z.SOA.RName, &refresh, &retry,
 		&expire, &minimum, &soaTTL, &z.TransferAllowCIDRs, &z.TransferTSIGKeyID, &z.Notify, &z.UpdateTSIGKeyIDs,
 		&z.Primaries, &z.CurrentSeq, &z.ImageSeq, &z.Loaded, &z.Expired, &z.LastRefreshAt, &z.LastSuccessAt, &z.NextRefreshAt,
-		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.CreatedAt, &z.UpdatedAt)
+		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt)
 	if err != nil {
 		return nil, store.MapError(err)
 	}
@@ -64,9 +67,9 @@ func scanZone(row pgx.Row) (*Zone, error) {
 }
 
 func loadZone(ctx context.Context, q querier, id uuid.UUID, forUpdate bool) (*Zone, error) {
-	sql := "SELECT " + zoneColumns + " FROM zones WHERE id = $1"
+	sql := "SELECT " + zoneColumns + zoneFrom + " WHERE z.id = $1"
 	if forUpdate {
-		sql += " FOR UPDATE"
+		sql += " FOR UPDATE OF z"
 	}
 	z, err := scanZone(q.QueryRow(ctx, sql, id))
 	if errors.Is(err, store.ErrNotFound) {
@@ -82,7 +85,7 @@ func (s *Service) GetZone(ctx context.Context, id uuid.UUID) (*Zone, error) {
 
 // GetZoneByName returns the zone named name (absolute, any case).
 func (s *Service) GetZoneByName(ctx context.Context, name string) (*Zone, error) {
-	z, err := scanZone(s.Store.Pool.QueryRow(ctx, "SELECT "+zoneColumns+" FROM zones WHERE name = $1", dns.CanonicalName(name)))
+	z, err := scanZone(s.Store.Pool.QueryRow(ctx, "SELECT "+zoneColumns+zoneFrom+" WHERE z.name = $1", dns.CanonicalName(name)))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("zone %s: %w", name, store.ErrNotFound)
 	}
@@ -91,7 +94,7 @@ func (s *Service) GetZoneByName(ctx context.Context, name string) (*Zone, error)
 
 // ListZones returns every zone ordered by name.
 func (s *Service) ListZones(ctx context.Context) ([]Zone, error) {
-	rows, err := s.Store.Pool.Query(ctx, "SELECT "+zoneColumns+" FROM zones ORDER BY name")
+	rows, err := s.Store.Pool.Query(ctx, "SELECT "+zoneColumns+zoneFrom+" ORDER BY z.name")
 	if err != nil {
 		return nil, store.MapError(err)
 	}

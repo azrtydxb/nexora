@@ -328,6 +328,16 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   connected to it.
 - Blocklist fetches take `pg_try_advisory_lock(hashtext('filter_list:'||id))`
   so only one instance fetches each list.
+- M4 online DNSSEC signing (`internal/dnssec`): primary zones with signing
+  enabled are signed inside the zone rebuild transaction (KSK/ZSK, algorithm
+  13 default or 8, NSEC or NSEC3 with zero iterations and empty salt);
+  RRSIGs are valid 14 days, renewed once less than 7 days remain, and cached
+  in `zone_signatures` so an edit re-signs only the RRsets it touched. Private
+  keys stay in `internal/secrets` (unsealed only for the signing call, or used
+  inside the PKCS#11 token). Engines receive the signed data as NZF
+  images/deltas. The refresh loop takes
+  `pg_try_advisory_lock(hashtext('dnssec:'||zone_id))` so only one instance
+  signs each zone.
 - HTTP API: `/api/v1`, OpenAPI 3.1 at `mgmt/api/openapi.yaml`, JSON errors
   `{"code": "...", "message": "..."}`. Editable resources carry `revision`; a
   stale revision returns 409 `conflict`.

@@ -4597,6 +4597,10 @@ fn notify_from_other_source_or_for_unknown_zone_is_refused() {
   - `Server.OnNotify` returns `error` (logged at info). `NotifyIgnored` (`nexora_mgmt_notify_ignored_total`) is registered in `main.go`.
   - Refresher: with a primary TSIG key the SOA response must be signed and every transfer message must verify (`dns.Transfer` rejects unsigned messages); transfers are bounded to `zone.MaxImportRecords` RRs, 30 s per message and 10 min overall; every transferred RR must be class IN inside the zone; received SOA refresh/retry/expire are floored at 5 s. Scheduler runs at most 8 refreshes in parallel and re-checks due-ness under the advisory lock.
   - Extra tests: `TestRefreshWithTSIGRequiresSignedPrimary`, `TestSchedulerLoadsOnCreateAndRefreshesOnNotify`. The plan's refresh test read `p.queries` without the mutex (race detector); reads now take `p.mu`.
+- As built (engine; recorded after implementation):
+  - `Zone` gains `secondary: bool` (instead of a `kind` enum), `primaries: Vec<SocketAddr>` and `update_keys: Vec<Box<[u8]>>` (lowercase wire key names), set by the loader's `Policy`; `validate` also checks `update_tsig_keys` names.
+  - `handle_notify` verifies a present TSIG first (failure → `tsig::error_response`) and signs every later response with it. A verified TSIG does not replace the source check: `AuthZone` does not say which key a primary uses, so the source IP must equal a primary's IP either way (`debt:` comment in `notify_in.rs`).
+  - `dispatch::unparsed` routes on the header opcode before `Question::parse`. The forwarded/dropped count is a `CountingSink` wrapping `AuthState`; non-NOERROR replies count `result="refused"`. `name::to_ascii` renders the zone name for `NotifyReceived`.
 - [ ] Commit: `git add engine mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts && git commit -m "feat(m4): secondary zones pulled by the management plane with NOTIFY forwarded by engines"`.
 
 ## Task 11: RFC 2136 dynamic updates authenticated with TSIG
@@ -4965,6 +4969,10 @@ func mustRR(t *testing.T, s string) dns.RR {
   - `Applier.Apply` also rejects messages over 65535 bytes (FORMERR), requires the TSIG owner to equal `req.TsigKey` and the key's algorithm to match (NOTAUTH), and re-checks the key against the locked zone row inside the transaction. Invalid SOA timers in an update are REFUSED; an update that would break `zone.CheckSet` (DS/DNAME rules) is REFUSED and rolled back. Inserted owners are stored lowercase.
   - Per engine the control server bounds updates: 16 applying at once (further ones REFUSED "too many concurrent updates"), a token bucket of 50/s with burst 100 (REFUSED "update rate limit exceeded"), request ids ≤ 64 bytes; without `OnUpdate` the reply is NOTIMP. Test `TestNotifyAndUpdateAreForwardedWithoutBlockingTheStream` (`mgmt/internal/control/forward_test.go`, fixture hook `setupServers`).
   - Extra test `TestTSIGAndUpdatePolicy` (unsigned REFUSED, key outside the zone policy REFUSED, wrong secret NOTAUTH, key differing from the engine's NOTAUTH, allowed key applied). The plan's case struct used `rcode uint32` (does not compile as a map index); it is `int`.
+- As built (engine; recorded after implementation):
+  - `handle_update` returns `(Vec<u8>, usize)` (the response and its `AuthCounters::updates` slot, counted in `run_slow`); `handle_update_with_set` takes `impl Deref<Target = AuthSet>` and returns only the response. Order: parse (FORMERR) → TSIG verify (failure → `error_response`) → zone hosted (NOTAUTH) → unsigned (REFUSED) → secondary or key not allowed (REFUSED); every response after a verified TSIG is signed. Result rcodes above 15 become SERVFAIL.
+  - `nexora_auth_updates_total{result}` labels: `applied`, `rejected` (mgmt non-NOERROR), `refused` (engine refused before forwarding), `failed` (no result).
+  - `AuthState` caps pending updates at 1024 (further ones SERVFAIL without forwarding); `detach` clears pending waiters so they fail at once. Extra test `auth_state_forwards_on_the_attached_stream_and_completes_by_request_id`.
 - [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestSecondaryAndDynamicUpdate -count=1` — expect PASS.
 - [ ] Commit: `git add engine mgmt e2e && git commit -m "feat(m4): TSIG-authenticated RFC 2136 updates applied transactionally by the management plane"`.
 
@@ -4972,16 +4980,19 @@ func mustRR(t *testing.T, s string) dns.RR {
 
 Files:
 
-- `mgmt/migrations/00401_dnssec.sql` — `zone_dnssec`, `dnssec_keys`, `zone_signatures`
+- `mgmt/migrations/00402_dnssec.sql` — `zone_dnssec`, `dnssec_keys`, `zone_signatures` (00401 was taken by Task 10's `zone_refresh_requests`)
 - `mgmt/internal/dnssec/sign.go` — pure signer: DNSKEY/CDS/CDNSKEY, NSEC or NSEC3 chain, RRSIG reuse and refresh
 - `mgmt/internal/dnssec/canonical.go` — RRset digest, cut/occlusion analysis
-- `mgmt/internal/dnssec/sign_test.go` — validation of output, reuse, goldens for the engine
+- `mgmt/internal/dnssec/sign_test.go` — validation of output, reuse
+- `mgmt/internal/dnssec/validate_test.go` — `TestSignedZonesValidateWithBIND`: `dnssec-verify` over the signed zone and `delv` (KSK trust anchor) against `named` serving it, ECDSA NSEC/NSEC3 and RSA NSEC3
 - `mgmt/internal/dnssec/store.go` — `zone.Signer` implementation backed by Postgres and `secrets.Box` (new package `dnssec`, distinct from M3's `dnssecconf` validation helpers)
 - `mgmt/internal/dnssec/enable.go` — `Enable(ctx, tx, …)`: settings row, first KSK + ZSK
+- `mgmt/internal/dnssec/maintainer.go` — signature refresh loop under `pg_try_advisory_lock(hashtext('dnssec:'||zone_id))` (Task 14 adds rollover transitions)
 - `mgmt/internal/dnssec/store_test.go`
 - `mgmt/internal/zone/service.go`, `mgmt/internal/zone/model.go` — load `dnssec_enabled` from `zone_dnssec` (modify)
-- `mgmt/cmd/nexora-mgmt/main.go` — `Signer: &dnssec.Store{Box: box}` on the shared `zone.Service` (modify)
-- `testdata/nzf/signed-nsec-full.nzf`, `testdata/nzf/signed-nsec3-full.nzf` — goldens for Task 13
+- `mgmt/cmd/nexora-mgmt/main.go` — `Signer: &dnssec.Store{Box: box}` on the shared `zone.Service`, start the `Maintainer` (modify)
+
+As built: the signed goldens `testdata/nzf/signed-nsec-full.nzf` / `signed-nsec3-full.nzf` were committed with Task 13 from `testdata/nzf/gen-signed` (fixed Ed25519 keys plus `signed-anchor.key`, which the engine's delv test trusts); the signer does not overwrite them (random keys would break that test), so `writeGolden` and `-update` are dropped and the signer's output is validated with BIND's tools instead. `SignRRset` was dropped: `ResignSOA` uses the same cache-aware signing path as `Sign`.
 
 Interfaces:
 
@@ -4994,13 +5005,15 @@ type CachedSig struct{ Digest [32]byte; RRSIG *dns.RRSIG }
 type Input struct{ Origin string; Records []dns.RR; Keys []Key; NSEC3 bool; Cache map[SigKey]CachedSig; Now time.Time }
 type Output struct{ Served []dns.RR; Cache map[SigKey]CachedSig; NextRefresh time.Time; Reused, Created int }
 func Sign(in Input) (*Output, error)
-func SignRRset(origin string, rrset []dns.RR, keys []Key, now time.Time) ([]dns.RR, error)
 type Settings struct{ Algorithm uint8; NSECMode string; KeyBackend secrets.Backend; PropagationDelay, ParentDSTTL time.Duration; ZSKLifetimeDays int }
 type Store struct{ Box *secrets.Box }
 func (s *Store) Sign(ctx context.Context, tx pgx.Tx, z *zone.Zone, rrs []dns.RR, now time.Time) ([]dns.RR, error)
 func (s *Store) ResignSOA(ctx context.Context, tx pgx.Tx, z *zone.Zone, served []dns.RR, now time.Time) ([]dns.RR, error)
 func Enable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID, st Settings) error
 func Disable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID) error
+var ErrNotPrimary error
+type Maintainer struct{ Store *store.Store; Zones *zone.Service; Tick time.Duration }
+func (m *Maintainer) Run(ctx context.Context) error
 ```
 
 - [ ] Write `mgmt/migrations/00401_dnssec.sql`:
@@ -5018,6 +5031,8 @@ CREATE TABLE zone_dnssec (
     zsk_lifetime_days         integer NOT NULL DEFAULT 90 CHECK (zsk_lifetime_days BETWEEN 0 AND 3650),
     next_maintenance_at       timestamptz
 );
+
+CREATE INDEX zone_dnssec_due ON zone_dnssec (next_maintenance_at) WHERE enabled;
 
 CREATE TABLE dnssec_keys (
     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -5065,18 +5080,13 @@ package dnssec
 
 import (
 	"crypto"
-	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/piwi3910/nexora/mgmt/internal/nzf"
 )
-
-var update = flag.Bool("update", false, "rewrite signed goldens")
 
 var t0 = time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
 
@@ -5218,7 +5228,6 @@ func TestSignNSECChainAndSignatures(t *testing.T) {
 			}
 		}
 	}
-	writeGolden(t, "signed-nsec-full.nzf", out.Served)
 }
 
 func TestSignNSEC3IncludesEmptyNonTerminalsWithZeroIterations(t *testing.T) {
@@ -5252,7 +5261,6 @@ func TestSignNSEC3IncludesEmptyNonTerminalsWithZeroIterations(t *testing.T) {
 	if hashes[dns.HashName("ns.sub.example.test.", dns.SHA1, 0, "")] {
 		t.Error("occluded glue has an NSEC3")
 	}
-	writeGolden(t, "signed-nsec3-full.nzf", out.Served)
 }
 
 func TestSignatureReuseAndRefresh(t *testing.T) {
@@ -5286,28 +5294,6 @@ func mustRR(t *testing.T, s string) dns.RR {
 	}
 	return rr
 }
-
-func writeGolden(t *testing.T, name string, served []dns.RR) {
-	t.Helper()
-	if !*update {
-		return
-	}
-	var recs []nzf.Record
-	for _, rr := range served {
-		r, err := nzf.FromRR(rr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		recs = append(recs, r)
-	}
-	raw, err := nzf.EncodeFull(nzf.Image{Origin: []byte("\x07example\x04test\x00"), Serial: 2026091301, Records: recs})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile("../../../testdata/nzf/"+name, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
 ```
 
 The 11 NSEC owners are: apex, alias, dn, insecure, mail, ns1, ns2, sub, www, `*.wild`, `a.b.c` (no empty non-terminals, no occluded glue).
@@ -5321,7 +5307,7 @@ The 11 NSEC owners are: apex, alias, dn, insecure, mail, ns1, ns2, sub, www, `*.
   - NSEC mode: sort authoritative owners by `nzf.CanonicalKey`; each gets `NSEC{NextDomain: next owner (wrap to apex), TypeBitMap: sorted types present + RRSIG + NSEC}`; at a delegation the bitmap is NS, DS (when present), RRSIG, NSEC — RRSIG is listed because the NSEC at the delegation is itself signed (RFC 4035 §2.3).
   - NSEC3 mode: set = authoritative owners ∪ empty non-terminals between them and the apex (not occluded); owner label = `strings.ToLower(dns.HashName(name, dns.SHA1, 0, ""))`; sorted by hash; `NSEC3{Hash: 1, Flags: 0, Iterations: 0, SaltLength: 0, Salt: "", HashLength: 20, NextDomain: next hash (uppercase base32hex as miekg expects), TypeBitMap: types (+RRSIG when the owner has a signed RRset)}`; ENTs have an empty bitmap; apex `NSEC3PARAM{Hash: 1, Flags: 0, Iterations: 0, Salt: ""}` with negative TTL.
   - signing set: every RRset at authoritative owners except NS at delegations; at delegations DS and NSEC are signed; occluded names are never signed; DNSKEY/CDS/CDNSKEY with `Signs` KSKs, all others with `Signs` ZSKs.
-  - reuse: digest = SHA-256 over the RRset's records packed uncompressed with lowercase owner, sorted bytewise; reuse `Cache[{owner, type, tag}]` when digests match and `Expiration - now > RefreshBefore`; otherwise sign:
+  - reuse: digest = SHA-256 over the RRset's records packed uncompressed with lowercase owner, sorted bytewise; reuse `Cache[{owner, type, tag}]` when digests match, the algorithm matches, inception is not in the future and `Expiration - now > RefreshBefore + 1h` (the extra hour is the jitter range, so one refresh pass renews a whole batch instead of publishing a version per jittered expiration); otherwise sign (the RRSIG header TTL is the RRset TTL):
 
 ```go
 func newSig(origin string, set []dns.RR, k Key, now time.Time) (*dns.RRSIG, error) {
@@ -5344,8 +5330,7 @@ func newSig(origin string, set []dns.RR, k Key, now time.Time) (*dns.RRSIG, erro
 ```
 
 - `NextRefresh` = earliest `Expiration - RefreshBefore` over all signatures in the output; `Served` = input records + generated records + RRSIGs.
-- `SignRRset` signs one RRset (used by `ResignSOA`).
-- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ -count=1 -update` then without `-update` — expect PASS and two signed goldens.
+- [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ -count=1` — expect PASS, including `TestSignedZonesValidateWithBIND`.
 - [ ] Write the failing `mgmt/internal/dnssec/store_test.go`:
 
 ```go
@@ -5468,7 +5453,7 @@ func findKey(keys []dns.RR, tag uint16) *dns.DNSKEY {
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ -run TestEnableSigns -count=1` — expect FAIL with "undefined: dnssec.Store".
 - [ ] Implement `enable.go`: refuse with `secrets.ErrUnconfigured` when the box is unconfigured, `secrets.ErrBackendUnavailable` when the requested backend is not; upsert `zone_dnssec` (`enabled=true`); when the zone has no non-removed keys, `GenerateSigningKey` twice (KSK flags 257, ZSK 256), compute key tags from the DNSKEY, insert both `state='active', activated_at=now()`, KSK `ds_state='pending'`. `Disable` sets `enabled=false`, marks keys `removed` (destroying HSM objects, nulling envelopes) and deletes `zone_signatures`.
-- [ ] Implement `store.go` `Store.Sign`: load settings and keys (`state IN ('published','active','retired')`), build `dnssec.Key`s via `Box.Signer` (releasing all at the end of the call), `Signs` = `state='active'`, `InCDS` = `role='ksk' AND state='active' AND ds_state='pending'`; load cache from `zone_signatures`; call `Sign`; replace changed rows in `zone_signatures` (delete rows whose `(owner,type,tag)` is absent from the output); `UPDATE zone_dnssec SET next_maintenance_at = LEAST(next_refresh, rollover next)` (rollover time filled by Task 14). `ResignSOA` re-signs the SOA RRset with active ZSKs via `SignRRset` and updates its cache row. `zone.Service` loads `DNSSECEnabled` with `LEFT JOIN zone_dnssec d ON d.zone_id = z.id` (`COALESCE(d.enabled, false)`).
+- [ ] Implement `store.go` `Store.Sign`: load settings and keys (`state IN ('published','active','retired')`), build `dnssec.Key`s via `Box.Signer` (releasing all at the end of the call), `Signs` = `state='active'`, `InCDS` = `role='ksk' AND state='active' AND ds_state='pending'`; load cache from `zone_signatures`; call `Sign`; replace changed rows in `zone_signatures` (delete rows whose `(owner,type,tag)` is absent from the output); `UPDATE zone_dnssec SET next_maintenance_at = LEAST(next_refresh, rollover next)` (rollover time filled by Task 14). `ResignSOA` re-signs the SOA RRset with active ZSKs through the same cache-aware path (reusing the cached signature when the SOA is unchanged), updates its cache rows and lowers `next_maintenance_at` when needed. Only active keys are unsealed (`Box.Signer`); PKCS#11 keys sign inside the token. `Enable` refuses secondary zones (`ErrNotPrimary`) and avoids key tags the zone already uses. `Maintainer` (5 s): due zones (`enabled AND next_maintenance_at <= now()`), per zone `pg_try_advisory_lock(hashtext('dnssec:'||zone_id))`, re-check due-ness, `zone.Service.Mutate` (actor `system:dnssec`, action `dnssecMaintenance`) whose `Rebuild` refreshes the due signatures. Extra tests: `TestDynamicUpdateToSignedZoneIsResignedIncrementally`, `TestPKCS11KeysSignInsideTheToken` (SoftHSM, alg 13 and 8, non-extractable keys, `Disable` destroys them), `TestEnableRefusesWithoutKeyStorageOrOnSecondaries`, `TestMaintainerRefreshesSignaturesUnderAdvisoryLock`. `zone.Service` loads `DNSSECEnabled` with `LEFT JOIN zone_dnssec d ON d.zone_id = z.id` (`COALESCE(d.enabled, false)`).
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/dnssec/ ./mgmt/internal/zone/ ./mgmt/internal/dynupdate/ -count=1` — expect PASS.
 - [ ] Commit: `git add mgmt testdata/nzf && git commit -m "feat(mgmt): online DNSSEC signing with NSEC/NSEC3 and signature reuse"`.
 
@@ -5722,7 +5707,7 @@ The `hash` input name is the lowercase wire form (callers lowercase first). Hash
 Files:
 
 - `mgmt/internal/dnssec/rollover.go`, `mgmt/internal/dnssec/rollover_test.go` — pure key-state machine
-- `mgmt/internal/dnssec/maintainer.go` — 5 s loop: due zones, rollover transitions, signature refresh
+- `mgmt/internal/dnssec/maintainer.go` — 5 s loop: due zones, rollover transitions, signature refresh (exists since Task 12 with the signature refresh under the advisory lock and field `Zones *zone.Service`; Task 14 adds the rollover transitions and may switch it to `Service`)
 - `mgmt/internal/dnssec/service.go` — `Get`, `Update`, `StartRollover`, `ConfirmDS` for the API
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/dnssec_zone.go`, `mgmt/internal/api/server.go` (`Deps.ZoneDNSSEC`), `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `getZoneDnssec`, `updateZoneDnssec`, `startZoneKeyRollover`, `confirmZoneKskDs` (modify/create; `dnssec.go` keeps M3's resolver DNSSEC handlers)
 - `mgmt/cmd/nexora-mgmt/main.go` — start the maintainer (modify)
