@@ -2,6 +2,7 @@ pub mod acl;
 pub mod authoritative;
 pub mod bootstrap;
 pub mod cache;
+pub mod cert_renewal;
 pub mod clock;
 pub mod control;
 pub mod edns;

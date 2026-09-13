@@ -2,11 +2,14 @@
 //! `Connect` loop (snapshot apply/ack/reject, stats), and blob fetching.
 
 use crate::bootstrap::Bootstrap;
+use crate::cert_renewal;
+use crate::proto::certificate_request::Reason;
 use crate::proto::engine_control_client::EngineControlClient;
 use crate::proto::engine_message::Msg;
 use crate::proto::server_message::Msg as ServerMsg;
 use crate::proto::{
-    Applied, ConfigSnapshot, EngineMessage, EnrollRequest, GetBlobRequest, Hello, Rejected,
+    Applied, CertificateRequest, ConfigSnapshot, EngineMessage, EnrollRequest, GetBlobRequest,
+    Hello, Rejected,
 };
 use crate::server::Shared;
 use crate::server::tls::CertStore;
@@ -23,7 +26,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 
@@ -31,6 +34,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(10);
 const ENGINE_VERSION: &str = crate::VERSION;
+/// A certificate request younger than this is not repeated.
+const PENDING_CSR_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlError {
@@ -46,6 +51,8 @@ pub enum ControlError {
     Transport(#[from] tonic::transport::Error),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("certificate renewed; reconnecting with the new identity")]
+    Renewed,
 }
 
 pub struct JoinToken {
@@ -97,7 +104,10 @@ const ID_FILES: [&str; 4] = ["cert.pem", "key.pem", "ca.pem", "engine_id"];
 /// The stored identity, or `None` before enrollment. `engine_id` is written last, so a
 /// partially written identity reads as absent.
 pub fn load_identity(state_dir: &Path) -> std::io::Result<Option<Identity>> {
-    let dir = state_dir.join("identity");
+    load_identity_dir(&state_dir.join("identity"))
+}
+
+fn load_identity_dir(dir: &Path) -> std::io::Result<Option<Identity>> {
     let read = |name: &str| std::fs::read_to_string(dir.join(name));
     let engine_id = match read("engine_id") {
         Ok(id) => id.trim().to_owned(),
@@ -138,8 +148,26 @@ pub fn save_identity(state_dir: &Path, id: &Identity) -> std::io::Result<()> {
 
 /// 500 ms × 2^attempt, capped at 30 s, with ±20 % jitter.
 pub fn backoff(attempt: u32) -> Duration {
+    reconnect_delay(None, attempt, rand::rng().random_range(0.0..=1.0))
+}
+
+/// True for the management plane's refusal of this engine's certificate.
+fn refused(s: &tonic::Status) -> bool {
+    s.code() == tonic::Code::PermissionDenied
+        && matches!(
+            s.message(),
+            "certificate revoked" | "unknown or deleted engine"
+        )
+}
+
+/// The wait before the next connection attempt: 300 s ±10 % after a refused certificate,
+/// otherwise [`backoff`] with `jitter` (0.0..=1.0) chosen by the caller.
+pub fn reconnect_delay(status: Option<&tonic::Status>, attempt: u32, jitter: f64) -> Duration {
+    if status.is_some_and(refused) {
+        return Duration::from_secs_f64(300.0 * (0.9 + 0.2 * jitter));
+    }
     let base = (500u64 << attempt.min(16)).min(30_000) as f64;
-    Duration::from_millis((base * rand::rng().random_range(0.8..=1.2)) as u64)
+    Duration::from_millis((base * (0.8 + 0.4 * jitter)) as u64)
 }
 
 /// Host (without IPv6 brackets) and port of an `https://host:port` URL.
@@ -406,20 +434,87 @@ pub async fn fetch_blobs(
     Ok(())
 }
 
-/// Enrolls when needed, then keeps a control stream to one of `management_urls` forever.
+/// Enrolls when needed, then keeps a control stream to one of `management_urls` forever. Serving
+/// from the last applied snapshot continues whatever happens to the stream.
 pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore>) {
-    let identity = obtain_identity(&boot).await;
+    let mut identity = obtain_identity(&boot).await;
     shared.engine_id.store(Arc::new(identity.engine_id.clone()));
+    let staged_dir = cert_renewal::staged_dir(&boot.state_dir);
     let mut attempt = 0;
     for url in boot.management_urls.iter().cycle() {
-        let err = session(&shared, &boot, &cert_store, &identity, url, &mut attempt).await;
+        match load_identity(&boot.state_dir) {
+            Ok(Some(id)) => identity = id,
+            Ok(None) => {}
+            Err(e) => eprintln!("nexora-engine: identity unreadable, using the loaded one: {e}"),
+        }
+        // A renewed identity is tried first; the current one stays on disk until it works.
+        let staged = match load_identity_dir(&staged_dir) {
+            Ok(staged) => staged,
+            Err(e) => {
+                eprintln!("nexora-engine: renewed identity unreadable: {e}");
+                None
+            }
+        };
+        let id = staged.as_ref().unwrap_or(&identity);
+        let err = session(
+            &shared,
+            &boot,
+            &cert_store,
+            id,
+            staged.is_some(),
+            url,
+            &mut attempt,
+        )
+        .await;
         shared
             .metrics
             .control_connected
             .store(false, Ordering::Relaxed);
         shared.mgmt_channel.store(None);
-        eprintln!("nexora-engine: control stream to {url}: {err}");
-        tokio::time::sleep(backoff(attempt)).await;
+        let status = match &err {
+            ControlError::Grpc(s) => Some(s),
+            _ => None,
+        };
+        if matches!(err, ControlError::Renewed) {
+            eprintln!("nexora-engine: control stream to {url}: {err}");
+            attempt = 0;
+            continue;
+        }
+        // debt: a renewed certificate failing for any reason other than PermissionDenied or
+        // Unauthenticated is retried with backoff instead of discarded; it was verified against
+        // the pinned CA before staging, so revisit only if such failures show up in practice.
+        let staged_refused = staged.is_some()
+            && staged_dir.exists()
+            && status.is_some_and(|s| {
+                matches!(
+                    s.code(),
+                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+                )
+            });
+        if staged_refused {
+            eprintln!(
+                "nexora-engine: renewed certificate refused by {url}: {err}; keeping the current identity"
+            );
+            match cert_renewal::discard_staged(&boot.state_dir) {
+                Ok(()) => continue,
+                Err(e) => eprintln!("nexora-engine: discard renewed identity: {e}"),
+            }
+        }
+        let revoked = status.is_some_and(refused);
+        shared
+            .metrics
+            .control_revoked
+            .store(revoked, Ordering::Relaxed);
+        let delay = reconnect_delay(status, attempt, rand::rng().random_range(0.0..=1.0));
+        if revoked {
+            eprintln!(
+                "nexora-engine: control stream to {url}: {err}; serving the last applied snapshot, retrying in {}s (recovery needs state_dir/identity removed and a new join token)",
+                delay.as_secs()
+            );
+        } else {
+            eprintln!("nexora-engine: control stream to {url}: {err}");
+        }
+        tokio::time::sleep(delay).await;
         attempt = attempt.saturating_add(1);
     }
 }
@@ -427,6 +522,9 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
 async fn obtain_identity(boot: &Bootstrap) -> Identity {
     let mut attempt = 0;
     loop {
+        if let Err(e) = cert_renewal::recover_identity(&boot.state_dir) {
+            eprintln!("nexora-engine: recover identity: {e}");
+        }
         match load_identity(&boot.state_dir) {
             Ok(Some(id)) => return id,
             Ok(None) => {}
@@ -466,12 +564,51 @@ fn stream_closed() -> ControlError {
     ControlError::Grpc(tonic::Status::unavailable("control stream closed"))
 }
 
-/// One control stream; returns why it ended.
+type PendingKey = Arc<parking_lot::Mutex<Option<(rcgen::KeyPair, Instant)>>>;
+
+/// A certificate request for a fresh key when `reason` is rotation or renewal is due, unless a
+/// request younger than [`PENDING_CSR_TTL`] is pending. The key stays in memory until issued.
+fn certificate_request(
+    pending: &PendingKey,
+    id: &Identity,
+    reason: Reason,
+) -> Option<EngineMessage> {
+    let due = reason == Reason::Rotate
+        || cert_renewal::cert_validity(&id.cert_pem)
+            .is_some_and(|(nb, na)| cert_renewal::renewal_due(nb, na, SystemTime::now()));
+    let mut pending = pending.lock();
+    if !due
+        || pending
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed() < PENDING_CSR_TTL)
+    {
+        return None;
+    }
+    match cert_renewal::new_csr(&id.engine_id) {
+        Ok((csr_der, key)) => {
+            *pending = Some((key, Instant::now()));
+            Some(EngineMessage {
+                msg: Some(Msg::CertRequest(CertificateRequest {
+                    csr_der,
+                    reason: reason as i32,
+                })),
+            })
+        }
+        Err(e) => {
+            eprintln!("nexora-engine: certificate request: {e}");
+            None
+        }
+    }
+}
+
+/// One control stream; returns why it ended. `staged` marks a renewed identity, promoted once the
+/// management plane accepts the stream.
 async fn session(
     shared: &Arc<Shared>,
     boot: &Bootstrap,
     cert_store: &CertStore,
     id: &Identity,
+    staged: bool,
     url: &str,
     attempt: &mut u32,
 ) -> ControlError {
@@ -499,6 +636,22 @@ async fn session(
         Err(s) => return s.into(),
     };
     eprintln!("nexora-engine: control connected to {url}");
+    if staged {
+        match cert_renewal::promote_identity(&boot.state_dir) {
+            Ok(()) => {
+                shared.metrics.cert_renewals.fetch_add(1, Ordering::Relaxed);
+                eprintln!(
+                    "nexora-engine: certificate renewed (serial {})",
+                    cert_renewal::cert_serial(&id.cert_pem)
+                );
+            }
+            Err(e) => eprintln!("nexora-engine: promote renewed identity: {e}"),
+        }
+    }
+    shared
+        .metrics
+        .control_revoked
+        .store(false, Ordering::Relaxed);
     shared.mgmt_channel.store(Some(Arc::new(ch)));
     // NOTIFY and UPDATE forwarding from the workers use this stream while it is up.
     shared.auth.attach(tx.clone());
@@ -508,8 +661,15 @@ async fn session(
         .store(true, Ordering::Relaxed);
     *attempt = 0;
 
+    let pending: PendingKey = Arc::default();
+    if let Some(req) = certificate_request(&pending, id, Reason::Renewal)
+        && tx.send(req).await.is_err()
+    {
+        shared.auth.detach();
+        return stream_closed();
+    }
     let ticker = tokio::spawn({
-        let (tx, shared) = (tx.clone(), shared.clone());
+        let (tx, shared, pending, id) = (tx.clone(), shared.clone(), pending.clone(), id.clone());
         async move {
             let mut every = tokio::time::interval(STATS_INTERVAL);
             every.tick().await;
@@ -522,6 +682,11 @@ async fn session(
                     msg: Some(Msg::Stats(stats)),
                 };
                 if tx.send(msg).await.is_err() {
+                    return;
+                }
+                if let Some(req) = certificate_request(&pending, &id, Reason::Renewal)
+                    && tx.send(req).await.is_err()
+                {
                     return;
                 }
             }
@@ -564,7 +729,45 @@ async fn session(
             // Hosted-zone TSIG keys: never logged, never persisted.
             Some(ServerMsg::KeyMaterial(km)) => shared.auth.keyring.apply(km),
             Some(ServerMsg::UpdateResult(r)) => shared.auth.complete_update(r),
-            Some(ServerMsg::CertIssued(_)) | Some(ServerMsg::RenewCertificate(_)) => {}
+            Some(ServerMsg::RenewCertificate(_)) => {
+                if let Some(req) = certificate_request(&pending, id, Reason::Rotate)
+                    && tx.send(req).await.is_err()
+                {
+                    break stream_closed();
+                }
+            }
+            Some(ServerMsg::CertIssued(issued)) => {
+                let Some((key, _)) = pending.lock().take() else {
+                    eprintln!(
+                        "nexora-engine: rejected issued certificate: no certificate request pending"
+                    );
+                    continue;
+                };
+                let verified = cert_renewal::verify_issued(
+                    &id.engine_id,
+                    &id.ca_pem,
+                    &key,
+                    &issued,
+                    SystemTime::now(),
+                );
+                match verified {
+                    Ok(cert_pem) => {
+                        // The private key reaches disk only now, 0600, staged beside the current identity.
+                        let key_pem = zeroize::Zeroizing::new(key.serialize_pem());
+                        match cert_renewal::stage_identity(
+                            &boot.state_dir,
+                            cert_pem.as_bytes(),
+                            key_pem.as_bytes(),
+                        ) {
+                            Ok(()) => break ControlError::Renewed,
+                            Err(e) => eprintln!("nexora-engine: store renewed identity: {e}"),
+                        }
+                    }
+                    Err(reason) => {
+                        eprintln!("nexora-engine: rejected issued certificate: {reason}")
+                    }
+                }
+            }
             None => {}
         }
     };
@@ -632,4 +835,22 @@ async fn apply_snapshot(
         }
     };
     EngineMessage { msg: Some(msg) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revoked_or_unknown_engine_backs_off_five_minutes() {
+        let revoked = tonic::Status::permission_denied("certificate revoked");
+        let unknown = tonic::Status::permission_denied("unknown or deleted engine");
+        for s in [&revoked, &unknown] {
+            assert_eq!(reconnect_delay(Some(s), 0, 0.0), Duration::from_secs(270));
+            assert_eq!(reconnect_delay(Some(s), 7, 1.0), Duration::from_secs(330));
+        }
+        let flaky = tonic::Status::unavailable("connection refused");
+        assert!(reconnect_delay(Some(&flaky), 0, 0.5) <= Duration::from_millis(600));
+        assert!(reconnect_delay(None, 20, 1.0) <= Duration::from_secs(36));
+    }
 }

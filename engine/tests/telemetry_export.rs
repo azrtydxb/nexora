@@ -271,6 +271,8 @@ fn metrics_endpoint_exposes_every_architecture_name() {
         "nexora_export_dropped_total{signal=\"logs\"}",
         "nexora_config_version 1",
         "nexora_control_connected",
+        "nexora_control_revoked 0",
+        "nexora_control_cert_renewals_total 0",
     ] {
         assert!(body.contains(name), "missing {name}");
     }

@@ -70,15 +70,34 @@ fn default_metrics_listen() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], 9153))
 }
 
+fn valid_node_name(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+/// Applies environment overrides read through `get`: `NEXORA_ENGINE_NODE_NAME` replaces
+/// `node_name` (same validation).
+pub fn apply_env_overrides(
+    b: &mut Bootstrap,
+    get: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<()> {
+    if let Some(name) = get("NEXORA_ENGINE_NODE_NAME") {
+        if !valid_node_name(&name) {
+            bail!("NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{{1,63}}");
+        }
+        b.node_name = name;
+    }
+    Ok(())
+}
+
 pub fn load(path: &Path) -> anyhow::Result<Bootstrap> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let b: Bootstrap =
+    let mut b: Bootstrap =
         toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    let name_ok = (1..=63).contains(&b.node_name.len())
-        && b.node_name
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
-    if !name_ok {
+    apply_env_overrides(&mut b, |k| std::env::var(k).ok())?;
+    if !valid_node_name(&b.node_name) {
         bail!("node_name {:?} must match [a-z0-9-]{{1,63}}", b.node_name);
     }
     if b.state_dir.as_os_str().is_empty() {
@@ -146,5 +165,32 @@ mod tests {
         .unwrap();
         let b = load(&path).unwrap();
         assert_eq!(b.proxy_protocol_trusted_cidrs, ["10.0.0.0/8"]);
+    }
+
+    #[test]
+    fn node_name_env_override_is_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("engine.toml");
+        std::fs::write(
+            &path,
+            "node_name = \"engine-1\"\nstate_dir = \"/tmp/x\"\nstandalone_snapshot = \"/tmp/s\"\n",
+        )
+        .unwrap();
+        let mut b = load(&path).unwrap();
+        apply_env_overrides(&mut b, |k| {
+            (k == "NEXORA_ENGINE_NODE_NAME").then(|| "edge-b-worker-24".to_string())
+        })
+        .unwrap();
+        assert_eq!(b.node_name, "edge-b-worker-24");
+        let err = apply_env_overrides(&mut b, |k| {
+            (k == "NEXORA_ENGINE_NODE_NAME").then(|| "Bad_Name".to_string())
+        })
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("NEXORA_ENGINE_NODE_NAME must match [a-z0-9-]{1,63}"),
+            "{err:#}"
+        );
+        apply_env_overrides(&mut b, |_| None).unwrap();
+        assert_eq!(b.node_name, "edge-b-worker-24");
     }
 }

@@ -356,6 +356,9 @@ pub struct Metrics {
     pub export_dropped: [Counter; 3],
     pub config_version: AtomicU64,
     pub control_connected: AtomicBool,
+    /// True while the management plane refuses this engine's certificate.
+    pub control_revoked: AtomicBool,
+    pub cert_renewals: AtomicU64,
     pub auth: AuthCounters,
 }
 
@@ -366,6 +369,8 @@ impl Metrics {
             export_dropped: array::from_fn(|_| counter()),
             config_version: AtomicU64::new(0),
             control_connected: AtomicBool::new(false),
+            control_revoked: AtomicBool::new(false),
+            cert_renewals: AtomicU64::new(0),
             auth: AuthCounters::default(),
         }
     }
@@ -580,6 +585,16 @@ impl Metrics {
             "nexora_control_connected",
             "1 while the management control stream is up",
             ConstGauge::new(i64::from(self.control_connected.load(Ordering::Relaxed))),
+        );
+        reg.register(
+            "nexora_control_revoked",
+            "1 while the management plane refuses this engine's certificate",
+            ConstGauge::new(i64::from(self.control_revoked.load(Ordering::Relaxed))),
+        );
+        reg.register(
+            "nexora_control_cert_renewals",
+            "Engine certificates renewed over the control stream",
+            ConstCounter::new(self.cert_renewals.load(Ordering::Relaxed)),
         );
 
         ENCRYPTED.register(&mut reg);

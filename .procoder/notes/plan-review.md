@@ -50,3 +50,4 @@
 
 - Accepted with documented limitation: kw `edge-b` engine group LB 192.168.10.137 uses externalTrafficPolicy Cluster (kube-vip may place the VIP on a node without an edge-b engine), so edge-b sees node IPs; per-client policy is verified on the `default` group (.136, Local). README and operations docs must state this.
 - The gate's "credential-looking string" in `mgmt/internal/api/gen.go` is oapi-codegen's embedded base64 swagger spec, not a secret.
+- M5 Task 14: delete kubectl-created nexora-mgmt/nexora-engine Deployment/DaemonSet/Services before helm install (selectors immutable, Helm won't adopt). Compose uses 'ca init --if-missing'; chart sets NEXORA_ENGINE_CERT_TTL and NEXORA_ROLLOUT_TICK — mgmt tasks must implement these.
