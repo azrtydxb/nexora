@@ -11,12 +11,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 )
+
+var fixtureReady = regexp.MustCompile(`fixture ready`)
 
 // OIDCUser is a user the OIDC fixture can sign in.
 type OIDCUser struct {
@@ -53,10 +56,11 @@ func (e *Env) StartOIDCFixture(users ...OIDCUser) *OIDCFixture {
 	if err := os.WriteFile(secretFile, []byte(hex.EncodeToString(secret)), 0o600); err != nil {
 		e.T.Fatal(err)
 	}
-	fx := &OIDCFixture{ClientID: "nexora", ClientSecretFile: secretFile}
-	fx.Proc = e.Start("nexora-fixture", []string{"oidc", "--listen", loopbackPort0, "--client-id", fx.ClientID,
+	listen := fmt.Sprintf("127.0.0.1:%d", e.FreePort())
+	fx := &OIDCFixture{Issuer: "http://" + listen, ClientID: "nexora", ClientSecretFile: secretFile}
+	fx.Proc = e.Start("nexora-fixture", []string{"oidc", "--listen", listen, "--client-id", fx.ClientID,
 		"--client-secret-file", secretFile, "--users-file", usersFile}, nil)
-	fx.Issuer = "http://" + fx.Proc.Addr(fx.Proc.WaitReady(10*time.Second), "http")
+	fx.Proc.WaitLog(fixtureReady, 10*time.Second)
 	return fx
 }
 
@@ -66,20 +70,23 @@ type DNSFixture struct {
 	UDP, TCP, DoT, DoH, Control, CACertPEM, TLSName string
 }
 
-// StartDNSFixture starts `nexora-fixture dns` on kernel-chosen loopback ports with a fresh CA.
+// StartDNSFixture starts `nexora-fixture dns` on five free loopback ports with a fresh CA.
 func (e *Env) StartDNSFixture() *DNSFixture {
 	e.T.Helper()
 	certDir, err := os.MkdirTemp(e.Dir, "fixture-")
 	if err != nil {
 		e.T.Fatal(err)
 	}
-	// The same port-0 address for UDP and TCP makes the fixture share one port between them, as
-	// on a real DNS server: the engine retries a truncated UDP reply over TCP to the same address.
-	p := e.Start("nexora-fixture", []string{"dns", "--udp", loopbackPort0, "--tcp", loopbackPort0, "--dot", loopbackPort0,
-		"--doh", loopbackPort0, "--control", loopbackPort0, "--cert-dir", certDir}, nil)
-	ready := p.WaitReady(10 * time.Second)
-	fx := &DNSFixture{UDP: p.Addr(ready, "udp"), TCP: p.Addr(ready, "tcp"), DoT: p.Addr(ready, "dot"),
-		DoH: p.Addr(ready, "doh"), Control: "http://" + p.Addr(ready, "control"), TLSName: "fixture.nexora.test"}
+	addr := func() string { return fmt.Sprintf("127.0.0.1:%d", e.FreePort()) }
+	// UDP and TCP share one port, as on a real DNS server: the engine retries a truncated
+	// UDP reply over TCP to the same address.
+	plain := addr()
+	fx := &DNSFixture{UDP: plain, TCP: plain, DoT: addr(), DoH: addr(), TLSName: "fixture.nexora.test"}
+	control := addr()
+	fx.Control = "http://" + control
+	p := e.Start("nexora-fixture", []string{"dns", "--udp", fx.UDP, "--tcp", fx.TCP, "--dot", fx.DoT,
+		"--doh", fx.DoH, "--control", control, "--cert-dir", certDir}, nil)
+	p.WaitLog(fixtureReady, 10*time.Second)
 	ca, err := os.ReadFile(filepath.Join(certDir, "ca.pem"))
 	if err != nil {
 		e.T.Fatal(err)
@@ -136,11 +143,12 @@ type HTTPFixture struct {
 	Base string
 }
 
-// StartHTTPFixture starts `nexora-fixture http` on a kernel-chosen loopback port.
+// StartHTTPFixture starts `nexora-fixture http` on a free loopback port.
 func (e *Env) StartHTTPFixture() *HTTPFixture {
 	e.T.Helper()
-	p := e.Start("nexora-fixture", []string{"http", "--listen", loopbackPort0}, nil)
-	return &HTTPFixture{Base: "http://" + p.Addr(p.WaitReady(10*time.Second), "http")}
+	listen := fmt.Sprintf("127.0.0.1:%d", e.FreePort())
+	e.Start("nexora-fixture", []string{"http", "--listen", listen}, nil).WaitLog(fixtureReady, 10*time.Second)
+	return &HTTPFixture{Base: "http://" + listen}
 }
 
 // URL is the download URL of list name.
@@ -205,8 +213,5 @@ func fixtureRaw(t *testing.T, method, target string, body io.Reader, out any) {
 		}
 	}
 }
-
-// loopbackPort0 asks the kernel for a free loopback port; children report what they bound.
-const loopbackPort0 = "127.0.0.1:0"
 
 var fixtureClient = &http.Client{Timeout: 5 * time.Second}

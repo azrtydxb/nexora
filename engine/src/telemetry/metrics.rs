@@ -384,14 +384,7 @@ const SCRAPE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Serves `GET /metrics` over HTTP/1.1 on `addr`; every other request is 404.
 pub async fn serve_metrics(addr: SocketAddr, shared: Arc<Shared>) -> std::io::Result<()> {
-    serve_metrics_on(tokio::net::TcpListener::bind(addr).await?, shared).await
-}
-
-/// [`serve_metrics`] on an already bound listener.
-pub async fn serve_metrics_on(
-    listener: tokio::net::TcpListener,
-    shared: Arc<Shared>,
-) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     loop {
         let stream = match listener.accept().await {
             Ok((stream, _)) => stream,

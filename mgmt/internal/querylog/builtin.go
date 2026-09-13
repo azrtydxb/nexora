@@ -1,0 +1,159 @@
+package querylog
+
+import (
+	"context"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+
+	"github.com/piwi3910/nexora/mgmt/internal/control"
+)
+
+const (
+	defaultLimit = 100
+	maxLimit     = 1000
+)
+
+// Builtin receives engine query logs over OTLP on the management gRPC port and keeps the newest
+// records in a fixed-size in-memory ring. Each management instance holds only the records its
+// connected engines sent it.
+type Builtin struct {
+	collogspb.UnimplementedLogsServiceServer
+
+	mu   sync.RWMutex
+	ring []entry
+	next uint64 // sequence number of the next record; ring[(next-1) % cap] is the newest
+}
+
+type entry struct {
+	seq uint64
+	rec Record
+}
+
+// NewBuiltin returns a ring holding at most capacity records.
+func NewBuiltin(capacity int) *Builtin {
+	return &Builtin{ring: make([]entry, 0, max(capacity, 1)), next: 1}
+}
+
+// Name implements Backend.
+func (*Builtin) Name() string { return "builtin" }
+
+// Export implements the OTLP LogsService for engines authenticated by their client certificate.
+func (b *Builtin) Export(ctx context.Context, req *collogspb.ExportLogsServiceRequest) (*collogspb.ExportLogsServiceResponse, error) {
+	engineID, err := control.EngineID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b.Ingest(engineID, req)
+	return &collogspb.ExportLogsServiceResponse{}, nil
+}
+
+// Ingest appends every log record of req, attributed to the authenticated engineID.
+func (b *Builtin) Ingest(engineID string, req *collogspb.ExportLogsServiceRequest) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, rl := range req.GetResourceLogs() {
+		for _, sl := range rl.GetScopeLogs() {
+			for _, lr := range sl.GetLogRecords() {
+				ns := lr.GetTimeUnixNano()
+				if ns == 0 {
+					ns = lr.GetObservedTimeUnixNano()
+				}
+				r := recordFromAttributes(lr.GetAttributes())
+				r.Time = time.Unix(0, int64(ns)).UTC()
+				r.EngineID = engineID // the certificate, not the record's own claim
+				e := entry{seq: b.next, rec: r}
+				if len(b.ring) < cap(b.ring) {
+					b.ring = append(b.ring, e)
+				} else {
+					b.ring[(b.next-1)%uint64(cap(b.ring))] = e
+				}
+				b.next++
+			}
+		}
+	}
+}
+
+func recordFromAttributes(attrs []*commonpb.KeyValue) Record {
+	var r Record
+	for _, kv := range attrs {
+		v := kv.GetValue()
+		switch kv.GetKey() {
+		case "client.address":
+			r.Client = v.GetStringValue()
+		case "dns.question.name":
+			r.Name = v.GetStringValue()
+		case "dns.question.type":
+			r.QType = v.GetStringValue()
+		case "dns.response.code":
+			r.RCode = v.GetStringValue()
+		case "nexora.cache":
+			r.Cache = v.GetStringValue()
+		case "nexora.filter":
+			r.Filter = v.GetStringValue()
+		case "nexora.upstream":
+			r.Upstream = v.GetStringValue()
+		case "nexora.transport":
+			r.Transport = v.GetStringValue()
+		case "nexora.duration_us":
+			r.DurationUS = v.GetIntValue()
+		}
+	}
+	return r
+}
+
+// Search implements Backend: matching records newest first; the cursor is the decimal sequence
+// number of the last record of the previous page.
+func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	limit = min(limit, maxLimit)
+	var before uint64
+	if q.Cursor != "" {
+		c, err := strconv.ParseUint(q.Cursor, 10, 64)
+		if err != nil {
+			return Page{}, ErrInvalidCursor
+		}
+		before = c
+	}
+	name := strings.ToLower(q.Name)
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var page Page
+	var lastSeq uint64
+	n := uint64(len(b.ring))
+	for i := uint64(1); i <= n; i++ {
+		e := b.ring[(b.next-1-i)%uint64(cap(b.ring))]
+		if before != 0 && e.seq >= before {
+			continue
+		}
+		if !matches(e.rec, q, name) {
+			continue
+		}
+		if len(page.Records) == limit {
+			page.NextCursor = strconv.FormatUint(lastSeq, 10)
+			break
+		}
+		page.Records = append(page.Records, e.rec)
+		lastSeq = e.seq
+	}
+	return page, nil
+}
+
+func matches(r Record, q Query, lowerName string) bool {
+	return (q.From.IsZero() || !r.Time.Before(q.From)) &&
+		(q.To.IsZero() || !r.Time.After(q.To)) &&
+		(q.Client == "" || r.Client == q.Client) &&
+		(lowerName == "" || strings.Contains(strings.ToLower(r.Name), lowerName)) &&
+		(q.QType == "" || r.QType == q.QType) &&
+		(q.RCode == "" || r.RCode == q.RCode) &&
+		(q.Cache == "" || r.Cache == q.Cache) &&
+		(q.Filter == "" || r.Filter == q.Filter)
+}

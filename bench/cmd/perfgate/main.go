@@ -87,12 +87,17 @@ func cmdRun(ctx context.Context, args []string) error {
 	if *threads <= 0 {
 		*threads = max(1, runtime.GOMAXPROCS(0)-*workers)
 	}
-	st, err := startStack(ctx, *engine, *fixture, "127.0.0.1:0", *workers)
+	port, err := freePort()
+	if err != nil {
+		return err
+	}
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	st, err := startStack(ctx, *engine, *fixture, addr, *workers)
 	if err != nil {
 		return err
 	}
 	defer st.stop()
-	r, err := warmAndLoad(ctx, st.dnsAddr, corpus.Names(*names), *seconds, *clients, *threads)
+	r, err := warmAndLoad(ctx, addr, corpus.Names(*names), *seconds, *clients, *threads)
 	if err != nil {
 		return err
 	}
@@ -332,14 +337,10 @@ type proc struct {
 type stack struct {
 	dir             string
 	fixture, engine *proc
-	// dnsAddr is the engine's bound UDP and TCP address.
-	dnsAddr string
 }
 
 // startStack runs `nexora-fixture dns` on loopback and a standalone nexora-engine serving dnsAddr
-// (port 0: a kernel-chosen port) with one UDP upstream pointing at the fixture, and waits until
-// the engine serves version 1. Both children listen on port 0 where they may and report the
-// addresses they bound, so no port is picked ahead of time for another process to take.
+// with one UDP upstream pointing at the fixture, and waits until the engine serves version 1.
 func startStack(ctx context.Context, engineBin, fixtureBin, dnsAddr string, workers int) (*stack, error) {
 	dir, err := os.MkdirTemp("", "perfgate-")
 	if err != nil {
@@ -350,17 +351,23 @@ func startStack(ctx context.Context, engineBin, fixtureBin, dnsAddr string, work
 		st.stop()
 		return nil, err
 	}
-	const port0 = "127.0.0.1:0"
-	st.fixture, err = start(ctx, dir, "fixture", fixtureBin, "dns", "--udp", port0, "--tcp", port0,
-		"--dot", port0, "--doh", port0, "--control", port0, "--cert-dir", filepath.Join(dir, "certs"))
+	ports := make([]string, 6)
+	for i := range ports {
+		p, err := freePort()
+		if err != nil {
+			return fail(err)
+		}
+		ports[i] = net.JoinHostPort("127.0.0.1", strconv.Itoa(p))
+	}
+	fixtureUDP := ports[0]
+	st.fixture, err = start(ctx, dir, "fixture", fixtureBin, "dns", "--udp", fixtureUDP, "--tcp", ports[1],
+		"--dot", ports[2], "--doh", ports[3], "--control", ports[4], "--cert-dir", filepath.Join(dir, "certs"))
 	if err != nil {
 		return fail(err)
 	}
-	fixtureReady, err := st.fixture.waitReady(10 * time.Second)
-	if err != nil {
+	if err := st.fixture.waitLog(regexp.MustCompile(`fixture ready`), 10*time.Second); err != nil {
 		return fail(err)
 	}
-	fixtureUDP := fixtureReady["udp"]
 
 	snap := &controlv1.ConfigSnapshot{
 		Version:  1,
@@ -393,7 +400,7 @@ metrics_listen = %q
 workers = %d
 standalone_snapshot = %q
 standalone_blob_dir = %q
-`, stateDir, dnsAddr, dnsAddr, "127.0.0.1:0", workers, snapPath, blobDir)
+`, stateDir, dnsAddr, dnsAddr, ports[5], workers, snapPath, blobDir)
 	cfgPath := filepath.Join(dir, "engine.toml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return fail(err)
@@ -402,14 +409,9 @@ standalone_blob_dir = %q
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := st.engine.waitLog(regexp.MustCompile(`(?m)^nexora-engine: serving version 1$`), 30*time.Second); err != nil {
+	if err := st.engine.waitLog(regexp.MustCompile(`(?m)^nexora-engine: serving version 1$`), 30*time.Second); err != nil {
 		return fail(err)
 	}
-	engineReady, err := st.engine.waitReady(10 * time.Second)
-	if err != nil {
-		return fail(err)
-	}
-	st.dnsAddr = engineReady["udp"]
 	return st, nil
 }
 
@@ -460,62 +462,44 @@ func (p *proc) stop() {
 	}
 }
 
-// waitLog waits until the log matches re and returns the submatches of the first match.
-func (p *proc) waitLog(re *regexp.Regexp, timeout time.Duration) ([]string, error) {
+func (p *proc) waitLog(re *regexp.Regexp, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		if data, err := os.ReadFile(p.log); err == nil {
-			if m := re.FindStringSubmatch(string(data)); m != nil {
-				return m, nil
-			}
+		if data, err := os.ReadFile(p.log); err == nil && re.Match(data) {
+			return nil
 		}
 		select {
 		case <-p.done:
-			return nil, fmt.Errorf("%s exited before logging %q:\n%s", filepath.Base(p.cmd.Path), re, tail(p.log, 30))
+			return fmt.Errorf("%s exited before logging %q:\n%s", filepath.Base(p.cmd.Path), re, tail(p.log, 30))
 		default:
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("%s did not log %q within %s:\n%s", filepath.Base(p.cmd.Path), re, timeout, tail(p.log, 30))
+			return fmt.Errorf("%s did not log %q within %s:\n%s", filepath.Base(p.cmd.Path), re, timeout, tail(p.log, 30))
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-}
-
-var readyLine = regexp.MustCompile(`(?m)^READY (.*)$`)
-
-// waitReady waits for the `READY key=addr ...` line that nexora-fixture and nexora-engine print
-// once their listeners are bound, and returns the pairs; every value is a host:port with a
-// non-zero port.
-func (p *proc) waitReady(timeout time.Duration) (map[string]string, error) {
-	m, err := p.waitLog(readyLine, timeout)
-	if err != nil {
-		return nil, err
-	}
-	return parseReady(m[1])
-}
-
-func parseReady(fields string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, f := range strings.Fields(fields) {
-		k, v, ok := strings.Cut(f, "=")
-		if !ok {
-			return nil, fmt.Errorf("malformed READY field %q", f)
-		}
-		for _, a := range strings.Split(v, ",") {
-			if err := checkAddr(a); err != nil {
-				return nil, fmt.Errorf("READY %s: %w", k, err)
-			}
-		}
-		out[k] = v
-	}
-	if out["udp"] == "" {
-		return nil, fmt.Errorf("READY line %q has no udp address", fields)
-	}
-	return out, nil
 }
 
 func tail(path string, lines int) string {
 	data, _ := os.ReadFile(path)
 	all := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	return strings.Join(all[max(0, len(all)-lines):], "\n")
+}
+
+// freePort returns a loopback port that is currently free for both UDP and TCP.
+func freePort() (int, error) {
+	for range 50 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, err
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		u, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		_ = l.Close()
+		if err == nil {
+			_ = u.Close()
+			return port, nil
+		}
+	}
+	return 0, errors.New("no free loopback port for both UDP and TCP")
 }

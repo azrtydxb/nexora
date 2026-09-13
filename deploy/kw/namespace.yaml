@@ -1,0 +1,5 @@
+# Namespace for Nexora on kw: the shared test services and (Task 23) the deployment itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexora

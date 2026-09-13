@@ -35,6 +35,12 @@ spec:
         - name: toolbox
           image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-1
           command: ["sleep", "infinity"]
+          env:
+            # Shared test services on kw (deploy/kw/, observability namespace).
+            - name: NEXORA_E2E_OPENSEARCH_URL
+              value: "http://opensearch.nexora.svc.cluster.local:9200"
+            - name: NEXORA_E2E_JAEGER_QUERY_URL
+              value: "http://jaeger.observability.svc.cluster.local:16686"
           securityContext:
             capabilities:
               add: ["NET_ADMIN", "NET_BIND_SERVICE", "SYS_PTRACE"]

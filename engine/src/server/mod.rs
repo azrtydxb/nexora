@@ -378,26 +378,12 @@ fn serve(
     buf
 }
 
-/// The worker threads and the addresses their listeners bound.
-pub struct Workers {
-    pub handles: Vec<std::thread::JoinHandle<()>>,
-    pub udp: Vec<SocketAddr>,
-    pub tcp: Vec<SocketAddr>,
-}
-
-type WorkerSockets = Vec<(Vec<std::net::UdpSocket>, Vec<std::net::TcpListener>)>;
-
-/// How often a kernel-chosen UDP port is re-picked when its TCP twin is taken.
-const PORT_ZERO_ATTEMPTS: usize = 16;
-
 /// Binds every listener, then starts one `nexora-worker-{i}` thread per core,
 /// each with a `current_thread` runtime running its listeners in a `LocalSet`.
-///
-/// Port 0 lets the kernel choose: the first worker's socket fixes the port and
-/// the other workers share it. A TCP listener on port 0 takes the port chosen
-/// for the first UDP listener on the same IP with port 0, since clients retry
-/// truncated UDP answers over TCP at the same address.
-pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<Workers> {
+pub fn spawn_workers(
+    shared: Arc<Shared>,
+    boot: &Bootstrap,
+) -> std::io::Result<Vec<std::thread::JoinHandle<()>>> {
     let workers = boot.worker_count();
     if workers > shared.metrics.workers.len() {
         return Err(std::io::Error::new(
@@ -408,25 +394,21 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
             ),
         ));
     }
-    let any_zero = boot
-        .listen_udp
-        .iter()
-        .chain(&boot.listen_tcp)
-        .any(|a| a.port() == 0);
-    let mut attempt = 1;
-    let (sockets, udp_addrs, tcp_addrs) = loop {
-        match bind_all(boot, workers) {
-            Err(e)
-                if any_zero
-                    && e.kind() == std::io::ErrorKind::AddrInUse
-                    && attempt < PORT_ZERO_ATTEMPTS =>
-            {
-                attempt += 1;
-            }
-            r => break r?,
-        }
-    };
-    let handles = sockets
+    let mut sockets = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let udp = boot
+            .listen_udp
+            .iter()
+            .map(|a| udp::bind_udp(*a))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let tcp = boot
+            .listen_tcp
+            .iter()
+            .map(|a| tcp::bind_tcp(*a))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        sockets.push((udp, tcp));
+    }
+    sockets
         .into_iter()
         .enumerate()
         .map(|(index, (udp, tcp))| {
@@ -449,49 +431,5 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
                     local.block_on(&runtime, std::future::pending::<()>());
                 })
         })
-        .collect::<std::io::Result<Vec<_>>>()?;
-    Ok(Workers {
-        handles,
-        udp: udp_addrs,
-        tcp: tcp_addrs,
-    })
-}
-
-/// Binds `workers` copies of every configured listener, resolving port 0 as
-/// described on [`spawn_workers`].
-fn bind_all(
-    boot: &Bootstrap,
-    workers: usize,
-) -> std::io::Result<(WorkerSockets, Vec<SocketAddr>, Vec<SocketAddr>)> {
-    let mut udp_addrs = boot.listen_udp.clone();
-    let mut tcp_addrs = boot.listen_tcp.clone();
-    let mut sockets = Vec::with_capacity(workers);
-    for w in 0..workers {
-        let mut udp = Vec::with_capacity(udp_addrs.len());
-        for addr in &mut udp_addrs {
-            let sock = udp::bind_udp(*addr)?;
-            *addr = sock.local_addr()?;
-            udp.push(sock);
-        }
-        if w == 0 {
-            for addr in tcp_addrs.iter_mut().filter(|a| a.port() == 0) {
-                let twin = boot
-                    .listen_udp
-                    .iter()
-                    .zip(&udp_addrs)
-                    .find(|(conf, _)| conf.port() == 0 && conf.ip() == addr.ip());
-                if let Some((_, bound)) = twin {
-                    addr.set_port(bound.port());
-                }
-            }
-        }
-        let mut tcp = Vec::with_capacity(tcp_addrs.len());
-        for addr in &mut tcp_addrs {
-            let listener = tcp::bind_tcp(*addr)?;
-            *addr = listener.local_addr()?;
-            tcp.push(listener);
-        }
-        sockets.push((udp, tcp));
-    }
-    Ok((sockets, udp_addrs, tcp_addrs))
+        .collect()
 }

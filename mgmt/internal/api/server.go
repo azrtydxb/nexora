@@ -39,6 +39,7 @@ type Deps struct {
 	InstanceID        string
 	PublicURL         string
 	Metrics           http.Handler
+	HTTPMetrics       *Metrics // optional per-operation request metrics
 	RefreshFilterList func(ctx context.Context, p auth.Principal, id string) error
 }
 
@@ -52,13 +53,20 @@ func NewHandler(d Deps) http.Handler {
 	h := &handlers{d: d}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.Recoverer)
-	strict := NewStrictHandlerWithOptions(h, []StrictMiddlewareFunc{h.authz}, StrictHTTPServerOptions{
+	middlewares := []StrictMiddlewareFunc{h.authz}
+	if d.HTTPMetrics != nil {
+		middlewares = append(middlewares, d.HTTPMetrics.Middleware()) // the last is outermost
+	}
+	strict := NewStrictHandlerWithOptions(h, middlewares, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		},
 		ResponseErrorHandlerFunc: mapError,
 	})
 	r.Group(func(g chi.Router) {
+		if d.HTTPMetrics != nil {
+			g.Use(d.HTTPMetrics.wrap)
+		}
 		g.Use(jsonOnly)
 		HandlerWithOptions(strict, ChiServerOptions{
 			BaseURL:    "/api/v1",
@@ -178,7 +186,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, auth.ErrOIDCUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "unavailable", "identity provider unavailable")
 	case errors.Is(err, querylog.ErrBackendUnavailable):
-		writeError(w, http.StatusServiceUnavailable, "querylog_unavailable", err.Error())
+		slog.Warn("query log search", "err", err) // the cause names internal endpoints: log it, answer generically
+		writeError(w, http.StatusServiceUnavailable, "querylog_unavailable", querylog.ErrBackendUnavailable.Error())
+	case errors.Is(err, querylog.ErrInvalidCursor):
+		writeError(w, http.StatusBadRequest, "invalid_request", querylog.ErrInvalidCursor.Error())
 	case errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "22") || pgErr.Code == "23514" || pgErr.Code == "23502"):
 		// Data exceptions and check/not-null violations: the database rejected the input.
 		writeError(w, http.StatusBadRequest, "invalid_request", pgErr.Message)

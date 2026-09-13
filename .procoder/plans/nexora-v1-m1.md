@@ -6233,8 +6233,19 @@ Interfaces:
 - `dnsperf.Options{ Server string; Port int; Names []string; QType string; Seconds, Clients, Threads int; MaxQPS int }`; `dnsperf.Result{ QPS float64; Sent, Completed, Lost uint64; LatencyAvgSeconds float64; P99Seconds float64 }`; `func Run(ctx context.Context, o Options) (Result, error)` (writes a data file of `<name> <qtype>` lines, runs `dnsperf -s -p -d -l -c -T -O latency-histogram [-Q]`); `func Parse(out string) (Result, error)`.
 - `harness.RunDnsperf(t *testing.T, server string, names []string, seconds int) dnsperf.Result`; `harness.OpenSearchURL(t) string`, `harness.JaegerQueryURL(t) string` (both `t.Fatal` with the variable name when unset); `harness.JaegerOTLPEndpoint(t) string` = host of the Jaeger query URL with port 4317.
 
-- [ ] Capture real dnsperf 2.14 output as test data, querying the dev pod's cluster resolver at 50 QPS: `scripts/dev-exec.sh bash -c 'mkdir -p bench/dnsperf/testdata && printf "kubernetes.default.svc.cluster.local A\n" > /tmp/q.txt && dnsperf -s $(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf) -d /tmp/q.txt -l 3 -Q 50 -O latency-histogram > bench/dnsperf/testdata/output.txt'`, then copy it back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - bench/dnsperf/testdata | tar -xf -`. The parser below is written against this file.
-- [ ] Write the failing test `bench/dnsperf/dnsperf_test.go`:
+As built (deviations from the steps below; the code wins):
+
+- `bench/dnsperf` (package, tests, captured `testdata/output.txt`) was already delivered by Task 21; Task 18 only adds `e2e/harness/dnsperf.go`.
+- `querylog.ErrInvalidCursor` (HTTP 400 `invalid_request`) is returned for a cursor the backend did not issue; a 503 `querylog_unavailable` answers with the generic message and logs the cause (it names internal endpoints).
+- `Builtin.Ingest` attributes records to the certificate-authenticated engine ID, not the record's own `nexora.engine.id`.
+- OpenSearch exact filters are `term attributes.<field>.keyword` (verified against OpenSearch 3.8.0 fed by otelcol-contrib 0.160's `opensearch` exporter: default dynamic mapping makes the attributes analysed `text`, so `term` on the bare field never matches values like `NOERROR`); the name filter is `match_phrase attributes.dns.question.name`. The client disables retries, node discovery and health checks; `size` is `limit+1` to detect the next page.
+- HTTP metrics: `api.Deps.HTTPMetrics *api.Metrics`; `Metrics.Middleware()` is appended after `authz` (outermost, so 401/403 are counted) and names the operation for a router-level wrapper that records the status the strict handler writes afterwards. Requests that match no operation are not recorded.
+- `stats.NewCollector` takes each engine's two newest samples within 60 s (QPS from their `unix_ms`); the histogram count is `max(queries_total, last cumulative bucket)`; a second engine with an already-seen node name is skipped (duplicate label sets would fail the scrape).
+- `deploy/kw/opensearch.yaml` pulls through Nexus (`192.168.10.131/opensearchproject/opensearch:3.8.0`, `192.168.10.131/library/busybox:1.37`), sets `fsGroup: 1000` (the Longhorn volume is root-owned and OpenSearch runs as uid 1000) and `bootstrap.memory_lock=false`.
+- The dev-pod env change in `deploy/dev/dev-pod.yaml` is committed but its `kubectl apply` (which recreates the toolbox pod) waits for a moment when no other agent runs in the pod; until then the tests are run with `NEXORA_E2E_OPENSEARCH_URL`/`NEXORA_E2E_JAEGER_QUERY_URL` exported on the command line.
+
+- [x] Capture real dnsperf 2.14 output as test data, querying the dev pod's cluster resolver at 50 QPS: `scripts/dev-exec.sh bash -c 'mkdir -p bench/dnsperf/testdata && printf "kubernetes.default.svc.cluster.local A\n" > /tmp/q.txt && dnsperf -s $(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf) -d /tmp/q.txt -l 3 -Q 50 -O latency-histogram > bench/dnsperf/testdata/output.txt'`, then copy it back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - bench/dnsperf/testdata | tar -xf -`. The parser below is written against this file.
+- [x] Write the failing test `bench/dnsperf/dnsperf_test.go`:
 
 ```go
 package dnsperf_test
@@ -6270,7 +6281,7 @@ func TestParseRejectsGarbage(t *testing.T) {
 }
 ```
 
-- [ ] Write the failing tests `mgmt/internal/querylog/builtin_test.go` and `opensearch_test.go`:
+- [x] Write the failing tests `mgmt/internal/querylog/builtin_test.go` and `opensearch_test.go`:
 
 ```go
 package querylog_test
@@ -6359,7 +6370,7 @@ func TestOpenSearchQueriesAttributesAndReportsUnavailable(t *testing.T) {
 
 (`Ingest(engineID string, req *collogspb.ExportLogsServiceRequest)` is the method `Export` calls after authenticating.)
 
-- [ ] Write the failing test `mgmt/internal/stats/collector_test.go` (Postgres via harness): insert a `users`-free engine row (`insert into engines(node_name, certificate_serial, connected_instance) ...` after inserting an `instances` row), call `stats.Record` twice 10 s apart (`Stats.UnixMs` values differing by 10 000, `QueriesTotal` 1000 then 3000, one upstream `{Name: "fx", Up: true}`, 15 buckets), then `prometheus.NewPedanticRegistry()`, `reg.MustRegister(stats.NewCollector(st))`, `reg.Gather()` and assert families `nexora_fleet_qps` (value 200 for engine label), `nexora_fleet_query_duration_seconds`, `nexora_fleet_cache_hit_ratio`, `nexora_fleet_upstream_up` exist:
+- [x] Write the failing test `mgmt/internal/stats/collector_test.go` (Postgres via harness): insert a `users`-free engine row (`insert into engines(node_name, certificate_serial, connected_instance) ...` after inserting an `instances` row), call `stats.Record` twice 10 s apart (`Stats.UnixMs` values differing by 10 000, `QueriesTotal` 1000 then 3000, one upstream `{Name: "fx", Up: true}`, 15 buckets), then `prometheus.NewPedanticRegistry()`, `reg.MustRegister(stats.NewCollector(st))`, `reg.Gather()` and assert families `nexora_fleet_qps` (value 200 for engine label), `nexora_fleet_query_duration_seconds`, `nexora_fleet_cache_hit_ratio`, `nexora_fleet_upstream_up` exist:
 
 ```go
 func TestCollectorExportsFleetMetrics(t *testing.T) {
@@ -6413,7 +6424,7 @@ func TestCollectorExportsFleetMetrics(t *testing.T) {
 
 (imports: `context`, `testing`, `time`, `github.com/prometheus/client_golang/prometheus`, `dto "github.com/prometheus/client_model/go"`, harness, controlv1, `stats`, `store`).
 
-- [ ] Write the failing acceptance tests `e2e/observability_test.go`:
+- [x] Write the failing acceptance tests `e2e/observability_test.go`:
 
 ```go
 package e2e
@@ -6566,8 +6577,8 @@ func TestOTelSinkDownNoBackpressure(t *testing.T) {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh go test -count=1 ./bench/dnsperf/... ./mgmt/internal/querylog/... ./mgmt/internal/stats/...` — expect FAIL with `undefined: dnsperf.Parse`, `undefined: querylog.NewBuiltin`, `undefined: stats.NewCollector`.
-- [ ] Write `deploy/kw/namespace.yaml` (`kind: Namespace`, name `nexora`) and `deploy/kw/opensearch.yaml`:
+- [x] Run `scripts/dev-exec.sh go test -count=1 ./bench/dnsperf/... ./mgmt/internal/querylog/... ./mgmt/internal/stats/...` — expect FAIL with `undefined: dnsperf.Parse`, `undefined: querylog.NewBuiltin`, `undefined: stats.NewCollector`.
+- [x] Write `deploy/kw/namespace.yaml` (`kind: Namespace`, name `nexora`) and `deploy/kw/opensearch.yaml`:
 
 ```yaml
 apiVersion: apps/v1
@@ -6626,13 +6637,13 @@ spec:
 ```
 
 - [ ] Apply and wire the shared services: `kubectl --context kw apply -f deploy/kw/namespace.yaml -f deploy/kw/opensearch.yaml && kubectl --context kw -n nexora rollout status statefulset/opensearch --timeout=10m`; find the Jaeger query service with `kubectl --context kw -n observability get svc -o wide` and set, in `deploy/dev/dev-pod.yaml` container `env`, `NEXORA_E2E_OPENSEARCH_URL=http://opensearch.nexora.svc.cluster.local:9200` and `NEXORA_E2E_JAEGER_QUERY_URL=http://<jaeger query service>.observability.svc.cluster.local:16686` (the service exposing port 16686; `harness.JaegerOTLPEndpoint` uses the same host on port 4317, so pick the Jaeger service that exposes both ports, as the all-in-one and collector-with-query services do), then `kubectl --context kw apply -f deploy/dev/dev-pod.yaml && kubectl --context kw -n nexora-dev rollout status deploy/toolbox` and verify `scripts/dev-exec.sh bash -c 'curl -fsS $NEXORA_E2E_OPENSEARCH_URL/_cluster/health && curl -fsS $NEXORA_E2E_JAEGER_QUERY_URL/api/services && h=${NEXORA_E2E_JAEGER_QUERY_URL#http://}; bash -c "</dev/tcp/${h%%:*}/4317"'` — expect JSON from both and a successful TCP connect to port 4317.
-- [ ] Implement `bench/dnsperf/dnsperf.go`: `Parse` reads `Queries sent:`, `Queries completed:`, `Queries lost:`, `Queries per second:`, `Average Latency (s):` and the latency histogram lines in the captured `testdata/output.txt` format, computing `P99Seconds` as the upper bound of the first bucket whose cumulative count reaches 99 % of completed queries; missing `Queries per second:` -> error `dnsperf output has no QPS line`. `Run` defaults `Clients=16`, `Threads=4`, `QType="A"`.
-- [ ] Implement `builtin.go` (ring of `Record` with a monotonically increasing sequence, `sync.RWMutex`; `Export` -> `control.EngineID` then `Ingest`; filters are case-insensitive substring for `Name`, exact for others), `opensearch.go` (`opensearchapi.NewClient(opensearchapi.Config{Client: opensearch.Config{Addresses: []string{cfg.URL}, Username, Password (from PasswordFile)}})`, 5 s request timeout), `stats/collector.go` (`prometheus.MustNewConstMetric`, `prometheus.MustNewConstHistogram` with bucket bounds converted to seconds), and `api/metrics.go`.
-- [ ] Wire `serve`: `reg := prometheus.NewRegistry()`, register `collectors.NewGoCollector()`, `collectors.NewProcessCollector(...)`, `stats.NewCollector(st)`, `api.NewMetrics(reg)`; query-log backend `builtin` -> `b := querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)` and `collogspb.RegisterLogsServiceServer(grpcServer, b)`; `opensearch` -> `querylog.NewOpenSearch(cfg.OpenSearch)`; `Deps.QueryLog` and `Deps.Metrics = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})`.
-- [ ] Implement `e2e/harness/dnsperf.go` (calls `dnsperf.Run` with `Seconds`, splitting `server` into host and port, `t.Fatal` on error) and `e2e/harness/external.go`.
-- [ ] Run `scripts/dev-exec.sh go test -count=1 ./bench/dnsperf/... ./mgmt/internal/querylog/... ./mgmt/internal/stats/...` — expect PASS: three `ok` lines.
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestObservabilityMetricsTraces|TestOTelSinkDownNoBackpressure" ./e2e/'` — expect PASS: `--- PASS: TestObservabilityMetricsTraces` and `--- PASS: TestOTelSinkDownNoBackpressure` (the log line shows both medians).
-- [ ] Commit: `git add mgmt bench e2e deploy/kw/namespace.yaml deploy/kw/opensearch.yaml deploy/dev/dev-pod.yaml go.mod go.sum && git commit -m "mgmt: builtin/OpenSearch query-log backends and fleet metrics; e2e observability tests"`.
+- [x] Implement `bench/dnsperf/dnsperf.go`: `Parse` reads `Queries sent:`, `Queries completed:`, `Queries lost:`, `Queries per second:`, `Average Latency (s):` and the latency histogram lines in the captured `testdata/output.txt` format, computing `P99Seconds` as the upper bound of the first bucket whose cumulative count reaches 99 % of completed queries; missing `Queries per second:` -> error `dnsperf output has no QPS line`. `Run` defaults `Clients=16`, `Threads=4`, `QType="A"`.
+- [x] Implement `builtin.go` (ring of `Record` with a monotonically increasing sequence, `sync.RWMutex`; `Export` -> `control.EngineID` then `Ingest`; filters are case-insensitive substring for `Name`, exact for others), `opensearch.go` (`opensearchapi.NewClient(opensearchapi.Config{Client: opensearch.Config{Addresses: []string{cfg.URL}, Username, Password (from PasswordFile)}})`, 5 s request timeout), `stats/collector.go` (`prometheus.MustNewConstMetric`, `prometheus.MustNewConstHistogram` with bucket bounds converted to seconds), and `api/metrics.go`.
+- [x] Wire `serve`: `reg := prometheus.NewRegistry()`, register `collectors.NewGoCollector()`, `collectors.NewProcessCollector(...)`, `stats.NewCollector(st)`, `api.NewMetrics(reg)`; query-log backend `builtin` -> `b := querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)` and `collogspb.RegisterLogsServiceServer(grpcServer, b)`; `opensearch` -> `querylog.NewOpenSearch(cfg.OpenSearch)`; `Deps.QueryLog` and `Deps.Metrics = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})`.
+- [x] Implement `e2e/harness/dnsperf.go` (calls `dnsperf.Run` with `Seconds`, splitting `server` into host and port, `t.Fatal` on error) and `e2e/harness/external.go`.
+- [x] Run `scripts/dev-exec.sh go test -count=1 ./bench/dnsperf/... ./mgmt/internal/querylog/... ./mgmt/internal/stats/...` — expect PASS: three `ok` lines.
+- [x] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestObservabilityMetricsTraces|TestOTelSinkDownNoBackpressure" ./e2e/'` — expect PASS: `--- PASS: TestObservabilityMetricsTraces` and `--- PASS: TestOTelSinkDownNoBackpressure` (the log line shows both medians).
+- [x] Commit: `git add mgmt bench e2e deploy/kw/namespace.yaml deploy/kw/opensearch.yaml deploy/dev/dev-pod.yaml go.mod go.sum && git commit -m "mgmt: builtin/OpenSearch query-log backends and fleet metrics; e2e observability tests"`.
 
 ## Task 19: GUI foundation, auth screens, Playwright harness and `TestAuthRBACAuditOIDC`
 

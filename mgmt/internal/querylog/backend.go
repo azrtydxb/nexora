@@ -10,6 +10,9 @@ import (
 // ErrBackendUnavailable is returned when the backend cannot be queried.
 var ErrBackendUnavailable = errors.New("query log backend unavailable")
 
+// ErrInvalidCursor is returned for a cursor the backend did not issue.
+var ErrInvalidCursor = errors.New("invalid query log cursor")
+
 // Query is a query-log search. Empty strings and zero times do not filter.
 type Query struct {
 	From, To                                  time.Time

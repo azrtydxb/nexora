@@ -24,14 +24,14 @@ type listServer struct {
 	hits    map[string]int
 }
 
-func runHTTP(args []string) (func(), string, error) {
+func runHTTP(args []string) (func(), error) {
 	fs := flag.NewFlagSet("http", flag.ContinueOnError)
 	listen := fs.String("listen", "", "listen address")
 	if err := fs.Parse(args); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if *listen == "" {
-		return nil, "", errors.New("--listen is required")
+		return nil, errors.New("--listen is required")
 	}
 	s := &listServer{lists: map[string][]byte{}, failing: map[string]bool{}, hits: map[string]int{}}
 	mux := http.NewServeMux()
@@ -41,7 +41,7 @@ func runHTTP(args []string) (func(), string, error) {
 	mux.HandleFunc("GET /hits/{name}", s.hitCount)
 	lis, err := net.Listen("tcp", *listen)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(lis) }()
@@ -49,7 +49,7 @@ func runHTTP(args []string) (func(), string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
-	}, "http=" + lis.Addr().String(), nil
+	}, nil
 }
 
 func (s *listServer) put(w http.ResponseWriter, r *http.Request) {

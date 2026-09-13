@@ -1,0 +1,58 @@
+# Single-node OpenSearch for the query-log backend tests (security plugin off; cluster-internal only).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: nexora
+  labels: { app.kubernetes.io/name: opensearch }
+spec:
+  serviceName: opensearch
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: opensearch }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: opensearch }
+    spec:
+      securityContext: { fsGroup: 1000 } # the image runs as uid/gid 1000; the volume is root-owned
+      initContainers:
+        - name: sysctl
+          image: 192.168.10.131/library/busybox:1.37
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext: { privileged: true }
+      containers:
+        - name: opensearch
+          image: 192.168.10.131/opensearchproject/opensearch:3.8.0
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: bootstrap.memory_lock, value: "false" }
+            - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
+            - { name: DISABLE_INSTALL_DEMO_CONFIG, value: "true" }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
+          ports:
+            - { name: http, containerPort: 9200 }
+          readinessProbe:
+            httpGet: { path: /_cluster/health, port: 9200 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 500m, memory: 2Gi }
+            limits: { cpu: "2", memory: 3Gi }
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/opensearch/data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single
+        resources:
+          requests: { storage: 20Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: nexora
+spec:
+  selector: { app.kubernetes.io/name: opensearch }
+  ports:
+    - { name: http, port: 9200, targetPort: 9200 }

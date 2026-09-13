@@ -17,23 +17,10 @@ type Balancer struct {
 // and every open connection are closed when the test ends.
 func (e *Env) StartTCPBalancer(backends ...string) *Balancer {
 	e.T.Helper()
-	l := e.listenLoopback()
-	e.forward(l, backends)
-	return &Balancer{Addr: l.Addr().String()}
-}
-
-func (e *Env) listenLoopback() net.Listener {
-	e.T.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		e.T.Fatal(err)
 	}
-	e.T.Cleanup(func() { _ = l.Close() })
-	return l
-}
-
-// forward serves l as described on StartTCPBalancer.
-func (e *Env) forward(l net.Listener, backends []string) {
 	var mu sync.Mutex
 	open := map[net.Conn]struct{}{}
 	track := func(c net.Conn, add bool) {
@@ -87,4 +74,5 @@ func (e *Env) forward(l net.Listener, backends []string) {
 			}()
 		}
 	}()
+	return &Balancer{Addr: l.Addr().String()}
 }
