@@ -151,6 +151,7 @@ async fn ask(ctx: &Rc<WorkerCtx>, shared: &Shared, client: &str, name: &str) -> 
             Message::from_vec(&run_rewrite_job(ctx.clone(), rt, job).await).unwrap(),
         ),
         FastOutcome::Drop => panic!("dropped {name} from {client}"),
+        FastOutcome::Slow(_) => panic!("{name} from {client} went to the slow path"),
     }
 }
 

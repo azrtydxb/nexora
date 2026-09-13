@@ -154,17 +154,26 @@ pub trait Answerer {
     /// Clears `out` and writes the full response; leaves `out` empty when the
     /// message must be dropped.
     async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>);
+
+    /// Stream transports (TCP, DoT): every message of the reply in order (several for a zone
+    /// transfer). Default: the one `answer` message, none when it is dropped.
+    async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>) {
+        let mut out = Vec::new();
+        self.answer(client, query, &mut out).await;
+        if !out.is_empty() {
+            frames.push(out);
+        }
+    }
 }
 
 /// The M1 pipeline (`handle_packet`, then `resolve_miss` on a miss) behind [`Answerer`].
 pub struct WorkerAnswerer(pub Rc<WorkerCtx>);
 
-impl Answerer for WorkerAnswerer {
-    async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>) {
-        let rt = self.0.shared.runtime.load_full();
-        out.clear();
-        out.resize(65535, 0);
-        match handle_packet(&self.0, &rt, query, client.addr, client.transport, out) {
+impl WorkerAnswerer {
+    /// Completes a fast-path outcome into `out` (whose first `n` octets hold a `Reply(n)`); a
+    /// slow job contributes its first message.
+    async fn complete(&self, rt: Arc<Runtime>, outcome: FastOutcome, out: &mut Vec<u8>) {
+        match outcome {
             FastOutcome::Reply(n) => out.truncate(n),
             FastOutcome::Drop => out.clear(),
             FastOutcome::Miss(job) => {
@@ -177,6 +186,36 @@ impl Answerer for WorkerAnswerer {
                 out.clear();
                 out.extend_from_slice(&reply);
             }
+            FastOutcome::Slow(job) => {
+                let msgs = auth_dispatch::run_slow(self.0.clone(), rt, job).await;
+                *out = msgs.into_iter().next().unwrap_or_default();
+            }
+        }
+    }
+}
+
+impl Answerer for WorkerAnswerer {
+    async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>) {
+        let rt = self.0.shared.runtime.load_full();
+        out.clear();
+        out.resize(65535, 0);
+        let outcome = handle_packet(&self.0, &rt, query, client.addr, client.transport, out);
+        self.complete(rt, outcome, out).await;
+    }
+
+    async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>) {
+        let rt = self.0.shared.runtime.load_full();
+        let mut out = vec![0u8; 65535];
+        match handle_packet(&self.0, &rt, query, client.addr, client.transport, &mut out) {
+            FastOutcome::Slow(job) => {
+                frames.extend(auth_dispatch::run_slow(self.0.clone(), rt, job).await);
+            }
+            outcome => {
+                self.complete(rt, outcome, &mut out).await;
+                if !out.is_empty() {
+                    frames.push(out);
+                }
+            }
         }
     }
 }
@@ -188,6 +227,8 @@ pub enum FastOutcome {
     Miss(MissJob),
     /// A CNAME rewrite, chased off the fast path; never cached.
     Rewrite(rewrite::RewriteJob),
+    /// Authoritative work off the fast path (zone transfers): `auth_dispatch::run_slow`.
+    Slow(auth_dispatch::SlowJob),
 }
 
 pub struct MissJob {
@@ -279,15 +320,18 @@ pub fn handle_packet(
         Ok(q) => q,
         Err(ParseError::TooShort | ParseError::IsResponse) => return FastOutcome::Drop,
         Err(e) => {
-            if !rt.auth.is_empty()
-                && let Some(AuthOutcome::Reply(n)) =
-                    auth_dispatch::unparsed(ctx, rt, packet, client, transport, out)
-            {
-                if n < HEADER_LEN {
-                    return FastOutcome::Drop;
+            if !rt.auth.is_empty() {
+                match auth_dispatch::unparsed(ctx, rt, packet, client, transport, out) {
+                    None | Some(AuthOutcome::NotHosted) => {}
+                    Some(AuthOutcome::Reply(n)) => {
+                        if n < HEADER_LEN {
+                            return FastOutcome::Drop;
+                        }
+                        scope.finish(scope.record(NameKey::ROOT, 0), &out[..n]);
+                        return FastOutcome::Reply(n);
+                    }
+                    Some(AuthOutcome::Slow(job)) => return FastOutcome::Slow(job),
                 }
-                scope.finish(scope.record(NameKey::ROOT, 0), &out[..n]);
-                return FastOutcome::Reply(n);
             }
             let rcode = match e {
                 ParseError::NotImp => wire::RCODE_NOTIMP,
@@ -343,6 +387,7 @@ pub fn handle_packet(
                 rec.cache = CacheOutcome::Auth;
                 return reply(&scope, rec, out, n);
             }
+            AuthOutcome::Slow(job) => return FastOutcome::Slow(job),
         }
     }
     if !rt.acl.allows(client.ip()) {

@@ -5,7 +5,7 @@
 use super::name::from_ascii;
 use super::nzf::{self, Kind, NzfError, Parsed};
 use super::set::AuthSet;
-use super::zone::{DeltaRecords, OwnedRecord, Zone, ZoneError};
+use super::zone::{DeltaRecords, Zone, ZoneError};
 use crate::proto;
 use crate::snapshot::{BlobSource, SnapshotError, is_sha256_hex};
 use std::collections::HashSet;
@@ -99,6 +99,17 @@ pub fn validate(zones: &[proto::AuthZone]) -> Result<(), String> {
         if let Some(c) = transfer.iter().find(|c| c.parse::<ipnet::IpNet>().is_err()) {
             return Err(format!("auth zone {n}: transfer CIDR {c:?} invalid"));
         }
+        let keys = z
+            .transfer
+            .iter()
+            .map(|t| &t.tsig_key)
+            .chain(z.notify.iter().map(|t| &t.tsig_key));
+        if let Some(k) = keys
+            .filter(|k| !k.is_empty())
+            .find(|k| !k.ends_with('.') || from_ascii(k).is_none())
+        {
+            return Err(format!("auth zone {n}: TSIG key name {k:?} invalid"));
+        }
         let addrs = z.notify.iter().map(|t| &t.address).chain(&z.primaries);
         for a in addrs {
             if a.parse::<SocketAddr>().is_err() {
@@ -154,16 +165,18 @@ fn load_zone(
     counts: &mut LoadCounts,
 ) -> Result<Arc<Zone>, LoadError> {
     let name = &z.name;
+    let policy = Policy::of(z);
     if let Some(old) = old
         && old.serial() == z.serial
         && same_history(old, z)
     {
         counts.reused += 1;
-        if old.expired == z.expired {
+        if old.expired == z.expired && policy.matches(old) {
             return Ok(old.clone());
         }
         let mut zone = (**old).clone();
         zone.expired = z.expired;
+        policy.set(&mut zone);
         return Ok(Arc::new(zone));
     }
 
@@ -230,14 +243,64 @@ fn load_zone(
                 let raw = read_delta(blobs, d, name)?;
                 let p = parse(&raw, name)?;
                 check_delta_header(&p, d, name)?;
-                Arc::new(owned_delta(&p))
+                Arc::new(DeltaRecords::from_parsed(&p))
             }
         };
         history.push(rec);
     }
     zone.deltas = history;
     zone.expired = z.expired;
+    policy.set(&mut zone);
     Ok(Arc::new(zone))
+}
+
+/// A zone's transfer ACL, required transfer key and NOTIFY targets (already validated).
+struct Policy {
+    allow: Vec<ipnet::IpNet>,
+    key: Option<Box<[u8]>>,
+    notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
+}
+
+/// `None` for an empty name (no key).
+fn key_wire(name: &str) -> Option<Box<[u8]>> {
+    if name.is_empty() {
+        return None;
+    }
+    from_ascii(&name.to_ascii_lowercase()).map(Vec::into_boxed_slice)
+}
+
+impl Policy {
+    fn of(z: &proto::AuthZone) -> Policy {
+        let transfer = z.transfer.as_ref();
+        Policy {
+            allow: transfer
+                .map(|t| {
+                    t.allow_cidrs
+                        .iter()
+                        .filter_map(|c| c.parse().ok())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            key: transfer.and_then(|t| key_wire(&t.tsig_key)),
+            notify: z
+                .notify
+                .iter()
+                .filter_map(|t| Some((t.address.parse().ok()?, key_wire(&t.tsig_key))))
+                .collect(),
+        }
+    }
+
+    fn matches(&self, zone: &Zone) -> bool {
+        zone.transfer_allow == self.allow
+            && zone.transfer_key == self.key
+            && zone.notify == self.notify
+    }
+
+    fn set(&self, zone: &mut Zone) {
+        zone.transfer_allow = self.allow.clone();
+        zone.transfer_key = self.key.clone();
+        zone.notify = self.notify.clone();
+    }
 }
 
 /// Applies `deltas` in order to `base` (`None` when there are none); every parsed delta is pushed
@@ -259,7 +322,7 @@ fn apply_deltas(
             .unwrap_or(base)
             .apply(&p)
             .map_err(|err| zone_err(name, err))?;
-        staged.push(Arc::new(owned_delta(&p)));
+        staged.push(Arc::new(DeltaRecords::from_parsed(&p)));
         cur = Some(next);
     }
     Ok(cur)
@@ -308,24 +371,5 @@ fn zone_err(name: &str, err: ZoneError) -> LoadError {
     LoadError::Zone {
         zone: name.to_owned(),
         err,
-    }
-}
-
-fn owned_delta(p: &Parsed<'_>) -> DeltaRecords {
-    let own = |rs: &[nzf::RecordRef<'_>]| {
-        rs.iter()
-            .map(|r| OwnedRecord {
-                owner: r.owner.into(),
-                rtype: r.rtype,
-                ttl: r.ttl,
-                rdata: r.rdata.into(),
-            })
-            .collect()
-    };
-    DeltaRecords {
-        from_serial: p.from_serial,
-        to_serial: p.serial,
-        deleted: own(&p.a),
-        added: own(&p.b),
     }
 }

@@ -6,7 +6,7 @@ pub mod index;
 pub mod manager;
 pub mod parse;
 pub mod transfer;
-pub mod tsig;
+pub use crate::tsig;
 
 #[cfg(test)]
 mod rpz_tests;

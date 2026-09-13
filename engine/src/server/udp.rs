@@ -2,6 +2,7 @@
 //! inline, flush those replies with one `sendmmsg`, and spawn a task per miss.
 
 use super::{FastOutcome, MissJob, WorkerCtx, handle_packet, resolve_miss, rewrite};
+use crate::authoritative::dispatch::{SlowJob, run_slow};
 use crate::edns::Transport;
 use crate::runtime::Runtime;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -140,6 +141,10 @@ pub async fn run_udp(ctx: Rc<WorkerCtx>, sock: UdpSocket) {
                     let rt = ctx.shared.runtime.load_full();
                     tokio::task::spawn_local(answer_rewrite(ctx.clone(), fd.clone(), rt, job));
                 }
+                FastOutcome::Slow(job) => {
+                    let rt = ctx.shared.runtime.load_full();
+                    tokio::task::spawn_local(answer_slow(ctx.clone(), fd.clone(), rt, job));
+                }
             }
         }
         if queued > 0 {
@@ -234,6 +239,20 @@ async fn answer_rewrite(
     let client = job.client;
     let reply = rewrite::run_rewrite_job(ctx, rt, job).await;
     send_reply(&fd, &reply, client).await;
+}
+
+/// UDP carries one message: the first of the slow job's reply.
+async fn answer_slow(
+    ctx: Rc<WorkerCtx>,
+    fd: Rc<AsyncFd<UdpSocket>>,
+    rt: Arc<Runtime>,
+    job: SlowJob,
+) {
+    let client = job.client;
+    let msgs = run_slow(ctx, rt, job).await;
+    if let Some(first) = msgs.first() {
+        send_reply(&fd, first, client).await;
+    }
 }
 
 /// Sends one reply built off the fast path; an empty reply sends nothing.

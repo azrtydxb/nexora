@@ -11,8 +11,9 @@ pub const MAX_PIPELINED: usize = 32;
 const BODY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Reads length-prefixed queries and answers each in its own task, replies in
-/// completion order (RFC 7766 section 6.2.1.1). Ends on EOF, a zero length, a read
-/// idle for `idle`, a query body slower than 5 s, or a reply write stalled for `idle`.
+/// completion order (RFC 7766 section 6.2.1.1; the messages of one multi-message reply
+/// stay in order). Ends on EOF, a zero length, a read idle for `idle`, a query body
+/// slower than 5 s, or a reply write stalled for `idle`.
 pub async fn serve_dns_stream<A, S>(answerer: Rc<A>, io: S, client: ClientInfo, idle: Duration)
 where
     A: Answerer + 'static,
@@ -62,13 +63,19 @@ where
         let answerer = answerer.clone();
         let tx = tx.clone();
         tokio::task::spawn_local(async move {
-            let mut out = Vec::with_capacity(512);
-            answerer.answer(client, &msg, &mut out).await;
-            if !out.is_empty() && out.len() <= 65535 {
+            let mut messages = Vec::new();
+            answerer.answer_frames(client, &msg, &mut messages).await;
+            // A transfer's messages are queued in order; the permit is held until the last.
+            for out in messages {
+                if out.is_empty() || out.len() > 65535 {
+                    continue;
+                }
                 let mut frame = Vec::with_capacity(out.len() + 2);
                 frame.extend_from_slice(&(out.len() as u16).to_be_bytes());
                 frame.extend_from_slice(&out);
-                let _ = tx.send(frame).await;
+                if tx.send(frame).await.is_err() {
+                    break;
+                }
             }
             drop(permit);
         });

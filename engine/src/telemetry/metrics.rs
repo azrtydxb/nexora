@@ -74,11 +74,22 @@ pub const AUTH_ANSWER_RESULTS: [&str; 5] = ["answer", "nodata", "nxdomain", "ref
 /// The `kind` label per slot of `AuthCounters::loads`.
 pub const AUTH_LOAD_KINDS: [&str; 3] = ["full", "delta", "reused"];
 
+/// The `type` label per first index of `AuthCounters::transfers`.
+pub const AUTH_TRANSFER_TYPES: [&str; 2] = ["axfr", "ixfr"];
+/// The `result` label per second index of `AuthCounters::transfers`.
+pub const AUTH_TRANSFER_RESULTS: [&str; 4] = ["full", "incremental", "uptodate", "refused"];
+/// The `result` label per slot of `AuthCounters::notify_sent`.
+pub const AUTH_NOTIFY_RESULTS: [&str; 4] = ["acked", "rejected", "timeout", "nokey"];
+
 /// Process-wide authoritative counters updated off the query path.
 #[derive(Default)]
 pub struct AuthCounters {
     /// Zone loads by `AUTH_LOAD_KINDS` slot.
     pub loads: [AtomicU64; 3],
+    /// Zone transfers out by `AUTH_TRANSFER_TYPES` and `AUTH_TRANSFER_RESULTS` slot.
+    pub transfers: [[AtomicU64; 4]; 2],
+    /// NOTIFY messages sent by `AUTH_NOTIFY_RESULTS` slot; shared with the sending tasks.
+    pub notify_sent: Arc<[AtomicU64; 4]>,
 }
 
 impl WorkerCounters {
@@ -602,6 +613,33 @@ impl Metrics {
             "Queries answered from hosted zones",
             answers,
         );
+        let transfers = Family::<Labels, PromCounter>::default();
+        for (ty, row) in AUTH_TRANSFER_TYPES.iter().zip(&self.auth.transfers) {
+            for (result, c) in AUTH_TRANSFER_RESULTS.iter().zip(row) {
+                transfers
+                    .get_or_create(&vec![
+                        ("type", (*ty).to_owned()),
+                        ("result", (*result).to_owned()),
+                    ])
+                    .inc_by(c.load(Ordering::Relaxed));
+            }
+        }
+        reg.register(
+            "nexora_auth_transfers",
+            "Zone transfer requests to hosted zones by type and outcome",
+            transfers,
+        );
+        let notify = Family::<Labels, PromCounter>::default();
+        for (result, c) in AUTH_NOTIFY_RESULTS.iter().zip(self.auth.notify_sent.iter()) {
+            notify
+                .get_or_create(&vec![("result", (*result).to_owned())])
+                .inc_by(c.load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_auth_notify_sent",
+            "NOTIFY messages sent to secondaries by outcome",
+            notify,
+        );
     }
 
     /// The periodic `Stats` report, from the same sums as `render`.
@@ -940,6 +978,8 @@ mod tests {
         let m = Metrics::new(2);
         m.workers[1].auth_answers[3].fetch_add(2, Ordering::Relaxed);
         m.auth.loads[1].fetch_add(1, Ordering::Relaxed);
+        m.auth.transfers[1][1].fetch_add(3, Ordering::Relaxed);
+        m.auth.notify_sent[0].fetch_add(1, Ordering::Relaxed);
         let text = m.render(&Runtime::initial(), &RecursorState::new(None));
         assert!(text.contains("nexora_auth_zones 0"), "{text}");
         for kind in AUTH_LOAD_KINDS {
@@ -954,6 +994,29 @@ mod tests {
                 "{text}"
             );
         }
+        for ty in AUTH_TRANSFER_TYPES {
+            for result in AUTH_TRANSFER_RESULTS {
+                let family =
+                    format!("nexora_auth_transfers_total{{type=\"{ty}\",result=\"{result}\"}}");
+                assert!(text.contains(&family), "{text}");
+            }
+        }
+        for result in AUTH_NOTIFY_RESULTS {
+            assert!(
+                text.contains(&format!(
+                    "nexora_auth_notify_sent_total{{result=\"{result}\"}}"
+                )),
+                "{text}"
+            );
+        }
+        assert!(has_positive(
+            &text,
+            "nexora_auth_transfers_total{type=\"ixfr\",result=\"incremental\"} "
+        ));
+        assert!(has_positive(
+            &text,
+            "nexora_auth_notify_sent_total{result=\"acked\"} "
+        ));
         assert!(has_positive(
             &text,
             "nexora_auth_zone_loads_total{kind=\"delta\"} "

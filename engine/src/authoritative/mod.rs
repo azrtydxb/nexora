@@ -1,5 +1,5 @@
 //! Authoritative service for zones hosted in Nexora: the NZF1 zone format and the in-memory zone
-//! model (M4). Answering and runtime wiring build on these modules.
+//! model (M4), answers, zone transfers out and NOTIFY.
 
 pub mod answer;
 pub mod dispatch;
@@ -7,10 +7,12 @@ pub mod loader;
 pub mod lookup;
 pub mod msg;
 pub mod name;
+pub mod notify_out;
 pub mod nzf;
 pub mod set;
 pub mod state;
 pub mod writer;
+pub mod xfr;
 pub mod zone;
 
 pub use state::after_apply;
@@ -19,6 +21,10 @@ pub use state::after_apply;
 mod answer_tests;
 #[cfg(test)]
 mod loader_tests;
+#[cfg(test)]
+mod notify_out_tests;
+#[cfg(test)]
+mod xfr_tests;
 #[cfg(test)]
 mod zone_tests;
 

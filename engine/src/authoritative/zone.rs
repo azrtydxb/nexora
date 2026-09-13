@@ -3,6 +3,7 @@
 //! only the nodes it touches.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::SocketAddr;
 use std::ops::Bound;
 use std::sync::Arc;
 
@@ -73,6 +74,28 @@ pub struct DeltaRecords {
     pub added: Vec<OwnedRecord>,
 }
 
+impl DeltaRecords {
+    /// Owned copies of a parsed NZF1 delta's deleted (`a`) and added (`b`) records.
+    pub fn from_parsed(p: &Parsed<'_>) -> DeltaRecords {
+        let own = |rs: &[RecordRef<'_>]| {
+            rs.iter()
+                .map(|r| OwnedRecord {
+                    owner: r.owner.into(),
+                    rtype: r.rtype,
+                    ttl: r.ttl,
+                    rdata: r.rdata.into(),
+                })
+                .collect()
+        };
+        DeltaRecords {
+            from_serial: p.from_serial,
+            to_serial: p.serial,
+            deleted: own(&p.a),
+            added: own(&p.b),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ZoneError {
     #[error("zone: expected a full image")]
@@ -107,6 +130,12 @@ pub struct Zone {
     pub deltas: Vec<Arc<DeltaRecords>>,
     /// Secondary zone past its SOA expire, set by the loader.
     pub expired: bool,
+    /// Transfer ACL (empty refuses every client), set by the loader.
+    pub transfer_allow: Vec<ipnet::IpNet>,
+    /// Lowercase wire name of the TSIG key transfers require, set by the loader.
+    pub transfer_key: Option<Box<[u8]>>,
+    /// NOTIFY targets and the lowercase wire name of the key signing each, set by the loader.
+    pub notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
 }
 
 fn covered(r: &RecordRef<'_>) -> Result<(u16, bool), ZoneError> {
@@ -255,6 +284,9 @@ impl Zone {
             nsec3param: None,
             deltas: Vec::new(),
             expired: false,
+            transfer_allow: Vec::new(),
+            transfer_key: None,
+            notify: Vec::new(),
         };
         let mut key = Vec::with_capacity(512);
         for r in &p.a {
@@ -265,7 +297,7 @@ impl Zone {
     }
 
     /// Returns the zone at the delta's target serial; `self` is unchanged. The result carries no
-    /// IXFR history and is not expired (the loader sets both).
+    /// IXFR history, transfer policy or NOTIFY targets and is not expired (the loader sets them).
     pub fn apply(&self, d: &Parsed<'_>) -> Result<Zone, ZoneError> {
         if d.kind != Kind::Delta {
             return Err(ZoneError::NotDelta);
@@ -298,6 +330,9 @@ impl Zone {
             nsec3param: None,
             deltas: Vec::new(),
             expired: false,
+            transfer_allow: Vec::new(),
+            transfer_key: None,
+            notify: Vec::new(),
         };
         zone.finalize()?;
         Ok(zone)

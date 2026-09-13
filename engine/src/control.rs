@@ -559,8 +559,10 @@ async fn session(
             }
             // The secrets are never logged and never persisted.
             Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),
-            // M4 contract (Task 1); TSIG keys arrive with M4 Task 6, update results with Task 11.
-            Some(ServerMsg::KeyMaterial(_) | ServerMsg::UpdateResult(_)) => {}
+            // Hosted-zone TSIG keys: never logged, never persisted.
+            Some(ServerMsg::KeyMaterial(km)) => shared.auth.keyring.apply(km),
+            // M4 contract (Task 1); update results arrive with Task 11.
+            Some(ServerMsg::UpdateResult(_)) => {}
             None => {}
         }
     };

@@ -260,7 +260,7 @@ impl RewriteContext for WorkerRewriteCtx {
                 buf
             }
             FastOutcome::Miss(job) => resolve_miss(self.ctx.clone(), self.rt.clone(), job).await,
-            FastOutcome::Rewrite(_) | FastOutcome::Drop => return Err(()),
+            FastOutcome::Rewrite(_) | FastOutcome::Drop | FastOutcome::Slow(_) => return Err(()),
         };
         Message::from_vec(&reply).map_err(|_| ())
     }

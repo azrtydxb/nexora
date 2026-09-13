@@ -140,3 +140,37 @@ fn missing_blob_and_broken_chain_are_rejected() {
     dup.push(dup[0].clone());
     assert!(validate(&dup).is_err(), "duplicate zone names");
 }
+
+#[test]
+fn transfer_policy_and_notify_targets_follow_the_snapshot_without_a_serial_change() {
+    let (blobs, refs) = MapBlobs::new(&[FULL]);
+    let v1 = vec![zone_msg(2026091301, &refs[0], vec![], 0)];
+    let first = load(&AuthSet::empty(), &v1, &blobs).unwrap();
+    let z1 = first.set.get(b"\x07example\x04test\x00").unwrap().clone();
+    assert!(z1.transfer_allow.is_empty() && z1.notify.is_empty());
+
+    let mut v2 = v1.clone();
+    v2[0].transfer = Some(proto::TransferPolicy {
+        allow_cidrs: vec!["127.0.0.1/32".into()],
+        tsig_key: "xfr-key.".into(),
+    });
+    v2[0].notify = vec![proto::NotifyTarget {
+        address: "127.0.0.1:5300".into(),
+        tsig_key: String::new(),
+    }];
+    validate(&v2).unwrap();
+    let second = load(&first.set, &v2, &blobs).unwrap();
+    assert_eq!(second.counts.reused, 1);
+    assert!(second.changed.is_empty(), "same serial: nothing to notify");
+    let z2 = second.set.get(b"\x07example\x04test\x00").unwrap();
+    assert_eq!(
+        z2.transfer_allow,
+        vec!["127.0.0.1/32".parse::<ipnet::IpNet>().unwrap()]
+    );
+    assert_eq!(z2.transfer_key.as_deref(), Some(&b"\x07xfr-key\x00"[..]));
+    assert_eq!(z2.notify, vec![("127.0.0.1:5300".parse().unwrap(), None)]);
+
+    let mut bad = v2.clone();
+    bad[0].notify[0].tsig_key = "no-dot".into();
+    assert!(validate(&bad).is_err());
+}

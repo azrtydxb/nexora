@@ -1,23 +1,42 @@
 //! Process-wide authoritative state that survives snapshot swaps, and the hook run after each
 //! applied snapshot.
 
+use super::T_SOA;
+use super::notify_out::{NotifyJob, NotifyResult, send_notify};
 use crate::runtime::Runtime;
 use crate::server::Shared;
+use crate::tsig::KeyRing;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
+/// NOTIFY retry schedule: 2 s, doubling, 5 attempts.
+const NOTIFY_FIRST_TIMEOUT: Duration = Duration::from_secs(2);
+const NOTIFY_ATTEMPTS: u32 = 5;
+/// `AuthCounters::notify_sent` slots.
+const NOTIFY_ACKED: usize = 0;
+const NOTIFY_REJECTED: usize = 1;
+const NOTIFY_TIMEOUT: usize = 2;
+const NOTIFY_NOKEY: usize = 3;
 
 pub struct AuthState {
+    /// Hosted-zone TSIG keys from `KeyMaterial` (memory only).
+    pub keyring: Arc<KeyRing>,
     /// The control runtime, for work spawned off the workers (NOTIFY, UPDATE forwarding).
     control: OnceLock<tokio::runtime::Handle>,
     /// The newest runtime version `after_apply` has handled.
     applied_version: AtomicU64,
+    /// The newest runtime version whose changed zones were notified.
+    notified_version: AtomicU64,
 }
 
 impl AuthState {
     pub fn new() -> Arc<AuthState> {
         Arc::new(AuthState {
+            keyring: Arc::new(KeyRing::default()),
             control: OnceLock::new(),
             applied_version: AtomicU64::new(0),
+            notified_version: AtomicU64::new(0),
         })
     }
 
@@ -31,22 +50,78 @@ impl AuthState {
     }
 }
 
-/// Once per runtime version: adds `rt.auth_loads` to `shared.metrics.auth`.
+/// Once per runtime version: adds `rt.auth_loads` to `shared.metrics.auth`, and (once the
+/// control runtime is set) sends NOTIFY for every zone in `rt.auth_changed` to its targets.
 pub fn after_apply(shared: &Shared, rt: &Runtime) {
     if shared
         .auth
         .applied_version
         .fetch_max(rt.version, Ordering::SeqCst)
+        < rt.version
+    {
+        let loads = &shared.metrics.auth.loads;
+        for (counter, n) in loads.iter().zip([
+            rt.auth_loads.full,
+            rt.auth_loads.delta,
+            rt.auth_loads.reused,
+        ]) {
+            counter.fetch_add(n, Ordering::Relaxed);
+        }
+    }
+    let Some(handle) = shared.auth.control_runtime() else {
+        return;
+    };
+    if shared
+        .auth
+        .notified_version
+        .fetch_max(rt.version, Ordering::SeqCst)
         >= rt.version
     {
         return;
     }
-    let loads = &shared.metrics.auth.loads;
-    for (counter, n) in loads.iter().zip([
-        rt.auth_loads.full,
-        rt.auth_loads.delta,
-        rt.auth_loads.reused,
-    ]) {
-        counter.fetch_add(n, Ordering::Relaxed);
+    let counters = &shared.metrics.auth.notify_sent;
+    for (origin, _) in &rt.auth_changed {
+        let Some(zone) = rt.auth.get(origin) else {
+            continue;
+        };
+        let Some(soa) = zone.apex().get(T_SOA) else {
+            continue;
+        };
+        let rdata = zone.soa_rdata();
+        let mut soa_rr = Vec::with_capacity(origin.len() + 10 + rdata.len());
+        soa_rr.extend_from_slice(origin);
+        soa_rr.extend_from_slice(&T_SOA.to_be_bytes());
+        soa_rr.extend_from_slice(&1u16.to_be_bytes());
+        soa_rr.extend_from_slice(&soa.ttl.to_be_bytes());
+        soa_rr.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+        soa_rr.extend_from_slice(rdata);
+        for (target, key_name) in &zone.notify {
+            let key = match key_name {
+                None => None,
+                Some(name) => match shared.auth.keyring.get(name) {
+                    Some(k) => Some(k),
+                    None => {
+                        counters[NOTIFY_NOKEY].fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                },
+            };
+            let job = NotifyJob {
+                zone: origin.clone(),
+                soa_rr: soa_rr.clone(),
+                target: *target,
+                key,
+            };
+            let counters = counters.clone();
+            handle.spawn(async move {
+                let slot = match send_notify(job, NOTIFY_FIRST_TIMEOUT, NOTIFY_ATTEMPTS).await {
+                    NotifyResult::Acked { .. } => NOTIFY_ACKED,
+                    NotifyResult::Rejected(_) => NOTIFY_REJECTED,
+                    NotifyResult::Timeout => NOTIFY_TIMEOUT,
+                    NotifyResult::NoKey => NOTIFY_NOKEY,
+                };
+                counters[slot].fetch_add(1, Ordering::Relaxed);
+            });
+        }
     }
 }

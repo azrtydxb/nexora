@@ -14,6 +14,9 @@ pub mod server;
 pub mod snapshot;
 pub mod snapshot_m3;
 pub mod telemetry;
+pub mod tsig;
+#[cfg(test)]
+mod tsig_tests;
 pub mod upstream;
 pub mod wire;
 
