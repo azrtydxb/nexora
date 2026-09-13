@@ -22,4 +22,5 @@ func (h *HSM) generate(uint8, []byte) (string, error)               { return "",
 func (h *HSM) privateKeyAttributes([]byte) (bool, bool, error)      { return false, false, errNoCgo }
 func (h *HSM) wrapKeyAttributes() (bool, bool, error)               { return false, false, errNoCgo }
 func (h *HSM) destroy([]byte) error                                 { return errNoCgo }
+func (h *HSM) signingKeyIDs() ([][]byte, error)                     { return nil, errNoCgo }
 func (h *HSM) signer(uint8, []byte, crypto.PublicKey) crypto.Signer { return nil }

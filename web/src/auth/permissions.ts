@@ -43,6 +43,7 @@ export const permissions = {
   listZoneRecords: "viewer",
   exportZoneFile: "viewer",
   listTsigKeys: "viewer",
+  getZoneDnssec: "viewer",
 
   createUpstream: "operator",
   updateUpstream: "operator",
@@ -84,6 +85,9 @@ export const permissions = {
   deleteZoneRecord: "operator",
   importZoneFile: "operator",
   refreshZone: "operator",
+  updateZoneDnssec: "operator",
+  startZoneKeyRollover: "operator",
+  confirmZoneKskDs: "operator",
 
   listUsers: "admin",
   createUser: "admin",

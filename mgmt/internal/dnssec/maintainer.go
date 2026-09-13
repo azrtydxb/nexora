@@ -18,22 +18,39 @@ const maintenanceBatch = 20
 
 var maintenanceActor = auth.Actor{Type: "system", ID: "dnssec", Name: "system:dnssec"}
 
-// Maintainer re-signs DNSSEC zones whose signatures are due for refresh (zone_dnssec
-// next_maintenance_at). Each run holds the session advisory lock dnssec:<zone id>, so one
-// management plane instance at a time signs a zone. Task 14 adds key rollover transitions.
+// orphanSweepEvery is how often the maintainer looks for PKCS#11 keys no row references.
+const orphanSweepEvery = 10 * time.Minute
+
+// Maintainer keeps DNSSEC zones current: for zones due (zone_dnssec next_maintenance_at) it applies
+// key rollover transitions and re-signs expiring signatures, each zone under the session advisory
+// lock dnssec:<zone id> so one management plane instance at a time signs it. Every run also
+// destroys queued PKCS#11 keys of committed removals and, every orphanSweepEvery, token keys no
+// committed row references.
 type Maintainer struct {
-	Store *store.Store
-	Zones *zone.Service
-	Tick  time.Duration
+	Store   *store.Store
+	Service *Service
+	Tick    time.Duration
 }
 
 // Run maintains due zones every Tick until ctx ends.
 func (m *Maintainer) Run(ctx context.Context) error {
 	t := time.NewTicker(m.Tick)
 	defer t.Stop()
+	var lastSweep time.Time
 	for {
 		if err := m.runDue(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("list DNSSEC zones due for maintenance", "err", err)
+		}
+		if err := DestroyPending(ctx, m.Store, m.Service.Box); err != nil && ctx.Err() == nil {
+			slog.Warn("destroy removed PKCS#11 signing keys", "err", err)
+		}
+		if time.Since(lastSweep) >= orphanSweepEvery {
+			lastSweep = time.Now()
+			if n, err := SweepTokenOrphans(ctx, m.Store, m.Service.Box, OrphanGrace); err != nil && ctx.Err() == nil {
+				slog.Warn("sweep orphaned PKCS#11 signing keys", "err", err)
+			} else if n > 0 {
+				slog.Info("destroyed orphaned PKCS#11 signing keys", "count", n)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -61,7 +78,8 @@ func (m *Maintainer) runDue(ctx context.Context) error {
 	return nil
 }
 
-// maintainLocked re-signs zone id under its advisory lock when it is still due.
+// maintainLocked advances rollovers of zone id and re-signs it under its advisory lock when it is
+// still due.
 func (m *Maintainer) maintainLocked(ctx context.Context, id uuid.UUID) error {
 	conn, err := m.Store.Pool.Acquire(ctx)
 	if err != nil {
@@ -86,8 +104,9 @@ func (m *Maintainer) maintainLocked(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return store.MapError(err)
 	}
-	_, err = m.Zones.Mutate(ctx, id, func(pgx.Tx, *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
-		return "dnssecMaintenance", nil, nil, zone.RebuildOptions{}, nil
+	svc := m.Service
+	_, err = svc.Zones.Mutate(ctx, id, func(tx pgx.Tx, z *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
+		return "dnssecMaintenance", nil, nil, zone.RebuildOptions{}, svc.advance(ctx, tx, z, svc.now())
 	}, maintenanceActor)
 	return err
 }

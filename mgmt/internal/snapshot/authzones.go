@@ -90,8 +90,17 @@ func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot
 			}
 			az.Notify = append(az.Notify, t)
 		}
+		keyed := false
 		for _, p := range primaries {
 			az.Primaries = append(az.Primaries, p.Address)
+			key := ""
+			if p.TSIGKeyID != nil {
+				key, keyed = keyNames[*p.TSIGKeyID], true
+			}
+			az.PrimaryTsigKeys = append(az.PrimaryTsigKeys, key)
+		}
+		if !keyed {
+			az.PrimaryTsigKeys = nil // no primary requires a key: keep the field empty
 		}
 		rows, err := tx.Query(ctx, `SELECT j.seq, j.from_serial, j.to_serial, j.blob_sha256, b.size
 			FROM zone_journal j JOIN blobs b ON b.sha256 = j.blob_sha256

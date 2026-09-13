@@ -44,9 +44,16 @@ pub fn handle_notify(
     let Some(zone) = set.get(lower) else {
         return reply(raw, &q, FLAG_QR, wire::RCODE_NOTAUTH, signing, now);
     };
-    // debt: a TSIG-signed NOTIFY is still bound to the primaries' source IPs, because the snapshot
-    // does not say which key each primary uses; revisit when AuthZone carries primary keys.
-    if !zone.secondary || !zone.primaries.iter().any(|p| p.ip() == client.ip()) {
+    // A primary with a configured key accepts only NOTIFYs signed with that key; one without a key
+    // accepts its address alone.
+    let signer = signed.as_ref().map(|(k, _)| k.lower_wire_name());
+    let from_primary = zone.primaries.iter().any(|(addr, key)| {
+        addr.ip() == client.ip()
+            && key
+                .as_deref()
+                .is_none_or(|want| signer.as_deref() == Some(want))
+    });
+    if !zone.secondary || !from_primary {
         return reply(raw, &q, FLAG_QR, wire::RCODE_REFUSED, signing, now);
     }
     let serial = msg::walk_rrs(raw, q.question_end, usize::from(be16(raw, 6)))

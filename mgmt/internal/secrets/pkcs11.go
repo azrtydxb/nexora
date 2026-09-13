@@ -20,6 +20,8 @@ import (
 const (
 	hsmWrapKeyID    = "nexora-kek-v1"
 	hsmWrapKeyLabel = "nexora-kek"
+	// hsmSigningLabel labels every DNSSEC key object Nexora creates; orphan sweeps touch only these.
+	hsmSigningLabel = "nexora-dnssec"
 	hsmSessions     = 4
 )
 
@@ -188,7 +190,7 @@ var oidP256 = []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
 func (h *HSM) generate(alg uint8, id []byte) (publicKey string, err error) {
 	err = h.with(func(sh pkcs11.SessionHandle) error {
 		common := func() []*pkcs11.Attribute {
-			return []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true), pkcs11.NewAttribute(pkcs11.CKA_ID, id), pkcs11.NewAttribute(pkcs11.CKA_LABEL, "nexora-dnssec")}
+			return []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true), pkcs11.NewAttribute(pkcs11.CKA_ID, id), pkcs11.NewAttribute(pkcs11.CKA_LABEL, hsmSigningLabel)}
 		}
 		priv := append([]*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true), pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
 			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true), pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false)}, common()...)
@@ -274,6 +276,47 @@ func (h *HSM) destroy(id []byte) error {
 		}
 		return nil
 	})
+}
+
+// signingKeyIDs returns the distinct CKA_IDs of the private and public key objects labelled
+// hsmSigningLabel.
+func (h *HSM) signingKeyIDs() (ids [][]byte, err error) {
+	err = h.with(func(sh pkcs11.SessionHandle) error {
+		seen := map[string]bool{}
+		for _, class := range []uint{pkcs11.CKO_PRIVATE_KEY, pkcs11.CKO_PUBLIC_KEY} {
+			tmpl := []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_CLASS, class), pkcs11.NewAttribute(pkcs11.CKA_LABEL, hsmSigningLabel)}
+			if err := h.ctx.FindObjectsInit(sh, tmpl); err != nil {
+				return err
+			}
+			var objs []pkcs11.ObjectHandle
+			for {
+				batch, _, err := h.ctx.FindObjects(sh, 256)
+				if err != nil {
+					_ = h.ctx.FindObjectsFinal(sh)
+					return err
+				}
+				if len(batch) == 0 {
+					break
+				}
+				objs = append(objs, batch...)
+			}
+			if err := h.ctx.FindObjectsFinal(sh); err != nil {
+				return err
+			}
+			for _, o := range objs {
+				attrs, err := h.ctx.GetAttributeValue(sh, o, []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_ID, nil)})
+				if err != nil {
+					return err
+				}
+				if id := attrs[0].Value; len(id) > 0 && !seen[string(id)] {
+					seen[string(id)] = true
+					ids = append(ids, id)
+				}
+			}
+		}
+		return nil
+	})
+	return ids, err
 }
 
 var sha256DigestInfo = []byte{0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20}

@@ -151,6 +151,15 @@ func (b *Box) DestroySigningKey(k StoredKey) error {
 	return b.hsm.destroy(k.KeyRef)
 }
 
+// PKCS11SigningKeyRefs lists the KeyRefs of every DNSSEC key object Nexora created in the token
+// (label "nexora-dnssec"), referenced by a database row or not.
+func (b *Box) PKCS11SigningKeyRefs() ([][]byte, error) {
+	if !b.HasBackend(BackendPKCS11) {
+		return nil, ErrBackendUnavailable
+	}
+	return b.hsm.signingKeyIDs()
+}
+
 // PKCS11KeyAttributes reports CKA_EXTRACTABLE and CKA_SENSITIVE of the token private key keyRef.
 func (b *Box) PKCS11KeyAttributes(keyRef []byte) (extractable, sensitive bool, err error) {
 	if !b.HasBackend(BackendPKCS11) {

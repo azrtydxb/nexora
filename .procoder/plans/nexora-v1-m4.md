@@ -5711,8 +5711,17 @@ Files:
 - `mgmt/internal/dnssec/service.go` — `Get`, `Update`, `StartRollover`, `ConfirmDS` for the API
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/dnssec_zone.go`, `mgmt/internal/api/server.go` (`Deps.ZoneDNSSEC`), `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — `getZoneDnssec`, `updateZoneDnssec`, `startZoneKeyRollover`, `confirmZoneKskDs` (modify/create; `dnssec.go` keeps M3's resolver DNSSEC handlers)
 - `mgmt/cmd/nexora-mgmt/main.go` — start the maintainer (modify)
-- `e2e/harness/dnssec.go` — `Delv`, `WriteTrustAnchors`, `SoftHSMToken`
-- `e2e/dnssec_test.go` — `TestDNSSECSigningRollover`, `TestKeyStorageBackends`
+- `e2e/harness/dnssec.go` — `Delv`, `WriteTrustAnchors` (the SoftHSM token comes from the existing `harness.InitSoftHSM`/`SoftHSM.Env`)
+- `e2e/dnssec_signing_test.go` — `TestDNSSECSigningRollover`, `TestKeyStorageBackends` (`e2e/dnssec_test.go` already holds M3's `TestDNSSECValidation`)
+- `mgmt/internal/dnssec/lifecycle.go`, `lifecycle_test.go`, `service_test.go`, `mgmt/migrations/00403_dnssec_key_lifecycle.sql`, `mgmt/internal/secrets/{signing,pkcs11,pkcs11_nocgo}.go` — PKCS#11 key lifecycle (review fixes, below)
+- `proto/nexora/control/v1/control.proto` (`AuthZone.primary_tsig_keys = 200`), `mgmt/internal/snapshot/authzones.go`, `engine/src/authoritative/{loader,zone,notify_in}.rs`, `e2e/harness/named.go` (`NamedZone.NotifyKey`), `e2e/secondary_update_test.go` — NOTIFY bound to the primary's TSIG key (review GAP)
+
+Review fixes folded into this task (from the Task 12 report and `.procoder/notes/plan-review.md`):
+
+- `Disable(ctx, tx, zoneID)` (no box) and the maintainer's removals never touch the token inside the transaction: they queue PKCS#11 key refs in `dnssec_key_destruction`; `DestroyPending(ctx, st, box)` destroys and dequeues them after commit (idempotent, retried every maintainer tick; `Service.Update` runs it after its commit). `TestDisableDestroysTokenKeysOnlyAfterCommit` injects a COMMIT failure (deferred FK violation) and proves the keys survive, then that a failed destroy stays queued.
+- Token keys whose generating transaction rolled back: `SweepTokenOrphans(ctx, st, box, grace)` lists token objects labelled `nexora-dnssec` (`Box.PKCS11SigningKeyRefs`), records unreferenced ones in `dnssec_token_orphans` and destroys them once unreferenced for `OrphanGrace` (1 h); the maintainer sweeps every 10 min. `TestSweepDestroysTokenKeysOfRolledBackTransactions`.
+- `AuthZone.primary_tsig_keys` (parallel to `primaries`, empty when no primary has a key): a NOTIFY from a keyed primary's address must be signed with that key, otherwise REFUSED.
+- CDS/CDNSKEY advertise only the newest active KSK while its DS is pending (the initial KSK stays pending until confirmed, so advertising every pending KSK would put two keys in CDS during a rollover). `View.DS` is the DS of that newest active KSK. `Store.Sign` sets `next_maintenance_at = min(signature refresh, Advance next)` (now when a transition is already due). Extra API error codes: 422 `dnssec_disabled`, `zone_not_primary`, `invalid_dnssec_settings`.
 
 Interfaces:
 
@@ -5731,6 +5740,9 @@ func (s *Service) StartRollover(ctx context.Context, actor auth.Actor, zoneID uu
 func (s *Service) ConfirmDS(ctx context.Context, actor auth.Actor, zoneID, keyID uuid.UUID) (*View, error)
 type Maintainer struct{ Store *store.Store; Service *Service; Tick time.Duration }
 func (m *Maintainer) Run(ctx context.Context) error
+func Disable(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID) error
+func DestroyPending(ctx context.Context, st *store.Store, box *secrets.Box) error
+func SweepTokenOrphans(ctx context.Context, st *store.Store, box *secrets.Box, grace time.Duration) (int, error)
 ```
 
 - [ ] Write the failing `mgmt/internal/dnssec/rollover_test.go`:
@@ -6018,7 +6030,10 @@ func validates(t *testing.T, server, anchors, zone, stage string) {
 		{"x.wild." + zone, "TXT", "; fully validated"},
 	} {
 		out := harness.Delv(t, server, anchors, root, q.name, q.qtype)
-		if !strings.Contains(out, q.want) || strings.Contains(out, "resolution failed") {
+		// delv prints ";; resolution failed: ncache nxdomain" above a validated denial, so only a
+		// whole "; fully validated" line counts, and "failed" is fatal for positive answers only.
+		failed := strings.Contains(out, "resolution failed") && !strings.Contains(out, "resolution failed: ncache")
+		if !strings.Contains("\n"+out, "\n"+q.want+"\n") || failed {
 			t.Fatalf("%s: delv %s %s:\n%s", stage, q.name, q.qtype, out)
 		}
 	}

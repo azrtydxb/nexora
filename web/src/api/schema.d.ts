@@ -914,6 +914,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/zones/{zoneId}/dnssec": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getZoneDnssec"];
+        /** @description Enables (generating a KSK and a ZSK), reconfigures or disables online signing. Omitted settings keep their current values. */
+        put: operations["updateZoneDnssec"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}/dnssec/rollovers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Starts a ZSK pre-publish rollover or a KSK double-signature rollover; the maintainer completes it (a KSK rollover after confirmZoneKskDs). */
+        post: operations["startZoneKeyRollover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/zones/{zoneId}/dnssec/rollovers/ds-published": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Confirms that the parent publishes the DS of an active KSK whose DS is pending; CDS/CDNSKEY are withdrawn and an older KSK is removed after the parent DS TTL. */
+        post: operations["confirmZoneKskDs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tsig-keys": {
         parameters: {
             query?: never;
@@ -1679,6 +1736,86 @@ export interface components {
         RecordPage: {
             items: components["schemas"]["Record"][];
             next_cursor: string | null;
+        };
+        ZoneDnssecKey: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            role: "ksk" | "zsk";
+            algorithm: number;
+            key_tag: number;
+            flags: number;
+            /** @enum {string} */
+            state: "published" | "active" | "retired" | "removed";
+            /**
+             * @description KSKs: whether the parent's DS for this key is pending or was confirmed.
+             * @enum {string}
+             */
+            ds_state: "none" | "pending" | "seen";
+            /** @enum {string} */
+            backend: "kek" | "pkcs11";
+            /** @description DNSKEY public key field (base64). */
+            public_key: string;
+            /** Format: date-time */
+            published_at: string;
+            /** Format: date-time */
+            activated_at: string | null;
+            /** Format: date-time */
+            retired_at: string | null;
+            /** Format: date-time */
+            removed_at: string | null;
+        };
+        ZoneDnssec: {
+            enabled: boolean;
+            /** @enum {integer} */
+            algorithm: 8 | 13;
+            /** @enum {string} */
+            nsec_mode: "nsec" | "nsec3";
+            /** @description kek or pkcs11; empty when no key storage is configured. */
+            key_backend: string;
+            propagation_delay_seconds: number;
+            parent_ds_ttl_seconds: number;
+            /** @description 0 means manual ZSK rollovers only. */
+            zsk_lifetime_days: number;
+            keys: components["schemas"]["ZoneDnssecKey"][];
+            /** @description DS records (SHA-256) of the newest active KSK, to publish at the parent. */
+            ds: string[];
+            /** @description The served DNSKEY RRset in presentation form. */
+            dnskeys: string[];
+        };
+        ZoneDnssecUpdate: {
+            /**
+             * Format: int64
+             * @description Zone revision.
+             */
+            revision: number;
+            enabled: boolean;
+            /**
+             * @description Default 13 (ECDSA P-256); cannot change while signing is enabled.
+             * @enum {integer}
+             */
+            algorithm?: 8 | 13;
+            /**
+             * @description Default nsec3.
+             * @enum {string}
+             */
+            nsec_mode?: "nsec" | "nsec3";
+            /**
+             * @description Default pkcs11 when a token is configured, else kek.
+             * @enum {string}
+             */
+            key_backend?: "kek" | "pkcs11";
+            propagation_delay_seconds?: number;
+            parent_ds_ttl_seconds?: number;
+            zsk_lifetime_days?: number;
+        };
+        ZoneKeyRollover: {
+            /** @enum {string} */
+            role: "zsk" | "ksk";
+        };
+        ZoneKskDsPublished: {
+            /** Format: uuid */
+            key_id: string;
         };
         /** @enum {string} */
         TsigKeyAlgorithm: "hmac-sha256" | "hmac-sha384" | "hmac-sha512";
@@ -3852,6 +3989,120 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+        };
+    };
+    getZoneDnssec: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DNSSEC settings, keys, DS records and DNSKEYs of the zone. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZoneDnssec"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    updateZoneDnssec: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneDnssecUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated; the zone is re-signed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZoneDnssec"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    startZoneKeyRollover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneKeyRollover"];
+            };
+        };
+        responses: {
+            /** @description Rollover started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZoneDnssec"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    confirmZoneKskDs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneKskDsPublished"];
+            };
+        };
+        responses: {
+            /** @description Confirmed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZoneDnssec"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     listTsigKeys: {

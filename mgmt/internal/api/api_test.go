@@ -15,6 +15,7 @@ import (
 	"github.com/piwi3910/nexora/e2e/harness"
 	"github.com/piwi3910/nexora/mgmt/internal/api"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
@@ -59,7 +60,8 @@ func newAPIWith(t *testing.T, adjust func(*api.Deps)) *apiEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x", Zones: &zone.Service{Store: st}, TSIGKeys: &tsigkey.Service{Store: st}}
+	zs := &zone.Service{Store: st}
+	deps := api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x", Zones: zs, TSIGKeys: &tsigkey.Service{Store: st}, ZoneDNSSEC: &dnssec.Service{Store: st, Zones: zs}}
 	if adjust != nil {
 		adjust(&deps)
 	}

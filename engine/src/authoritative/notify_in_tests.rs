@@ -1,10 +1,12 @@
+use super::name::from_ascii;
 use super::notify_in::{NotifySink, handle_notify};
 use super::nzf;
 use super::set::AuthSet;
 use super::zone::Zone;
 use super::zone_tests::FULL;
 use crate::proto;
-use crate::tsig::KeyRing;
+use crate::tsig::{KeyRing, sign_request};
+use crate::tsig_tests::test_ring;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RecordType};
 use std::sync::{Arc, Mutex};
@@ -19,8 +21,13 @@ impl NotifySink for Captured {
 }
 
 fn secondary_set(primary: &str) -> AuthSet {
+    secondary_set_keyed(primary, None)
+}
+
+fn secondary_set_keyed(primary: &str, key: Option<&str>) -> AuthSet {
     let mut z = Zone::from_image(&nzf::parse(FULL).unwrap()).unwrap();
-    z.set_secondary_primaries(vec![primary.parse().unwrap()]);
+    let key = key.map(|k| from_ascii(k).unwrap().into_boxed_slice());
+    z.set_secondary_primaries(vec![(primary.parse().unwrap(), key)]);
     AuthSet::from_zones(vec![Arc::new(z)]).unwrap()
 }
 
@@ -101,5 +108,49 @@ fn notify_from_other_source_or_for_unknown_zone_is_refused() {
         sink.0.lock().unwrap().len(),
         1,
         "only the accepted NOTIFY is forwarded"
+    );
+}
+
+fn signed_notify(zone: &str, ring: &KeyRing, key: &[u8]) -> Vec<u8> {
+    let mut msg = notify_msg(zone);
+    sign_request(&mut msg, &ring.get(key).unwrap(), NOW);
+    msg
+}
+
+const NOW: u64 = 1757750400;
+
+#[test]
+fn notify_from_keyed_primary_requires_that_key() {
+    let ring = test_ring();
+    let set = secondary_set_keyed("192.0.2.53:53", Some("xfr-key."));
+    let from = "192.0.2.53:40000".parse().unwrap();
+    let rcode = |msg: &[u8], sink: &Captured| {
+        let resp = handle_notify(msg, from, &set, &ring, sink, NOW);
+        Message::from_vec(&resp).unwrap().metadata.response_code
+    };
+    let sink = Captured::default();
+    // positive first: the primary's own key is accepted and forwarded
+    assert_eq!(
+        rcode(
+            &signed_notify("example.test.", &ring, b"\x07xfr-key\x00"),
+            &sink
+        ),
+        ResponseCode::NoError
+    );
+    assert_eq!(sink.0.lock().unwrap().len(), 1);
+    // another key that verifies, and no key at all, are refused from the same address
+    let other = rcode(
+        &signed_notify("example.test.", &ring, b"\x0asha512-key\x00"),
+        &sink,
+    );
+    assert_eq!(other, ResponseCode::Refused);
+    assert_eq!(
+        rcode(&notify_msg("example.test."), &sink),
+        ResponseCode::Refused
+    );
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        1,
+        "refused NOTIFYs are not forwarded"
     );
 }

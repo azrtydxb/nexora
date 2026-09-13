@@ -104,12 +104,20 @@ pub fn validate(zones: &[proto::AuthZone]) -> Result<(), String> {
             .iter()
             .map(|t| &t.tsig_key)
             .chain(z.notify.iter().map(|t| &t.tsig_key))
-            .chain(&z.update_tsig_keys);
+            .chain(&z.update_tsig_keys)
+            .chain(&z.primary_tsig_keys);
         if let Some(k) = keys
             .filter(|k| !k.is_empty())
             .find(|k| !k.ends_with('.') || from_ascii(k).is_none())
         {
             return Err(format!("auth zone {n}: TSIG key name {k:?} invalid"));
+        }
+        if !z.primary_tsig_keys.is_empty() && z.primary_tsig_keys.len() != z.primaries.len() {
+            return Err(format!(
+                "auth zone {n}: {} primary TSIG keys for {} primaries",
+                z.primary_tsig_keys.len(),
+                z.primaries.len()
+            ));
         }
         let addrs = z.notify.iter().map(|t| &t.address).chain(&z.primaries);
         for a in addrs {
@@ -262,7 +270,7 @@ struct Policy {
     key: Option<Box<[u8]>>,
     notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     secondary: bool,
-    primaries: Vec<SocketAddr>,
+    primaries: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     update_keys: Vec<Box<[u8]>>,
 }
 
@@ -293,7 +301,15 @@ impl Policy {
                 .filter_map(|t| Some((t.address.parse().ok()?, key_wire(&t.tsig_key))))
                 .collect(),
             secondary: z.kind == proto::AuthZoneKind::Secondary as i32,
-            primaries: z.primaries.iter().filter_map(|a| a.parse().ok()).collect(),
+            primaries: z
+                .primaries
+                .iter()
+                .enumerate()
+                .filter_map(|(i, a)| {
+                    let key = z.primary_tsig_keys.get(i).and_then(|k| key_wire(k));
+                    Some((a.parse().ok()?, key))
+                })
+                .collect(),
             update_keys: z
                 .update_tsig_keys
                 .iter()

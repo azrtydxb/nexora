@@ -439,6 +439,9 @@ message AuthZone {
   repeated string primaries = 10;        // secondary: "ip:port" accepted as NOTIFY sources
   repeated string update_tsig_keys = 11; // key names allowed to UPDATE; empty = updates refused
   bool expired = 12;                     // secondary past SOA expire: SERVFAIL
+  // Parallel to primaries (empty, or one entry per primary): the TSIG key name a NOTIFY from that
+  // primary must be signed with; "" accepts unsigned NOTIFY (or any valid key) from its address.
+  repeated string primary_tsig_keys = 200;
 }
 
 message TsigSecret {

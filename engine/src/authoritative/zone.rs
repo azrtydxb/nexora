@@ -138,8 +138,9 @@ pub struct Zone {
     pub notify: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     /// A secondary zone (pulled by the management plane), set by the loader.
     pub secondary: bool,
-    /// Secondary: the primaries whose IPs are accepted as NOTIFY sources, set by the loader.
-    pub primaries: Vec<SocketAddr>,
+    /// Secondary: the primaries whose IPs are accepted as NOTIFY sources, each with the lowercase
+    /// wire name of the TSIG key its NOTIFY must be signed with (when set), set by the loader.
+    pub primaries: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     /// Lowercase wire names of the TSIG keys allowed to UPDATE (empty refuses), set by the loader.
     pub update_keys: Vec<Box<[u8]>>,
 }
@@ -438,8 +439,9 @@ impl Zone {
     }
 
     /// Lowercase wire origin.
-    /// Test setter: marks the zone secondary with `primaries` as its NOTIFY sources.
-    pub fn set_secondary_primaries(&mut self, primaries: Vec<SocketAddr>) {
+    /// Test setter: marks the zone secondary with `primaries` (address, required NOTIFY key wire
+    /// name) as its NOTIFY sources.
+    pub fn set_secondary_primaries(&mut self, primaries: Vec<(SocketAddr, Option<Box<[u8]>>)>) {
         self.secondary = true;
         self.primaries = primaries;
     }

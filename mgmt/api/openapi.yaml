@@ -1081,6 +1081,59 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/Record" } }
         next_cursor: { type: [string, "null"] }
+    ZoneDnssecKey:
+      type: object
+      required: [id, role, algorithm, key_tag, flags, state, ds_state, backend, public_key, published_at, activated_at, retired_at, removed_at]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [ksk, zsk] }
+        algorithm: { type: integer }
+        key_tag: { type: integer }
+        flags: { type: integer }
+        state: { type: string, enum: [published, active, retired, removed] }
+        ds_state: { type: string, enum: [none, pending, seen], description: "KSKs: whether the parent's DS for this key is pending or was confirmed." }
+        backend: { type: string, enum: [kek, pkcs11] }
+        public_key: { type: string, description: "DNSKEY public key field (base64)." }
+        published_at: { type: string, format: date-time }
+        activated_at: { type: [string, "null"], format: date-time }
+        retired_at: { type: [string, "null"], format: date-time }
+        removed_at: { type: [string, "null"], format: date-time }
+    ZoneDnssec:
+      type: object
+      required: [enabled, algorithm, nsec_mode, key_backend, propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days, keys, ds, dnskeys]
+      properties:
+        enabled: { type: boolean }
+        algorithm: { type: integer, enum: [8, 13] }
+        nsec_mode: { type: string, enum: [nsec, nsec3] }
+        key_backend: { type: string, description: "kek or pkcs11; empty when no key storage is configured." }
+        propagation_delay_seconds: { type: integer }
+        parent_ds_ttl_seconds: { type: integer }
+        zsk_lifetime_days: { type: integer, description: "0 means manual ZSK rollovers only." }
+        keys: { type: array, items: { $ref: "#/components/schemas/ZoneDnssecKey" } }
+        ds: { type: array, items: { type: string }, description: "DS records (SHA-256) of the newest active KSK, to publish at the parent." }
+        dnskeys: { type: array, items: { type: string }, description: "The served DNSKEY RRset in presentation form." }
+    ZoneDnssecUpdate:
+      type: object
+      required: [revision, enabled]
+      properties:
+        revision: { type: integer, format: int64, description: "Zone revision." }
+        enabled: { type: boolean }
+        algorithm: { type: integer, enum: [8, 13], description: "Default 13 (ECDSA P-256); cannot change while signing is enabled." }
+        nsec_mode: { type: string, enum: [nsec, nsec3], description: "Default nsec3." }
+        key_backend: { type: string, enum: [kek, pkcs11], description: "Default pkcs11 when a token is configured, else kek." }
+        propagation_delay_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        parent_ds_ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        zsk_lifetime_days: { type: integer, minimum: 0, maximum: 3650 }
+    ZoneKeyRollover:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [zsk, ksk] }
+    ZoneKskDsPublished:
+      type: object
+      required: [key_id]
+      properties:
+        key_id: { type: string, format: uuid }
     TsigKeyAlgorithm:
       type: string
       enum: [hmac-sha256, hmac-sha384, hmac-sha512]
@@ -2697,6 +2750,83 @@ paths:
             text/plain; charset=utf-8:
               schema: { type: string }
         "404": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/dnssec:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getZoneDnssec
+      tags: [zones]
+      responses:
+        "200":
+          description: DNSSEC settings, keys, DS records and DNSKEYs of the zone.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneDnssec" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updateZoneDnssec
+      tags: [zones]
+      description: Enables (generating a KSK and a ZSK), reconfigures or disables online signing. Omitted settings keep their current values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneDnssecUpdate" }
+      responses:
+        "200":
+          description: Updated; the zone is re-signed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneDnssec" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/dnssec/rollovers:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: startZoneKeyRollover
+      tags: [zones]
+      description: Starts a ZSK pre-publish rollover or a KSK double-signature rollover; the maintainer completes it (a KSK rollover after confirmZoneKskDs).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneKeyRollover" }
+      responses:
+        "202":
+          description: Rollover started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneDnssec" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/dnssec/rollovers/ds-published:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: confirmZoneKskDs
+      tags: [zones]
+      description: Confirms that the parent publishes the DS of an active KSK whose DS is pending; CDS/CDNSKEY are withdrawn and an older KSK is removed after the parent DS TTL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneKskDsPublished" }
+      responses:
+        "200":
+          description: Confirmed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneDnssec" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /tsig-keys:
     get:
       operationId: listTsigKeys

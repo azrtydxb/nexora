@@ -173,4 +173,25 @@ fn transfer_policy_and_notify_targets_follow_the_snapshot_without_a_serial_chang
     let mut bad = v2.clone();
     bad[0].notify[0].tsig_key = "no-dot".into();
     assert!(validate(&bad).is_err());
+
+    let mut v3 = v2.clone();
+    v3[0].kind = proto::AuthZoneKind::Secondary as i32;
+    v3[0].primaries = vec!["192.0.2.1:53".into(), "192.0.2.2:53".into()];
+    v3[0].primary_tsig_keys = vec!["XFR-key.".into(), String::new()];
+    validate(&v3).unwrap();
+    let third = load(&second.set, &v3, &blobs).unwrap();
+    let z3 = third.set.get(b"\x07example\x04test\x00").unwrap();
+    assert_eq!(
+        z3.primaries,
+        vec![
+            (
+                "192.0.2.1:53".parse().unwrap(),
+                Some(b"\x07xfr-key\x00".to_vec().into_boxed_slice())
+            ),
+            ("192.0.2.2:53".parse().unwrap(), None),
+        ]
+    );
+    let mut uneven = v3.clone();
+    uneven[0].primary_tsig_keys.pop();
+    assert!(validate(&uneven).is_err(), "one key name per primary");
 }

@@ -289,7 +289,8 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	go fetcher.Run(ctx)
 
 	zones := &zone.Service{Store: st, Build: build, Signer: &dnssec.Store{Box: box}, Now: time.Now}
-	go func() { _ = (&dnssec.Maintainer{Store: st, Zones: zones, Tick: 5 * time.Second}).Run(ctx) }()
+	zoneDNSSEC := &dnssec.Service{Store: st, Box: box, Zones: zones}
+	go func() { _ = (&dnssec.Maintainer{Store: st, Service: zoneDNSSEC, Tick: 5 * time.Second}).Run(ctx) }()
 	tsigKeys := &tsigkey.Service{Store: st, Build: build, Box: box}
 	refresher := &xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}
 	scheduler := &xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}
@@ -324,7 +325,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
-			Zones: zones, TSIGKeys: tsigKeys,
+			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

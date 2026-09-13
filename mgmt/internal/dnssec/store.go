@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,11 +52,39 @@ func (s *Store) Sign(ctx context.Context, tx pgx.Tx, z *zone.Zone, rrs []dns.RR,
 	if err := saveCache(ctx, tx, z.ID, cache, out.Cache); err != nil {
 		return nil, err
 	}
-	// debt: Task 14 lowers this to the next key rollover transition as well.
-	if _, err := tx.Exec(ctx, "UPDATE zone_dnssec SET next_maintenance_at = $2 WHERE zone_id = $1", z.ID, out.NextRefresh); err != nil {
+	next, err := s.rolloverDue(ctx, tx, z, rrs, now)
+	if err != nil {
+		return nil, err
+	}
+	if next.IsZero() || out.NextRefresh.Before(next) {
+		next = out.NextRefresh
+	}
+	if _, err := tx.Exec(ctx, "UPDATE zone_dnssec SET next_maintenance_at = $2 WHERE zone_id = $1", z.ID, next); err != nil {
 		return nil, err
 	}
 	return out.Served, nil
+}
+
+// rolloverDue returns when the next key transition of z is due: now when one already is (the
+// maintainer applies it on its next run), zero when none is pending.
+func (s *Store) rolloverDue(ctx context.Context, tx pgx.Tx, z *zone.Zone, rrs []dns.RR, now time.Time) (time.Time, error) {
+	st, _, err := loadSettings(ctx, tx, s.Box, z.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	keys, err := loadKeyStates(ctx, tx, z.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var maxTTL uint32
+	for _, rr := range rrs {
+		maxTTL = max(maxTTL, rr.Header().Ttl)
+	}
+	out, act, next := Advance(keys, policyOf(st, z.SOA.TTL, maxTTL), now)
+	if act.CreateZSK || !slices.EqualFunc(out, keys, func(a, b KeyState) bool { return a.State == b.State }) {
+		return now, nil
+	}
+	return next, nil
 }
 
 // ResignSOA replaces the SOA signatures in served after Rebuild set the new serial.
@@ -101,7 +130,7 @@ func (s *Store) ResignSOA(ctx context.Context, tx pgx.Tx, z *zone.Zone, served [
 // loadKeys returns the published, active and retired keys of z. Only active keys get a signer;
 // release zeroes their unsealed private keys and must be called once signing is done.
 func (s *Store) loadKeys(ctx context.Context, tx pgx.Tx, z *zone.Zone) ([]Key, func(), error) {
-	rows, err := tx.Query(ctx, `SELECT id, role, algorithm, public_key, backend, key_ref, private_envelope, state, ds_state
+	rows, err := tx.Query(ctx, `SELECT id, role, algorithm, public_key, backend, key_ref, private_envelope, state, ds_state, activated_at
 		FROM dnssec_keys WHERE zone_id = $1 AND state IN ('published', 'active', 'retired') ORDER BY role, published_at, id`, z.ID)
 	if err != nil {
 		return nil, nil, err
@@ -111,16 +140,24 @@ func (s *Store) loadKeys(ctx context.Context, tx pgx.Tx, z *zone.Zone) ([]Key, f
 		role, state, dsState string
 		algorithm            int16
 		stored               secrets.StoredKey
+		activatedAt          *time.Time
 	}
 	var list []row
+	// Only the newest active KSK is advertised in CDS/CDNSKEY while its DS is pending: during a
+	// double-signature rollover the parent's DS set should move to it alone.
+	var cdsKey uuid.UUID
+	var cdsAt time.Time
 	for rows.Next() {
 		var r row
 		var backend string
-		if err := rows.Scan(&r.id, &r.role, &r.algorithm, &r.stored.PublicKey, &backend, &r.stored.KeyRef, &r.stored.Envelope, &r.state, &r.dsState); err != nil {
+		if err := rows.Scan(&r.id, &r.role, &r.algorithm, &r.stored.PublicKey, &backend, &r.stored.KeyRef, &r.stored.Envelope, &r.state, &r.dsState, &r.activatedAt); err != nil {
 			rows.Close()
 			return nil, nil, err
 		}
 		r.stored.Backend, r.stored.Algorithm = secrets.Backend(backend), uint8(r.algorithm)
+		if r.role == "ksk" && r.state == "active" && r.activatedAt != nil && !r.activatedAt.Before(cdsAt) {
+			cdsKey, cdsAt = r.id, *r.activatedAt
+		}
 		list = append(list, r)
 	}
 	rows.Close()
@@ -143,7 +180,7 @@ func (s *Store) loadKeys(ctx context.Context, tx pgx.Tx, z *zone.Zone) ([]Key, f
 			ID: r.id.String(), Role: r.role, Algorithm: r.stored.Algorithm,
 			DNSKEY: &dns.DNSKEY{Hdr: hdr(z.Name, dns.TypeDNSKEY, z.SOA.TTL), Flags: flags, Protocol: 3, Algorithm: r.stored.Algorithm, PublicKey: r.stored.PublicKey},
 			Signs:  r.state == "active",
-			InCDS:  r.role == "ksk" && r.state == "active" && r.dsState == "pending",
+			InCDS:  r.id == cdsKey && r.dsState == "pending",
 		}
 		if k.Signs {
 			signer, rel, err := s.Box.Signer(r.stored)

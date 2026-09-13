@@ -813,6 +813,195 @@ func (e ZoneCreateKind) Valid() bool {
 	}
 }
 
+// Defines values for ZoneDnssecAlgorithm.
+const (
+	ZoneDnssecAlgorithmN13 ZoneDnssecAlgorithm = 13
+	ZoneDnssecAlgorithmN8  ZoneDnssecAlgorithm = 8
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecAlgorithm enum.
+func (e ZoneDnssecAlgorithm) Valid() bool {
+	switch e {
+	case ZoneDnssecAlgorithmN13:
+		return true
+	case ZoneDnssecAlgorithmN8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecNsecMode.
+const (
+	ZoneDnssecNsecModeNsec  ZoneDnssecNsecMode = "nsec"
+	ZoneDnssecNsecModeNsec3 ZoneDnssecNsecMode = "nsec3"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecNsecMode enum.
+func (e ZoneDnssecNsecMode) Valid() bool {
+	switch e {
+	case ZoneDnssecNsecModeNsec:
+		return true
+	case ZoneDnssecNsecModeNsec3:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecKeyBackend.
+const (
+	ZoneDnssecKeyBackendKek    ZoneDnssecKeyBackend = "kek"
+	ZoneDnssecKeyBackendPkcs11 ZoneDnssecKeyBackend = "pkcs11"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecKeyBackend enum.
+func (e ZoneDnssecKeyBackend) Valid() bool {
+	switch e {
+	case ZoneDnssecKeyBackendKek:
+		return true
+	case ZoneDnssecKeyBackendPkcs11:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecKeyDsState.
+const (
+	ZoneDnssecKeyDsStateNone    ZoneDnssecKeyDsState = "none"
+	ZoneDnssecKeyDsStatePending ZoneDnssecKeyDsState = "pending"
+	ZoneDnssecKeyDsStateSeen    ZoneDnssecKeyDsState = "seen"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecKeyDsState enum.
+func (e ZoneDnssecKeyDsState) Valid() bool {
+	switch e {
+	case ZoneDnssecKeyDsStateNone:
+		return true
+	case ZoneDnssecKeyDsStatePending:
+		return true
+	case ZoneDnssecKeyDsStateSeen:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecKeyRole.
+const (
+	ZoneDnssecKeyRoleKsk ZoneDnssecKeyRole = "ksk"
+	ZoneDnssecKeyRoleZsk ZoneDnssecKeyRole = "zsk"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecKeyRole enum.
+func (e ZoneDnssecKeyRole) Valid() bool {
+	switch e {
+	case ZoneDnssecKeyRoleKsk:
+		return true
+	case ZoneDnssecKeyRoleZsk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecKeyState.
+const (
+	Active    ZoneDnssecKeyState = "active"
+	Published ZoneDnssecKeyState = "published"
+	Removed   ZoneDnssecKeyState = "removed"
+	Retired   ZoneDnssecKeyState = "retired"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecKeyState enum.
+func (e ZoneDnssecKeyState) Valid() bool {
+	switch e {
+	case Active:
+		return true
+	case Published:
+		return true
+	case Removed:
+		return true
+	case Retired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecUpdateAlgorithm.
+const (
+	ZoneDnssecUpdateAlgorithmN13 ZoneDnssecUpdateAlgorithm = 13
+	ZoneDnssecUpdateAlgorithmN8  ZoneDnssecUpdateAlgorithm = 8
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecUpdateAlgorithm enum.
+func (e ZoneDnssecUpdateAlgorithm) Valid() bool {
+	switch e {
+	case ZoneDnssecUpdateAlgorithmN13:
+		return true
+	case ZoneDnssecUpdateAlgorithmN8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecUpdateKeyBackend.
+const (
+	ZoneDnssecUpdateKeyBackendKek    ZoneDnssecUpdateKeyBackend = "kek"
+	ZoneDnssecUpdateKeyBackendPkcs11 ZoneDnssecUpdateKeyBackend = "pkcs11"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecUpdateKeyBackend enum.
+func (e ZoneDnssecUpdateKeyBackend) Valid() bool {
+	switch e {
+	case ZoneDnssecUpdateKeyBackendKek:
+		return true
+	case ZoneDnssecUpdateKeyBackendPkcs11:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneDnssecUpdateNsecMode.
+const (
+	ZoneDnssecUpdateNsecModeNsec  ZoneDnssecUpdateNsecMode = "nsec"
+	ZoneDnssecUpdateNsecModeNsec3 ZoneDnssecUpdateNsecMode = "nsec3"
+)
+
+// Valid indicates whether the value is a known member of the ZoneDnssecUpdateNsecMode enum.
+func (e ZoneDnssecUpdateNsecMode) Valid() bool {
+	switch e {
+	case ZoneDnssecUpdateNsecModeNsec:
+		return true
+	case ZoneDnssecUpdateNsecModeNsec3:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ZoneKeyRolloverRole.
+const (
+	ZoneKeyRolloverRoleKsk ZoneKeyRolloverRole = "ksk"
+	ZoneKeyRolloverRoleZsk ZoneKeyRolloverRole = "zsk"
+)
+
+// Valid indicates whether the value is a known member of the ZoneKeyRolloverRole enum.
+func (e ZoneKeyRolloverRole) Valid() bool {
+	switch e {
+	case ZoneKeyRolloverRoleKsk:
+		return true
+	case ZoneKeyRolloverRoleZsk:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessControl defines model for AccessControl.
 type AccessControl struct {
 	AllowCidrs []string `json:"allow_cidrs"`
@@ -1601,6 +1790,95 @@ type ZoneCreate struct {
 // ZoneCreateKind defines model for ZoneCreate.Kind.
 type ZoneCreateKind string
 
+// ZoneDnssec defines model for ZoneDnssec.
+type ZoneDnssec struct {
+	Algorithm ZoneDnssecAlgorithm `json:"algorithm"`
+
+	// Dnskeys The served DNSKEY RRset in presentation form.
+	Dnskeys []string `json:"dnskeys"`
+
+	// Ds DS records (SHA-256) of the newest active KSK, to publish at the parent.
+	Ds      []string `json:"ds"`
+	Enabled bool     `json:"enabled"`
+
+	// KeyBackend kek or pkcs11; empty when no key storage is configured.
+	KeyBackend              string             `json:"key_backend"`
+	Keys                    []ZoneDnssecKey    `json:"keys"`
+	NsecMode                ZoneDnssecNsecMode `json:"nsec_mode"`
+	ParentDsTtlSeconds      int                `json:"parent_ds_ttl_seconds"`
+	PropagationDelaySeconds int                `json:"propagation_delay_seconds"`
+
+	// ZskLifetimeDays 0 means manual ZSK rollovers only.
+	ZskLifetimeDays int `json:"zsk_lifetime_days"`
+}
+
+// ZoneDnssecAlgorithm defines model for ZoneDnssec.Algorithm.
+type ZoneDnssecAlgorithm int
+
+// ZoneDnssecNsecMode defines model for ZoneDnssec.NsecMode.
+type ZoneDnssecNsecMode string
+
+// ZoneDnssecKey defines model for ZoneDnssecKey.
+type ZoneDnssecKey struct {
+	ActivatedAt *time.Time           `json:"activated_at"`
+	Algorithm   int                  `json:"algorithm"`
+	Backend     ZoneDnssecKeyBackend `json:"backend"`
+
+	// DsState KSKs: whether the parent's DS for this key is pending or was confirmed.
+	DsState ZoneDnssecKeyDsState `json:"ds_state"`
+	Flags   int                  `json:"flags"`
+	Id      openapi_types.UUID   `json:"id"`
+	KeyTag  int                  `json:"key_tag"`
+
+	// PublicKey DNSKEY public key field (base64).
+	PublicKey   string             `json:"public_key"`
+	PublishedAt time.Time          `json:"published_at"`
+	RemovedAt   *time.Time         `json:"removed_at"`
+	RetiredAt   *time.Time         `json:"retired_at"`
+	Role        ZoneDnssecKeyRole  `json:"role"`
+	State       ZoneDnssecKeyState `json:"state"`
+}
+
+// ZoneDnssecKeyBackend defines model for ZoneDnssecKey.Backend.
+type ZoneDnssecKeyBackend string
+
+// ZoneDnssecKeyDsState KSKs: whether the parent's DS for this key is pending or was confirmed.
+type ZoneDnssecKeyDsState string
+
+// ZoneDnssecKeyRole defines model for ZoneDnssecKey.Role.
+type ZoneDnssecKeyRole string
+
+// ZoneDnssecKeyState defines model for ZoneDnssecKey.State.
+type ZoneDnssecKeyState string
+
+// ZoneDnssecUpdate defines model for ZoneDnssecUpdate.
+type ZoneDnssecUpdate struct {
+	// Algorithm Default 13 (ECDSA P-256); cannot change while signing is enabled.
+	Algorithm *ZoneDnssecUpdateAlgorithm `json:"algorithm,omitempty"`
+	Enabled   bool                       `json:"enabled"`
+
+	// KeyBackend Default pkcs11 when a token is configured, else kek.
+	KeyBackend *ZoneDnssecUpdateKeyBackend `json:"key_backend,omitempty"`
+
+	// NsecMode Default nsec3.
+	NsecMode                *ZoneDnssecUpdateNsecMode `json:"nsec_mode,omitempty"`
+	ParentDsTtlSeconds      *int                      `json:"parent_ds_ttl_seconds,omitempty"`
+	PropagationDelaySeconds *int                      `json:"propagation_delay_seconds,omitempty"`
+
+	// Revision Zone revision.
+	Revision        int64 `json:"revision"`
+	ZskLifetimeDays *int  `json:"zsk_lifetime_days,omitempty"`
+}
+
+// ZoneDnssecUpdateAlgorithm Default 13 (ECDSA P-256); cannot change while signing is enabled.
+type ZoneDnssecUpdateAlgorithm int
+
+// ZoneDnssecUpdateKeyBackend Default pkcs11 when a token is configured, else kek.
+type ZoneDnssecUpdateKeyBackend string
+
+// ZoneDnssecUpdateNsecMode Default nsec3.
+type ZoneDnssecUpdateNsecMode string
+
 // ZoneEndpoint defines model for ZoneEndpoint.
 type ZoneEndpoint struct {
 	// Address ip:port
@@ -1619,6 +1897,19 @@ type ZoneImport struct {
 type ZoneImportResult struct {
 	RecordsImported int  `json:"records_imported"`
 	Zone            Zone `json:"zone"`
+}
+
+// ZoneKeyRollover defines model for ZoneKeyRollover.
+type ZoneKeyRollover struct {
+	Role ZoneKeyRolloverRole `json:"role"`
+}
+
+// ZoneKeyRolloverRole defines model for ZoneKeyRollover.Role.
+type ZoneKeyRolloverRole string
+
+// ZoneKskDsPublished defines model for ZoneKskDsPublished.
+type ZoneKskDsPublished struct {
+	KeyId openapi_types.UUID `json:"key_id"`
 }
 
 // ZoneSOA defines model for ZoneSOA.
@@ -1878,6 +2169,15 @@ type CreateZoneJSONRequestBody = ZoneCreate
 
 // UpdateZoneJSONRequestBody defines body for UpdateZone for application/json ContentType.
 type UpdateZoneJSONRequestBody = ZoneUpdate
+
+// UpdateZoneDnssecJSONRequestBody defines body for UpdateZoneDnssec for application/json ContentType.
+type UpdateZoneDnssecJSONRequestBody = ZoneDnssecUpdate
+
+// StartZoneKeyRolloverJSONRequestBody defines body for StartZoneKeyRollover for application/json ContentType.
+type StartZoneKeyRolloverJSONRequestBody = ZoneKeyRollover
+
+// ConfirmZoneKskDsJSONRequestBody defines body for ConfirmZoneKskDs for application/json ContentType.
+type ConfirmZoneKskDsJSONRequestBody = ZoneKskDsPublished
 
 // ImportZoneFileJSONRequestBody defines body for ImportZoneFile for application/json ContentType.
 type ImportZoneFileJSONRequestBody = ZoneImport
@@ -2145,6 +2445,18 @@ type ServerInterface interface {
 
 	// (PATCH /zones/{zoneId})
 	UpdateZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (GET /zones/{zoneId}/dnssec)
+	GetZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (PUT /zones/{zoneId}/dnssec)
+	UpdateZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (POST /zones/{zoneId}/dnssec/rollovers)
+	StartZoneKeyRollover(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
+
+	// (POST /zones/{zoneId}/dnssec/rollovers/ds-published)
+	ConfirmZoneKskDs(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
 
 	// (GET /zones/{zoneId}/export)
 	ExportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID)
@@ -2594,6 +2906,26 @@ func (_ Unimplemented) GetZone(w http.ResponseWriter, r *http.Request, zoneId op
 
 // (PATCH /zones/{zoneId})
 func (_ Unimplemented) UpdateZone(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /zones/{zoneId}/dnssec)
+func (_ Unimplemented) GetZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /zones/{zoneId}/dnssec)
+func (_ Unimplemented) UpdateZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /zones/{zoneId}/dnssec/rollovers)
+func (_ Unimplemented) StartZoneKeyRollover(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /zones/{zoneId}/dnssec/rollovers/ds-published)
+func (_ Unimplemented) ConfirmZoneKskDs(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4592,6 +4924,110 @@ func (siw *ServerInterfaceWrapper) UpdateZone(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetZoneDnssec operation middleware
+func (siw *ServerInterfaceWrapper) GetZoneDnssec(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetZoneDnssec(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateZoneDnssec operation middleware
+func (siw *ServerInterfaceWrapper) UpdateZoneDnssec(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateZoneDnssec(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartZoneKeyRollover operation middleware
+func (siw *ServerInterfaceWrapper) StartZoneKeyRollover(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartZoneKeyRollover(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmZoneKskDs operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmZoneKskDs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmZoneKskDs(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ExportZoneFile operation middleware
 func (siw *ServerInterfaceWrapper) ExportZoneFile(w http.ResponseWriter, r *http.Request) {
 
@@ -5242,6 +5678,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/zones/{zoneId}/export", wrapper.ExportZoneFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/zones/{zoneId}/dnssec", wrapper.GetZoneDnssec)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/zones/{zoneId}/dnssec", wrapper.UpdateZoneDnssec)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/zones/{zoneId}/dnssec/rollovers", wrapper.StartZoneKeyRollover)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/zones/{zoneId}/dnssec/rollovers/ds-published", wrapper.ConfirmZoneKskDs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/tsig-keys", wrapper.ListTsigKeys)
@@ -8545,6 +8993,293 @@ func (response UpdateZone422JSONResponse) VisitUpdateZoneResponse(w http.Respons
 	return err
 }
 
+type GetZoneDnssecRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+}
+
+type GetZoneDnssecResponseObject interface {
+	VisitGetZoneDnssecResponse(w http.ResponseWriter) error
+}
+
+type GetZoneDnssec200JSONResponse ZoneDnssec
+
+func (response GetZoneDnssec200JSONResponse) VisitGetZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetZoneDnssec404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetZoneDnssec404JSONResponse) VisitGetZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssecRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *UpdateZoneDnssecJSONRequestBody
+}
+
+type UpdateZoneDnssecResponseObject interface {
+	VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error
+}
+
+type UpdateZoneDnssec200JSONResponse ZoneDnssec
+
+func (response UpdateZoneDnssec200JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssec400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateZoneDnssec400JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssec404JSONResponse Error
+
+func (response UpdateZoneDnssec404JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssec409JSONResponse Error
+
+func (response UpdateZoneDnssec409JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssec422JSONResponse Error
+
+func (response UpdateZoneDnssec422JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneDnssec503JSONResponse Error
+
+func (response UpdateZoneDnssec503JSONResponse) VisitUpdateZoneDnssecResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRolloverRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *StartZoneKeyRolloverJSONRequestBody
+}
+
+type StartZoneKeyRolloverResponseObject interface {
+	VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error
+}
+
+type StartZoneKeyRollover202JSONResponse ZoneDnssec
+
+func (response StartZoneKeyRollover202JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRollover400JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartZoneKeyRollover400JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRollover404JSONResponse Error
+
+func (response StartZoneKeyRollover404JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRollover409JSONResponse Error
+
+func (response StartZoneKeyRollover409JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRollover422JSONResponse Error
+
+func (response StartZoneKeyRollover422JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartZoneKeyRollover503JSONResponse Error
+
+func (response StartZoneKeyRollover503JSONResponse) VisitStartZoneKeyRolloverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmZoneKskDsRequestObject struct {
+	ZoneId openapi_types.UUID `json:"zoneId"`
+	Body   *ConfirmZoneKskDsJSONRequestBody
+}
+
+type ConfirmZoneKskDsResponseObject interface {
+	VisitConfirmZoneKskDsResponse(w http.ResponseWriter) error
+}
+
+type ConfirmZoneKskDs200JSONResponse ZoneDnssec
+
+func (response ConfirmZoneKskDs200JSONResponse) VisitConfirmZoneKskDsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmZoneKskDs400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ConfirmZoneKskDs400JSONResponse) VisitConfirmZoneKskDsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmZoneKskDs404JSONResponse Error
+
+func (response ConfirmZoneKskDs404JSONResponse) VisitConfirmZoneKskDsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmZoneKskDs422JSONResponse Error
+
+func (response ConfirmZoneKskDs422JSONResponse) VisitConfirmZoneKskDsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ExportZoneFileRequestObject struct {
 	ZoneId openapi_types.UUID `json:"zoneId"`
 }
@@ -9257,6 +9992,18 @@ type StrictServerInterface interface {
 
 	// (PATCH /zones/{zoneId})
 	UpdateZone(ctx context.Context, request UpdateZoneRequestObject) (UpdateZoneResponseObject, error)
+
+	// (GET /zones/{zoneId}/dnssec)
+	GetZoneDnssec(ctx context.Context, request GetZoneDnssecRequestObject) (GetZoneDnssecResponseObject, error)
+
+	// (PUT /zones/{zoneId}/dnssec)
+	UpdateZoneDnssec(ctx context.Context, request UpdateZoneDnssecRequestObject) (UpdateZoneDnssecResponseObject, error)
+
+	// (POST /zones/{zoneId}/dnssec/rollovers)
+	StartZoneKeyRollover(ctx context.Context, request StartZoneKeyRolloverRequestObject) (StartZoneKeyRolloverResponseObject, error)
+
+	// (POST /zones/{zoneId}/dnssec/rollovers/ds-published)
+	ConfirmZoneKskDs(ctx context.Context, request ConfirmZoneKskDsRequestObject) (ConfirmZoneKskDsResponseObject, error)
 
 	// (GET /zones/{zoneId}/export)
 	ExportZoneFile(ctx context.Context, request ExportZoneFileRequestObject) (ExportZoneFileResponseObject, error)
@@ -11657,6 +12404,131 @@ func (sh *strictHandler) UpdateZone(w http.ResponseWriter, r *http.Request, zone
 	}
 }
 
+// GetZoneDnssec operation middleware
+func (sh *strictHandler) GetZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request GetZoneDnssecRequestObject
+
+	request.ZoneId = zoneId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetZoneDnssec(ctx, request.(GetZoneDnssecRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetZoneDnssec")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetZoneDnssecResponseObject); ok {
+		if err := validResponse.VisitGetZoneDnssecResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateZoneDnssec operation middleware
+func (sh *strictHandler) UpdateZoneDnssec(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request UpdateZoneDnssecRequestObject
+
+	request.ZoneId = zoneId
+
+	var body UpdateZoneDnssecJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateZoneDnssec(ctx, request.(UpdateZoneDnssecRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateZoneDnssec")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateZoneDnssecResponseObject); ok {
+		if err := validResponse.VisitUpdateZoneDnssecResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartZoneKeyRollover operation middleware
+func (sh *strictHandler) StartZoneKeyRollover(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request StartZoneKeyRolloverRequestObject
+
+	request.ZoneId = zoneId
+
+	var body StartZoneKeyRolloverJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartZoneKeyRollover(ctx, request.(StartZoneKeyRolloverRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartZoneKeyRollover")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartZoneKeyRolloverResponseObject); ok {
+		if err := validResponse.VisitStartZoneKeyRolloverResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ConfirmZoneKskDs operation middleware
+func (sh *strictHandler) ConfirmZoneKskDs(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
+	var request ConfirmZoneKskDsRequestObject
+
+	request.ZoneId = zoneId
+
+	var body ConfirmZoneKskDsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ConfirmZoneKskDs(ctx, request.(ConfirmZoneKskDsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ConfirmZoneKskDs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ConfirmZoneKskDsResponseObject); ok {
+		if err := validResponse.VisitConfirmZoneKskDsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ExportZoneFile operation middleware
 func (sh *strictHandler) ExportZoneFile(w http.ResponseWriter, r *http.Request, zoneId openapi_types.UUID) {
 	var request ExportZoneFileRequestObject
@@ -11869,138 +12741,156 @@ func (sh *strictHandler) RefreshZone(w http.ResponseWriter, r *http.Request, zon
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"Q86K5tFL2W726OFEdED4rwEA",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

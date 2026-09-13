@@ -3692,8 +3692,11 @@ type AuthZone struct {
 	Primaries        []string               `protobuf:"bytes,10,rep,name=primaries,proto3" json:"primaries,omitempty"`                                   // secondary: "ip:port" accepted as NOTIFY sources
 	UpdateTsigKeys   []string               `protobuf:"bytes,11,rep,name=update_tsig_keys,json=updateTsigKeys,proto3" json:"update_tsig_keys,omitempty"` // key names allowed to UPDATE; empty = updates refused
 	Expired          bool                   `protobuf:"varint,12,opt,name=expired,proto3" json:"expired,omitempty"`                                      // secondary past SOA expire: SERVFAIL
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Parallel to primaries (empty, or one entry per primary): the TSIG key name a NOTIFY from that
+	// primary must be signed with; "" accepts unsigned NOTIFY (or any valid key) from its address.
+	PrimaryTsigKeys []string `protobuf:"bytes,200,rep,name=primary_tsig_keys,json=primaryTsigKeys,proto3" json:"primary_tsig_keys,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AuthZone) Reset() {
@@ -3808,6 +3811,13 @@ func (x *AuthZone) GetExpired() bool {
 		return x.Expired
 	}
 	return false
+}
+
+func (x *AuthZone) GetPrimaryTsigKeys() []string {
+	if x != nil {
+		return x.PrimaryTsigKeys
+	}
+	return nil
 }
 
 type TsigSecret struct {
@@ -4381,7 +4391,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\btsig_key\x18\x02 \x01(\tR\atsigKey\"C\n" +
 	"\fNotifyTarget\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x19\n" +
-	"\btsig_key\x18\x02 \x01(\tR\atsigKey\"\xfe\x03\n" +
+	"\btsig_key\x18\x02 \x01(\tR\atsigKey\"\xab\x04\n" +
 	"\bAuthZone\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x123\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1f.nexora.control.v1.AuthZoneKindR\x04kind\x12\x16\n" +
@@ -4395,7 +4405,8 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\tprimaries\x18\n" +
 	" \x03(\tR\tprimaries\x12(\n" +
 	"\x10update_tsig_keys\x18\v \x03(\tR\x0eupdateTsigKeys\x12\x18\n" +
-	"\aexpired\x18\f \x01(\bR\aexpired\"x\n" +
+	"\aexpired\x18\f \x01(\bR\aexpired\x12+\n" +
+	"\x11primary_tsig_keys\x18\xc8\x01 \x03(\tR\x0fprimaryTsigKeys\"x\n" +
 	"\n" +
 	"TsigSecret\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12>\n" +

@@ -68,10 +68,11 @@ func Enable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID, 
 	if keys > 0 {
 		return nil
 	}
-	if err := createKey(ctx, tx, box, zoneID, st, "ksk", "pending"); err != nil {
+	now := time.Now()
+	if err := createKey(ctx, tx, box, zoneID, st, "ksk", "active", "pending", now); err != nil {
 		return err
 	}
-	return createKey(ctx, tx, box, zoneID, st, "zsk", "none")
+	return createKey(ctx, tx, box, zoneID, st, "zsk", "active", "none", now)
 }
 
 func withDefaults(st Settings, box *secrets.Box) Settings {
@@ -94,26 +95,29 @@ func withDefaults(st Settings, box *secrets.Box) Settings {
 }
 
 func validate(st Settings) error {
+	var msg string
 	switch {
 	case st.Algorithm != dns.ECDSAP256SHA256 && st.Algorithm != dns.RSASHA256:
-		return fmt.Errorf("DNSSEC algorithm %d is not supported (13 or 8)", st.Algorithm)
+		msg = fmt.Sprintf("DNSSEC algorithm %d is not supported (13 or 8)", st.Algorithm)
 	case st.NSECMode != "nsec" && st.NSECMode != "nsec3":
-		return fmt.Errorf("nsec_mode %q must be nsec or nsec3", st.NSECMode)
+		msg = fmt.Sprintf("nsec_mode %q must be nsec or nsec3", st.NSECMode)
 	case st.PropagationDelay < time.Second || st.PropagationDelay > 7*24*time.Hour:
-		return fmt.Errorf("propagation delay %v must be between 1 s and 7 days", st.PropagationDelay)
+		msg = fmt.Sprintf("propagation delay %v must be between 1 s and 7 days", st.PropagationDelay)
 	case st.ParentDSTTL < time.Second || st.ParentDSTTL > 7*24*time.Hour:
-		return fmt.Errorf("parent DS TTL %v must be between 1 s and 7 days", st.ParentDSTTL)
+		msg = fmt.Sprintf("parent DS TTL %v must be between 1 s and 7 days", st.ParentDSTTL)
 	case st.ZSKLifetimeDays < 0 || st.ZSKLifetimeDays > 3650:
-		return fmt.Errorf("ZSK lifetime %d days must be between 0 and 3650", st.ZSKLifetimeDays)
+		msg = fmt.Sprintf("ZSK lifetime %d days must be between 0 and 3650", st.ZSKLifetimeDays)
+	default:
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%w: %s", ErrInvalidSettings, msg)
 }
 
-// createKey generates an active key of role in st.KeyBackend whose key tag no key of the zone uses
-// (a shared tag would make validators try the wrong key) and stores it.
-// debt: a PKCS#11 key generated in a transaction that later rolls back stays in the token
-// unreferenced; revisit with a sweep of token objects without a dnssec_keys row.
-func createKey(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID, st Settings, role, dsState string) error {
+// createKey generates a key of role in st.KeyBackend, in state (published or active) at now, whose
+// key tag no key of the zone uses (a shared tag would make validators try the wrong key) and
+// stores it. A PKCS#11 key whose transaction rolls back stays in the token until
+// SweepTokenOrphans removes it.
+func createKey(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID, st Settings, role, state, dsState string, now time.Time) error {
 	rows, err := tx.Query(ctx, "SELECT key_tag FROM dnssec_keys WHERE zone_id = $1", zoneID)
 	if err != nil {
 		return err
@@ -142,17 +146,22 @@ func createKey(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUI
 			}
 			continue
 		}
+		var activated *time.Time
+		if state == "active" {
+			activated = &now
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO dnssec_keys (zone_id, role, algorithm, key_tag, public_key, backend, key_ref, private_envelope,
-			state, ds_state, activated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, now())`,
-			zoneID, role, int16(sk.Algorithm), int32(tag), sk.PublicKey, string(sk.Backend), sk.KeyRef, sk.Envelope, dsState)
+			state, ds_state, published_at, activated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			zoneID, role, int16(sk.Algorithm), int32(tag), sk.PublicKey, string(sk.Backend), sk.KeyRef, sk.Envelope, state, dsState, now, activated)
 		return store.MapError(err)
 	}
 	return fmt.Errorf("zone %s: no %s with an unused key tag after %d attempts", zoneID, role, maxTagAttempts)
 }
 
-// Disable turns signing off for zoneID: its keys are removed (token objects destroyed, envelopes
-// dropped) and the signature cache is cleared. The caller rebuilds the zone unsigned.
-func Disable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID) error {
+// Disable turns signing off for zoneID: its keys are removed (envelopes dropped, PKCS#11 token
+// objects queued for DestroyPending, which the caller runs once the transaction committed) and
+// the signature cache is cleared. The caller rebuilds the zone unsigned.
+func Disable(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID) error {
 	if _, err := tx.Exec(ctx, "UPDATE zone_dnssec SET enabled = false, next_maintenance_at = NULL WHERE zone_id = $1", zoneID); err != nil {
 		return err
 	}
@@ -161,26 +170,20 @@ func Disable(ctx context.Context, tx pgx.Tx, box *secrets.Box, zoneID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	removed, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (secrets.StoredKey, error) {
-		var k secrets.StoredKey
-		var backend string
-		err := r.Scan(&backend, &k.KeyRef)
-		k.Backend = secrets.Backend(backend)
-		return k, err
-	})
+	removed, err := pgx.CollectRows(rows, scanStoredRef)
 	if err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, "DELETE FROM zone_signatures WHERE zone_id = $1", zoneID); err != nil {
 		return err
 	}
-	// Token objects go last, once every row change succeeded.
-	// debt: they are destroyed before the transaction commits, so a later failure in the same
-	// transaction leaves rows naming destroyed keys; revisit with a post-commit destroy queue.
-	for _, k := range removed {
-		if err := box.DestroySigningKey(k); err != nil {
-			return fmt.Errorf("destroy PKCS#11 key: %w", err)
-		}
-	}
-	return nil
+	return enqueueDestruction(ctx, tx, removed)
+}
+
+func scanStoredRef(r pgx.CollectableRow) (secrets.StoredKey, error) {
+	var k secrets.StoredKey
+	var backend string
+	err := r.Scan(&backend, &k.KeyRef)
+	k.Backend = secrets.Backend(backend)
+	return k, err
 }

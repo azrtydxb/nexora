@@ -297,8 +297,11 @@ func TestPKCS11KeysSignInsideTheToken(t *testing.T) {
 			}
 		}
 		if _, err := zs.Mutate(context.Background(), z.ID, func(tx pgx.Tx, z *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
-			return "updateZoneDnssec", nil, nil, zone.RebuildOptions{Force: true}, dnssec.Disable(context.Background(), tx, box, z.ID)
+			return "updateZoneDnssec", nil, nil, zone.RebuildOptions{Force: true}, dnssec.Disable(context.Background(), tx, z.ID)
 		}, actor); err != nil {
+			t.Fatal(err)
+		}
+		if err := dnssec.DestroyPending(context.Background(), zs.Store, box); err != nil {
 			t.Fatal(err)
 		}
 		for _, ref := range refs {
@@ -373,7 +376,7 @@ func TestMaintainerRefreshesSignaturesUnderAdvisoryLock(t *testing.T) {
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
-		_ = (&dnssec.Maintainer{Store: zs.Store, Zones: zs, Tick: 50 * time.Millisecond}).Run(runCtx)
+		_ = (&dnssec.Maintainer{Store: zs.Store, Service: &dnssec.Service{Store: zs.Store, Box: box, Zones: zs}, Tick: 50 * time.Millisecond}).Run(runCtx)
 		close(done)
 	}()
 	defer func() { cancel(); <-done }()

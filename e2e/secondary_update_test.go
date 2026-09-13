@@ -17,13 +17,18 @@ func TestSecondaryAndDynamicUpdate(t *testing.T) {
 
 	t.Run("secondary zone follows NOTIFY from external primary", func(t *testing.T) {
 		updSecret := base64.StdEncoding.EncodeToString([]byte("fixture-update-key-for-named"))
+		// named signs its NOTIFY with upd-key.; the zone binds that key to the primary
 		named := e.env.StartNamedConfig(harness.NamedConfig{
 			Keys: []harness.NamedKey{{Name: "upd-key.", Algorithm: "hmac-sha256", SecretB64: updSecret}},
-			Zones: []harness.NamedZone{{Name: "upstream.test.", Type: "primary", AllowUpdateKey: "upd-key.", AlsoNotify: eng.DNS,
+			Zones: []harness.NamedZone{{Name: "upstream.test.", Type: "primary", AllowUpdateKey: "upd-key.", AlsoNotify: eng.DNS, NotifyKey: "upd-key.",
 				Text: "$TTL 60\n@ SOA ns.upstream.test. h.upstream.test. 1 3600 600 86400 60\n@ NS ns.upstream.test.\nns A 192.0.2.53\na A 192.0.2.1\n"}},
 		})
+		var primaryKey, otherKey tsigKeyResp
+		api.Must(http.MethodPost, "/tsig-keys", map[string]any{"name": "upd-key.", "algorithm": "hmac-sha256", "secret": updSecret}, &primaryKey, http.StatusCreated)
+		api.Must(http.MethodPost, "/tsig-keys", map[string]any{"name": "other-notify-key.", "algorithm": "hmac-sha256"}, &otherKey, http.StatusCreated)
 		var z zoneResp
-		api.Must(http.MethodPost, "/zones", map[string]any{"name": "upstream.test.", "kind": "secondary", "primaries": []map[string]any{{"address": named.Addr}}}, &z, http.StatusCreated)
+		api.Must(http.MethodPost, "/zones", map[string]any{"name": "upstream.test.", "kind": "secondary",
+			"primaries": []map[string]any{{"address": named.Addr, "tsig_key_id": primaryKey.ID}}}, &z, http.StatusCreated)
 		harness.WaitDNSAnswer(t, eng.DNS, "a.upstream.test.", dns.TypeA, 15*time.Second, func(m *dns.Msg) bool { return m.Authoritative && len(m.Answer) == 1 })
 
 		m := new(dns.Msg)
@@ -47,6 +52,37 @@ func TestSecondaryAndDynamicUpdate(t *testing.T) {
 		}
 		if v := eng.Metric(t, "nexora_auth_notify_received_total", map[string]string{"result": "forwarded"}); v < 1 {
 			t.Fatalf("engine did not forward NOTIFY")
+		}
+
+		// From the primary's address (named and this test both use 127.0.0.1), a NOTIFY signed with
+		// the primary's key is accepted (positive first); another valid key or none is refused.
+		notify := func(key, secret string) int {
+			t.Helper()
+			m := new(dns.Msg)
+			m.SetNotify("upstream.test.")
+			c := &dns.Client{Timeout: 5 * time.Second}
+			if key != "" {
+				m.SetTsig(key, dns.HmacSHA256, 300, time.Now().Unix())
+				c.TsigSecret = map[string]string{key: secret}
+			}
+			r, _, err := c.Exchange(m, eng.DNS)
+			if err != nil {
+				t.Fatalf("NOTIFY signed with %q: %v", key, err)
+			}
+			return r.Rcode
+		}
+		if rc := notify("upd-key.", updSecret); rc != dns.RcodeSuccess {
+			t.Fatalf("NOTIFY signed with the primary's key: rcode %s", dns.RcodeToString[rc])
+		}
+		refusedBefore := eng.Metric(t, "nexora_auth_notify_received_total", map[string]string{"result": "refused"})
+		if rc := notify("other-notify-key.", otherKey.Secret); rc != dns.RcodeRefused {
+			t.Fatalf("NOTIFY signed with another valid key: rcode %s, want REFUSED", dns.RcodeToString[rc])
+		}
+		if rc := notify("", ""); rc != dns.RcodeRefused {
+			t.Fatalf("unsigned NOTIFY from a keyed primary: rcode %s, want REFUSED", dns.RcodeToString[rc])
+		}
+		if v := eng.Metric(t, "nexora_auth_notify_received_total", map[string]string{"result": "refused"}); v < refusedBefore+2 {
+			t.Fatalf("refused NOTIFYs not counted: %v -> %v", refusedBefore, v)
 		}
 	})
 

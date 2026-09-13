@@ -16,6 +16,7 @@ import (
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
+	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/secrets"
@@ -52,6 +53,7 @@ type Deps struct {
 	Secrets           *secrets.Box          // key storage for RPZ TSIG secrets; nil behaves as unconfigured
 	Zones             *zone.Service         // hosted zones and records
 	TSIGKeys          *tsigkey.Service      // TSIG keys of hosted zones
+	ZoneDNSSEC        *dnssec.Service       // DNSSEC signing settings, keys and rollovers of hosted zones
 }
 
 type handlers struct{ d Deps }
@@ -217,6 +219,18 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, tsigkey.ErrInUse):
 		writeError(w, http.StatusConflict, "tsig_key_in_use", "the TSIG key is referenced by a zone")
+	case errors.Is(err, dnssec.ErrAlgorithmRollover):
+		writeError(w, http.StatusUnprocessableEntity, "algorithm_rollover_unsupported", dnssec.ErrAlgorithmRollover.Error())
+	case errors.Is(err, dnssec.ErrRolloverInProgress):
+		writeError(w, http.StatusConflict, "rollover_in_progress", dnssec.ErrRolloverInProgress.Error())
+	case errors.Is(err, dnssec.ErrNotPendingKSK):
+		writeError(w, http.StatusUnprocessableEntity, "ksk_not_pending", dnssec.ErrNotPendingKSK.Error())
+	case errors.Is(err, dnssec.ErrNotEnabled):
+		writeError(w, http.StatusUnprocessableEntity, "dnssec_disabled", dnssec.ErrNotEnabled.Error())
+	case errors.Is(err, dnssec.ErrNotPrimary):
+		writeError(w, http.StatusUnprocessableEntity, "zone_not_primary", dnssec.ErrNotPrimary.Error())
+	case errors.Is(err, dnssec.ErrInvalidSettings):
+		writeError(w, http.StatusUnprocessableEntity, "invalid_dnssec_settings", err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "not found")
 	case errors.Is(err, store.ErrConflict):

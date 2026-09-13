@@ -29,6 +29,15 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
 	}
 	tx, _ := st.Pool.Begin(ctx)
 	defer tx.Rollback(ctx)
+	// Primary endpoints' key names travel parallel to primaries (read for every served zone).
+	var keyID string
+	if err := tx.QueryRow(ctx, `INSERT INTO tsig_keys (name, algorithm, secret_envelope) VALUES ('notify-key.', 'hmac-sha256', 'NXE1'::bytea) RETURNING id::text`).Scan(&keyID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE zones SET primaries = jsonb_build_array(jsonb_build_object('address', '192.0.2.53:53', 'tsig_key_id', $2::text),
+		jsonb_build_object('address', '192.0.2.54:53')) WHERE id = $1`, z.ID, keyID); err != nil {
+		t.Fatal(err)
+	}
 	snap := &controlv1.ConfigSnapshot{}
 	if err := snapshot.AddAuthZones(ctx, tx, snap); err != nil {
 		t.Fatal(err)
@@ -39,6 +48,9 @@ func TestAddAuthZonesListsImageAndContiguousDeltas(t *testing.T) {
 	az := snap.AuthZones[0]
 	if az.Name != "snap.test." || az.Serial != 4 || az.ImageSerial != 1 || az.ImageDeltaOffset != 0 || len(az.Deltas) != 3 {
 		t.Fatalf("auth zone: %+v", az)
+	}
+	if len(az.Primaries) != 2 || len(az.PrimaryTsigKeys) != 2 || az.PrimaryTsigKeys[0] != "notify-key." || az.PrimaryTsigKeys[1] != "" {
+		t.Fatalf("primaries %v with keys %q", az.Primaries, az.PrimaryTsigKeys)
 	}
 	for i, d := range az.Deltas {
 		if d.FromSerial != uint32(i+1) || d.ToSerial != uint32(i+2) || len(d.Blob.Sha256) != 64 {

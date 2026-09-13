@@ -75,6 +75,7 @@ var Permissions = map[string]Role{
 	"listZoneRecords":          RoleViewer,
 	"exportZoneFile":           RoleViewer,
 	"listTsigKeys":             RoleViewer,
+	"getZoneDnssec":            RoleViewer,
 
 	"createUpstream":            RoleOperator,
 	"updateUpstream":            RoleOperator,
@@ -116,6 +117,9 @@ var Permissions = map[string]Role{
 	"deleteZoneRecord":          RoleOperator,
 	"importZoneFile":            RoleOperator,
 	"refreshZone":               RoleOperator,
+	"updateZoneDnssec":          RoleOperator,
+	"startZoneKeyRollover":      RoleOperator,
+	"confirmZoneKskDs":          RoleOperator,
 
 	"listUsers":       RoleAdmin,
 	"createTsigKey":   RoleAdmin,

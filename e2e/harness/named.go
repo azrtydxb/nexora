@@ -35,9 +35,11 @@ type NamedKey struct{ Name, Algorithm, SecretB64 string }
 
 // NamedZone is one zone: Type "primary" (Text is the zone file; AllowTransferKey restricts
 // transfers to that key, otherwise any client may transfer; AllowUpdateKey enables RFC 2136
-// updates with that key; AlsoNotify is "ip:port") or "secondary" (Primary is "ip:port", KeyName
-// signs the transfer).
-type NamedZone struct{ Name, Type, Text, Primary, KeyName, AllowTransferKey, AllowUpdateKey, AlsoNotify string }
+// updates with that key; AlsoNotify is "ip:port", signed with NotifyKey when set) or "secondary"
+// (Primary is "ip:port", KeyName signs the transfer).
+type NamedZone struct {
+	Name, Type, Text, Primary, KeyName, AllowTransferKey, AllowUpdateKey, AlsoNotify, NotifyKey string
+}
 
 // NamedConfig configures StartNamedConfig.
 type NamedConfig struct {
@@ -114,7 +116,11 @@ func (e *Env) StartNamedConfig(c NamedConfig) *Named {
 				if err != nil {
 					t.Fatal(err)
 				}
-				extra += fmt.Sprintf(" notify explicit; also-notify { %s port %s; };", host, port)
+				key := ""
+				if z.NotifyKey != "" {
+					key = fmt.Sprintf(" key %q", z.NotifyKey)
+				}
+				extra += fmt.Sprintf(" notify explicit; also-notify { %s port %s%s; };", host, port, key)
 			}
 			fmt.Fprintf(&body, "zone %q { type primary; file %q;%s };\n", name, filepath.Join(dir, file), extra)
 		case "secondary":
