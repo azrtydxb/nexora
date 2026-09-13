@@ -7,11 +7,21 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
+
+	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/config"
+	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
+	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
@@ -27,6 +37,8 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var err error
 	switch {
+	case len(args) == 1 && args[0] == "serve":
+		err = serve(ctx, stdout)
 	case len(args) == 1 && args[0] == "migrate":
 		err = migrate(ctx, stdout)
 	case len(args) >= 2 && args[0] == "ca" && args[1] == "init":
@@ -78,5 +90,65 @@ func caInit(args []string, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "ca fingerprint: %s\n", ca.Fingerprint())
+	return nil
+}
+
+func serve(ctx context.Context, stdout io.Writer) error {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return err
+	}
+	ca, err := pki.LoadCA(cfg.CACertFile, cfg.CAKeyFile)
+	if err != nil {
+		return err
+	}
+	tlsCfg, err := control.TLSConfig(ca, cfg.GRPCServerNames)
+	if err != nil {
+		return fmt.Errorf("gRPC server certificate (NEXORA_GRPC_SERVER_NAMES): %w", err)
+	}
+	instanceID := control.NewInstanceID()
+	go control.RunInstanceHeartbeat(ctx, st, instanceID)
+	build := snapshot.BuildConfig{QueryLogToManagement: cfg.QueryLogBackend == "builtin", DefaultOTLPEndpoint: cfg.OTLPEndpoint}
+	if _, err := snapshot.EnsureInitial(ctx, st, build); err != nil {
+		return err
+	}
+	hub := control.NewHub(st, instanceID)
+	go func() { _ = hub.Run(ctx) }()
+
+	srv := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(tlsCfg)),
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 20 * time.Second, Timeout: 10 * time.Second}),
+		// Engines ping every 10 s; the default policy (5 min) would close their connections.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
+	)
+	controlv1.RegisterEngineControlServer(srv, control.NewServer(st, ca, hub, instanceID))
+	lis, err := net.Listen("tcp", cfg.GRPCListen)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "grpc listening on %s\n", lis.Addr())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(lis) }()
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+	// Engine streams never finish on their own: give unary calls a moment, then close the rest.
+	stopped := make(chan struct{})
+	go func() { srv.GracefulStop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		srv.Stop()
+	}
 	return nil
 }
