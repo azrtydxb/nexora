@@ -15,3 +15,8 @@
 
 ## Open follow-ups found during M1 build
 - e2e harness free-port picking can race (DNS fixture once exited at startup during Task 11). Harden before M1 closes: bind listeners on :0 inside the child and report the bound port back (e.g. via a ready line on stdout) instead of pre-picking ports.
+- PR perf gate flaked (7.53% "regression" base==head) on the loaded dev pod. Before M1 closes: raise rounds and use median-of-rounds with interleaving, and run PR tier on a dedicated runner (`arc-azrtydxb-amd64`, 14 CPU, one warm) rather than shared arm64; re-measure base==head noise and set threshold above measured noise floor with evidence.
+- fuzz.yml uses `ubuntu-24.04`; must use `arc-azrtydxb` + `container: nexora-dev` (repo will live in azrtydxb org).
+- `nexora-engine --version` missing (clap `#[command(version)]`).
+- perfgate pre-picks free ports (same race as harness).
+- First bench datapoint (arm64 dev pod, loaded, 2 workers, not reference box): 144k-195k QPS cache-hit, p99 ~1.6 ms.
