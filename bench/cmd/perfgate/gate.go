@@ -9,9 +9,11 @@ import (
 	"github.com/piwi3910/nexora/bench/dnsperf"
 )
 
-// Verdict is the relative regression check: head's median QPS against base's.
+// Verdict is the relative regression check. Drop is 1 - the median per-round head/base QPS ratio;
+// BaseQPS and HeadQPS are each side's median, for the report.
 type Verdict struct {
 	BaseQPS, HeadQPS, Drop float64
+	Ratios                 []float64
 	Pass                   bool
 }
 
@@ -23,8 +25,14 @@ type Verdict2 struct {
 	Reasons []string
 }
 
-// Compare passes when the median head QPS is at least base*(1-maxDrop).
+// Compare pairs base[i] with head[i], two runs made back to back in one round, and passes when
+// the median of the per-round head/base QPS ratios is at least 1-maxDrop. Pairing cancels drift
+// in the machine's speed across rounds, and the median ignores rounds disturbed by bursts of
+// outside load.
 func Compare(base, head []dnsperf.Result, maxDrop float64) (Verdict, error) {
+	if len(base) != len(head) {
+		return Verdict{}, fmt.Errorf("%d base results but %d head results: each round pairs one of each", len(base), len(head))
+	}
 	b, err := medianQPS("base", base)
 	if err != nil {
 		return Verdict{}, err
@@ -33,7 +41,13 @@ func Compare(base, head []dnsperf.Result, maxDrop float64) (Verdict, error) {
 	if err != nil {
 		return Verdict{}, err
 	}
-	return Verdict{BaseQPS: b, HeadQPS: h, Drop: 1 - h/b, Pass: h >= b*(1-maxDrop)}, nil
+	ratios := make([]float64, len(base))
+	for i := range base {
+		ratios[i] = head[i].QPS / base[i].QPS
+	}
+	drop := 1 - median(ratios)
+	// The epsilon keeps a drop of exactly maxDrop passing despite float rounding.
+	return Verdict{BaseQPS: b, HeadQPS: h, Drop: drop, Ratios: ratios, Pass: drop <= maxDrop+1e-9}, nil
 }
 
 // Absolute passes when r reaches minQPS and its p99 stays below maxP99.
@@ -63,10 +77,16 @@ func medianQPS(side string, rs []dnsperf.Result) (float64, error) {
 		}
 		q[i] = r.QPS
 	}
+	return median(q), nil
+}
+
+// median of a non-empty slice; it sorts a copy.
+func median(v []float64) float64 {
+	q := slices.Clone(v)
 	slices.Sort(q)
 	n := len(q)
 	if n%2 == 0 {
-		return (q[n/2-1] + q[n/2]) / 2, nil
+		return (q[n/2-1] + q[n/2]) / 2
 	}
-	return q[n/2], nil
+	return q[n/2]
 }

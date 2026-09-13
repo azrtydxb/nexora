@@ -34,7 +34,7 @@ const usage = `usage:
   perfgate run --engine PATH --fixture PATH --names N --seconds S --workers N --out FILE [--clients C] [--threads T]
   perfgate serve --engine PATH --fixture PATH --listen ADDR --workers N
   perfgate load --target ADDR --names N --seconds S --clients C --threads T --out FILE
-  perfgate compare --base A.json,B.json,... --head C.json,D.json,... --max-drop 0.05
+  perfgate compare --base A1.json,A2.json,... --head B1.json,B2.json,... --max-drop 0.05  (Ai and Bi: round i)
   perfgate absolute --result FILE --min-qps 1000000 --max-p99 500us`
 
 func main() {
@@ -175,7 +175,10 @@ func cmdCompare(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("base median %.0f QPS, head median %.0f QPS, drop %.2f%% (limit %.2f%%): %s\n",
+	for i, r := range v.Ratios {
+		fmt.Printf("round %d: base %.0f QPS, head %.0f QPS, head/base %.4f\n", i+1, b[i].QPS, h[i].QPS, r)
+	}
+	fmt.Printf("base median %.0f QPS, head median %.0f QPS, median per-round drop %.2f%% (limit %.2f%%): %s\n",
 		v.BaseQPS, v.HeadQPS, v.Drop*100, *maxDrop*100, passFail(v.Pass))
 	if !v.Pass {
 		return errGateFailed
