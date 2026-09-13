@@ -30,7 +30,8 @@ pub struct Runtime {
     /// Per-client policy groups and rewrites; selects `filter` for global clients.
     pub policy: PolicyTable,
     /// `b:<sha256>` per blocklist, `a:<sha256>` per allowlist, `g:<key>` per
-    /// policy-group cache partition, then `r:<ResolutionRuntime::config_key>`.
+    /// policy-group cache partition, `r:<ResolutionRuntime::config_key>`, then
+    /// `u:<upstreams_key>`.
     pub filter_hashes: Vec<String>,
     pub filter_stats: ListStats,
     pub cache: Arc<Cache>,
@@ -145,13 +146,14 @@ impl Runtime {
             .chain(f.allowlists.iter().map(|a| format!("a:{}", a.sha256)))
             .chain(policy.partition_keys().iter().map(|k| format!("g:{k}")))
             .chain(std::iter::once(format!("r:{}", resolution.config_key)))
+            .chain(std::iter::once(format!("u:{}", upstreams_key(s))))
             .collect();
         if let Some(p) = reused
             && p.filter_hashes != filter_hashes
         {
             // Cached answers must be re-filtered: CNAME cloaking is checked on the
-            // miss path, per cache partition; resolution, DNSSEC and RPZ settings
-            // change answers too.
+            // miss path, per cache partition; resolution, DNSSEC, RPZ and upstream
+            // settings change answers too.
             cache.clear();
         }
 
@@ -182,6 +184,21 @@ impl Runtime {
             auth_changed: loaded.changed,
         })
     }
+}
+
+/// SHA-256 hex over the prost encoding of the upstream strategy and every upstream: answers
+/// resolved through other upstreams (an engine moved into another engine group) must not be served.
+fn upstreams_key(s: &ConfigSnapshot) -> String {
+    use prost::Message as _;
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.resolver.as_ref().map_or(0, |r| r.strategy).to_be_bytes());
+    for u in &s.upstreams {
+        let bytes = u.encode_to_vec();
+        h.update((bytes.len() as u32).to_be_bytes());
+        h.update(bytes);
+    }
+    hex::encode(h.finalize())
 }
 
 fn upstream_spec(u: &proto::Upstream) -> Result<UpstreamSpec, SnapshotError> {

@@ -59,6 +59,37 @@ func TestCAInitLoadAndIssue(t *testing.T) {
 	}
 }
 
+// TestEngineCertificateRenewalPointIsInTheFuture breaks if the clock-skew backdating of NotBefore
+// swallows a short lifetime: engines renew from 2/3 of NotBefore..NotAfter, so a certificate whose
+// renewal point has already passed is renewed again the moment it is installed.
+func TestEngineCertificateRenewalPointIsInTheFuture(t *testing.T) {
+	dir := t.TempDir()
+	if err := pki.InitCA(dir); err != nil {
+		t.Fatal(err)
+	}
+	ca, err := pki.LoadCA(filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, validity := range []time.Duration{time.Minute, time.Hour, pki.EngineCertValidity} {
+		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+		issued := time.Now()
+		der, _, err := ca.SignEngineCSR(csr, "0b0e7f3c-1111-4222-8333-944455556666", validity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, _ := x509.ParseCertificate(der)
+		renewAt := cert.NotBefore.Add(cert.NotAfter.Sub(cert.NotBefore) * 2 / 3)
+		if renewAt.Before(issued.Add(validity / 2)) {
+			t.Errorf("validity %s: renewal due at %s, less than half the lifetime after issuance %s", validity, renewAt, issued)
+		}
+		if !cert.NotBefore.Before(issued.Add(-time.Second)) {
+			t.Errorf("validity %s: NotBefore %s is not backdated for clock skew", validity, cert.NotBefore)
+		}
+	}
+}
+
 func TestJoinTokenFormat(t *testing.T) {
 	fp := strings.Repeat("ab", 32)
 	tok, secret, err := pki.NewJoinToken(fp)

@@ -224,10 +224,12 @@ func (ca *CA) SignEngineCSR(csrDER []byte, engineID string, validity time.Durati
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: engineID},
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.Add(validity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		// Backdated for clock skew by at most a tenth of the lifetime: engines renew from 2/3 of
+		// NotBefore..NotAfter, which a full hour would put in the past for short lifetimes.
+		NotBefore:   now.Add(-min(time.Hour, validity/10)),
+		NotAfter:    now.Add(validity),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, pub, ca.Key)
 	if err != nil {

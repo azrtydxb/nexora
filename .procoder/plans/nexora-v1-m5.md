@@ -3573,7 +3573,7 @@ pub fn apply_env_overrides(b: &mut Bootstrap, get: impl Fn(&str) -> Option<Strin
 
 ## Task 10: Fleet acceptance tests
 
-Files: `e2e/harness/lb.go` (backends that can change while the balancer runs), `e2e/harness/mgmt.go` (`EngineOptions.SkipControlWait`), `e2e/fleet_test.go` (`TestFleetRolloutAndPartition`, `TestEngineGroupScopedConfig`, `TestJoinTokenGroupAndExpiry`), `e2e/fleet_canary_test.go` (`TestCanaryRolloutHaltsOnFailure`), `e2e/fleet_cert_test.go` (`TestEngineCertRevocation`)
+Files: `engine/src/runtime.rs`, `engine/tests/snapshot_apply.rs`, `mgmt/internal/pki/pki.go`, `mgmt/internal/pki/pki_test.go`, `docs/architecture.md` (cache clearing rule), `e2e/harness/lb.go` (backends that can change while the balancer runs), `e2e/harness/mgmt.go` (`EngineOptions.SkipControlWait`), `e2e/fleet_test.go` (`TestFleetRolloutAndPartition`, `TestEngineGroupScopedConfig`, `TestJoinTokenGroupAndExpiry`), `e2e/fleet_canary_test.go` (`TestCanaryRolloutHaltsOnFailure`), `e2e/fleet_cert_test.go` (`TestEngineCertRevocation`)
 Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *SwitchableBalancer`, `type SwitchableBalancer struct { Addr string }` with `func (b *SwitchableBalancer) SetBackends(backends ...string)`; `EngineOptions.SkipControlWait bool` (return once the READY line is read); consumes the Task 7 harness, M1 `(*Env).StartDNSFixture` (`SetRecords`, `SetMode(t, "servfail")`), `harness.MustQuery`, `waitLatestApplied`, `wantA`, `createUDPUpstream`.
 
 - [ ] Change `e2e/harness/lb.go`: `forward(l, backends func() []string)` reads the list for every accepted connection; `StartTCPBalancer` passes a function returning its fixed slice; add
@@ -3607,7 +3607,7 @@ Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *Switchab
   	b.backends = backends
   }
   ```
-  and in `e2e/harness/mgmt.go` make `StartManagedEngineWith` skip `en.Proc.WaitLog(controlConnected, ...)` when `o.SkipControlWait` is set. Run `scripts/dev-exec.sh 'go vet ./e2e/... && go test ./e2e/harness/ -count=1'` and expect no vet output and `ok`.
+  (`StartMgmt`'s public HTTP forwarder passes `func() []string { return []string{m.HTTPAddr} }`) and in `e2e/harness/mgmt.go` make `StartManagedEngineWith` skip `en.Proc.WaitLog(controlConnected, ...)` when `o.SkipControlWait` is set. Run `scripts/dev-exec.sh 'go vet ./e2e/... && go test ./e2e/harness/ -count=1'` and expect no vet output and `ok`.
 - [ ] Write `e2e/fleet_test.go`:
   ```go
   package e2e
@@ -3641,12 +3641,14 @@ Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *Switchab
   	fx := env.StartDNSFixture()
   	createUDPUpstream(t, api, "fixture", fx.UDP)
   	lb := env.StartSwitchableBalancer(a.GRPCAddr)
+  	edge := api.CreateEngineGroup(map[string]any{"name": "fleet-edge"})
   	names := []string{"fleet-1", "fleet-2", "fleet-3"}
+  	groups := map[string]string{"fleet-1": harness.DefaultEngineGroupID, "fleet-2": harness.DefaultEngineGroupID, "fleet-3": edge.ID}
+  	tokens := map[string]string{harness.DefaultEngineGroupID: api.CreateJoinToken(), edge.ID: api.CreateJoinTokenFor(edge.ID, nil)}
   	engines := map[string]*harness.Engine{}
-  	token := api.CreateJoinToken()
   	dirs := map[string]bool{}
   	for _, n := range names {
-  		engines[n] = env.StartManagedEngine(n, []string{"https://" + lb.Addr}, token)
+  		engines[n] = env.StartManagedEngine(n, []string{"https://" + lb.Addr}, tokens[groups[n]])
   		dirs[engines[n].StateDir] = true
   	}
   	if len(dirs) != 3 {
@@ -3659,9 +3661,10 @@ Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *Switchab
   	ids := map[string]string{}
   	for _, n := range names {
   		wantA(t, harness.MustQuery(t, engines[n].DNS, "before.fleet.test.", dns.TypeA, harness.QueryOpts{}), "192.0.2.10")
+  		// Engine groups share one version sequence: a fleet-wide change is the same version in every group.
   		e := api.EngineByNode(n)
-  		if e.Status != "current" || e.TargetVersion != v || e.EngineGroupID != harness.DefaultEngineGroupID {
-  			t.Fatalf("%s: %+v, want current at target %d in the default group", n, e, v)
+  		if e.Status != "current" || e.AppliedVersion != v || e.TargetVersion != v || e.EngineGroupID != groups[n] {
+  			t.Fatalf("%s: %+v, want current, applied and targeted at %d in engine group %s", n, e, v, groups[n])
   		}
   		ids[n] = e.ID
   	}
@@ -3812,6 +3815,7 @@ Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *Switchab
   }
   ```
   `env.RestartEngine` already waits for the restarted engine's control stream; the engine count and id prove it did not enroll again.
+- [ ] Product fixes these tests exposed (each with a unit test): `engine/src/runtime.rs` adds `u:<sha256 of strategy and upstreams>` to the cache-invalidation key, so an engine moved into a group with other upstreams stops serving answers cached through the old ones (`upstream_changes_clear_cached_answers` in `engine/tests/snapshot_apply.rs`); `mgmt/internal/pki/pki.go` `SignEngineCSR` backdates `NotBefore` by `min(1h, validity/10)` instead of 1 h, which put the 2/3 renewal point of short-lived certificates in the past and made engines renew in a loop (`TestEngineCertificateRenewalPointIsInTheFuture`).
 - [ ] Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestFleetRolloutAndPartition|TestEngineGroupScopedConfig|TestJoinTokenGroupAndExpiry" -count=1 -v -timeout 20m'` and expect `--- PASS` for all three. To prove the partition assertion bites, temporarily replace `a.Proc.Kill()` with `time.Sleep(time.Second)` and rerun `TestFleetRolloutAndPartition`; expect FAIL with `still reports a control stream`; restore.
 - [ ] Write `e2e/fleet_canary_test.go`:
   ```go
@@ -4078,10 +4082,10 @@ Interfaces: `func (e *Env) StartSwitchableBalancer(backends ...string) *Switchab
 The screens follow the M1–M4 GUI layout (pages in `web/src/pages/`, TanStack Query hooks over `api`/`unwrap`, Radix components from `components/ui`, `data-testid` hooks, `useCan` for role gating) and are covered by the request-based `TestGUICoverage`: every M5 operation must be issued by the browser in `web/e2e/screens/20-fleet.spec.ts` or `21-engine-group-scope.spec.ts`. The web package has no unit-test runner, so badge and progress rendering is asserted in Playwright. This task runs after M4 Task 15 (it edits `web/src/pages/ZonesPage.tsx`).
 
 Files: `web/src/api/fleet.ts` (hooks), `web/src/components/fleet.tsx` (`EngineStatusBadge`, `RolloutStateBadge`, `RolloutProgress`, `EngineGroupSelect`, `LabelsEditor`), `web/src/pages/EnginesPage.tsx` (`/engines`: fleet summary, engine groups, engines, join tokens), `web/src/pages/EngineGroupPage.tsx` (`/engines/groups/:id`), `web/src/pages/EngineDetailPage.tsx` (`/engines/nodes/:id`), `web/src/pages/RolloutPage.tsx` (`/engines/rollouts/:id`), `web/src/app/router.tsx` (routes), engine-group scope fields in `web/src/pages/UpstreamsPage.tsx`, `FilteringPage.tsx`, `PoliciesPage.tsx`, `RewritesPage.tsx`, `ForwardZonesSection.tsx`, `RpzPage.tsx`, `ZonesPage.tsx`, `web/e2e/screens/20-fleet.spec.ts`, `web/e2e/screens/21-engine-group-scope.spec.ts`, `e2e/gui_test.go` (coverage glob)
-Interfaces: routes above; `EngineGroupSelect` props `{ value: string | null; onChange(v: string | null): void; id?: string; testId: string }` where `null` renders `All engine groups`; test ids listed in the specs below (the M1 ids `engine-row-<node>`, `engine-open-<node>`, `engine-detail`, `engine-delete`, `confirm-delete`, `jointoken-add`, `jointoken-name`, `jointoken-save`, `jointoken-value`, `jointoken-row-<name>`, `jointoken-revoke-<name>` keep working for `05-engines.spec.ts`).
+Interfaces: routes above; `EngineGroupSelect` props `{ value: string | null; onChange(v: string | null): void; id?: string; testId: string; allowAll?: boolean; disabled?: boolean; className?: string }` where `null` renders `All engine groups` (`allowAll={false}` drops that option); `ConfirmDialog` gains `testId` (default `confirm-delete`) and `destructive` (default true); test ids listed in the specs below (the M1 ids `engine-row-<node>`, `engine-open-<node>`, `engine-detail`, `engine-delete`, `confirm-delete`, `jointoken-add`, `jointoken-name`, `jointoken-save`, `jointoken-value`, `jointoken-row-<name>`, `jointoken-revoke-<name>` keep working for `05-engines.spec.ts`).
 
-- [ ] Widen the coverage glob in `e2e/gui_test.go` from `web/e2e/screens/[01][0-9]-*.spec.ts` to `web/e2e/screens/[012][0-9]-*.spec.ts`, and run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'`; expect FAIL whose uncovered list is exactly the M5 operations (`createEngineGroup`, `deleteEngineGroup`, `getEngineGroup`, `getEngineStats`, `getFleetSummary`, `getRollout`, `listEngineGroups`, `listRollouts`, `resumeEngineGroupRollouts`, `revokeEngine`, `rollbackEngineGroup`, `rotateEngineCertificate`, `updateEngine`, `updateEngineGroup`).
-- [ ] Write the failing Playwright spec `web/e2e/screens/20-fleet.spec.ts`:
+- [x] Widen the coverage glob in `e2e/gui_test.go` from `web/e2e/screens/[01][0-9]-*.spec.ts` to `web/e2e/screens/[012][0-9]-*.spec.ts`, and run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'`; expect FAIL whose uncovered list is exactly the M5 operations (`createEngineGroup`, `deleteEngineGroup`, `getEngineGroup`, `getEngineStats`, `getFleetSummary`, `getRollout`, `listEngineGroups`, `listRollouts`, `resumeEngineGroupRollouts`, `revokeEngine`, `rollbackEngineGroup`, `rotateEngineCertificate`, `updateEngine`, `updateEngineGroup`).
+- [x] Write the failing Playwright spec `web/e2e/screens/20-fleet.spec.ts`:
   ```ts
   import { test, expect, env, login } from "../fixtures";
 
@@ -4167,7 +4171,7 @@ Interfaces: routes above; `EngineGroupSelect` props `{ value: string | null; onC
     await expect(page.getByTestId("enginegroup-row-gui-tmp")).toHaveCount(0);
   });
   ```
-- [ ] Write the failing Playwright spec `web/e2e/screens/21-engine-group-scope.spec.ts`:
+- [x] Write the failing Playwright spec `web/e2e/screens/21-engine-group-scope.spec.ts` (the column-header check is scoped to the `Upstreams` region because the forward zones section on the same page also has an "Engine group" column):
   ```ts
   import { test, expect, env, login } from "../fixtures";
 
@@ -4196,21 +4200,23 @@ Interfaces: routes above; `EngineGroupSelect` props `{ value: string | null; onC
 
     await page.getByTestId("nav-upstreams").click();
     await expect(
-      page.getByRole("columnheader", { name: "Engine group" }),
+      page
+        .getByRole("region", { name: "Upstreams", exact: true })
+        .getByRole("columnheader", { name: "Engine group" }),
     ).toBeVisible();
   });
   ```
-- [ ] Run `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'` and expect FAIL with `getByTestId('fleet-summary')` in the Playwright output.
-- [ ] Implement `web/src/api/fleet.ts`: one hook per operation (`useFleetSummary`, `useEngineGroups`, `useEngineGroup(id)`, `useRollouts({ engineGroupId, limit })`, `useRollout(id)`, `useEngine(id)`, `useEngineStats(id, window)`, and mutations `useCreateEngineGroup`, `useUpdateEngineGroup`, `useDeleteEngineGroup`, `useRollbackEngineGroup`, `useResumeRollouts`, `useUpdateEngine`, `useRevokeEngine`, `useRotateEngineCertificate`); list queries refetch every 5 s; mutations invalidate the `["fleet"]` and `["engines"]` query keys; a 409 `conflict` shows the existing conflict message pattern of the M2 pages (`reload to see the other change`).
-- [ ] Implement `web/src/components/fleet.tsx`: `EngineStatusBadge` (current green, behind/ahead amber, rejected/revoked red, disconnected muted; text is the status value), `RolloutStateBadge` (completed green, pending/canary/verifying/rolling blue, halted red, rolled_back/superseded muted), `RolloutProgress` (`role="progressbar"`, `aria-valuenow` = round(applied / total × 100), text `<applied> / <total> applied`, `<rejected> rejected` when non-zero, halt reason under it when halted; `data-testid="rollout-progress"`), `EngineGroupSelect` (Radix `Select` over `useEngineGroups`, first option `All engine groups` mapping to `null`), `LabelsEditor` (rows of key/value inputs `engine-label-key-<i>` / `engine-label-value-<i>`, add button `engine-label-add`, remove buttons).
-- [ ] Implement the pages:
+- [x] Run `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1'` and expect FAIL with `getByTestId('fleet-summary')` in the Playwright output.
+- [x] Implement `web/src/api/fleet.ts`: one hook per operation (`useFleetSummary`, `useEngineGroups({ live })` (polls only on the fleet screens; scope selects load once), `useEngines`, `useDeleteEngine`, `useEngineGroup(id)`, `useRollouts({ engineGroupId, limit })`, `useRollout(id)`, `useEngine(id)`, `useEngineStats(id, window)`, and mutations `useCreateEngineGroup`, `useUpdateEngineGroup`, `useDeleteEngineGroup`, `useRollbackEngineGroup`, `useResumeRollouts`, `useUpdateEngine`, `useRevokeEngine`, `useRotateEngineCertificate`); list queries refetch every 5 s; mutations invalidate the `["fleet"]` and `["engines"]` query keys; a 409 `conflict` shows the existing conflict message pattern of the M2 pages (`reload to see the other change`).
+- [x] Implement `web/src/components/fleet.tsx` (also `RolloutStages` — the strategy's phases with the current one marked and halted/rolled back/superseded appended — `EngineGroupName`, `LinkButton`, `BackLink`, `canarySize`): `EngineStatusBadge` (current green, behind/ahead amber, rejected/revoked red, disconnected muted; text is the status value), `RolloutStateBadge` (completed green, pending/canary/verifying/rolling in the primary accent (the theme has no blue token), halted red, rolled_back/superseded muted), `RolloutProgress` (`role="progressbar"`, `aria-valuenow` = round(applied / total × 100), text `<applied> / <total> applied`, `<rejected> rejected` when non-zero, halt reason under it when halted; `data-testid="rollout-progress"`), `EngineGroupSelect` (Radix `Select` over `useEngineGroups`, first option `All engine groups` mapping to `null`), `LabelsEditor` (rows of key/value inputs `engine-label-key-<i>` / `engine-label-value-<i>`, add button `engine-label-add`, remove buttons).
+- [x] Implement the pages (the engines table sorts by column, filters by text/label, engine group and status, pages 50 rows at a time, keeps its filters in the URL, and flags config lag and engine software drift from the fleet's most common version; the upstreams table sits in a `section` labelled `Upstreams`):
   - `EnginesPage` (`/engines`): `fleet-summary` card (engines by status, halted rollouts, one line per engine group with name, engines connected/total, stable version and `RolloutStateBadge` of its active rollout); "Engine groups" table (row `enginegroup-row-<name>` with name, strategy, upstream mode, engines, stable version; link `enginegroup-open-<name>`) with `enginegroup-add` dialog (`enginegroup-name`, description, upstream mode, strategy, canary count/percent, save `enginegroup-save`; 400/409 messages inline); the M1 engines table extended with engine group, target version and `EngineStatusBadge` (`engine-open-<node>` navigates to the engine page); the M1 join token section extended with an engine group select and max uses in the create dialog and engine group, state and uses columns.
   - `EngineGroupPage` (`/engines/groups/:id`, `enginegroup-detail`): settings form (description `enginegroup-description`, upstream mode, extra ACL CIDRs, OTLP endpoint, strategy and gate parameters; save `enginegroup-save-settings` sends `revision`, success text `Saved`); paused banner `enginegroup-paused` with `enginegroup-resume`; `enginegroup-rollback` dialog whose `rollback-version` select lists the group's rollout versions older than the newest one and `rollback-confirm`; rollouts table (newest 20, `rollout-open` links, `RolloutStateBadge`, `RolloutProgress`); engines of the group; `enginegroup-delete` (hidden for `default` and without `deleteEngineGroup` permission) with `confirm-delete`, returning to `/engines`.
   - `EngineDetailPage` (`/engines/nodes/:id`, `engine-detail`): node name, engine id, version, connected, last seen, `engine-status` (`EngineStatusBadge`), applied/target version and rejection reason; `engine-group-name`; `engine-group-select` (the `EngineGroupSelect` without the `All engine groups` option) and `LabelsEditor` with `engine-save` (sends `revision`); certificate serial and not-after; Recharts line chart `engine-stats-chart` of QPS and p99 over `useEngineStats(id, "1h")`; `engine-rotate` (+ `confirm-rotate`, toast `Rotation requested`), `engine-revoke` (+ `confirm-revoke`), the M1 `engine-delete` (+ `confirm-delete`); admin-only actions hidden via `useCan`.
   - `RolloutPage` (`/engines/rollouts/:id`, `rollout-detail`): state, kind, strategy, version, from version, creator, halt reason, `RolloutProgress`, and table `rollout-engines` (node name, canary marker, connected, applied version, progress).
   - `web/src/app/router.tsx`: routes `engines/groups/:id`, `engines/nodes/:id`, `engines/rollouts/:id` under the authenticated shell.
   - Scoped pages: each create/edit dialog gets an "Engine group" `EngineGroupSelect` (test id `<resource>-engine-group`, e.g. `rewrite-engine-group`, `upstream-engine-group`) and each table an "Engine group" column showing the group name or `All engine groups`; the rewrite dialog hides the field when a policy group is selected.
-- [ ] Run `scripts/dev-exec.sh 'make web-test && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1 -v'` and expect typecheck, lint and build clean and `--- PASS: TestGUICoverage` (every OpenAPI operation, including the fleet ones, is covered; `05-engines.spec.ts` still passes).
+- [x] Run `scripts/dev-exec.sh 'make web-test && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run TestGUICoverage -count=1 -v'` and expect typecheck, lint and build clean and `--- PASS: TestGUICoverage` (every OpenAPI operation, including the fleet ones, is covered; `05-engines.spec.ts` still passes).
 - [ ] Commit: `git add web e2e/gui_test.go && git commit -m "feat(web): fleet overview, engine group, engine and rollout pages; engine-group scope fields"`.
 
 ## Task 12: Release images workflow (extend) and docker-compose example
@@ -5533,7 +5539,9 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
 Files: `docs/operations.md` (install, upgrade, backup/restore, rollouts, lifecycle, monitoring, kw), `README.md` (product overview and quick start), `deploy/deploytest/docs_test.go` (`TestOperationsDoc`)
 Interfaces: headings listed in the test; every repository path the documents mention in backticks must exist.
 
-- [ ] Write the failing test `deploy/deploytest/docs_test.go`:
+As built: `docs/operations.md` keeps the eight required headings and the content below, verified against the code, and adds overview (components, features per milestone, ports, mgmt environment and CLI, `engine.toml` essentials), first-run setup and access (lost setup token: `user create --admin --password-file /dev/stdin`; a new install forwards with no upstreams), enrolling engines, encrypted DNS, key storage, a state-location table, Compose backup/restore, performance tuning and the perf gate, known limitations and troubleshooting. Corrections to the draft below: the setup-token `kubectl logs` uses the label selector (only one replica logs it), `docker compose run` needs `-T` when redirecting the token, and the restore loop pauses/resumes one group repeatedly because each publish adds exactly one global version. The kw section describes the chart release from `deploy/kw/values-kw.yaml` and points to `deploy/kw/README.md`; it does not name `scripts/kw-acceptance.sh`, which Task 14 creates (re-check that section when Task 14 lands). README has no badges (the repository has no CI remote yet).
+
+- [x] Write the failing test `deploy/deploytest/docs_test.go`:
   ```go
   package deploytest
 
@@ -5576,8 +5584,8 @@ Interfaces: headings listed in the test; every repository path the documents men
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestOperationsDoc -count=1` and expect FAIL with `no such file or directory`.
-- [ ] Create `docs/operations.md`:
+- [x] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -run TestOperationsDoc -count=1` and expect FAIL with `no such file or directory`.
+- [x] Create `docs/operations.md`:
   ````markdown
   # Operating Nexora
 
@@ -5758,7 +5766,7 @@ Interfaces: headings listed in the test; every repository path the documents men
   | Traces                                                | Jaeger `jaeger.observability:4317`                              |
   | Metrics                                               | kube-prometheus-stack (`release: kps`)                          |
   ````
-- [ ] Rewrite `README.md` with these sections, keeping any existing badge lines at the top:
+- [x] Rewrite `README.md` with these sections, keeping any existing badge lines at the top:
   ```markdown
   # Nexora
 
@@ -5787,6 +5795,6 @@ Interfaces: headings listed in the test; every repository path the documents men
   `scripts/dev-exec.sh make build`, `scripts/dev-exec.sh make e2e`.
   Release images are built by `.github/workflows/images.yml`.
   ```
-- [ ] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -count=1 -v` and expect `--- PASS` for `TestOperationsDoc`, `TestHelmTemplate`, `TestImagesWorkflow` and `TestComposeExample`.
+- [x] Run `scripts/dev-exec.sh go test ./deploy/deploytest/ -count=1 -v` and expect `--- PASS` for `TestOperationsDoc`, `TestHelmTemplate`, `TestImagesWorkflow` and `TestComposeExample`.
 - [ ] Run the milestone gate: `scripts/dev-exec.sh 'make lint && make engine-test && make mgmt-test && make web-test && make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test ./e2e/ -run "TestFleetRolloutAndPartition|TestEngineGroupScopedConfig|TestJoinTokenGroupAndExpiry|TestCanaryRolloutHaltsOnFailure|TestEngineCertRevocation|TestFleetAPI|TestMgmtCLIFleet|TestGUICoverage|TestMgmtStatelessHA|TestInvalidSnapshotRejected" -count=1 -timeout 90m'` and expect every target and test to pass; then `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwFullProduct`.
 - [ ] Commit: `git add docs/operations.md README.md deploy/deploytest/docs_test.go && git commit -m "docs: operations guide and README for the fleet release"`.

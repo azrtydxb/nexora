@@ -160,6 +160,73 @@ fn in_flight_holders_keep_old_runtime_and_cache_survives_unchanged_settings() {
     assert!(!Arc::ptr_eq(&old.cache, &cur.load().cache));
 }
 
+/// Caches one positive answer in the current runtime's cache and returns the entry count.
+fn cache_one_answer(cur: &ArcSwap<Runtime>) -> u64 {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A};
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+    use nexora_engine::cache::CacheKey;
+
+    let mut m = Message::new(7, MessageType::Query, OpCode::Query);
+    m.add_query(Query::query(
+        Name::from_ascii("cached.example.").unwrap(),
+        RecordType::A,
+    ));
+    let query = m.to_bytes().unwrap();
+    let mut r = Message::from_bytes(&query).unwrap();
+    r.metadata.message_type = MessageType::Response;
+    r.add_answer(Record::from_rdata(
+        Name::from_ascii("cached.example.").unwrap(),
+        300,
+        RData::A(A::new(192, 0, 2, 1)),
+    ));
+    let v = nexora_engine::wire::parse_query(&query).unwrap();
+    let rt = cur.load();
+    rt.cache.insert(
+        CacheKey::from_query(&v),
+        &r.to_bytes().unwrap(),
+        &v,
+        nexora_engine::clock::now_secs(),
+    );
+    rt.cache.entries()
+}
+
+#[test]
+fn upstream_changes_clear_cached_answers() {
+    // Breaks if answers resolved through upstreams a snapshot no longer lists (an engine moved
+    // into an engine group with other upstreams) keep being served from the cache.
+    let dir = tempfile::tempdir().unwrap();
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    snapshot::apply(&cur, base(1), &blobs, None);
+    assert_eq!(cache_one_answer(&cur), 1);
+    snapshot::apply(&cur, base(2), &blobs, None);
+    assert_eq!(
+        cur.load().cache.entries(),
+        1,
+        "unchanged upstreams keep answers"
+    );
+
+    let mut s = base(3);
+    s.upstreams[0].address = "127.0.0.1:5354".into();
+    snapshot::apply(&cur, s, &blobs, None);
+    assert_eq!(cur.load().version, 3);
+    assert_eq!(
+        cur.load().cache.entries(),
+        0,
+        "new upstream address clears answers"
+    );
+
+    let mut s = base(4);
+    s.upstreams[0].address = "127.0.0.1:5354".into();
+    assert_eq!(cache_one_answer(&cur), 1);
+    s.resolver.as_mut().unwrap().strategy = UpstreamStrategy::Fastest as i32;
+    snapshot::apply(&cur, s, &blobs, None);
+    assert_eq!(cur.load().cache.entries(), 0, "new strategy clears answers");
+}
+
 #[test]
 fn persist_failure_still_applies_and_reports() {
     let dir = tempfile::tempdir().unwrap();

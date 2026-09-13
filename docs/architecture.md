@@ -173,6 +173,9 @@ host concerns and are not part of the snapshot.
   not cached.
 - Serve-stale (RFC 8767): entries are kept `stale_window` seconds past expiry
   and served with TTL 30 only when resolution fails.
+- A snapshot with unchanged cache settings keeps the cache; it is cleared when
+  the filter lists, policy-group partitions, resolution/DNSSEC/RPZ settings,
+  upstream strategy or any upstream change (zone edits do not clear it).
 
 ### Upstreams (forwarding)
 

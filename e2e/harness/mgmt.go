@@ -117,7 +117,7 @@ func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 	ready := m.Proc.WaitReady(30 * time.Second)
 	m.HTTPAddr, m.GRPCAddr = m.Proc.Addr(ready, "http"), m.Proc.Addr(ready, "grpc")
 	m.BaseURL, m.GRPCURL = "http://"+m.HTTPAddr, "https://"+m.GRPCAddr
-	e.forward(public, []string{m.HTTPAddr})
+	e.forward(public, func() []string { return []string{m.HTTPAddr} })
 	return m
 }
 
@@ -309,6 +309,8 @@ type EngineOptions struct {
 	ProxyTrustedCIDRs               []string
 	// ExtraEnv is added to the engine process environment (also on RestartEngine).
 	ExtraEnv []string
+	// SkipControlWait returns once the READY line is read instead of waiting for the control stream.
+	SkipControlWait bool
 }
 
 // StartManagedEngine runs nexora-engine enrolled through joinToken against grpcURLs on loopback
@@ -370,7 +372,9 @@ workers = 2
 	en.env = o.ExtraEnv
 	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath}, en.env)
 	en.readAddrs()
-	en.Proc.WaitLog(controlConnected, 30*time.Second)
+	if !o.SkipControlWait {
+		en.Proc.WaitLog(controlConnected, 30*time.Second)
+	}
 	return en
 }
 

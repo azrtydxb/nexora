@@ -18,8 +18,37 @@ type Balancer struct {
 func (e *Env) StartTCPBalancer(backends ...string) *Balancer {
 	e.T.Helper()
 	l := e.listenLoopback()
-	e.forward(l, backends)
+	e.forward(l, func() []string { return backends })
 	return &Balancer{Addr: l.Addr().String()}
+}
+
+// SwitchableBalancer is a TCP balancer whose backends can be replaced while it runs.
+type SwitchableBalancer struct {
+	Addr string
+
+	mu       sync.Mutex
+	backends []string
+}
+
+// StartSwitchableBalancer is StartTCPBalancer with SetBackends.
+func (e *Env) StartSwitchableBalancer(backends ...string) *SwitchableBalancer {
+	e.T.Helper()
+	b := &SwitchableBalancer{backends: backends}
+	l := e.listenLoopback()
+	b.Addr = l.Addr().String()
+	e.forward(l, func() []string {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return append([]string(nil), b.backends...)
+	})
+	return b
+}
+
+// SetBackends replaces the backends for connections accepted from now on.
+func (b *SwitchableBalancer) SetBackends(backends ...string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.backends = backends
 }
 
 func (e *Env) listenLoopback() net.Listener {
@@ -32,8 +61,8 @@ func (e *Env) listenLoopback() net.Listener {
 	return l
 }
 
-// forward serves l as described on StartTCPBalancer.
-func (e *Env) forward(l net.Listener, backends []string) {
+// forward serves l as described on StartTCPBalancer, reading backends for every accepted connection.
+func (e *Env) forward(l net.Listener, backends func() []string) {
 	var mu sync.Mutex
 	open := map[net.Conn]struct{}{}
 	track := func(c net.Conn, add bool) {
@@ -61,7 +90,7 @@ func (e *Env) forward(l net.Listener, backends []string) {
 			}
 			go func() {
 				var backend net.Conn
-				for _, addr := range backends {
+				for _, addr := range backends() {
 					if backend, err = net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
 						break
 					}
