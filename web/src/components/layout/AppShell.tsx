@@ -8,6 +8,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router";
 import {
+  ArrowLeftRight,
   ChevronDown,
   Cpu,
   Funnel,
@@ -19,6 +20,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  ShieldHalf,
   Sun,
   TextSearch,
   Users,
@@ -76,6 +78,20 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Filtering",
         icon: Funnel,
         op: "listFilterLists",
+      },
+      {
+        route: "policies",
+        path: "/policies",
+        label: "Policies",
+        icon: ShieldHalf,
+        op: "listPolicyGroups",
+      },
+      {
+        route: "rewrites",
+        path: "/rewrites",
+        label: "Rewrites",
+        icon: ArrowLeftRight,
+        op: "listRewrites",
       },
       {
         route: "access-control",

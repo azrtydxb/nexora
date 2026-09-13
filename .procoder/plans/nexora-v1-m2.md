@@ -2760,6 +2760,7 @@ As built (2026-09-13): generation ran as `oapi-codegen -config oapi-codegen.yaml
 Files:
 
 - `mgmt/internal/config/config.go` — `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`, `NEXORA_DNS_TLS_RELOAD_INTERVAL`.
+- `mgmt/internal/config/config_test.go` (M1) — validation cases for the pair rule and the interval minimum.
 - `mgmt/internal/pki/dnstls.go` — issue (from M1's `pki.CA`), load and watch the DNS serving certificate.
 - `mgmt/internal/pki/dnstls_test.go` — tests.
 - `mgmt/cmd/nexora-mgmt/main.go` — `ca issue-dns` subcommand; start the watcher in `serve`.
@@ -2769,6 +2770,7 @@ Files:
 - `mgmt/internal/control/control_test.go` (M1) — its setup passes `control.NewDNSTLSFanout()` to the new `NewServer` argument.
 - `mgmt/internal/api/server.go` (M1) — `Deps.DNSTLS`.
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/dnstls.go`, `mgmt/internal/auth/permissions.go` — `getDnsTlsStatus`.
+- `mgmt/internal/api/gen.go`, `web/src/api/schema.d.ts`, `web/src/auth/permissions.ts` — regenerated / permission parity for `getDnsTlsStatus`.
 
 Interfaces:
 
@@ -3204,7 +3206,7 @@ test("operator creates, filters, edits and deletes rewrites", async ({
   await page.getByRole("option", { name: "CNAME", exact: true }).click();
   await dialog.getByLabel("Value").fill("other.home.test");
   await dialog.getByRole("button", { name: "Save" }).click();
-  await expect(dialog.getByText(/CNAME cannot coexist/)).toBeVisible();
+  await expect(dialog.getByText(/CNAME rewrite cannot coexist/)).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel" }).click();
 
   await page.getByLabel("Scope").click();
@@ -3229,7 +3231,7 @@ test("operator creates, filters, edits and deletes rewrites", async ({
 });
 ```
 
-The 409 `rewrite_conflict` message from Task 7/8 is `nas-….home.test already has A records; CNAME cannot coexist with other records` — set it exactly as `<name> already has <types> records; CNAME cannot coexist with other records` (or `<name> already has a CNAME record; CNAME cannot coexist with other records`) in `mgmt/internal/api/rewrites.go`.
+The 409 `rewrite_conflict` message is the committed `store.ErrRewriteCNAMEConflict` text from Task 7, `a CNAME rewrite cannot coexist with other rewrites for the same name`, which the dialog shows unchanged; the spec matches `/CNAME rewrite cannot coexist/`.
 
 - [ ] Write `web/e2e/screens/14-settings-dns-tls.spec.ts`:
 
@@ -3288,7 +3290,9 @@ test("settings shows the DNS encryption certificate state", async ({
 - [ ] Run the specs through M1's GUI coverage test: `scripts/dev-exec.sh bash -c 'make e2e-build && NEXORA_E2E_BIN_DIR=$PWD/bin go test -count=1 -v ./e2e/ -run TestGUICoverage'` — expect FAIL: `harness.RunPlaywright` reports `e2e/screens/12-policies.spec.ts` timing out on `getByTestId('nav-policies')` (routes not implemented).
 - [ ] Implement `web/src/api/policies.ts`, `web/src/pages/PoliciesPage.tsx`, `web/src/pages/RewritesPage.tsx`, the section in `web/src/pages/SettingsPage.tsx`, the routes in `web/src/app/router.tsx`, the `navGroups` entries in `web/src/components/layout/AppShell.tsx`, and the 12 operationIds in `web/src/auth/permissions.ts` (viewer: `listPolicyGroups`, `getPolicyGroup`, `getGlobalSafeSearch`, `listRewrites`, `getDnsTlsStatus`; operator: `createPolicyGroup`, `updatePolicyGroup`, `deletePolicyGroup`, `updateGlobalSafeSearch`, `createRewrite`, `updateRewrite`, `deleteRewrite`) with the exact texts, roles and labels in "Screen behaviour". Cards and settings sections are `<section aria-labelledby=…>` so they expose the region role with the heading as name; tables that need a name use `aria-label`. The `Client CIDRs` and `Allowlist` textareas split on newlines, trim, and drop empty lines before sending. The edit dialog sends the `revision` it loaded. Role-gated controls use M1's `useCan(operationId)` from `@/auth/AuthProvider`. Use `PageHeader` for screen titles, `ConfirmDialog` for deletes and `ErrorAlert` for 422/`cidr_in_use`/`rewrite_conflict` messages under the dialog forms.
 - [ ] Rerun the same command — expect PASS, with the list reporter showing `screens/12-policies.spec.ts` (2 tests), `screens/13-rewrites.spec.ts` (1) and `screens/14-settings-dns-tls.spec.ts` (1) passed and no uncovered operations; then `scripts/dev-exec.sh make web-test lint` — expect exit 0.
-- [ ] Commit: `git add web e2e/gui_test.go mgmt/internal/api/rewrites.go && git commit -m "feat(web): policies, rewrites and DNS TLS settings screens"`.
+- [ ] Commit: `git add web e2e/gui_test.go && git commit -m "feat(web): policies, rewrites and DNS TLS settings screens"`.
+
+As built (2026-09-13): the rewrite conflict message was not rewritten in `mgmt/internal/api/rewrites.go` (mgmt is owned by the management-plane task and the committed store message already names the conflict); `13-rewrites.spec.ts` matches `/CNAME rewrite cannot coexist/` instead. `usePolicyGroup(id)` is a disabled query refetched by the edit dialog's Reload button. The filter-list checkboxes offer only `kind: "block"` lists (the API refuses allow lists). The global safe search form, policy group dialog and rewrite dialog keep their success/error state in their own mutations; the Expires badge shows only under 21 days. `getDnsTlsStatus` and its `permissions.ts` entry came from Task 9. `14-settings-dns-tls.spec.ts` exercises only the not-configured branch in `TestGUICoverage` (the harness loads no DNS serving certificate).
 
 ## Task 11: E2E harness encrypted clients and `TestEncryptedTransports`
 

@@ -7,14 +7,18 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, unwrap, type Schemas } from "@/api/client";
+import { useDnsTlsStatus } from "@/api/policies";
 import { useCan } from "@/auth/AuthProvider";
 import {
   ErrorAlert,
+  Fact,
   formatDateTime,
   MessageRow,
   SavedNote,
+  StatusDot,
 } from "@/components/common";
 import { PageHeader } from "@/components/layout/AppShell";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -114,6 +118,8 @@ export function SettingsPage() {
         <Card className="text-muted-foreground mb-8 p-6 text-sm">Loading…</Card>
       )}
       {settings.data && <SettingsForm settings={settings.data} />}
+
+      <DnsTlsSection />
 
       <section aria-labelledby="versions-heading" className="mt-10">
         <h2 id="versions-heading" className="mb-1 text-sm font-semibold">
@@ -457,5 +463,113 @@ function Field({
       {children}
       {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
     </div>
+  );
+}
+
+const dayMs = 86_400_000;
+
+function DnsTlsSection() {
+  const status = useDnsTlsStatus();
+  const cert = status.data?.certificate;
+  return (
+    <section aria-labelledby="dns-tls-heading" className="mt-10">
+      <h2 id="dns-tls-heading" className="mb-1 text-sm font-semibold">
+        DNS encryption certificate
+      </h2>
+      <p className="text-muted-foreground mb-3 text-sm">
+        The certificate engines present to DoT, DoH and DoQ clients. Management
+        loads it from files and pushes it to every engine.
+      </p>
+      <ErrorAlert
+        error={status.error}
+        prefix="Could not load the DNS encryption certificate"
+        className="mb-3"
+      />
+      {status.isPending && (
+        <Card className="text-muted-foreground p-5 text-sm">Loading…</Card>
+      )}
+      {status.data && !cert && (
+        <Card className="text-muted-foreground p-5 text-sm">
+          Not configured. Set NEXORA_DNS_TLS_CERT_FILE and
+          NEXORA_DNS_TLS_KEY_FILE on every management instance; DoT, DoH and DoQ
+          refuse handshakes until then.
+        </Card>
+      )}
+      {status.data && cert && (
+        <Card className="overflow-hidden">
+          <dl className="grid gap-4 px-5 py-5 text-sm sm:grid-cols-2">
+            <Fact label="Subject">{cert.subject || "—"}</Fact>
+            <Fact label="Names">
+              <span className="font-mono text-[13px]">
+                {[...cert.dns_names, ...cert.ip_addresses].join(", ") || "—"}
+              </span>
+            </Fact>
+            <Fact label="Expires">
+              <span className="inline-flex flex-wrap items-center gap-2">
+                {formatDateTime(cert.not_after)}
+                <ExpiryBadge notAfter={cert.not_after} />
+              </span>
+            </Fact>
+            <Fact label="Fingerprint">
+              <span className="font-mono text-[13px] break-all">
+                {cert.fingerprint_sha256}
+              </span>
+            </Fact>
+          </dl>
+          <Table aria-label="Engines" className="border-t">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="h-10">Node</TableHead>
+                <TableHead className="h-10">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {status.data.engines.map((e) => (
+                <TableRow key={e.engine_id}>
+                  <TableCell className="py-2.5 font-medium">
+                    {e.node_name}
+                  </TableCell>
+                  <TableCell className="py-2.5">
+                    {!e.applied ? (
+                      <StatusDot tone="destructive">{e.error}</StatusDot>
+                    ) : e.fingerprint_sha256 === cert.fingerprint_sha256 ? (
+                      <StatusDot tone="success">
+                        Serving current certificate
+                      </StatusDot>
+                    ) : (
+                      <StatusDot tone="warning">Outdated</StatusDot>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {status.data.engines.length === 0 && (
+                <MessageRow colSpan={2}>
+                  No engine has reported a certificate yet.
+                </MessageRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+/** Whole days from now until v; negative once v has passed. */
+function daysUntil(v: string): number {
+  return Math.floor((new Date(v).getTime() - Date.now()) / dayMs);
+}
+
+function ExpiryBadge({ notAfter }: { notAfter: string }) {
+  const days = daysUntil(notAfter);
+  if (days >= 21) return null;
+  const text =
+    days < 0 ? "Expired" : days === 0 ? "Expires today" : `${days} days left`;
+  return days < 7 ? (
+    <Badge variant="destructive">{text}</Badge>
+  ) : (
+    <Badge variant="outline" className="border-warning/40 text-warning">
+      {text}
+    </Badge>
   );
 }

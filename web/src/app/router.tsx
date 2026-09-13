@@ -9,7 +9,9 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { EnginesPage } from "@/pages/EnginesPage";
 import { FilteringPage } from "@/pages/FilteringPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { PoliciesPage } from "@/pages/PoliciesPage";
 import { QueryLogPage } from "@/pages/QueryLogPage";
+import { RewritesPage } from "@/pages/RewritesPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SetupPage } from "@/pages/SetupPage";
 import { UpstreamsPage } from "@/pages/UpstreamsPage";
@@ -31,6 +33,8 @@ export const router = createBrowserRouter([
       { path: "upstreams", element: <UpstreamsPage /> },
       { path: "access-control", element: <AccessControlPage /> },
       { path: "filtering", element: <FilteringPage /> },
+      { path: "policies", element: <PoliciesPage /> },
+      { path: "rewrites", element: <RewritesPage /> },
       { path: "engines", element: <EnginesPage /> },
       { path: "users", element: <UsersPage /> },
       { path: "api-tokens", element: <ApiTokensPage /> },

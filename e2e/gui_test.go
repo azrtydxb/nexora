@@ -36,6 +36,16 @@ func TestGUICoverage(t *testing.T) {
 
 	admin := env.NewAPI(mgmt.BaseURL)
 	admin.Must("POST", "/auth/login", map[string]string{"username": "admin", "password": "admin-password-e2e"}, nil, 200)
+	for _, u := range []map[string]any{
+		{"username": "vera", "email": "vera@example.test", "password": "viewer-password-e2e", "role": "viewer"},
+		{"username": "otto", "email": "otto@example.test", "password": "operator-password-e2e", "role": "operator"},
+	} {
+		admin.Must("POST", "/users", u, nil, 201)
+	}
+	vars["NEXORA_E2E_VIEWER_USER"] = "vera"
+	vars["NEXORA_E2E_VIEWER_PASSWORD"] = "viewer-password-e2e"
+	vars["NEXORA_E2E_OPERATOR_USER"] = "otto"
+	vars["NEXORA_E2E_OPERATOR_PASSWORD"] = "operator-password-e2e"
 	admin.Must("POST", "/upstreams", map[string]any{"name": "fixture", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 0}, nil, 201)
 	eng := env.StartManagedEngine("gui-engine", []string{mgmt.GRPCURL}, admin.CreateJoinToken())
 	env.StartManagedEngine("gui-engine-2", []string{mgmt.GRPCURL}, admin.CreateJoinToken())
