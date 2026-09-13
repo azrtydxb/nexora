@@ -15,6 +15,7 @@ import {
   StatusDot,
   useRevealRef,
 } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { ListEditor } from "@/components/ListEditor";
 import { Badge } from "@/components/ui/badge";
@@ -105,6 +106,7 @@ export function FilteringPage() {
                 <TableHead className="h-10">Name</TableHead>
                 <TableHead className="h-10">Kind</TableHead>
                 <TableHead className="h-10">Source</TableHead>
+                <TableHead className="h-10">Engine group</TableHead>
                 <TableHead className="h-10">Refresh</TableHead>
                 <TableHead className="h-10 text-right">Entries</TableHead>
                 <TableHead className="h-10">Last fetched</TableHead>
@@ -134,6 +136,9 @@ export function FilteringPage() {
                     title={l.url}
                   >
                     {l.url}
+                  </TableCell>
+                  <TableCell className="py-2.5 whitespace-nowrap">
+                    <EngineGroupName id={l.engine_group_id} />
                   </TableCell>
                   <TableCell className="py-2.5 whitespace-nowrap tabular-nums">
                     {formatSeconds(l.refresh_interval_seconds)}
@@ -174,9 +179,9 @@ export function FilteringPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {lists.isPending && <MessageRow colSpan={7}>Loading…</MessageRow>}
+              {lists.isPending && <MessageRow colSpan={8}>Loading…</MessageRow>}
               {lists.isSuccess && rows.length === 0 && (
-                <MessageRow colSpan={7}>
+                <MessageRow colSpan={8}>
                   No subscriptions yet.{" "}
                   {canCreate
                     ? "Add a blocklist URL to start filtering."
@@ -448,6 +453,7 @@ function ListDialog({
     url: list?.url ?? "",
     interval: String(list?.refresh_interval_seconds ?? 86400),
     enabled: list?.enabled ?? true,
+    engine_group_id: list?.engine_group_id ?? null,
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -460,6 +466,7 @@ function ListDialog({
         url: form.url.trim(),
         refresh_interval_seconds: Number(form.interval),
         enabled: form.enabled,
+        engine_group_id: form.engine_group_id,
       };
       if (list) {
         return unwrap(
@@ -542,6 +549,15 @@ function ListDialog({
               pattern="https?://.+"
               value={form.url}
               onChange={(e) => set("url", e.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="list-engine-group">Engine group</Label>
+            <EngineGroupSelect
+              id="list-engine-group"
+              testId="list-engine-group"
+              value={form.engine_group_id}
+              onChange={(v) => set("engine_group_id", v)}
             />
           </div>
           <div className="grid grid-cols-[1fr_auto] items-end gap-4">

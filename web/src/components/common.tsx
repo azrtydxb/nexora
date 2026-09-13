@@ -68,13 +68,15 @@ export function MessageRow({
   );
 }
 
-/** A destructive confirmation dialog; the confirm button carries `confirm-delete`. */
+/** A confirmation dialog, destructive by default; the confirm button carries `confirm-delete` unless testId says otherwise. */
 export function ConfirmDialog({
   title,
   description,
   confirmLabel,
   pendingLabel,
   thing,
+  testId = "confirm-delete",
+  destructive = true,
   onConfirm,
   onClose,
 }: {
@@ -83,6 +85,8 @@ export function ConfirmDialog({
   confirmLabel: string;
   pendingLabel: string;
   thing?: string;
+  testId?: string;
+  destructive?: boolean;
   onConfirm: () => Promise<unknown>;
   onClose: () => void;
 }) {
@@ -100,8 +104,8 @@ export function ConfirmDialog({
             Cancel
           </Button>
           <Button
-            variant="destructive"
-            data-testid="confirm-delete"
+            variant={destructive ? "destructive" : "default"}
+            data-testid={testId}
             disabled={run.isPending}
             onClick={() => run.mutate()}
           >

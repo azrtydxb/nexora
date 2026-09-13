@@ -11,6 +11,7 @@ import {
 } from "@/api/policies";
 import { useCan } from "@/auth/AuthProvider";
 import { ConfirmDialog, ErrorAlert, MessageRow } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,7 +71,11 @@ export function RewritesPage() {
   const [deleting, setDeleting] = useState<Rewrite | null>(null);
   const rows = rewrites.data ?? [];
   const groupNames = new Map((groups.data ?? []).map((g) => [g.id, g.name]));
-  const cols = 5 + (canUpdate || canDelete ? 1 : 0);
+  // A rewrite inside a policy group follows that group's engine group.
+  const groupEngineGroups = new Map(
+    (groups.data ?? []).map((g) => [g.id, g.engine_group_id]),
+  );
+  const cols = 6 + (canUpdate || canDelete ? 1 : 0);
 
   return (
     <>
@@ -117,6 +122,7 @@ export function RewritesPage() {
               <TableHead>Value</TableHead>
               <TableHead className="text-right">TTL</TableHead>
               <TableHead>Scope</TableHead>
+              <TableHead>Engine group</TableHead>
               {(canUpdate || canDelete) && (
                 <TableHead className="w-24 text-right">Actions</TableHead>
               )}
@@ -143,6 +149,15 @@ export function RewritesPage() {
                   ) : (
                     (groupNames.get(r.group_id) ?? r.group_id.slice(0, 8))
                   )}
+                </TableCell>
+                <TableCell className="py-3 whitespace-nowrap">
+                  <EngineGroupName
+                    id={
+                      r.group_id === null
+                        ? r.engine_group_id
+                        : (groupEngineGroups.get(r.group_id) ?? null)
+                    }
+                  />
                 </TableCell>
                 {(canUpdate || canDelete) && (
                   <TableCell className="py-2 text-right whitespace-nowrap">
@@ -228,6 +243,7 @@ function RewriteDialog({
     value: rewrite?.value ?? "",
     ttl: String(rewrite?.ttl ?? 300),
     scope: rewrite ? (rewrite.group_id ?? "global") : defaultScope,
+    engine_group_id: rewrite?.engine_group_id ?? null,
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -243,6 +259,8 @@ function RewriteDialog({
       value: form.value.trim(),
       ttl: Number(form.ttl),
       group_id: form.scope === "global" ? null : form.scope,
+      // A rewrite inside a policy group follows the policy group's engine group.
+      engine_group_id: form.scope === "global" ? form.engine_group_id : null,
     };
     const done = { onSuccess: onClose };
     if (rewrite) {
@@ -340,6 +358,17 @@ function RewriteDialog({
               </Select>
             </div>
           </div>
+          {form.scope === "global" && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="rewrite-engine-group">Engine group</Label>
+              <EngineGroupSelect
+                id="rewrite-engine-group"
+                testId="rewrite-engine-group"
+                value={form.engine_group_id}
+                onChange={(v) => set("engine_group_id", v)}
+              />
+            </div>
+          )}
           <ErrorAlert error={save.error} thing="This rewrite" />
           <DialogFooter className="gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>

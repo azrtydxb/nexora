@@ -10,6 +10,7 @@ import {
 } from "@/api/resolution";
 import { useCan } from "@/auth/AuthProvider";
 import { ConfirmDialog, ErrorAlert, MessageRow } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -45,7 +46,7 @@ export function ForwardZonesSection() {
   const [editing, setEditing] = useState<ForwardZone | "new" | null>(null);
   const [deleting, setDeleting] = useState<ForwardZone | null>(null);
   const rows = zones.data ?? [];
-  const cols = 3 + (canUpdate || canDelete ? 1 : 0);
+  const cols = 4 + (canUpdate || canDelete ? 1 : 0);
 
   return (
     <section aria-label="Forward zones" className="mb-10">
@@ -76,6 +77,7 @@ export function ForwardZonesSection() {
               <TableHead>Domain</TableHead>
               <TableHead>Servers</TableHead>
               <TableHead>DNSSEC</TableHead>
+              <TableHead>Engine group</TableHead>
               {(canUpdate || canDelete) && (
                 <TableHead className="w-24 text-right">Actions</TableHead>
               )}
@@ -96,6 +98,9 @@ export function ForwardZonesSection() {
                   ) : (
                     <span className="text-muted-foreground">Off</span>
                   )}
+                </TableCell>
+                <TableCell className="py-3 whitespace-nowrap">
+                  <EngineGroupName id={z.engine_group_id} />
                 </TableCell>
                 {(canUpdate || canDelete) && (
                   <TableCell className="py-2 text-right whitespace-nowrap">
@@ -169,6 +174,7 @@ function ForwardZoneDialog({
     domain: zone?.domain ?? "",
     addresses: zone?.addresses.join(", ") ?? "",
     validate: zone?.validate ?? false,
+    engine_group_id: zone?.engine_group_id ?? null,
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -182,6 +188,7 @@ function ForwardZoneDialog({
       domain: form.domain.trim(),
       addresses: splitList(form.addresses),
       validate: form.validate,
+      engine_group_id: form.engine_group_id,
     };
     const done = { onSuccess: onClose };
     if (zone) {
@@ -232,6 +239,15 @@ function ForwardZoneDialog({
             <p className="text-muted-foreground text-xs">
               Comma-separated ip:port, tried in order
             </p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="forwardzone-engine-group">Engine group</Label>
+            <EngineGroupSelect
+              id="forwardzone-engine-group"
+              testId="forwardzone-engine-group"
+              value={form.engine_group_id}
+              onChange={(v) => set("engine_group_id", v)}
+            />
           </div>
           <div className="flex items-center gap-2">
             <Switch

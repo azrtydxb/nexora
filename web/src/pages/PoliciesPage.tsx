@@ -19,6 +19,7 @@ import {
   MessageRow,
   SavedNote,
 } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -103,7 +104,7 @@ export function PoliciesPage() {
   const [deleting, setDeleting] = useState<PolicyGroup | null>(null);
   const rows = groups.data ?? [];
   const listNames = new Map((lists.data ?? []).map((l) => [l.id, l.name]));
-  const cols = 4 + (canUpdate || canDelete ? 1 : 0);
+  const cols = 5 + (canUpdate || canDelete ? 1 : 0);
 
   return (
     <>
@@ -147,6 +148,7 @@ export function PoliciesPage() {
                 <TableHead>CIDRs</TableHead>
                 <TableHead>Filter lists</TableHead>
                 <TableHead>Safe search</TableHead>
+                <TableHead>Engine group</TableHead>
                 {(canUpdate || canDelete) && (
                   <TableHead className="w-24 text-right">Actions</TableHead>
                 )}
@@ -183,6 +185,9 @@ export function PoliciesPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground py-3 align-top">
                     {safeSearchSummary(g.safe_search)}
+                  </TableCell>
+                  <TableCell className="py-3 align-top whitespace-nowrap">
+                    <EngineGroupName id={g.engine_group_id} />
                   </TableCell>
                   {(canUpdate || canDelete) && (
                     <TableCell className="py-2 text-right align-top whitespace-nowrap">
@@ -398,6 +403,7 @@ type GroupForm = {
   filterListIds: string[];
   allowlist: string;
   safeSearch: SafeSearch;
+  engineGroupId: string | null;
   revision: number;
 };
 
@@ -409,6 +415,7 @@ function toGroupForm(g: PolicyGroup | null): GroupForm {
     filterListIds: g?.filter_list_ids ?? [],
     allowlist: g?.allowlist.join("\n") ?? "",
     safeSearch: g?.safe_search ?? offSafeSearch,
+    engineGroupId: g?.engine_group_id ?? null,
     revision: g?.revision ?? 0,
   };
 }
@@ -443,6 +450,7 @@ function PolicyGroupDialog({
       filter_list_ids: form.filterListIds,
       allowlist: lines(form.allowlist),
       safe_search: form.safeSearch,
+      engine_group_id: form.engineGroupId,
     };
     const done = { onSuccess: onClose };
     if (group) {
@@ -503,6 +511,19 @@ function PolicyGroupDialog({
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
             />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="policygroup-engine-group">Engine group</Label>
+            <EngineGroupSelect
+              id="policygroup-engine-group"
+              testId="policygroup-engine-group"
+              value={form.engineGroupId}
+              onChange={(v) => set("engineGroupId", v)}
+            />
+            <p className="text-muted-foreground text-xs">
+              The group's filter lists must apply to the same engine group or to
+              all of them.
+            </p>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="group-cidrs">Client CIDRs</Label>

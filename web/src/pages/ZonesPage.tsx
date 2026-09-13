@@ -12,6 +12,7 @@ import {
   MessageRow,
   StatusDot,
 } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,7 @@ export function ZonesPage() {
               <TableHead className="text-right">Serial</TableHead>
               <TableHead>DNSSEC</TableHead>
               <TableHead>Transfers</TableHead>
+              <TableHead>Engine group</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -152,11 +154,14 @@ export function ZonesPage() {
                     </span>
                   )}
                 </TableCell>
+                <TableCell className="py-3 whitespace-nowrap">
+                  <EngineGroupName id={z.engine_group_id} />
+                </TableCell>
               </TableRow>
             ))}
-            {zones.isPending && <MessageRow colSpan={5}>Loading…</MessageRow>}
+            {zones.isPending && <MessageRow colSpan={6}>Loading…</MessageRow>}
             {zones.isSuccess && rows.length === 0 && (
-              <MessageRow colSpan={5}>No zones yet.</MessageRow>
+              <MessageRow colSpan={6}>No zones yet.</MessageRow>
             )}
           </TableBody>
         </Table>
@@ -173,6 +178,7 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
   const create = useCreateZone();
   const keys = useTsigKeys();
   const [kind, setKind] = useState<Kind>("primary");
+  const [engineGroup, setEngineGroup] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     default_ttl: "3600",
@@ -193,6 +199,7 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
         ? {
             name,
             kind,
+            engine_group_id: engineGroup,
             default_ttl: Number(form.default_ttl),
             soa: { mname: fqdn(form.mname), rname: fqdn(form.rname) },
             nameservers: splitList(form.nameservers).map(fqdn),
@@ -200,6 +207,7 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
         : {
             name,
             kind,
+            engine_group_id: engineGroup,
             primaries: splitList(form.primaries).map((address) => ({
               address,
               tsig_key_id:
@@ -249,6 +257,15 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="zone-engine-group">Engine group</Label>
+            <EngineGroupSelect
+              id="zone-engine-group"
+              testId="zone-engine-group"
+              value={engineGroup}
+              onChange={setEngineGroup}
+            />
           </div>
           {kind === "primary" ? (
             <>

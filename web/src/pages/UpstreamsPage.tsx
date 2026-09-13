@@ -4,6 +4,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
 import { useCan } from "@/auth/AuthProvider";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -79,125 +80,137 @@ export function UpstreamsPage() {
       />
       <ResolutionSection />
       <ForwardZonesSection />
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="mb-1 text-sm font-semibold">Global upstreams</h2>
-          <p className="text-muted-foreground max-w-prose text-sm">
-            Resolvers the engines forward to in forward mode, tried in the order
-            listed.
-          </p>
+      <section aria-label="Upstreams">
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="mb-1 text-sm font-semibold">Upstreams</h2>
+            <p className="text-muted-foreground max-w-prose text-sm">
+              Resolvers the engines forward to in forward mode, tried in the
+              order listed. An engine group in override mode uses only its own.
+            </p>
+          </div>
+          {canCreate && (
+            <Button
+              data-testid="upstream-add"
+              onClick={() => setEditing("new")}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Add upstream
+            </Button>
+          )}
         </div>
-        {canCreate && (
-          <Button data-testid="upstream-add" onClick={() => setEditing("new")}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            Add upstream
-          </Button>
+        {list.error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertDescription>
+              Could not load upstreams: {errorMessage(list.error)}
+            </AlertDescription>
+          </Alert>
         )}
-      </div>
-      {list.error && (
-        <Alert variant="destructive" className="mb-4">
-          <AlertDescription>
-            Could not load upstreams: {errorMessage(list.error)}
-          </AlertDescription>
-        </Alert>
-      )}
-      <Card className="overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-12">#</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Protocol</TableHead>
-              <TableHead>Target</TableHead>
-              <TableHead className="text-right">Timeout</TableHead>
-              <TableHead>State</TableHead>
-              {(canUpdate || canDelete) && <TableHead className="w-24" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((u) => (
-              <TableRow key={u.id} data-testid={`upstream-row-${u.name}`}>
-                <TableCell className="text-muted-foreground py-3">
-                  {u.position}
-                </TableCell>
-                <TableCell className="py-3 font-medium whitespace-nowrap">
-                  {u.name}
-                </TableCell>
-                <TableCell className="py-3">
-                  <Badge variant="secondary" title={protocolLabels[u.protocol]}>
-                    {u.protocol.toUpperCase()}
-                  </Badge>
-                </TableCell>
-                <TableCell className="py-3 font-mono text-[13px]">
-                  {u.protocol === "doh" ? u.doh_url : u.address}
-                  {u.protocol === "dot" && u.tls_server_name && (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      ({u.tls_server_name})
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="py-3 text-right tabular-nums">
-                  {u.timeout_ms} ms
-                </TableCell>
-                <TableCell className="py-3">
-                  <span className="inline-flex items-center gap-1.5 text-sm">
-                    <span
-                      className={
-                        u.enabled
-                          ? "bg-success h-1.5 w-1.5 rounded-full"
-                          : "bg-muted-foreground/50 h-1.5 w-1.5 rounded-full"
-                      }
-                    />
-                    {u.enabled ? "Enabled" : "Disabled"}
-                  </span>
-                </TableCell>
-                {(canUpdate || canDelete) && (
-                  <TableCell className="py-2 text-right whitespace-nowrap">
-                    {canUpdate && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        data-testid={`upstream-edit-${u.name}`}
-                        aria-label={`Edit ${u.name}`}
-                        onClick={() => setEditing(u)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {canDelete && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="hover:text-destructive h-8 w-8"
-                        data-testid={`upstream-delete-${u.name}`}
-                        aria-label={`Delete ${u.name}`}
-                        onClick={() => setDeleting(u)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+        <Card className="overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-12">#</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Protocol</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead className="text-right">Timeout</TableHead>
+                <TableHead>Engine group</TableHead>
+                <TableHead>State</TableHead>
+                {(canUpdate || canDelete) && <TableHead className="w-24" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((u) => (
+                <TableRow key={u.id} data-testid={`upstream-row-${u.name}`}>
+                  <TableCell className="text-muted-foreground py-3">
+                    {u.position}
+                  </TableCell>
+                  <TableCell className="py-3 font-medium whitespace-nowrap">
+                    {u.name}
+                  </TableCell>
+                  <TableCell className="py-3">
+                    <Badge
+                      variant="secondary"
+                      title={protocolLabels[u.protocol]}
+                    >
+                      {u.protocol.toUpperCase()}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="py-3 font-mono text-[13px]">
+                    {u.protocol === "doh" ? u.doh_url : u.address}
+                    {u.protocol === "dot" && u.tls_server_name && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        ({u.tls_server_name})
+                      </span>
                     )}
                   </TableCell>
-                )}
-              </TableRow>
-            ))}
-            {list.isSuccess && rows.length === 0 && (
-              <TableRow className="hover:bg-transparent">
-                <TableCell
-                  colSpan={7}
-                  className="text-muted-foreground py-10 text-center"
-                >
-                  No upstreams yet.{" "}
-                  {canCreate
-                    ? "Add one so the engines can resolve names."
-                    : "An operator can add one."}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+                  <TableCell className="py-3 text-right tabular-nums">
+                    {u.timeout_ms} ms
+                  </TableCell>
+                  <TableCell className="py-3 whitespace-nowrap">
+                    <EngineGroupName id={u.engine_group_id} />
+                  </TableCell>
+                  <TableCell className="py-3">
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <span
+                        className={
+                          u.enabled
+                            ? "bg-success h-1.5 w-1.5 rounded-full"
+                            : "bg-muted-foreground/50 h-1.5 w-1.5 rounded-full"
+                        }
+                      />
+                      {u.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </TableCell>
+                  {(canUpdate || canDelete) && (
+                    <TableCell className="py-2 text-right whitespace-nowrap">
+                      {canUpdate && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          data-testid={`upstream-edit-${u.name}`}
+                          aria-label={`Edit ${u.name}`}
+                          onClick={() => setEditing(u)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canDelete && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="hover:text-destructive h-8 w-8"
+                          data-testid={`upstream-delete-${u.name}`}
+                          aria-label={`Delete ${u.name}`}
+                          onClick={() => setDeleting(u)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+              {list.isSuccess && rows.length === 0 && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={8}
+                    className="text-muted-foreground py-10 text-center"
+                  >
+                    No upstreams yet.{" "}
+                    {canCreate
+                      ? "Add one so the engines can resolve names."
+                      : "An operator can add one."}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      </section>
       {editing !== null && (
         <UpstreamDialog
           upstream={editing === "new" ? null : editing}
@@ -230,6 +243,7 @@ function UpstreamDialog({
     doh_url: upstream?.doh_url ?? "",
     timeout_ms: String(upstream?.timeout_ms ?? 250),
     enabled: upstream?.enabled ?? true,
+    engine_group_id: upstream?.engine_group_id ?? null,
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -247,6 +261,7 @@ function UpstreamDialog({
         ca_certificate_pem: upstream?.ca_certificate_pem ?? "",
         position: upstream?.position ?? nextPosition,
         enabled: form.enabled,
+        engine_group_id: form.engine_group_id,
       };
       if (upstream) {
         return unwrap(
@@ -367,6 +382,15 @@ function UpstreamDialog({
               />
             </div>
           )}
+          <div className="grid gap-1.5">
+            <Label htmlFor="upstream-engine-group">Engine group</Label>
+            <EngineGroupSelect
+              id="upstream-engine-group"
+              testId="upstream-engine-group"
+              value={form.engine_group_id}
+              onChange={(v) => set("engine_group_id", v)}
+            />
+          </div>
           <div className="grid grid-cols-[1fr_auto] items-end gap-4">
             <div className="grid gap-1.5">
               <Label htmlFor="upstream-timeout">Timeout (ms)</Label>

@@ -29,6 +29,7 @@ import {
   SavedNote,
   StatusDot,
 } from "@/components/common";
+import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,7 +95,7 @@ export function RpzPage() {
   const rows = [...(zones.data ?? [])].sort((a, b) => a.position - b.position);
   const actions =
     canUpdate || canDelete || canUpload || canRefresh || canReorder;
-  const cols = 6 + (actions ? 1 : 0);
+  const cols = 7 + (actions ? 1 : 0);
 
   function move(i: number, by: -1 | 1) {
     const ids = rows.map((z) => z.id);
@@ -138,6 +139,7 @@ export function RpzPage() {
               <TableHead>Source</TableHead>
               <TableHead>Policy</TableHead>
               <TableHead className="text-right">Min. refresh</TableHead>
+              <TableHead>Engine group</TableHead>
               <TableHead>Engines</TableHead>
               {actions && (
                 <TableHead className="w-44 text-right">Actions</TableHead>
@@ -179,6 +181,9 @@ export function RpzPage() {
                 </TableCell>
                 <TableCell className="py-3 text-right tabular-nums">
                   {z.min_refresh_seconds} s
+                </TableCell>
+                <TableCell className="py-3 whitespace-nowrap">
+                  <EngineGroupName id={z.engine_group_id} />
                 </TableCell>
                 <TableCell className="py-3">
                   <EngineStatus zone={z} />
@@ -353,6 +358,7 @@ type ZoneForm = {
   tsig_secret: string;
   policy_override: Override;
   min_refresh_seconds: string;
+  engine_group_id: string | null;
 };
 
 function EditRpzZoneDialog({
@@ -394,6 +400,7 @@ function RpzZoneDialog({
     tsig_secret: "",
     policy_override: (zone?.policy_override as Override) ?? "given",
     min_refresh_seconds: String(zone?.min_refresh_seconds ?? 60),
+    engine_group_id: zone?.engine_group_id ?? null,
   });
   const set = <K extends keyof ZoneForm>(key: K, value: ZoneForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -421,7 +428,12 @@ function RpzZoneDialog({
       );
     } else {
       create.mutate(
-        { ...fields, name: form.name.trim(), source_type: form.source_type },
+        {
+          ...fields,
+          name: form.name.trim(),
+          source_type: form.source_type,
+          engine_group_id: form.engine_group_id,
+        },
         done,
       );
     }
@@ -468,6 +480,17 @@ function RpzZoneDialog({
                 </Select>
               </div>
             )}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="rpz-engine-group">Engine group</Label>
+            {/* The scope is fixed at creation; the update body has no engine group. */}
+            <EngineGroupSelect
+              id="rpz-engine-group"
+              testId="rpz-engine-group"
+              disabled={!!zone}
+              value={form.engine_group_id}
+              onChange={(v) => set("engine_group_id", v)}
+            />
           </div>
           {transfer && (
             <>

@@ -57,7 +57,7 @@ func TestGUICoverage(t *testing.T) {
 	vars["NEXORA_E2E_QUERY_NAME"] = strings.TrimSuffix(name, ".")
 	time.Sleep(12 * time.Second) // one engine Stats interval so the dashboard has samples
 
-	specs, _ := filepath.Glob(filepath.Join(harness.RepoRoot(t), "web/e2e/screens/[01][0-9]-*.spec.ts"))
+	specs, _ := filepath.Glob(filepath.Join(harness.RepoRoot(t), "web/e2e/screens/[012][0-9]-*.spec.ts"))
 	var rel []string
 	for _, s := range specs {
 		if !strings.HasSuffix(s, "00-setup.spec.ts") {

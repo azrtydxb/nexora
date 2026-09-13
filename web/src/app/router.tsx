@@ -7,12 +7,15 @@ import { ApiTokensPage } from "@/pages/ApiTokensPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { DnssecPage } from "@/pages/DnssecPage";
+import { EngineDetailPage } from "@/pages/EngineDetailPage";
+import { EngineGroupPage } from "@/pages/EngineGroupPage";
 import { EnginesPage } from "@/pages/EnginesPage";
 import { FilteringPage } from "@/pages/FilteringPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { QueryLogPage } from "@/pages/QueryLogPage";
 import { RewritesPage } from "@/pages/RewritesPage";
+import { RolloutPage } from "@/pages/RolloutPage";
 import { RpzPage } from "@/pages/RpzPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SetupPage } from "@/pages/SetupPage";
@@ -46,6 +49,9 @@ export const router = createBrowserRouter([
       { path: "zones/tsig-keys", element: <TsigKeysPage /> },
       { path: "zones/:zoneId", element: <ZoneDetailPage /> },
       { path: "engines", element: <EnginesPage /> },
+      { path: "engines/groups/:id", element: <EngineGroupPage /> },
+      { path: "engines/nodes/:id", element: <EngineDetailPage /> },
+      { path: "engines/rollouts/:id", element: <RolloutPage /> },
       { path: "users", element: <UsersPage /> },
       { path: "api-tokens", element: <ApiTokensPage /> },
       { path: "audit", element: <AuditPage /> },
