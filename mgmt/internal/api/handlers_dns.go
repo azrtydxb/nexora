@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -377,8 +378,8 @@ func (h *handlers) UpdateAllowlist(ctx context.Context, req UpdateAllowlistReque
 
 const filterListColumns = `id::text, name, kind, url, refresh_interval_seconds, enabled, current_blob_sha256, entry_count,
 	invalid_line_count, last_success_at, last_attempt_at, last_error,
-	(last_error <> '' or (last_success_at is not null and
-		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second')) as stale, revision`
+	(last_error <> '' or last_success_at is null or
+		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second') as stale, revision`
 
 func scanFilterList(row pgx.Row) (FilterList, error) {
 	var f FilterList
@@ -448,6 +449,14 @@ func (h *handlers) CreateFilterList(ctx context.Context, req CreateFilterListReq
 	})
 	if err != nil {
 		return nil, err
+	}
+	if h.d.RefreshFilterList != nil {
+		p, id := PrincipalFrom(ctx), after.Id.String()
+		go func() {
+			if err := h.d.RefreshFilterList(context.WithoutCancel(ctx), p, id); err != nil {
+				slog.Warn("initial filter list refresh", "id", id, "err", err)
+			}
+		}()
 	}
 	return CreateFilterList201JSONResponse(after), nil
 }
