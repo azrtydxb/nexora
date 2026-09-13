@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type Engine struct {
 	Proc                               *Proc
 
 	snapPath, blobDir string
+	dot, doh, doq     string
 }
 
 // StartStandaloneEngine runs nexora-engine in standalone mode on loopback with snap and blobs
@@ -73,6 +75,42 @@ func (en *Engine) readAddrs() {
 	if tcp := p.Addr(ready, "tcp"); tcp != en.DNS {
 		p.t.Fatalf("nexora-engine: UDP %s and TCP %s listeners differ", en.DNS, tcp)
 	}
+	en.dot, en.doh, en.doq = ready["dot"], ready["doh"], ready["doq"]
+}
+
+// DoTAddr is the DoT listener's host:port (the engine must have been started with DoT).
+func (en *Engine) DoTAddr() string { return en.listener("dot", en.dot) }
+
+// DoHURL is the DoH endpoint URL on the DoH listener.
+func (en *Engine) DoHURL() string { return "https://" + en.listener("doh", en.doh) + "/dns-query" }
+
+// DoQAddr is the DoQ listener's host:port.
+func (en *Engine) DoQAddr() string { return en.listener("doq", en.doq) }
+
+func (en *Engine) listener(name, addr string) string {
+	en.Proc.t.Helper()
+	if addr == "" {
+		en.Proc.t.Fatalf("nexora-engine has no %s listener (enable it in EngineOptions)", name)
+	}
+	return addr
+}
+
+// PID is the engine process id.
+func (en *Engine) PID() int { return en.Proc.Cmd.Process.Pid }
+
+// MetricsText returns the raw Prometheus exposition from /metrics.
+func (en *Engine) MetricsText(t *testing.T) string {
+	t.Helper()
+	resp, err := metricsClient.Get("http://" + en.Metrics + "/metrics")
+	if err != nil {
+		t.Fatalf("scrape metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("scrape metrics: %s %v", resp.Status, err)
+	}
+	return string(body)
 }
 
 func (en *Engine) writeSnapshot(t *testing.T, snap *controlv1.ConfigSnapshot, blobs map[string][]byte) {

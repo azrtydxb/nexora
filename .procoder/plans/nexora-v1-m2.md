@@ -3336,7 +3336,13 @@ Interfaces:
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -3368,6 +3374,7 @@ func TestEncryptedTransports(t *testing.T) {
 	defer cancel()
 	client := harness.EncryptedClient{RootCAs: mg.DNSTLSRoots(), ServerName: "dns.nexora.test"}
 	firstFP := mg.DNSTLSFingerprint()
+	firstKey := dnsTLSSecrets(t, filepath.Join(mg.DNSTLSDir, "tls.key"))
 	harness.EventuallyTrue(t, 30*time.Second, func() bool {
 		m, _, err := new(dns.Client).Exchange(question("example.test.", dns.TypeA), eng.DNS)
 		return err == nil && len(m.Answer) == 1 && m.Answer[0].(*dns.A).A.String() == "192.0.2.10"
@@ -3534,13 +3541,10 @@ func TestEncryptedTransports(t *testing.T) {
 	})
 
 	t.Run("no-key-material-on-engine-disk", func(t *testing.T) {
-		keyPEM, err := os.ReadFile(filepath.Join(mg.DNSTLSDir, "tls.key"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := strings.TrimSpace(strings.Split(strings.SplitN(string(keyPEM), "\n", 2)[1], "-----END")[0])
+		// Both the initial and the rotated serving keys: neither may reach the engine's disk.
+		secrets := append(firstKey, dnsTLSSecrets(t, filepath.Join(mg.DNSTLSDir, "tls.key"))...)
 		scanned := 0
-		err = filepath.WalkDir(eng.StateDir, func(p string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(eng.StateDir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return err
 			}
@@ -3552,8 +3556,11 @@ func TestEncryptedTransports(t *testing.T) {
 			if strings.Contains(string(b), "PRIVATE KEY") && !strings.HasPrefix(p, filepath.Join(eng.StateDir, "identity")) {
 				t.Errorf("%s contains a PEM private key", p)
 			}
-			if strings.Contains(string(b), body[:40]) {
-				t.Errorf("%s contains DNS TLS key material", p)
+			flat := strings.ReplaceAll(string(b), "\n", "")
+			for _, secret := range secrets {
+				if strings.Contains(flat, secret) {
+					t.Errorf("%s contains DNS TLS key material", p)
+				}
 			}
 			return nil
 		})
@@ -3586,6 +3593,41 @@ func question(name string, qtype uint16) *dns.Msg {
 	return m
 }
 
+// dnsTLSSecrets returns encodings of the private scalar of a PKCS#8 ECDSA key file: raw, hex,
+// base64, and the PEM body span that carries it (every P-256 PKCS#8 key shares its first 36 DER
+// bytes, so only a span from the scalar onwards identifies the key).
+func dnsTLSSecrets(t *testing.T, keyFile string) []string {
+	t.Helper()
+	data, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		t.Fatalf("no PEM block in %s", keyFile)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("%s: %T, want an ECDSA key", keyFile, key)
+	}
+	d, err := ec.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := bytes.Index(block.Bytes, d)
+	if at < 0 {
+		t.Fatalf("%s: private scalar not found in the DER encoding", keyFile)
+	}
+	// Base64 characters from the first whole group at or after the scalar, 40 characters long.
+	start := (at + 2) / 3 * 4
+	body := base64.StdEncoding.EncodeToString(block.Bytes)
+	return []string{string(d), hex.EncodeToString(d), base64.StdEncoding.EncodeToString(d), body[start : start+40]}
+}
+
 func mustSame(t *testing.T, transport, want string, m *dns.Msg, err error) {
 	t.Helper()
 	if err != nil {
@@ -3597,7 +3639,7 @@ func mustSame(t *testing.T, transport, want string, m *dns.Msg, err error) {
 }
 ```
 
-The key-body check skips the engine's own `identity/` directory (its mTLS client key is expected there) and asserts the DNS serving key's base64 body appears in no file.
+The PEM-header check skips the engine's own `identity/` directory (its mTLS client key is expected there). The key-material check covers every file, identity included, for both the initial and the rotated serving key: `dnsTLSSecrets` searches for the private scalar raw, hex, base64 and as the PEM body span that carries it. (Deviation: the original check compared the first 40 base64 characters of the PEM body, which are the fixed PKCS#8 P-256 header shared by every such key, and falsely matched the engine's identity key.)
 
 - [ ] Run `scripts/dev-exec.sh bash -c 'NEXORA_E2E_BIN_DIR=bin go test -count=1 ./e2e/ -run TestEncryptedTransports'` — expect FAIL with "unknown field DNSTLS in struct literal of type harness.MgmtOptions".
 - [ ] Implement `e2e/harness/encrypted.go`:
@@ -3849,7 +3891,8 @@ Interfaces:
 - Consumed from M1: everything listed under Task 11 "Consumed from M1"; M1 (Task 17) filter list API `POST /filter-lists` with `{"name","kind":"block","url","refresh_interval_seconds","enabled"}` (`refresh_interval_seconds` required, minimum 300; list formats are auto-detected, there is no `format` field) returning the `FilterList` (with `id`), and `GET /filter-lists/{id}` returning `current_blob_sha256` (null until the first successful fetch).
 - Consumed from Task 11: `harness.EncryptedClient`, `harness.DoH`, `harness.WriteProxyV2`, `harness.EventuallyTrue`, `EngineOptions.{DoT, DoH, ProxyProtocolDoT, ProxyTrustedCIDRs}`, `MgmtOptions.DNSTLS`, `(*Mgmt).DNSTLSRoots()`, `(*DNSFixture).SetRecords`, `(*Engine).DoHURL()`, `(*Engine).DoTAddr()`.
 - Consumed from Task 8: `/policy-groups`, `/safe-search`, `/rewrites` (relative to `/api/v1`, as `harness.API` paths).
-- Produced: tests `TestPerClientPolicy`, `TestSafeSearchRewrites`; helper `udpFrom(t *testing.T, localIP, server, name string, qtype uint16) *dns.Msg` in `e2e/per_client_policy_test.go`.
+- Produced: tests `TestPerClientPolicy`, `TestSafeSearchRewrites`; helpers `udpFrom(t *testing.T, localIP, server, name string, qtype uint16) *dns.Msg` and `waitLatestApplied(t *testing.T, api *harness.API, nodes ...string)` in `e2e/per_client_policy_test.go`.
+- Consumed from M1: `GET /query-log?filter=&name=` (builtin backend); the `QueryLogRecord.filter` enum gains `rewritten` (openapi.yaml, gen.go, schema.d.ts, Query log filter select).
 
 - [ ] Write the failing test `e2e/per_client_policy_test.go`:
 
@@ -3885,6 +3928,16 @@ func firstA(m *dns.Msg) string {
 		}
 	}
 	return ""
+}
+
+// waitLatestApplied waits until every named engine applied the newest config version: a test
+// that made several mutations must not assert on an engine still serving an intermediate one.
+func waitLatestApplied(t *testing.T, api *harness.API, nodes ...string) {
+	t.Helper()
+	v := api.LatestVersion()
+	for _, n := range nodes {
+		api.WaitEngine(n, 15*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion >= v })
+	}
 }
 
 func TestPerClientPolicy(t *testing.T) {
@@ -3938,6 +3991,7 @@ func TestPerClientPolicy(t *testing.T) {
 	harness.EventuallyTrue(t, 10*time.Second, func() bool {
 		return firstA(udpFrom(t, "127.0.0.2", eng.DNS, "ads.example.test.", dns.TypeA)) == "0.0.0.0"
 	}, "wide group blocks ads.example.test")
+	waitLatestApplied(t, op, "policy-1", "policy-2")
 	// 127.0.0.3 is in both; the /32 is more specific, and "open" selects no list
 	if got := firstA(udpFrom(t, "127.0.0.3", eng.DNS, "ads.example.test.", dns.TypeA)); got != "203.0.113.10" {
 		t.Fatalf("open group (most specific CIDR) = %q, want 203.0.113.10", got)
@@ -3999,7 +4053,7 @@ func TestPerClientPolicy(t *testing.T) {
 }
 ```
 
-Both engines are enrolled with the same management plane, so both receive the groups.
+Both engines are enrolled with the same management plane, so both receive the groups. Every API mutation publishes its own config version, so after the first Eventually the tests wait with `waitLatestApplied` for the newest version before asserting on the rest (without it the "open" group or the last rewrite was intermittently still unapplied).
 
 - [ ] Write the failing test `e2e/safe_search_rewrites_test.go`:
 
@@ -4082,6 +4136,7 @@ func TestSafeSearchRewrites(t *testing.T) {
 		}
 	}
 	harness.EventuallyTrue(t, 10*time.Second, func() bool { return a("127.0.0.1", "nas.home.test.") == "192.168.1.50" }, "custom rewrite applied")
+	waitLatestApplied(t, op, "ss-1")
 	nas := udpFrom(t, "127.0.0.1", eng.DNS, "nas.home.test.", dns.TypeA)
 	if nas.Answer[0].Header().Ttl != 120 {
 		t.Errorf("rewrite ttl = %d, want 120", nas.Answer[0].Header().Ttl)
@@ -4099,6 +4154,26 @@ func TestSafeSearchRewrites(t *testing.T) {
 	}
 	if got := a("127.0.0.1", "special.lab.home.test."); got != "192.168.1.60" {
 		t.Errorf("exact beats wildcard = %q", got)
+	}
+
+	// rewritten answers reach the query log as filter=rewritten, for both an inline rewrite and a
+	// safe-search CNAME chased upstream
+	for _, name := range []string{"nas.home.test", "www.google.com"} {
+		var page struct {
+			Records []struct {
+				Name   string `json:"name"`
+				Filter string `json:"filter"`
+			} `json:"records"`
+		}
+		harness.EventuallyTrue(t, 30*time.Second, func() bool {
+			code, _ := op.Do(http.MethodGet, "/query-log?filter=rewritten&name="+name, nil, &page)
+			return code == http.StatusOK && len(page.Records) > 0
+		}, "query log lists "+name+" as rewritten")
+		for _, r := range page.Records {
+			if r.Filter != "rewritten" {
+				t.Errorf("query log filter=rewritten returned %+v", r)
+			}
+		}
 	}
 
 	// a group gets only its own safe search and rewrites

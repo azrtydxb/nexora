@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,12 +44,21 @@ type MgmtOptions struct {
 	OIDC                                         *OIDCFixture
 	OIDCAdminGroup, OIDCOperatorGroup            string
 	ExtraEnv                                     []string
+	// DNSTLS issues a DNS serving certificate (dns.nexora.test, 127.0.0.1) from the CA into
+	// <env dir>/dnstls and points the instance at it with a 1 s reload interval.
+	DNSTLS bool
 }
 
 // Mgmt is a running `nexora-mgmt serve`.
 type Mgmt struct {
 	HTTPAddr, GRPCAddr, BaseURL, GRPCURL string
 	Proc                                 *Proc
+	// DNSTLSDir holds tls.crt and tls.key when MgmtOptions.DNSTLS is set.
+	DNSTLSDir string
+
+	env   *Env
+	ca    *CA
+	roots *x509.CertPool
 }
 
 var (
@@ -62,7 +72,7 @@ var (
 // the harness holds and forwards to HTTPAddr; BaseURL is the instance's own listener.
 func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 	e.T.Helper()
-	m := &Mgmt{}
+	m := &Mgmt{env: e, ca: ca, roots: caPool(e.T, ca)}
 	public := e.listenLoopback()
 	backend := o.QueryLogBackend
 	if backend == "" {
@@ -78,6 +88,15 @@ func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 		"NEXORA_PUBLIC_URL=http://" + public.Addr().String(),
 		"NEXORA_SECURE_COOKIES=false",
 		"NEXORA_QUERYLOG_BACKEND=" + backend,
+	}
+	if o.DNSTLS {
+		m.DNSTLSDir = filepath.Join(e.Dir, "dnstls")
+		e.issueDNSTLS(e.T, ca, m.DNSTLSDir)
+		env = append(env,
+			"NEXORA_DNS_TLS_CERT_FILE="+filepath.Join(m.DNSTLSDir, "tls.crt"),
+			"NEXORA_DNS_TLS_KEY_FILE="+filepath.Join(m.DNSTLSDir, "tls.key"),
+			"NEXORA_DNS_TLS_RELOAD_INTERVAL=1s",
+		)
 	}
 	if o.OpenSearchURL != "" {
 		env = append(env, "NEXORA_OPENSEARCH_URL="+o.OpenSearchURL)
@@ -266,9 +285,21 @@ func (a *API) WaitEngine(nodeName string, timeout time.Duration, cond func(Engin
 	}
 }
 
+// EngineOptions adds encrypted listeners (port 0 on loopback) to a managed engine.
+type EngineOptions struct {
+	DoT, DoH, DoQ, ProxyProtocolDoT bool
+	ProxyTrustedCIDRs               []string
+}
+
 // StartManagedEngine runs nexora-engine enrolled through joinToken against grpcURLs on loopback
 // and waits until its control stream connects.
 func (e *Env) StartManagedEngine(nodeName string, grpcURLs []string, joinToken string) *Engine {
+	e.T.Helper()
+	return e.StartManagedEngineWith(nodeName, grpcURLs, joinToken, EngineOptions{})
+}
+
+// StartManagedEngineWith is StartManagedEngine with the encrypted listeners o enables.
+func (e *Env) StartManagedEngineWith(nodeName string, grpcURLs []string, joinToken string, o EngineOptions) *Engine {
 	e.T.Helper()
 	dir, err := os.MkdirTemp(e.Dir, "engine-")
 	if err != nil {
@@ -282,9 +313,13 @@ func (e *Env) StartManagedEngine(nodeName string, grpcURLs []string, joinToken s
 	if err := os.WriteFile(tokenFile, []byte(joinToken+"\n"), 0o600); err != nil {
 		e.T.Fatal(err)
 	}
-	urls, err := json.Marshal(grpcURLs) // a JSON string array is a valid TOML array
-	if err != nil {
-		e.T.Fatal(err)
+	// JSON string arrays are valid TOML arrays.
+	tomlArray := func(v []string) string {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			e.T.Fatal(err)
+		}
+		return string(raw)
 	}
 	toml := fmt.Sprintf(`node_name = %q
 state_dir = %q
@@ -294,7 +329,21 @@ listen_udp = [%q]
 listen_tcp = [%q]
 metrics_listen = %q
 workers = 2
-`, nodeName, en.StateDir, urls, tokenFile, loopbackPort0, loopbackPort0, loopbackPort0)
+`, nodeName, en.StateDir, tomlArray(grpcURLs), tokenFile, loopbackPort0, loopbackPort0, loopbackPort0)
+	for _, l := range []struct {
+		on  bool
+		key string
+	}{{o.DoT, "listen_dot"}, {o.DoH, "listen_doh"}, {o.DoQ, "listen_doq"}} {
+		if l.on {
+			toml += fmt.Sprintf("%s = [%q]\n", l.key, loopbackPort0)
+		}
+	}
+	if o.ProxyProtocolDoT {
+		toml += "proxy_protocol_dot = true\n"
+	}
+	if len(o.ProxyTrustedCIDRs) > 0 {
+		toml += "proxy_protocol_trusted_cidrs = " + tomlArray(o.ProxyTrustedCIDRs) + "\n"
+	}
 	if err := os.WriteFile(en.ConfigPath, []byte(toml), 0o600); err != nil {
 		e.T.Fatal(err)
 	}

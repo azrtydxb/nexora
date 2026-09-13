@@ -85,3 +85,50 @@ func TestDNSFixtureBehaviours(t *testing.T) {
 		t.Fatal("blackhole answered")
 	}
 }
+
+func TestDNSFixtureStaticRecords(t *testing.T) {
+	const port0 = "127.0.0.1:0"
+	fx, err := startDNSFixture(dnsConfig{UDP: port0, TCP: port0, DoT: port0, DoH: port0, Control: port0, CertDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fx.Close()
+	post := func(body string) int {
+		resp, err := http.Post("http://"+fx.bound.Control+"/records", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := post(`{"rrs": ["Static.Example. 60 IN A 192.0.2.10", "static.example. 60 IN A 192.0.2.11"]}`); code != http.StatusNoContent {
+		t.Fatalf("POST /records = %d", code)
+	}
+	if code := post(`{"rrs": ["not a record"]}`); code != http.StatusBadRequest {
+		t.Fatalf("bad record = %d, want 400", code)
+	}
+	ask := func(name string, qtype uint16) *dns.Msg {
+		m := new(dns.Msg)
+		m.SetQuestion(name, qtype)
+		r, _, err := (&dns.Client{Net: "udp", Timeout: time.Second}).Exchange(m, fx.bound.UDP)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if r := ask("STATIC.example.", dns.TypeA); len(r.Answer) != 2 || r.Answer[0].Header().Name != "STATIC.example." || !r.RecursionAvailable || r.Authoritative {
+		t.Fatalf("static A: %v", r)
+	}
+	if r := ask("static.example.", dns.TypeAAAA); r.Rcode != dns.RcodeSuccess || len(r.Answer) != 0 {
+		t.Fatalf("static name, other type must be NODATA: %v", r)
+	}
+	if code := post(`{"rrs": ["static.example. 60 IN AAAA 2001:db8::10"]}`); code != http.StatusNoContent {
+		t.Fatalf("replace = %d", code)
+	}
+	if r := ask("static.example.", dns.TypeA); len(r.Answer) != 0 {
+		t.Fatalf("records for a name must be replaced: %v", r)
+	}
+	if r := ask("other.example.", dns.TypeA); len(r.Answer) != 1 || r.Answer[0].(*dns.A).A.String() != "192.0.2.1" {
+		t.Fatalf("names without records keep the default answer: %v", r)
+	}
+}

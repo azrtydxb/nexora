@@ -125,6 +125,14 @@ func (f *DNSFixture) SetDelay(t *testing.T, d time.Duration) {
 	fixtureCall(t, http.MethodPost, f.Control+"/delay", map[string]int64{"ms": d.Milliseconds()}, nil)
 }
 
+// SetRecords installs exact-name static records (presentation format), replacing earlier records
+// for the same owner names. A stored name answers its records of the asked type, NODATA when it
+// has none; other names keep the label-prefix behaviour.
+func (f *DNSFixture) SetRecords(t *testing.T, rrs ...string) {
+	t.Helper()
+	fixtureCall(t, http.MethodPost, f.Control+"/records", map[string][]string{"rrs": rrs}, nil)
+}
+
 // Reset clears the counters, mode and delay.
 func (f *DNSFixture) Reset(t *testing.T) {
 	t.Helper()

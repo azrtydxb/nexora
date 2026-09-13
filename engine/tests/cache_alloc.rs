@@ -1,18 +1,30 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// Only allocations made by a thread that armed itself count: libtest's main thread
+// and any other thread allocate concurrently and must not fail the guard.
 struct Counting;
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+}
+fn record() {
+    // try_with: the allocator runs during thread teardown, after TLS is destroyed.
+    if ARMED.try_with(Cell::get).unwrap_or(false) {
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        record();
         unsafe { System.alloc(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        record();
         unsafe { System.realloc(p, l, n) }
     }
 }
@@ -60,7 +72,7 @@ fn cache_lookup_and_serve_do_not_allocate() {
             write_cached(&e, &v, 2, ServeMode::Fresh, &mut out, 512, None);
         }
     }
-    let before = ALLOCS.load(Ordering::Relaxed);
+    ARMED.with(|a| a.set(true));
     for _ in 0..10_000 {
         let v = parse_query(&query).unwrap();
         let Lookup::Fresh(e) = cache.lookup(&CacheKey::from_query(&v), 2) else {
@@ -69,8 +81,9 @@ fn cache_lookup_and_serve_do_not_allocate() {
         let n = write_cached(&e, &v, 2, ServeMode::Fresh, &mut out, 512, None);
         assert!(n > 12);
     }
+    ARMED.with(|a| a.set(false));
     assert_eq!(
-        ALLOCS.load(Ordering::Relaxed) - before,
+        ALLOCS.load(Ordering::Relaxed),
         0,
         "cache hit path allocated"
     );

@@ -47,7 +47,7 @@ const qtypes = [
 ];
 const rcodes = ["NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED", "FORMERR"];
 const cacheStates = ["hit", "miss", "stale", "none"];
-const filterStates = ["none", "blocked", "allowed"];
+const filterStates = ["none", "blocked", "allowed", "rewritten"];
 
 type Filters = {
   name: string;
@@ -361,6 +361,8 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
           <Badge variant="destructive">blocked</Badge>
         ) : r.filter === "allowed" ? (
           <Badge variant="secondary">allowed</Badge>
+        ) : r.filter === "rewritten" ? (
+          <Badge variant="outline">rewritten</Badge>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}

@@ -387,7 +387,7 @@ components:
         qtype: { type: string }
         rcode: { type: string }
         cache: { type: string, enum: [hit, miss, stale, none] }
-        filter: { type: string, enum: [none, blocked, allowed] }
+        filter: { type: string, enum: [none, blocked, allowed, rewritten] }
         upstream: { type: string }
         transport: { type: string }
         engine_id: { type: string }

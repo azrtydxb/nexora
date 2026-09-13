@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -36,6 +37,8 @@ type dnsFixture struct {
 	total  int
 	mode   string
 	delay  time.Duration
+	// records holds static RRs keyed by lowercase owner name.
+	records map[string][]dns.RR
 }
 
 const maxDNSMessage = 65535
@@ -100,7 +103,7 @@ func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &dnsFixture{counts: map[string]int{}, mode: "normal"}
+	f := &dnsFixture{counts: map[string]int{}, mode: "normal", records: map[string][]dns.RR{}}
 	fail := func(err error) (*dnsFixture, error) {
 		f.Close()
 		return nil, err
@@ -139,6 +142,7 @@ func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
 	ctl.HandleFunc("POST /reset", f.reset)
 	ctl.HandleFunc("POST /mode", f.setModeHTTP)
 	ctl.HandleFunc("POST /delay", f.setDelayHTTP)
+	ctl.HandleFunc("POST /records", f.setRecordsHTTP)
 	cl, err := net.Listen("tcp", cfg.Control)
 	if err != nil {
 		return fail(err)
@@ -200,6 +204,7 @@ func (f *dnsFixture) respond(req *dns.Msg, udp bool) *dns.Msg {
 	f.counts[countKey(q.Name, q.Qtype)]++
 	f.total++
 	mode, delay := f.mode, f.delay
+	stored, static := f.records[strings.ToLower(q.Name)]
 	f.mu.Unlock()
 	if mode == "blackhole" {
 		return nil
@@ -210,6 +215,17 @@ func (f *dnsFixture) respond(req *dns.Msg, udp bool) *dns.Msg {
 	m.Compress = true
 	if mode == "servfail" {
 		m.Rcode = dns.RcodeServerFailure
+		return m
+	}
+	if static {
+		m.RecursionAvailable = true
+		for _, rr := range stored {
+			if rr.Header().Rrtype == q.Qtype {
+				c := dns.Copy(rr)
+				c.Header().Name = q.Name
+				m.Answer = append(m.Answer, c)
+			}
+		}
 		return m
 	}
 	label := strings.ToLower(strings.SplitN(q.Name, ".", 2)[0])
@@ -320,6 +336,32 @@ func (f *dnsFixture) setModeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "mode must be normal, blackhole or servfail", http.StatusBadRequest)
 	}
+}
+
+func (f *dnsFixture) setRecordsHTTP(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		RRs []string `json:"rrs"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	parsed := map[string][]dns.RR{}
+	for _, s := range body.RRs {
+		rr, err := dns.NewRR(s)
+		if err != nil || rr == nil {
+			http.Error(w, fmt.Sprintf("bad record %q: %v", s, err), http.StatusBadRequest)
+			return
+		}
+		name := strings.ToLower(rr.Header().Name)
+		parsed[name] = append(parsed[name], rr)
+	}
+	f.mu.Lock()
+	for name, rrs := range parsed {
+		f.records[name] = rrs
+	}
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (f *dnsFixture) setDelayHTTP(w http.ResponseWriter, r *http.Request) {

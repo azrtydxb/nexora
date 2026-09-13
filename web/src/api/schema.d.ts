@@ -811,7 +811,7 @@ export interface components {
             /** @enum {string} */
             cache: "hit" | "miss" | "stale" | "none";
             /** @enum {string} */
-            filter: "none" | "blocked" | "allowed";
+            filter: "none" | "blocked" | "allowed" | "rewritten";
             upstream: string;
             transport: string;
             engine_id: string;
