@@ -13,7 +13,7 @@ All engine code for M3 lives under `engine/src/recursor/` (per docs/architecture
 
 Process-wide state that must survive snapshot swaps (infrastructure cache, RRset cache, key cache, trust-anchor store, RPZ zone data, in-memory RPZ TSIG keys) lives in one `recursor::RecursorState`, held as `server::Shared.recursor: Arc<RecursorState>` (created in `main.rs` from `boot.state_dir`; `Shared::new(workers)` keeps its M1 signature and creates an in-memory state for tests). Per-snapshot settings live in `runtime::Runtime.resolution: Arc<recursor::dispatch::ResolutionRuntime>`, built in `Runtime::build(s, blobs, previous)` and swapped atomically with the rest of the runtime.
 
-The query pipeline after M3, in order (M1/M2 stages unchanged): `wire::parse_query` → ACL (REFUSED) → cookies → M2 `rt.policy.select(client)` / `policy.check(name)` (blocks and rewrites are final; CNAME rewrites keep using `rewrite::run_rewrite_job`, whose `WorkerRewriteCtx::resolve` re-enters `handle_packet`/`resolve_miss`, so rewrite targets are recursed, validated and RPZ-checked) → RPZ query phase (QNAME and CLIENT-IP triggers, only when `shared.recursor.rpz_query_triggers` is set) → cache lookup with `CacheKey::in_partition(&q, policy.cache_partition())` → `FastOutcome::Miss(MissJob)` → `server::resolve_miss` → in-flight coalescing on the partitioned key → `recursor::dispatch::resolve_miss` (route: longest forward zone, else resolution mode) → DNSSEC validation (recursive route and forward zones with `validate`) → RPZ response phase → M2 CNAME-cloaking check against the client's filter (`leader_answer`) → cache insert in the policy partition → `cache::write_cached` with an EDE option when one applies.
+The query pipeline after M3, in order (M1/M2 stages unchanged): `wire::parse_query` → ACL (REFUSED) → cookies → M2 `rt.policy.select(client)` / `policy.check(name)` (blocks and rewrites are final; CNAME rewrites keep using `rewrite::run_rewrite_job`, whose `WorkerRewriteCtx::resolve` re-enters `handle_packet`/`resolve_miss`, so rewrite targets are recursed, validated and RPZ-checked) → RPZ query phase (QNAME and CLIENT-IP triggers, only when `shared.recursor.rpz_query_triggers` is set) → cache lookup with `CacheKey::in_partition(&q, policy.cache_partition())` → `FastOutcome::Miss(MissJob)` → `server::resolve_miss` → in-flight coalescing on the partitioned key → `recursor::dispatch::resolve_miss` (route: longest forward zone, else resolution mode) → DNSSEC validation (recursive route, forward zones with `validate`, and the global forward route when `dnssec_validate_forwarded` is set) → RPZ response phase → M2 CNAME-cloaking check against the client's filter (`leader_answer`) → cache insert in the policy partition → `cache::write_cached` with an EDE option when one applies.
 
 The management plane adds migrations `00300_resolution.sql`, `00301_dnssec.sql`, `00302_rpz.sql`, an envelope-encryption helper `mgmt/internal/secrets` (KEK from `NEXORA_KEK_FILE`), OpenAPI operations for resolution settings, forward zones, DNSSEC settings/trust anchors/NTAs/status and RPZ zones, snapshot-builder code filling the new `ConfigSnapshot` fields, delivery of RPZ TSIG secrets as a `ServerMessage.rpz_tsig_keys` control message, and ingestion of the new `Stats` fields. The e2e suite never touches the internet: `nexora-fixture authhier` serves a private hierarchy (fake root `.`, `test.`, leaf zones, signed with miekg/dns under a per-run test trust anchor, plus a spoofing server and a validating-forwarder endpoint) on loopback addresses `127.0.53.0/24` sharing one kernel-chosen port, which the engine reaches through the snapshot's root-hint override and `authority_port`; a BIND `named` child process serves an RPZ zone over AXFR/IXFR with TSIG.
 
@@ -29,7 +29,7 @@ Interfaces consumed from M1/M2 (reconciled against the committed code at `85dbb4
 Reconciled with M1/M2 code (design-level changes to the original M3 plan):
 
 1. **RPZ TSIG secrets never enter `ConfigSnapshot`.** `config_versions` stores every marshalled snapshot in PostgreSQL and the engine persists `snapshot.binpb`, so the original `RpzTransferSource.tsig_secret` (plus `strip_key_material`) would have put key material in the database. The secret is sealed with `mgmt/internal/secrets` (the NXE1 envelope of M4 Task 6, file-KEK wrap `1`; without `NEXORA_KEK_FILE` the API refuses with 503 `key_storage_unconfigured`) into `rpz_zones.tsig_secret_envelope`, and delivered to engines only as `ServerMessage.rpz_tsig_keys = 100` (`RpzTsigKeys`), following M2's `TlsMaterial` pattern: held in engine memory (`Zeroizing`), never written to `state_dir`, never logged. M4 Task 6 builds `keystore.Store` on `secrets.Box` (same layout, errors and purposes format), so envelopes sealed in M3 stay readable.
-2. **Global forwarding keeps M1's path.** `Route::Forward` sends the client's query bytes through `upstream::forward` exactly as M1 does, and answers from the global upstreams are not DNSSEC-validated; validation applies to the recursive route and to forward zones with `validate = true`. With validation on by default, validating global forwards would SERVFAIL every M1/M2 managed-engine test (their fixture upstream serves synthetic unsigned data under the real root anchor) and would change the forwarded bytes the perf gate measures.
+2. **Forwarded answers are validated under a global switch.** (plan-review "M3 reconciliation review": the earlier "global forwarding is not DNSSEC-validated" change was rejected; S-7 requires validation of recursive and forwarded answers.) `ConfigSnapshot.dnssec_validate_forwarded = 105` is a global setting stored as `dnssec_settings.validate_forwarded` (default `true` for new installs and on kw, exposed by `GET/PUT /dnssec/settings` and the "Validation settings" region of `/dnssec`); the snapshot builder sends `validation && validate_forwarded` and the engine rejects a snapshot that sets it without `dnssec.validation`. When it is false (every pre-M3 snapshot and every standalone or perf-gate snapshot, which leave it unset), `Route::Forward` sends the client's query bytes through `upstream::forward` exactly as M1 does, so the perf gate measures unchanged bytes. When it is true and the client query has CD=0, `Route::Forward` sends its own query (random ID, RD=1, EDNS 1232, DO=1, CD=1) through `upstream::forward`, validates the decoded answer up to the root trust anchor with DS/DNSKEY fetched through the forwarder (`RoutedFetcher`'s `Route::Forward` arm), and builds the response with `build_response`. The M1/M2 managed-engine e2e tests, whose fixture upstreams serve synthetic unsigned data under the real root anchor, turn it off explicitly with `(*API).DisableForwardedValidation()` (Task 11); `TestDNSSECValidation` adds a forward-mode subtest against the hierarchy's validating forwarder (Task 14).
 3. **Resolution, forward zones, DNSSEC and RPZ are global, not per policy group.** M2 policy decisions (block, rewrite) run first and are final; RPZ applies to every client whose verdict is `Pass` or `Allowed`; recursion answers are cached in the client's M2 cache partition like forwarded answers, so the CNAME-cloaking check keeps its per-partition meaning. Answers changed by RPZ, and misses carrying a query-phase RPZ decision, bypass in-flight coalescing and are never cached.
 4. **No `policy_generation` stamp on `CachedResponse`.** `Runtime::build` appends `r:<ResolutionRuntime::config_key>` to `filter_hashes`, so M2's existing clear-on-change also clears the cache when resolution, forward zones, DNSSEC settings, NTAs or RPZ configuration change; an RPZ transfer that publishes new data clears `shared.runtime.load().cache`; a leader skips its cache insert when `shared.recursor.rpz` or `shared.runtime` changed while it resolved. The cache-hit path gains one `AtomicBool` load when no RPZ zone has query triggers, and nothing else.
 5. **RPZ file zones are ordinary blobs.** `RpzFileSource` carries a `BlobRef` fetched by `control::fetch_blobs` and parsed in `Runtime::build` (a bad zone rejects the snapshot, as M2's policy blobs do). `snapshot::apply` keeps its signature; after every applied snapshot the three call sites (`control::apply_snapshot`, and `main.rs` for the persisted and standalone snapshots) call `shared.recursor.sync(&runtime)`, which merges trust anchors and hands RPZ configuration to the `RpzManager`. Trust-anchor refresh and RPZ transfers run on one background thread `nexora-recursor` (a `current_thread` runtime), because resolution futures are `!Send` like the workers'.
@@ -41,7 +41,7 @@ Reconciled with M1/M2 code (design-level changes to the original M3 plan):
 
 Decisions made in this plan that docs/architecture.md does not settle (Task 1 records the contract, key-material and engine-state ones there):
 
-1. Snapshot field numbers 100–104 (`ConfigSnapshot`), 100–102 (`Stats`) and 100 (`ServerMessage.rpz_tsig_keys`); new messages number from 1.
+1. Snapshot field numbers 100–105 (`ConfigSnapshot`), 100–102 (`Stats`) and 100 (`ServerMessage.rpz_tsig_keys`); new messages number from 1.
 2. `RecursionConfig.authority_port` (default 53) lets the private e2e hierarchy run on loopback without binding port 53; root-hint override is `RecursionConfig.root_hints`.
 3. Forward zones carry their own `ip:port` servers (UDP with TCP fallback via the recursor transport) and a per-zone `validate` flag (default off, so internal zones below signed public names do not go bogus). A forward zone beats the resolution mode in both modes.
 4. Resolution deadline 4000 ms; unknown-server RTO 376 ms; RFC 6298 RTO clamp 50–3000 ms; backoff after 3 consecutive timeouts `5 s << (n-3)` capped at 300 s; lame marks 900 s; server choice random within 400 ms of the best RTO; glueless NS resolution capped at 3 names per cut.
@@ -91,7 +91,7 @@ Plan-wide conventions (decided here):
 
 - Every command step runs from the repository root on the laptop as `scripts/dev-exec.sh <cmd>` (which syncs the tree into the dev pod first). Engine commands use the workspace form `cargo test --locked -p nexora-engine ...`.
 - Generated sources are regenerated with the pinned toolchains in the dev pod and copied back to the laptop, as M2 did: protobuf with `scripts/dev-exec.sh 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto'`, the HTTP server with `scripts/dev-exec.sh 'cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml'`, each followed by a copy back of the generated paths, e.g. `kubectl --context kw -n nexora-dev exec -i deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - gen/go/nexora/control/v1 mgmt/internal/api/gen.go | tar -xf -`; `web/src/api/schema.d.ts` with `pnpm --dir web run gen:api` on the laptop.
-- New `ConfigSnapshot` fields use numbers 100–104, new `Stats` fields 100–102 and the new `ServerMessage` field 100 (M3's range 100–199; M2 owns 300–399, M4 200–299, M5 500+).
+- New `ConfigSnapshot` fields use numbers 100–105, new `Stats` fields 100–102 and the new `ServerMessage` field 100 (M3's range 100–199; M2 owns 300–399, M4 200–299, M5 500+).
 - Resolution deadline for one client query in recursive mode: 4000 ms (`recursor::RESOLUTION_DEADLINE`). Outgoing EDNS buffer: 1232 (`recursor::EDNS_BUFFER`). CNAME/DNAME depth: 16 (`recursor::MAX_CNAME_DEPTH`).
 - Migrations for M3 are `mgmt/migrations/00300_resolution.sql`, `00301_dnssec.sql`, `00302_rpz.sql` (goose, `-- +goose Up` / `-- +goose Down`).
 
@@ -99,11 +99,13 @@ Plan-wide conventions (decided here):
 
 Files:
 
-- `proto/nexora/control/v1/control.proto` — new messages/enums, `ConfigSnapshot` fields 100–104, `Stats` fields 100–102, `ServerMessage.rpz_tsig_keys = 100`.
+- `proto/nexora/control/v1/control.proto` — new messages/enums, `ConfigSnapshot` fields 100–105, `Stats` fields 100–102, `ServerMessage.rpz_tsig_keys = 100`.
 - `gen/go/nexora/control/v1/control.pb.go` — regenerated in the dev pod and copied back (`control_grpc.pb.go` is unchanged because the service is unchanged).
 - `mgmt/internal/control/contract_m3_test.go` — field-number and key-isolation guard test.
 - `engine/src/snapshot_m3.rs` — `validate_m3` (validation of the new fields only) and `parse_ds`.
 - `engine/src/snapshot.rs` — `validate` calls `validate_m3`; `is_sha256_hex` becomes `pub(crate)`.
+- `engine/src/telemetry/metrics.rs` — the `Stats` literal in `Metrics::stats` sets the new fields empty (`recursion: None, dnssec: None, rpz_zones: Vec::new()`; Tasks 8 and 10 fill them).
+- `engine/src/proto.rs` — `#![allow(clippy::large_enum_variant)]` for the generated oneof enums (the larger `Stats` and `ConfigSnapshot` trip the lint on `EngineMessage.msg` / `ServerMessage.msg`).
 - `engine/src/control.rs` — `fetch_blobs` also fetches RPZ file blobs; the `ServerMsg` match in `session` gains a no-op `RpzTsigKeys` arm (Task 10 replaces it).
 - `engine/src/lib.rs` — `pub mod recursor;` and `pub mod snapshot_m3;`.
 - `engine/src/recursor/mod.rs` — module declarations, M3 constants and `LocalBoxFuture`.
@@ -286,6 +288,9 @@ message ConfigSnapshot {
   repeated ForwardZone forward_zones = 102;
   DnssecConfig dnssec = 103;
   repeated RpzZone rpz_zones = 104; // ordered: index 0 has the highest precedence
+  // Validate answers from the global upstreams (forward mode) up to the root trust anchor, fetching
+  // DS/DNSKEY through the forwarder. Requires dnssec.validation. Management defaults it to true.
+  bool dnssec_validate_forwarded = 105;
 }
 
 message Stats {
@@ -322,6 +327,7 @@ func TestM3ContractFieldNumbers(t *testing.T) {
 		{snap, "forward_zones", 102},
 		{snap, "dnssec", 103},
 		{snap, "rpz_zones", 104},
+		{snap, "dnssec_validate_forwarded", 105},
 		{stats, "recursion", 100},
 		{stats, "dnssec", 101},
 		{stats, "rpz_zones", 102},
@@ -371,7 +377,7 @@ func TestSnapshotCannotReachRpzTsigKeys(t *testing.T) {
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run 'TestM3ContractFieldNumbers|TestSnapshotCannotReachRpzTsigKeys'` — expect FAIL with "nexora.control.v1.ConfigSnapshot.resolution_mode missing".
 - [ ] Add the proto definitions above to `proto/nexora/control/v1/control.proto` and regenerate Go code with the pinned toolchain in the dev pod: `scripts/dev-exec.sh 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto'`, then `kubectl --context kw -n nexora-dev exec -i deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - gen/go/nexora/control/v1 | tar -xf -` — expect exit 0 and a diff in `gen/go/nexora/control/v1/control.pb.go` containing `ResolutionMode_RESOLUTION_MODE_RECURSIVE` whose header still names `protoc-gen-go v1.36.12` and `protoc v3.21.12`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run 'TestM3ContractFieldNumbers|TestSnapshotCannotReachRpzTsigKeys'` — expect PASS.
-- [ ] Keep the engine compiling against the regenerated types (prost regenerates through `engine/build.rs`): in `engine/src/control.rs` `session`, change the arm `None => {}` of `match msg.msg` to `Some(ServerMsg::RpzTsigKeys(_)) | None => {}`; in `fetch_blobs`, chain the RPZ file blobs into `refs`: `.chain(snap.rpz_zones.iter().filter_map(|z| match &z.source { Some(crate::proto::rpz_zone::Source::File(f)) => f.blob.as_ref(), _ => None }))`. Run `scripts/dev-exec.sh cargo build --locked -p nexora-engine --all-targets` — expect exit 0 (every M1/M2 `ConfigSnapshot` literal uses `..Default::default()`).
+- [ ] Keep the engine compiling against the regenerated types (prost regenerates through `engine/build.rs`): in `engine/src/control.rs` `session`, change the arm `None => {}` of `match msg.msg` to `Some(ServerMsg::RpzTsigKeys(_)) | None => {}`; in `fetch_blobs`, chain the RPZ file blobs into `refs`: `.chain(snap.rpz_zones.iter().filter_map(|z| match &z.source { Some(crate::proto::rpz_zone::Source::File(f)) => f.blob.as_ref(), _ => None }))`. In `engine/src/telemetry/metrics.rs` `Metrics::stats`, add `recursion: None, dnssec: None, rpz_zones: Vec::new()` to the `Stats` literal (it lists every field); in `engine/src/proto.rs` add `#![allow(clippy::large_enum_variant)]` above `tonic::include_proto!`. Run `scripts/dev-exec.sh cargo build --locked -p nexora-engine --all-targets` — expect exit 0 (every M1/M2 `ConfigSnapshot` literal uses `..Default::default()`).
 - [ ] Create `engine/src/snapshot_m3.rs` containing only the test module below (and add `pub mod snapshot_m3;` to `engine/src/lib.rs`):
 
 ```rust
@@ -406,6 +412,7 @@ mod tests {
                 RpzZone { id: "11111111-1111-1111-1111-111111111111".into(), name: "rpz.file.".into(), source: Some(Source::File(RpzFileSource { blob: Some(BlobRef { sha256: "a".repeat(64), size: 10, name: "rpz.file.".into() }) })), policy_override: 0, refresh_nonce: 0 },
                 RpzZone { id: "22222222-2222-2222-2222-222222222222".into(), name: "rpz.axfr.".into(), source: Some(Source::Transfer(RpzTransferSource { primary: "127.0.0.1:5300".into(), tsig_key_name: "rpz-key.".into(), tsig_algorithm: TsigAlgorithm::HmacSha256 as i32, min_refresh_seconds: 0 })), policy_override: 0, refresh_nonce: 0 },
             ],
+            dnssec_validate_forwarded: true,
             ..Default::default()
         }
     }
@@ -472,21 +479,34 @@ mod tests {
         s.rpz_zones[1].id = s.rpz_zones[0].id.clone();
         assert_eq!(validate_m3(&s).unwrap_err(), "rpz_zones[1].id: duplicate 11111111-1111-1111-1111-111111111111");
     }
+
+    #[test]
+    fn validate_forwarded_requires_validation() {
+        let mut s = ok_snapshot();
+        s.dnssec.as_mut().unwrap().validation = false;
+        assert_eq!(validate_m3(&s).unwrap_err(), "dnssec_validate_forwarded: requires dnssec.validation");
+        s.dnssec = None;
+        assert_eq!(validate_m3(&s).unwrap_err(), "dnssec_validate_forwarded: requires dnssec.validation");
+        s.dnssec_validate_forwarded = false;
+        assert_eq!(validate_m3(&s), Ok(()));
+    }
 }
 ```
 
 - [ ] Add `hickory-proto` feature `dnssec-ring` (both entries), `ring = "=0.17.14"`, `data-encoding = "2"` and `serde_json = "1"` to `engine/Cargo.toml`; record them in the workspace lock file with `scripts/dev-exec.sh cargo fetch` (without `--locked`; it adds `serde_json` and marks `ring`/`data-encoding` as direct dependencies) and copy it back with `kubectl --context kw -n nexora-dev exec -i deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - Cargo.lock | tar -xf -`; then run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib snapshot_m3::tests` — expect FAIL with "cannot find function `validate_m3` in this scope".
-- [ ] Implement `validate_m3` in `engine/src/snapshot_m3.rs` above the test module. Rules, checked in this order, each returning the exact error strings asserted above (field path, colon, message):
+- [ ] Implement `validate_m3` in `engine/src/snapshot_m3.rs` above the test module. Rules, checked in this order, each returning the exact error strings asserted above (field path, colon, message); an invalid name anywhere reports `"{path}: not a fully-qualified domain name: {v}"`:
+  - `resolution_mode` is a known `ResolutionMode` (`"resolution_mode: unknown value {n}"`).
   - `recursion` (when present): each `root_hints[i].name` parses with `hickory_proto::rr::Name::from_ascii` and is FQDN; each `addresses[j]` parses as `std::net::IpAddr` (`"recursion.root_hints[{i}].addresses[{j}]: not an IP address: {v}"`); `max_upstream_queries` is 0 or 1..=1000; `max_delegation_depth` is 0 or 1..=64; `authority_port` is 0..=65535.
   - `forward_zones[i]`: `domain` parses as FQDN; lowercased duplicates rejected (`"forward_zones[{i}].domain: duplicate {lower}"`); `addresses` non-empty, each parses as `std::net::SocketAddr` (`"forward_zones[{i}].addresses[{j}]: not ip:port: {v}"`).
-  - `dnssec.trust_anchors[i]`: `zone` FQDN; `ds` parses with `parse_ds` (four whitespace-separated fields; key tag `u16`; algorithm `u8`; digest type `u8`; digest hex via `data_encoding::HEXUPPER_PERMISSIVE`, error `"digest is not hex"`; digest length 20 for type 1, 32 for type 2, 48 for type 4, error `"digest length {n} does not match digest type {t}"`).
+  - `dnssec.trust_anchors[i]`: `zone` FQDN; `ds` parses with `parse_ds` (four whitespace-separated fields; key tag `u16`; algorithm `u8`; digest type `u8`; digest hex via `data_encoding::HEXUPPER_PERMISSIVE`, error `"digest is not hex"`; digest length 20 for type 1, 32 for type 2, 48 for type 4, error `"digest length {n} does not match digest type {t}"`; any other digest type `"unsupported digest type {t}"`).
   - `dnssec.negative_trust_anchors[i]`: `domain` FQDN, `expires_unix > 0`.
-  - `rpz_zones[i]`: `id` non-empty and unique; `name` FQDN; `source` present (`"rpz_zones[{i}]: no source"`); file: `blob` present and `crate::snapshot::is_sha256_hex(&blob.sha256)` (`"rpz_zones[{i}].file.blob.sha256: must be 64 lowercase hex"`); transfer: `primary` parses as `SocketAddr`; `tsig_algorithm` is a known `TsigAlgorithm`; when it is not `None`, `tsig_key_name` is non-empty (`"rpz_zones[{i}].transfer.tsig_key_name: required with tsig_algorithm"`) and FQDN.
+  - `dnssec_validate_forwarded` set without `dnssec` present with `validation = true` → `"dnssec_validate_forwarded: requires dnssec.validation"`.
+  - `rpz_zones[i]`: `id` non-empty and unique; `name` FQDN; `policy_override` a known `RpzPolicyOverride`; `source` present (`"rpz_zones[{i}]: no source"`); file: `blob` present and `crate::snapshot::is_sha256_hex(&blob.sha256)` (`"rpz_zones[{i}].file.blob.sha256: must be 64 lowercase hex"`); transfer: `primary` parses as `SocketAddr`; `tsig_algorithm` is a known `TsigAlgorithm`; when it is not `None`, `tsig_key_name` is non-empty (`"rpz_zones[{i}].transfer.tsig_key_name: required with tsig_algorithm"`) and FQDN.
 - [ ] In `engine/src/snapshot.rs`: make `is_sha256_hex` `pub(crate)` and end `validate` with `crate::snapshot_m3::validate_m3(s).map_err(SnapshotError::Invalid)?;` before `Ok(())`.
 - [ ] Create `engine/src/recursor/mod.rs` with the constants and `LocalBoxFuture` listed under Interfaces and `pub mod` lines for the submodules added by later tasks, starting with none; add `pub mod recursor;` to `engine/src/lib.rs`.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib snapshot_m3::tests` — expect PASS (8 tests); run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test snapshot_apply` — expect PASS (M1 validation unchanged).
-- [ ] Update `docs/architecture.md`: in "Contract", add an M3 bullet — `ConfigSnapshot.resolution_mode`/`recursion`/`forward_zones`/`dnssec`/`rpz_zones` (100–104), `Stats.recursion`/`dnssec`/`rpz_zones` (100–102), `ServerMessage.rpz_tsig_keys` (100): RPZ TSIG secrets travel only on `Connect` and are held in engine memory; RPZ file zones are blobs fetched with `GetBlob`. In "Management plane", change `NEXORA_KEK_FILE (M4)` to `NEXORA_KEK_FILE (M3: RPZ TSIG secrets sealed by internal/secrets; M4 adds DNSSEC and TSIG keys)` and add `internal/secrets` (NXE1 envelope encryption under the KEK) to the repository layout. In "Engine", add `state_dir/trust-anchors.json` and `state_dir/rpz/<zone id>.zone` to the engine's local state.
-- [ ] Commit: `git add proto gen/go mgmt/internal/control/contract_m3_test.go engine/Cargo.toml Cargo.lock engine/src/lib.rs engine/src/snapshot.rs engine/src/snapshot_m3.rs engine/src/control.rs engine/src/recursor/mod.rs docs/architecture.md && git commit -m "feat(proto): M3 recursion, DNSSEC and RPZ contract"`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib snapshot_m3::tests` — expect PASS (9 tests); run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test snapshot_apply` — expect PASS (M1 validation unchanged).
+- [ ] Update `docs/architecture.md`: in "Contract", add an M3 bullet — `ConfigSnapshot.resolution_mode`/`recursion`/`forward_zones`/`dnssec`/`rpz_zones`/`dnssec_validate_forwarded` (100–105), `Stats.recursion`/`dnssec`/`rpz_zones` (100–102), `ServerMessage.rpz_tsig_keys` (100): RPZ TSIG secrets travel only on `Connect` and are held in engine memory; RPZ file zones are blobs fetched with `GetBlob`. In "Management plane", change `NEXORA_KEK_FILE (M4)` to `NEXORA_KEK_FILE (M3: RPZ TSIG secrets sealed by internal/secrets; M4 adds DNSSEC and TSIG keys)` and add `internal/secrets` (NXE1 envelope encryption under the KEK) to the repository layout. In "Engine", add `state_dir/trust-anchors.json` and `state_dir/rpz/<zone id>.zone` to the engine's local state.
+- [ ] Commit: `git add proto gen/go mgmt/internal/control/contract_m3_test.go engine/Cargo.toml Cargo.lock engine/src/lib.rs engine/src/proto.rs engine/src/snapshot.rs engine/src/snapshot_m3.rs engine/src/control.rs engine/src/telemetry/metrics.rs engine/src/recursor/mod.rs docs/architecture.md && git commit -m "feat(proto): M3 recursion, DNSSEC and RPZ contract"`.
 
 ## Task 2: Outbound transport with spoofing defences and recursor metrics
 
@@ -688,7 +708,7 @@ fn reply_matching_rules() {
   - `reply_matches` order: `message_type != Response` → `NotResponse`; `metadata.id != sent_id` → `Id`; `queries.len() != 1`, type, class IN, or `!name.eq_ignore_ascii_case` (compare `to_lowercase()` values) → `Question`; `strict_case && !queries[0].name().eq_case(sent_name)` → `Case`.
   - `exchange`: `let mut rng = rand::rng();` (the OS-seeded CSPRNG M1's upstream IDs use; `rand::Rng::next_u32`); `id = rng.next_u32() as u16`; `wire_name = if use_0x20 { randomise_case } else { qname.clone() }`; build `Message::new(id, MessageType::Query, OpCode::Query)` with `recursion_desired`, `checking_disabled`, one `Query::query(wire_name, qtype)`, and when `edns` an `Edns::new()` with `set_max_payload(EDNS_BUFFER)` and `set_dnssec_ok(dnssec_ok)`.
   - UDP socket: bind to the unspecified address of the server's family on a random port — up to 10 attempts at `1024 + rng.next_u32() % 64512`, then port 0 — then `connect(server)` so the kernel drops datagrams from any other address/port. Send once; loop `recv` under `tokio::time::timeout_at(start + timeout)`. For each datagram: `< 12` bytes → `malformed_replies += 1`, continue; `Message::from_vec` error → `malformed_replies += 1`, continue; `reply_matches(.., strict_case = use_0x20, ..)` error → increment `mismatched_id` / `mismatched_question` (also for `NotResponse`) / `mismatched_case`, continue; otherwise accept. Deadline expiry → `upstream_timeouts += 1`, `Err(Timeout)`. `upstream_queries += 1` per datagram sent.
-  - If the accepted reply has `truncation`: `tcp_fallbacks += 1`; open `TcpStream::connect(server)` under the remaining deadline (minimum 500 ms), send the same query with a fresh random ID prefixed by a big-endian `u16` length, read one length-prefixed reply, apply `reply_matches` (mismatch → `Err(TcpFailed("reply mismatch"))`), return `via_tcp: true`.
+  - If the accepted reply has `truncation`: `tcp_fallbacks += 1`; open `TcpStream::connect(server)` under the remaining deadline (minimum 500 ms), send the same query (same 0x20 name) with a fresh random ID prefixed by a big-endian `u16` length (`upstream_queries += 1`), read one length-prefixed reply, apply `reply_matches` (mismatch → `Err(TcpFailed("reply mismatch"))`; undecodable → `malformed_replies += 1`, `Err(TcpFailed("malformed reply"))`; I/O error → `Err(TcpFailed(<error>))`; deadline → `upstream_timeouts += 1`, `Err(Timeout)`), return `via_tcp: true`.
   - `rtt` is measured from send to accepted reply.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::transport::tests` — expect PASS (4 tests).
 - [ ] Commit: `git add engine/src/recursor && git commit -m "feat(recursor): outbound transport with 0x20, strict matching and TCP fallback"`.
@@ -1245,7 +1265,7 @@ impl ResolutionRuntime {
     pub fn build(s: &proto::ConfigSnapshot, blobs: &dyn crate::snapshot::BlobSource) -> Result<Self, String>;
     pub fn route(&self, qname_wire_lower: &[u8]) -> Route<'_>;
 }
-/// SHA-256 hex over the prost encoding of resolution_mode, recursion, forward_zones, dnssec and rpz_zones.
+/// SHA-256 hex over the prost encoding of resolution_mode, recursion, forward_zones, dnssec, dnssec_validate_forwarded and rpz_zones.
 pub fn config_key(s: &proto::ConfigSnapshot) -> String;
 /// Sends a complete DNS query (the client's bytes on the forward route) to the global upstreams.
 pub trait ForwardUpstream { fn forward<'a>(&'a self, query_wire: &'a [u8]) -> LocalBoxFuture<'a, Result<Bytes, String>>; }
@@ -1286,7 +1306,7 @@ pub struct ReplyOpt { pub udp_size: u16, pub do_bit: bool, pub ext_rcode: u8, pu
 impl Metrics { pub fn render(&self, rt: &Runtime, recursor: &RecursorState) -> String; pub fn stats(&self, rt: &Runtime, recursor: &RecursorState) -> Stats; }
 ```
 
-In this task `validator` and `anchors` are declared but `resolve_miss` does not call them yet (Tasks 7–8 add those calls); `DnssecRuntime` is created here as `#[derive(Default)] pub struct DnssecRuntime { pub validation: bool, pub ntas: Vec<(Name, i64)>, pub anchors: Vec<proto::TrustAnchor>, pub rfc5011: bool }` in `engine/src/recursor/dnssec/mod.rs`, built from `s.dnssec` in `ResolutionRuntime::build`.
+In this task `validator` and `anchors` are declared but `resolve_miss` does not call them yet (Tasks 7–8 add those calls); `DnssecRuntime` is created here as `#[derive(Default)] pub struct DnssecRuntime { pub validation: bool, pub validate_forwarded: bool, pub ntas: Vec<(Name, i64)>, pub anchors: Vec<proto::TrustAnchor>, pub rfc5011: bool }` in `engine/src/recursor/dnssec/mod.rs`, built from `s.dnssec` and `s.dnssec_validate_forwarded` (Architecture change 2) in `ResolutionRuntime::build`.
 
 - [ ] Create `engine/src/recursor/dispatch_tests.rs`:
 
@@ -1412,12 +1432,12 @@ async fn root_unreachable_is_servfail_ede_22() {
 - [ ] Implement `dispatch.rs`:
   - `ForwardZones::build` stores `domain.to_lowercase().to_bytes()` (uncompressed wire) → index. `longest_match` walks label offsets from the start of the name (offset 0, then `offset += 1 + wire[offset]` until the root label) and returns the first hit, which is the longest suffix; no allocation.
   - `route`: `longest_match` first; else `Mode::Recursive → Route::Recursive`, `Mode::Forward → Route::Forward`. `ResolutionMode::Unspecified` maps to `Mode::Forward`. `ResolutionRuntime::default()` (used by `Runtime::initial()`) is forward mode with no zones.
-  - `config_key`: `sha2::Sha256` over `resolution_mode.to_be_bytes()`, then `prost::Message::encode_to_vec` of `recursion`, each `forward_zones` entry, `dnssec` and each `rpz_zones` entry, each prefixed by its `u32` length; hex-encoded.
+  - `config_key`: `sha2::Sha256` over `resolution_mode.to_be_bytes()`, then `prost::Message::encode_to_vec` of `recursion`, each `forward_zones` entry, `dnssec` and each `rpz_zones` entry, each prefixed by its `u32` length, then one byte `dnssec_validate_forwarded as u8`; hex-encoded.
   - `MissQuery::from_view`: `Name::from_vec(q.key.as_wire())` (the lowercase key), `dnssec_ok = q.do_bit()`, `checking_disabled = q.cd()`, `authentic_data = q.flags & 0x0020 != 0`, `over_tcp = transport != Transport::Udp`.
   - `resolve_miss`:
     - `Route::Recursive`: `WorkBudget::new(params.max_upstream_queries, params.max_delegation_depth)`; `state.recursor.resolve`; `metrics.resolutions_recursive += 1`.
     - `Route::ForwardZone(z)`: `metrics.resolutions_forward_zone += 1`; `Transport::exchange` with `recursion_desired: true`, `use_0x20: true`, `dnssec_ok: true`, `checking_disabled: true`, server chosen with `infra.select` over `z.servers` IPs (port taken from the matching `SocketAddr`), up to `z.servers.len()` attempts; answer/authority sections copied as received.
-    - `Route::Forward`: `upstream.forward(q.query)` with the client's query bytes (M1 behaviour, byte for byte); `Ok(bytes)` → `MissAnswer { wire: bytes, cacheable: true, failed: false, route: Forward, security: None, .. }` without decoding (the M1 cache insert decides cacheability); `Err` → failure.
+    - `Route::Forward`: `upstream.forward(q.query)` with the client's query bytes (M1 behaviour, byte for byte); `Ok(bytes)` → `MissAnswer { wire: bytes, cacheable: true, failed: false, route: Forward, security: None, .. }` without decoding (the M1 cache insert decides cacheability); `Err` → failure. This is the whole forward route while `rt.dnssec.validate_forwarded` is false; Task 7 adds the validating forward branch.
     - Failures build a SERVFAIL with `build_response`, set `failed: true`, `cacheable: false`, `metrics.resolution_failures += 1` and EDE: `NoReachableAuthority`/forward error → `22 "no reachable authority"`; `Deadline` → `22 "resolution deadline exceeded"`; `Limit(_)` → `metrics.limit_queries += 1` when `UpstreamQueries`, EDE `0 "work limit exceeded"`; `CnameLoop` → `0 "CNAME loop"`.
     - Success on the recursive and forward-zone routes: `build_response` then `cacheable = rcode ∈ {NoError, NXDomain}`.
   - `build_response`: `Message::response(0, OpCode::Query)`, RA=1, RD=1, AA=0, `authentic_data = secure && (q.dnssec_ok || q.authentic_data)`, CD copied from the query, question with lowercase `q.qname`; when `!q.dnssec_ok`, drop RRSIG/NSEC/NSEC3 records unless `q.qtype` is that type (RFC 4035 §3.2.1); `to_vec()`.
@@ -1764,7 +1784,7 @@ Files:
 - `engine/src/recursor/dnssec/validator.rs` — `Validator`, `Fetcher`, chain-of-trust walk, per-response validation, EDE mapping.
 - `engine/src/recursor/dnssec/nsec_cache.rs` — RFC 8198 aggressive use of validated NSEC/NSEC3.
 - `engine/src/recursor/dnssec/validator_tests.rs` — unit tests with an in-memory signed hierarchy.
-- `engine/src/recursor/dispatch.rs` — `RoutedFetcher`; validation, CD and NTA handling in `resolve_miss`; aggressive-NSEC lookup before recursion.
+- `engine/src/recursor/dispatch.rs` — `RoutedFetcher`; validation, CD and NTA handling in `resolve_miss` (including the validating global-forward branch under `dnssec_validate_forwarded`); aggressive-NSEC lookup before recursion.
 
 Interfaces:
 
@@ -1990,11 +2010,12 @@ async fn signed_nxdomain_validates_and_feeds_aggressive_cache() {
   5. Combine: any `Bogus` → `Bogus` (first error), any `Indeterminate` → `Indeterminate`, any `Insecure` → `Insecure` (first EDE), else `Secure`; `ttl_cap = min capped_ttl` over verified RRsets. Update `metrics.dnssec_secure/insecure/bogus/indeterminate` and `dnssec_bogus_by_ede[code]` (codes ≥ 32 counted in slot 0).
 - [ ] Implement `AggressiveNsecCache` (`parking_lot::Mutex<HashMap<Name, ZoneDenials>>`, max 10 000 zones, oldest zone evicted): `insert_secure` stores each NSEC (owner, next, bitmap, record + RRSIG, `expires = now + min(TTL, SOA minimum)`) and each NSEC3 by owner hash, plus the SOA RRset with RRSIG. `synthesize(qname, qtype)`: find the deepest cached zone containing `qname`; with cached NSECs run `nsec_proves_nxdomain` (→ `NXDomain`) then `nsec_proves_nodata` (→ `NoError`) over the unexpired records; for NSEC3 zones the same with NSEC3 functions, never using opt-out records; return the SOA + the NSEC/NSEC3 records used + RRSIGs; `None` when no proof or no SOA; increment `dnssec_aggressive_synthesized`.
 - [ ] Wire into `dispatch::resolve_miss`:
-  - `validation_enabled = rt.dnssec.validation && match route { Route::Recursive => true, Route::ForwardZone(z) => z.validate, Route::Forward => false }` (Architecture change 2: answers from the global upstreams keep M1's unvalidated path).
+  - `validation_enabled = rt.dnssec.validation && match route { Route::Recursive => true, Route::ForwardZone(z) => z.validate, Route::Forward => rt.dnssec.validate_forwarded }` (Architecture change 2).
+  - `Route::Forward` with `validation_enabled && !q.checking_disabled`: instead of forwarding the client's bytes, `upstream.forward` a query built with `hickory_proto::op::Message` (random ID from `rand::rng()`, RD=1, EDNS 1232, DO=1, CD=1, question `q.qname`/`q.qtype`); decode the reply (undecodable or rcode other than NoError/NXDomain → failure with EDE 22 as in Task 5); validate its answer/authority sections like the other routes (DS/DNSKEY fetched by `RoutedFetcher`'s `Route::Forward` arm, i.e. through the same forwarder, up to the root trust points); respond with `build_response` (`route: Forward`, `security` set). With `validate_forwarded` false or CD=1 the Task 5 byte-for-byte path is unchanged. Add a `validator_tests` case `forward_mode_validates_when_enabled`: a `ForwardUpstream` fake backed by the in-memory signed hierarchy answers `www.good.test` with AD set by the validator (`Secure`) and a broken-signature name with SERVFAIL + EDE 6; with `validate_forwarded = false` the fake's bytes are returned unchanged.
   - Before resolving, when `rt.params.aggressive_nsec && validation_enabled && !q.checking_disabled`, `state.validator.nsec.synthesize(..)` → `Some` returns that answer (`security = Secure`, cacheable).
   - After a successful resolution on a validating route: when `q.checking_disabled` → no validation, `SecurityTag::None`, AD=0 (RFC 4035 §3.2.2 CD honoured; the M1 cache key already separates CD). Otherwise run `validator.validate` with `TrustPoints` from `state.anchors.trust_points()` (Task 8; until then `TrustPoints::from_config(&rt.dnssec.anchors)`), `rt.dnssec.ntas`, and `RoutedFetcher`. `Secure` → `build_response(.., secure: true)`; `Insecure(ede)` → AD=0 and EDE attached; `Bogus(ede)`/`Indeterminate(ede)` → SERVFAIL, `failed: false` (the SERVFAIL is the answer, stale data must not be served), `cacheable: false`, EDE attached.
   - `RoutedFetcher::fetch` builds `FetchedSet` from the route of the fetched name: `Route::Recursive` → `recursor.fetch(name, rtype, params, budget)`; `Route::ForwardZone` → the forward-zone exchange with DO=1, CD=1; `Route::Forward` (a validating forward zone below a name the global upstreams answer, e.g. the root DS/DNSKEY in forward mode) → `upstream.forward` of a query built with `hickory_proto::op::Message` (random ID from `rand::rng()`, RD=1, EDNS 1232, DO=1, CD=1); `WorkerForward` parses the question from those bytes, so reply matching stays M1's. An upstream that strips RRSIGs produces `Bogus(10)`.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::dnssec::validator_tests` — expect PASS (8 tests).
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::dnssec::validator_tests` — expect PASS (9 tests).
 - [ ] Commit: `git add engine/src/recursor && git commit -m "feat(dnssec): chain-of-trust validation, EDE, NTAs and aggressive NSEC"`.
 
 ## Task 8: Trust anchor store with RFC 5011 automated rollover
@@ -2813,6 +2834,7 @@ Files:
 - `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts` — permission entries (kept in parity for `pnpm lint`).
 - `mgmt/internal/stats/resolution.go`, `mgmt/internal/stats/resolution_test.go` — `Stats` fields 100–102 → `engine_dnssec_status`, `engine_rpz_status`.
 - `mgmt/cmd/nexora-mgmt/main.go` — KEK loading, `Deps.Secrets`, `hub.RPZTsig`, `OnStats`, NTA expiry job.
+- `e2e/harness/mgmt.go` — `(*API).DisableForwardedValidation()`; `e2e/auth_test.go`, `e2e/blocklist_test.go`, `e2e/control_test.go`, `e2e/encrypted_transports_test.go`, `e2e/gui_test.go`, `e2e/observability_test.go`, `e2e/per_client_policy_test.go`, `e2e/safe_search_rewrites_test.go` — call it after `harness.Bootstrap` (Architecture change 2).
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/gen.go` (oapi-codegen in the dev pod, copied back), `web/src/api/schema.d.ts` (`pnpm --dir web run gen:api`).
 
 Interfaces:
@@ -2854,7 +2876,7 @@ var ErrLastRootAnchor = errors.New("the last trust anchor for the root zone cann
 type RootHint = dnssecconf.RootHint
 type ResolutionSettings struct{ Mode string; QnameMinimisation, AggressiveNSEC bool; MaxUpstreamQueries, MaxDelegationDepth, AuthorityPort int32; RootHints []RootHint; Revision int64 }
 type ForwardZone struct{ ID uuid.UUID; Domain string; Addresses []string; Validate bool; Revision int64 }
-type DnssecSettings struct{ Validation, RFC5011 bool; Revision int64 }
+type DnssecSettings struct{ Validation, ValidateForwarded, RFC5011 bool; Revision int64 }
 type TrustAnchor struct{ ID uuid.UUID; Zone, DS, Source string; CreatedAt time.Time }
 type NegativeTrustAnchor struct{ ID uuid.UUID; Domain, Reason, CreatedBy string; ExpiresAt, CreatedAt time.Time }
 type RPZZone struct {
@@ -3011,9 +3033,14 @@ ForwardZone:
     revision: { type: integer, format: int64 }
 DnssecSettings:
   type: object
-  required: [validation, rfc5011, revision]
+  required: [validation, validate_forwarded, rfc5011, revision]
   properties:
     validation: { type: boolean }
+    validate_forwarded:
+      {
+        type: boolean,
+        description: "Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation",
+      }
     rfc5011: { type: boolean }
     revision: { type: integer, format: int64 }
 TrustAnchorInput:
@@ -3257,6 +3284,7 @@ DROP TABLE resolution_settings;
 CREATE TABLE dnssec_settings (
     singleton  boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     validation boolean NOT NULL DEFAULT true,
+    validate_forwarded boolean NOT NULL DEFAULT true,
     rfc5011    boolean NOT NULL DEFAULT true,
     revision   bigint NOT NULL DEFAULT 1,
     updated_at timestamptz NOT NULL DEFAULT now()
@@ -3579,7 +3607,7 @@ func TestApplyResolution(t *testing.T) {
 	rows := store.ResolutionRows{
 		Resolution:   store.ResolutionSettings{Mode: "recursive", QnameMinimisation: true, MaxUpstreamQueries: 100, MaxDelegationDepth: 32, AuthorityPort: 5353, RootHints: []store.RootHint{{Name: "a.root.test.", Addresses: []string{"127.0.53.1"}}}},
 		ForwardZones: []store.ForwardZone{{Domain: "corp.example.", Addresses: []string{"10.0.0.1:53"}, Validate: true}},
-		Dnssec:       store.DnssecSettings{Validation: true, RFC5011: true},
+		Dnssec:       store.DnssecSettings{Validation: true, ValidateForwarded: true, RFC5011: true},
 		Anchors:      []store.TrustAnchor{{Zone: ".", DS: "20326 8 2 E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"}},
 		NTAs: []store.NegativeTrustAnchor{
 			{Domain: "broken.example.", ExpiresAt: now.Add(time.Hour)},
@@ -3601,6 +3629,15 @@ func TestApplyResolution(t *testing.T) {
 	}
 	if len(s.Dnssec.NegativeTrustAnchors) != 1 || s.Dnssec.NegativeTrustAnchors[0].ExpiresUnix != now.Add(time.Hour).Unix() {
 		t.Fatalf("expired NTAs must be omitted: %v", s.Dnssec.NegativeTrustAnchors)
+	}
+	if !s.DnssecValidateForwarded {
+		t.Fatal("dnssec_validate_forwarded not carried into the snapshot")
+	}
+	off := &controlv1.ConfigSnapshot{}
+	rows.Dnssec.Validation = false
+	snapshot.ApplyResolution(off, rows, now)
+	if off.DnssecValidateForwarded {
+		t.Fatal("dnssec_validate_forwarded sent without validation; the engine rejects that snapshot")
 	}
 	if len(s.RpzZones) != 2 {
 		t.Fatalf("a file zone without an uploaded file must be omitted: %v", s.RpzZones)
@@ -3672,7 +3709,7 @@ func gcm(key []byte) (cipher.AEAD, error) {
 - [ ] Implement `dnssecconf`: `ValidateDS` = four fields, key tag 0..65535, algorithm and digest type 0..255, hex digest with length 40/64/96 hex characters for types 1/2/4 (`digest is not hex`, `digest length N does not match digest type T`); `ValidateDomain` uses `dns.IsDomainName` and returns lowercase FQDN; `ValidateForwardAddresses` uses `net.SplitHostPort` + `netip.ParseAddr` (`addresses[i]: not ip:port: V`); `ValidateRootHints` requires FQDN names and bare IP addresses (`root_hints[i].addresses[j]: not an IP address: V`).
 - [ ] Write the three migrations literally as above.
 - [ ] Implement `store/resolution.go` and `store/blobs.go`: row structs and functions from Interfaces; revision-checked updates and deletes follow M2's `missingOrStale` (zero rows → `ErrNotFound` or `ErrConflict`); `LoadResolution` selects everything (`forward_zones ORDER BY domain`, `trust_anchors ORDER BY zone, ds`, `negative_trust_anchors ORDER BY domain`, `rpz_zones` left-joined to `blobs` for `BlobSize`, `ORDER BY position`); `DeleteTrustAnchor` returns `ErrLastRootAnchor` when the row is the only one with `zone = '.'` (checked under `SELECT ... FOR UPDATE`); `ReorderRPZZones` requires `ids` to be exactly the set of zone IDs (else `fmt.Errorf("%w: ids must list every RPZ zone exactly once", ErrConflict)`) and rewrites positions `1..n` after negating them (unique index); `PutBlob` computes SHA-256 hex and runs `insert into blobs(sha256, size, data) values ($1, $2, $3) on conflict do nothing`.
-- [ ] Implement `snapshot/resolution.go` `ApplyResolution`: mode `recursive` → `RESOLUTION_MODE_RECURSIVE`, otherwise `RESOLUTION_MODE_FORWARD`; NTAs with `ExpiresAt <= now` omitted; RPZ zones sorted by `Position`; file zones without `BlobSHA256` omitted, otherwise `RpzFileSource{Blob: &BlobRef{Sha256, Size, Name: zone name}}`; policy override and TSIG algorithm strings map to the proto enums; `TSIGSecretEnvelope` is never read. In `snapshot.Build`, after `buildPolicy`, call `rows, err := store.LoadResolution(ctx, tx)` (wrap errors as `resolution: %w`) and `ApplyResolution(snap, rows, time.Now())`.
+- [ ] Implement `snapshot/resolution.go` `ApplyResolution`: mode `recursive` → `RESOLUTION_MODE_RECURSIVE`, otherwise `RESOLUTION_MODE_FORWARD`; NTAs with `ExpiresAt <= now` omitted; RPZ zones sorted by `Position`; file zones without `BlobSHA256` omitted, otherwise `RpzFileSource{Blob: &BlobRef{Sha256, Size, Name: zone name}}`; policy override and TSIG algorithm strings map to the proto enums; `TSIGSecretEnvelope` is never read; `DnssecValidateForwarded = Dnssec.Validation && Dnssec.ValidateForwarded`. In `snapshot.Build`, after `buildPolicy`, call `rows, err := store.LoadResolution(ctx, tx)` (wrap errors as `resolution: %w`) and `ApplyResolution(snap, rows, time.Now())`.
 - [ ] Implement `snapshot/ntaexpiry.go` `RunNTAExpiry`: every 60 s, `Mutate(ctx, st, cfg, auth.Actor{Type: "system", ID: "nta-expiry", Name: "system"}, fn)` where `fn` takes `pg_try_advisory_xact_lock(hashtext('nexora:nta_expiry'))` (not acquired → `errNothingToExpire`), calls `store.DeleteExpiredNegativeTrustAnchors(ctx, tx, time.Now())` (0 rows → `errNothingToExpire`, which rolls back without publishing) and returns `auth.Change{Action: "expireNegativeTrustAnchors", TargetType: "negative_trust_anchor", TargetID: "expired", After: map[string]int64{"deleted": n}}`; `errNothingToExpire` is not logged, other errors are logged with `slog.Warn`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/secrets/ ./mgmt/internal/rpz/ ./mgmt/internal/dnssecconf/ ./mgmt/internal/snapshot/` — expect PASS.
 - [ ] Create `mgmt/internal/control/rpztsig_test.go`:
@@ -3838,7 +3875,7 @@ func TestResolutionDnssecAndRPZAPI(t *testing.T) {
 		t.Fatalf("upload $INCLUDE = %d %+v", code, e)
 	}
 	transfer := map[string]any{"name": "rpz.axfr.test.", "source_type": "transfer", "primary": "127.0.0.1:5300", "tsig_key_name": "rpz-key.",
-		"tsig_algorithm": "hmac-sha256", "tsig_secret": "MDEyMzQ1Njc4OWFiY2RlZg==", "policy_override": "given", "min_refresh_seconds": 60}
+		"tsig_algorithm": "hmac-sha256", "tsig_secret": base64.StdEncoding.EncodeToString([]byte("fixture-tsig-key")), "policy_override": "given", "min_refresh_seconds": 60}
 	if code := op.do(http.MethodPost, "/rpz-zones", transfer, &e); code != 503 || e.Code != "key_storage_unconfigured" {
 		t.Fatalf("TSIG secret without NEXORA_KEK_FILE = %d %+v", code, e)
 	}
@@ -3928,7 +3965,22 @@ func TestRecordM3UpsertsStatusAndSkipsUnknownZones(t *testing.T) {
 - [ ] Wire `mgmt/cmd/nexora-mgmt/main.go` and `config.go`: `Config.KEKFile = getenv("NEXORA_KEK_FILE")`; in `serve`, `box, err := secrets.LoadKEKFile(cfg.KEKFile)` (return the error) and `log.Printf("key storage: none configured; RPZ TSIG secrets are refused")` when `!box.Configured()`; `hub.RPZTsig = control.NewRPZTsig(st, box)` before `go hub.Run(ctx)`; `api.Deps{..., Secrets: box}`; `go snapshot.RunNTAExpiry(ctx, st, build)`; the `OnStats` closure also calls `_ = stats.RecordM3(ctx, st, engineID, s)`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/api/ ./mgmt/internal/stats/ -run 'TestResolutionDnssecAndRPZAPI|TestRecordM3|TestPermissionsCoverEveryOperation'` — expect PASS.
 - [ ] Run `scripts/dev-exec.sh make mgmt-test` — expect PASS (migrations apply on a fresh database in every store test); run `scripts/dev-exec.sh 'cd web && pnpm install --frozen-lockfile && pnpm run lint'` — expect PASS (permission parity).
-- [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts && git commit -m "feat(mgmt): resolution, DNSSEC and RPZ API with sealed TSIG secrets"`.
+- [ ] Keep the M1/M2 e2e tests on their unsigned fixture upstreams now that `validate_forwarded` defaults to `true`: add to `e2e/harness/mgmt.go`
+
+```go
+// DisableForwardedValidation turns off DNSSEC validation of answers from the global upstreams, for
+// tests whose fixture upstreams serve unsigned synthetic data under the real root trust anchor.
+func (a *API) DisableForwardedValidation() {
+	var s map[string]any
+	a.Must("GET", "/dnssec/settings", nil, &s, http.StatusOK)
+	s["validate_forwarded"] = false
+	a.Must("PUT", "/dnssec/settings", s, nil, http.StatusOK)
+}
+```
+
+and call it on the value returned by every `harness.Bootstrap` in the files listed under Files (once per management-plane database; in `TestMgmtStatelessHA` on the first bootstrap only). Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test -count=1 -timeout 60m ./e2e/ -run "TestAuthRBACAuditOIDC|TestBlocklistSubscription|TestInvalidSnapshotRejected|TestMgmtStatelessHA|TestEncryptedTransports|TestGUICoverage|TestQueryLogBackends|TestPerClientPolicy|TestObservabilityMetricsTraces|TestOTelSinkDownNoBackpressure|TestSafeSearchRewrites"'` — expect PASS.
+
+- [ ] Commit: `git add mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts e2e/harness/mgmt.go e2e/*_test.go && git commit -m "feat(mgmt): resolution, DNSSEC and RPZ API with sealed TSIG secrets"`.
 
 ## Task 12: GUI — `/rpz`, `/dnssec`, resolution settings and forward zones on `/upstreams`
 
@@ -4108,7 +4160,7 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
   await dialog.getByLabel("TSIG key name").fill("rpz-key.");
   await dialog
     .getByLabel("TSIG secret (base64)")
-    .fill("MDEyMzQ1Njc4OWFiY2RlZg==");
+    .fill(btoa("fixture-tsig-key"));
   await dialog.getByRole("button", { name: "Save" }).click();
   // TestGUICoverage's management plane runs without NEXORA_KEK_FILE.
   await expect(dialog.getByRole("alert")).toContainText(
@@ -4184,16 +4236,24 @@ test("operator edits DNSSEC settings, trust anchors and negative trust anchors",
   });
   await expect(rfc5011).toBeChecked();
   await rfc5011.click();
+  // The e2e harness may have turned forwarded validation off; flip whatever state it is in.
+  const forwarded = settings.getByRole("switch", {
+    name: "Validate forwarded answers",
+  });
+  const forwardedWas = await forwarded.isChecked();
+  await forwarded.click();
   await settings.getByRole("button", { name: "Save settings" }).click();
   await expect(settings.getByText("Settings saved")).toBeVisible();
   await page.reload();
+  const reloaded = page.getByRole("region", { name: "Validation settings" });
   await expect(
-    page
-      .getByRole("region", { name: "Validation settings" })
-      .getByRole("switch", {
-        name: "Automated trust anchor updates (RFC 5011)",
-      }),
+    reloaded.getByRole("switch", {
+      name: "Automated trust anchor updates (RFC 5011)",
+    }),
   ).not.toBeChecked();
+  await expect(
+    reloaded.getByRole("switch", { name: "Validate forwarded answers" }),
+  ).toBeChecked({ checked: !forwardedWas });
 
   const anchors = page.getByRole("region", { name: "Trust anchors" });
   await expect(anchors.getByRole("row", { name: /20326 8 2/ })).toContainText(
@@ -4315,7 +4375,7 @@ test("operator edits resolution settings and forward zones", async ({
 - [ ] Implement the pages with the exact accessible names used in the tests (mutating controls hidden unless `useCan` allows the operation, as the M2 pages do):
   - `RpzPage`: heading "Response policy zones"; button "New zone"; table rows ordered by `position` showing name, source ("File"/"Zone transfer"), `N records` or "no file" (file) or primary (transfer), override, "secret set" badge when `tsig_secret_set`, `min_refresh_seconds` as `N s`, and per-engine serial/last success/stale badge (red "stale" when any engine reports `stale`, amber when `last_error` is non-empty); row buttons `Move <name> up`, `Move <name> down` (call `reorderRpzZones` with the full new ID order), `Edit <name>` (opens "Edit RPZ zone" and fetches `GET /rpz-zones/{id}`), `Upload file for <name>` (file zones), `Refresh <name>` (transfer zones; a `role="status"` note "Refresh requested"), `Delete <name>` (`ConfirmDialog`).
   - RPZ zone dialog ("New RPZ zone" / "Edit RPZ zone"): labels "Zone name", "Source" (options "File", "Zone transfer"; create only), "Primary", "TSIG algorithm" (options "None", "hmac-sha256", "hmac-sha512"), "TSIG key name" and "TSIG secret (base64)" (shown when an algorithm is chosen; on edit the secret field is empty and its placeholder says "leave empty to keep the stored secret"), "Policy override" (options "Given", "Disabled", "NXDOMAIN", "NODATA", "PASSTHRU", "DROP", "TCP-only"), "Minimum refresh (seconds)"; the dialog stays open and shows the API error on failure. Upload dialog "Upload zone file": label "Zone file" (`<input type="file">` read with `File.text()`), button "Upload".
-  - `DnssecPage`: heading "DNSSEC"; `<section aria-label="Validation settings">` with switches "Validate answers" and "Automated trust anchor updates (RFC 5011)", button "Save settings" and `SavedNote` "Settings saved"; `<section aria-label="Trust anchors">` table (zone, DS, source badge "IANA"/"Operator", `Delete trust anchor <key tag> for <zone>`), button "Add trust anchor" (dialog "Add trust anchor", labels "Zone", "DS record"); `<section aria-label="Negative trust anchors">` table (domain, reason, expiry, creator, `Delete negative trust anchor <domain>`), button "Add negative trust anchor" (dialog labels "Domain", "Reason", "Expires in" with options "1 hour", "1 day", "7 days", "30 days" converted to `expires_at`); `<section aria-label="Validation by engine">` listing each engine name with secure/insecure/bogus/indeterminate counts and trust anchor key states; a red banner "Trust anchor refresh failing" when any anchor for `.` has a `last_error` and `last_refresh_success` older than 72 h, or when no key for `.` is in state `valid`/`configured`.
+  - `DnssecPage`: heading "DNSSEC"; `<section aria-label="Validation settings">` with switches "Validate answers", "Validate forwarded answers" (`validate_forwarded`, disabled while "Validate answers" is off) and "Automated trust anchor updates (RFC 5011)", button "Save settings" and `SavedNote` "Settings saved"; `<section aria-label="Trust anchors">` table (zone, DS, source badge "IANA"/"Operator", `Delete trust anchor <key tag> for <zone>`), button "Add trust anchor" (dialog "Add trust anchor", labels "Zone", "DS record"); `<section aria-label="Negative trust anchors">` table (domain, reason, expiry, creator, `Delete negative trust anchor <domain>`), button "Add negative trust anchor" (dialog labels "Domain", "Reason", "Expires in" with options "1 hour", "1 day", "7 days", "30 days" converted to `expires_at`); `<section aria-label="Validation by engine">` listing each engine name with secure/insecure/bogus/indeterminate counts and trust anchor key states; a red banner "Trust anchor refresh failing" when any anchor for `.` has a `last_error` and `last_refresh_success` older than 72 h, or when no key for `.` is in state `valid`/`configured`.
   - `ResolutionSection` (`<section aria-label="Resolution">`): labels "Mode" (options "Forward", "Recursive"), "QNAME minimisation", "Aggressive NSEC caching", "Maximum upstream queries per client query", "Maximum delegation depth", "Authority port", root-hint rows ("Add root hint", "Root hint name N", "Root hint addresses N" comma-separated, "Remove root hint N"), button "Save resolution settings" and `SavedNote` "Resolution settings saved"; help text states that forward zones override the mode and that DNSSEC validation applies to recursion and validating forward zones.
   - `ForwardZonesSection` (`<section aria-label="Forward zones">`): "New forward zone", dialogs "New forward zone" / "Edit forward zone" with labels "Domain", "Servers" (comma-separated `ip:port`), switch "Validate DNSSEC"; row buttons `Edit <domain>`, `Delete <domain>`; row badge "validated" when `validate`.
   - `router.tsx` gains `{ path: "rpz", element: <RpzPage /> }` and `{ path: "dnssec", element: <DnssecPage /> }`; `AppShell.tsx` gains the two nav items listed under Files (after "Rewrites").
@@ -4895,6 +4955,7 @@ package e2e
 
 import (
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -4984,6 +5045,49 @@ func TestDNSSECValidation(t *testing.T) {
 			t.Fatalf("forward zone route not used (%v -> %v)", before, after)
 		}
 		r.api.Must("DELETE", fmt.Sprintf("/forward-zones/%s?revision=%d", fz.ID, fz.Revision), nil, nil, 204)
+	})
+	t.Run("forward mode validates answers from the global upstreams", func(t *testing.T) {
+		var dsettings map[string]any
+		r.api.Must("GET", "/dnssec/settings", nil, &dsettings, 200)
+		if dsettings["validate_forwarded"] != true {
+			t.Fatalf("validate_forwarded = %v, want the default true", dsettings["validate_forwarded"])
+		}
+		var res map[string]any
+		r.api.Must("GET", "/resolution", nil, &res, 200)
+		res["mode"] = "forward"
+		r.api.Must("PUT", "/resolution", res, &res, 200)
+		var up struct {
+			ID       string `json:"id"`
+			Revision int64  `json:"revision"`
+		}
+		r.api.Must("POST", "/upstreams", map[string]any{"name": "hierarchy-forwarder", "protocol": "udp", "address": r.h.Ready.Forwarder, "timeout_ms": 1000, "enabled": true, "position": 0}, &up, 201)
+		waitApplied(t, r.api)
+		t.Cleanup(func() {
+			r.api.Must("DELETE", fmt.Sprintf("/upstreams/%s?revision=%d", up.ID, up.Revision), nil, nil, 204)
+			res["mode"] = "recursive"
+			r.api.Must("PUT", "/resolution", res, nil, 200)
+			waitApplied(t, r.api)
+		})
+		forwarderIP, _, _ := net.SplitHostPort(r.h.Ready.Forwarder)
+		before := r.h.Stats(t).Queries[forwarderIP]
+		good := query(t, addr, "www.good.test", dns.TypeA, qopt{DO: true})
+		wantA(t, good, "192.0.2.10")
+		if !good.AuthenticatedData {
+			t.Fatal("forward mode: secure answer lacks AD")
+		}
+		if r.h.Stats(t).Queries[forwarderIP] <= before {
+			t.Fatal("forward mode: the global upstream was never queried")
+		}
+		bad := query(t, addr, "www.bad.test", dns.TypeA, qopt{DO: true})
+		if bad.Rcode != dns.RcodeServerFailure || len(aValues(bad)) != 0 {
+			t.Fatalf("forward mode: bogus data served: rcode=%s answers=%v", dns.RcodeToString[bad.Rcode], aValues(bad))
+		}
+		if code, ok := edeCode(bad); !ok || code != 6 {
+			t.Fatalf("forward mode: EDE = %d (present %v), want 6", code, ok)
+		}
+		if cd := query(t, addr, "www.bad.test", dns.TypeA, qopt{DO: true, CD: true}); len(aValues(cd)) == 0 || cd.AuthenticatedData {
+			t.Fatalf("forward mode: CD=1 must return the unvalidated answer without AD: %v", cd)
+		}
 	})
 	t.Run("status reports trust anchors", func(t *testing.T) {
 		harness.Eventually(t, 30*time.Second, func() error {
@@ -5296,14 +5400,14 @@ func setupRecursion(t *testing.T) recursionEnv {
 ```
 
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test -count=3 ./e2e/ -run "TestRecursionRootHints|TestSpoofedReplyRejected|TestDNSSECValidation|TestRPZPolicy"'` — expect PASS three times in a row (no flakes).
-- [ ] Run the full suite: `scripts/dev-exec.sh make e2e` — expect PASS, including the M1/M2 tests (forward mode is still the default and forwards the client's bytes unvalidated).
+- [ ] Run the full suite: `scripts/dev-exec.sh make e2e` — expect PASS, including the M1/M2 tests (forward mode is still the default; those tests turn `validate_forwarded` off with `DisableForwardedValidation` from Task 11, so the engine forwards the client's bytes unvalidated for them).
 - [ ] Commit: `git add e2e && git commit -m "test(e2e): recursion, spoofing, DNSSEC validation and RPZ acceptance tests"`.
 
 ## Task 15: kw deployment update and kw smoke subtests
 
 Files:
 
-- `e2e/kw_smoke_m3_test.go` — `TestKwSmokeM3` with subtests `recursion`, `dnssec`, `rpz`, `metrics` (package `e2e`, skipped unless the kw variables are set, like M1's `TestKwSmoke`).
+- `e2e/kw_smoke_m3_test.go` — `TestKwSmokeM3` with subtests `dnssec_forwarded`, `recursion`, `dnssec`, `rpz`, `metrics` (package `e2e`, skipped unless the kw variables are set, like M1's `TestKwSmoke`).
 - `deploy/kw/README.md` — the M3 smoke command and the M3 limits on kw.
 
 No manifest changes: `deploy/kw/engine.yaml` and `deploy/kw/mgmt.yaml` already take the image tag from `scripts/kw-deploy.sh` (`NEXORA_TAG`); migrations `00300`–`00302` run when `nexora-mgmt serve` starts (`store.Migrate`); recursion needs only egress to UDP/TCP 53, which kw allows (no NetworkPolicy exists in namespace `nexora`); engine state stays `emptyDir` (Architecture change 8); `NEXORA_KEK_FILE` is not configured on kw in M3, so TSIG-protected RPZ transfers are refused there with 503 until M4 Task 16 mounts the `nexora-kek` secret (the smoke test uses a file zone).
@@ -5372,6 +5476,29 @@ func TestKwSmokeM3(t *testing.T) {
 		original["revision"] = cur["revision"]
 		api.Must("PUT", "/resolution", original, nil, http.StatusOK)
 	})
+
+	// Runs first, while kw is still in its deployed forward mode with the default settings.
+	t.Run("dnssec_forwarded", func(t *testing.T) {
+		var ds map[string]any
+		api.Must("GET", "/dnssec/settings", nil, &ds, http.StatusOK)
+		if original["mode"] != "forward" || ds["validation"] != true || ds["validate_forwarded"] != true {
+			t.Fatalf("kw must run forward mode with validation and validate_forwarded on: mode=%v dnssec=%v", original["mode"], ds)
+		}
+		harness.Eventually(t, 30*time.Second, func() error {
+			r, err := ask("www.iana.org", dns.TypeA, true)
+			if err != nil {
+				return err
+			}
+			if !r.AuthenticatedData {
+				return fmt.Errorf("forward mode: www.iana.org not AD (rcode %s)", dns.RcodeToString[r.Rcode])
+			}
+			return nil
+		})
+		if r, err := ask("dnssec-failed.org", dns.TypeA, true); err != nil || r.Rcode != dns.RcodeServerFailure {
+			t.Fatalf("forward mode: dnssec-failed.org: %v %v, want SERVFAIL", r, err)
+		}
+	})
+
 	recursive := map[string]any{}
 	for k, v := range original {
 		recursive[k] = v
@@ -5480,6 +5607,6 @@ func TestKwSmokeM3(t *testing.T) {
 
 - [ ] Run against the currently deployed (M2) build to prove the smoke test detects the missing feature: `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local NEXORA_KW_ADMIN_PASSWORD="$(kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d)" go test -count=1 -v -run TestKwSmokeM3 ./e2e/` — expect FAIL with "GET /resolution: status 404".
 - [ ] Deploy the M3 build: `scripts/kw-deploy.sh` (builds and pushes `nexora-engine` and `nexora-mgmt` tagged `sha-<7>`, applies `deploy/kw/*.yaml` with that tag, reruns the idempotent `bootstrap.sh`, waits for both rollouts) — expect `deployment "nexora-mgmt" successfully rolled out`, `deployment "nexora-engine" successfully rolled out` and the final `NEXORA_KW_DNS_ADDR=192.168.10.136:53` line.
-- [ ] Re-run the smoke command from the first step — expect PASS for `TestKwSmokeM3/recursion`, `/dnssec`, `/rpz`, `/metrics`; then run M1/M2's `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -v -run 'TestKwSmoke$' ./e2e/` — expect PASS (the cleanup restored forward mode).
+- [ ] Re-run the smoke command from the first step — expect PASS for `TestKwSmokeM3/dnssec_forwarded`, `/recursion`, `/dnssec`, `/rpz`, `/metrics` (`dnssec_forwarded` proves the kw default `validate_forwarded = true` from migration `00301`); then run M1/M2's `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -v -run 'TestKwSmoke$' ./e2e/` — expect PASS (the cleanup restored forward mode).
 - [ ] Update `deploy/kw/README.md`: add the `TestKwSmokeM3` command above (with the `nexora-admin` password lookup) under the smoke-test paragraph, and to "Known limits": "M3: engine state is still an `emptyDir`, so RFC 5011 trust-anchor state and RPZ last-good zone copies are rebuilt after an engine pod restart (M5 moves state to `hostPath`)" and "M3: `NEXORA_KEK_FILE` is not mounted, so RPZ zones with TSIG are refused (M4 adds the `nexora-kek` secret)".
 - [ ] Commit: `git add e2e/kw_smoke_m3_test.go deploy/kw/README.md && git commit -m "test(kw): M3 smoke subtests for recursion, DNSSEC, RPZ and metrics"`.

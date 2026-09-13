@@ -27,6 +27,7 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
                                         rewrite answer synthesis
   src/control.rs                        management-plane client (enroll, stream, blobs)
   src/snapshot.rs                       snapshot validation + persistence
+  src/snapshot_m3.rs                    (M3) validation of recursion/DNSSEC/RPZ snapshot fields
   src/telemetry/{metrics,querylog,otlp}.rs
   src/recursor/…                        (M3) iterative resolver, DNSSEC validation, RPZ
   src/authoritative/…                   (M4) zone serving, transfers, updates, signing
@@ -38,6 +39,7 @@ mgmt/                                   Go management plane (module root is repo
   api/openapi.yaml                      HTTP API source of truth
   migrations/*.sql                      goose migrations (embedded)
   internal/config                       env configuration
+  internal/secrets                      (M3) NXE1 envelope encryption under the KEK
   internal/store                        pgx pool, migrations, queries
   internal/pki                          CA, engine/server certificates
   internal/control                      gRPC EngineControl server, engine hub
@@ -216,6 +218,9 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
 - Build the new `Runtime` (including filter sets) on the control runtime, then
   `ArcSwap::store`. In-flight queries keep the `Arc` they loaded.
 - Persist `state_dir/snapshot.binpb` via write-to-temp + fsync + rename.
+- Other engine local state: `state_dir/identity/`, `state_dir/blobs/`, and
+  (M3) `state_dir/trust-anchors.json` (RFC 5011 trust-anchor state) and
+  `state_dir/rpz/<zone id>.zone` (last good copy of each transfer RPZ zone).
 - Ack `Applied{version}` or `Rejected{version, reason}`; a rejected snapshot
   leaves the previous runtime in place.
 
@@ -280,6 +285,16 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   the management plane into rewrite sets); `Hello.tls_fingerprint_sha256`
   reports the installed DNS serving certificate; the server sends
   `TlsMaterial` when it differs and the engine answers `TlsMaterialResult`.
+- M3: `ConfigSnapshot.resolution_mode` / `recursion` / `forward_zones` /
+  `dnssec` / `rpz_zones` / `dnssec_validate_forwarded` (100-105),
+  `Stats.recursion` / `dnssec` / `rpz_zones` (100-102),
+  `ServerMessage.rpz_tsig_keys` (100). RPZ TSIG secrets travel only on
+  `Connect` (`RpzTsigKeys`) and are held in engine memory; they are never part
+  of `ConfigSnapshot`, `config_versions` or `state_dir`. RPZ file zones are
+  blobs fetched with `GetBlob`. `dnssec_validate_forwarded` (management
+  default `true`; requires `dnssec.validation`) makes the engine validate
+  answers from the global upstreams too, fetching DS/DNSKEY through the
+  forwarder up to the root trust anchor.
 
 ## Management plane
 
@@ -298,7 +313,8 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`,
   `NEXORA_DNS_TLS_RELOAD_INTERVAL` (`30s`) (M2; the DNS serving certificate
   for DoT/DoH/DoQ, pushed to engines, never stored in PostgreSQL),
-  `NEXORA_KEK_FILE` (M4), `NEXORA_PKCS11_MODULE` / `_TOKEN_LABEL` /
+  `NEXORA_KEK_FILE` (M3: RPZ TSIG secrets sealed by internal/secrets; M4 adds
+  DNSSEC and TSIG keys), `NEXORA_PKCS11_MODULE` / `_TOKEN_LABEL` /
   `_PIN_FILE` (M4).
 - Secrets come from files, never from the database in plaintext.
 - `nexora-mgmt serve | migrate | ca init --out <dir> | user create --admin`;

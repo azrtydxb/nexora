@@ -30,7 +30,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(10);
-const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ENGINE_VERSION: &str = crate::VERSION;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlError {
@@ -356,6 +356,10 @@ pub async fn fetch_blobs(
         .iter()
         .flat_map(|f| f.blocklists.iter().chain(&f.allowlists))
         .chain(snap.policy_groups.iter().flat_map(|g| &g.blocklists))
+        .chain(snap.rpz_zones.iter().filter_map(|z| match &z.source {
+            Some(crate::proto::rpz_zone::Source::File(f)) => f.blob.as_ref(),
+            _ => None,
+        }))
         // Collected so no closure is held across an await (keeps the future `Send`).
         .collect::<Vec<_>>();
     for r in refs {
@@ -546,7 +550,7 @@ async fn session(
                     break stream_closed();
                 }
             }
-            None => {}
+            Some(ServerMsg::RpzTsigKeys(_)) | None => {}
         }
     };
     ticker.abort();

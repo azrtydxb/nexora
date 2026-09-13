@@ -118,11 +118,12 @@ pub fn validate(s: &ConfigSnapshot, applied_version: u64) -> Result<(), Snapshot
             return invalid(format!("sha256 {} must be 64 lowercase hex", b.sha256));
         }
     }
+    crate::snapshot_m3::validate_m3(s).map_err(SnapshotError::Invalid)?;
     Ok(())
 }
 
 /// Also keeps blob names safe to join onto a directory.
-fn is_sha256_hex(h: &str) -> bool {
+pub(crate) fn is_sha256_hex(h: &str) -> bool {
     h.len() == 64
         && h.bytes()
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))

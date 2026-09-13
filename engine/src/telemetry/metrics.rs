@@ -596,6 +596,10 @@ impl Metrics {
                 .collect(),
             cache_entries: rt.cache.entries(),
             cache_bytes: rt.cache.bytes(),
+            // M3 Tasks 5, 8 and 10 fill these from the recursor state.
+            recursion: None,
+            dnssec: None,
+            rpz_zones: Vec::new(),
         }
     }
 }

@@ -58,6 +58,7 @@ message ServerMessage {
   oneof msg {
     ConfigSnapshot snapshot = 1;
     VersionAhead version_ahead = 2;
+    RpzTsigKeys rpz_tsig_keys = 100;   // M3: never persisted, never part of ConfigSnapshot
     TlsMaterial tls_material = 300;    // M2: never persisted, never part of ConfigSnapshot
   }
 }
@@ -80,6 +81,15 @@ message ConfigSnapshot {
   repeated PolicyGroup policy_groups = 300;
   repeated RewriteSet rewrite_sets = 301;
   repeated string global_rewrite_set_ids = 302; // rewrite sets for clients in no group, in precedence order
+  // M3: recursion, DNSSEC validation, RPZ.
+  ResolutionMode resolution_mode = 100;
+  RecursionConfig recursion = 101;
+  repeated ForwardZone forward_zones = 102;
+  DnssecConfig dnssec = 103;
+  repeated RpzZone rpz_zones = 104; // ordered: index 0 has the highest precedence
+  // Validate answers from the global upstreams (forward mode) up to the root trust anchor, fetching
+  // DS/DNSKEY through the forwarder. Requires dnssec.validation. Management defaults it to true.
+  bool dnssec_validate_forwarded = 105;
 }
 
 enum UpstreamStrategy {
@@ -178,6 +188,10 @@ message Stats {
   map<string, uint64> export_dropped_total = 12; // keyed by signal: logs, traces, metrics
   uint64 cache_entries = 13;
   uint64 cache_bytes = 14;
+  // M3
+  RecursionStats recursion = 100;
+  DnssecStats dnssec = 101;
+  repeated RpzZoneStatus rpz_zones = 102;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,4 +244,150 @@ message TlsMaterialResult {
   string fingerprint_sha256 = 1;    // echoes TlsMaterial.fingerprint_sha256
   bool applied = 2;
   string error = 3;                 // empty when applied
+}
+
+// ---------------------------------------------------------------------------
+// M3: recursion, DNSSEC validation, RPZ. Fields added to earlier messages use numbers 100-199.
+// ---------------------------------------------------------------------------
+
+enum ResolutionMode {
+  RESOLUTION_MODE_UNSPECIFIED = 0; // engine treats as FORWARD
+  RESOLUTION_MODE_FORWARD = 1;
+  RESOLUTION_MODE_RECURSIVE = 2;
+}
+
+message RootHint {
+  string name = 1;               // e.g. "a.root-servers.net."
+  repeated string addresses = 2; // IPv4 or IPv6 literals, no port
+}
+
+message RecursionConfig {
+  repeated RootHint root_hints = 1; // empty: compiled-in IANA hints
+  bool qname_minimisation = 2;      // RFC 9156
+  bool aggressive_nsec = 3;         // RFC 8198, off by default
+  uint32 max_upstream_queries = 4;  // 0 -> 100; valid 1..=1000
+  uint32 max_delegation_depth = 5;  // 0 -> 32; valid 1..=64
+  uint32 authority_port = 6;        // 0 -> 53; port used for every authoritative server
+}
+
+message ForwardZone {
+  string domain = 1;             // "corp.example."
+  repeated string addresses = 2; // "ip:port", UDP with TCP fallback on TC
+  bool validate = 3;             // false: answers under this zone are treated as insecure
+}
+
+message TrustAnchor {
+  string zone = 1; // "."
+  string ds = 2;   // "20326 8 2 E06D44B8..."
+}
+
+message NegativeTrustAnchor {
+  string domain = 1;
+  int64 expires_unix = 2;
+}
+
+message DnssecConfig {
+  bool validation = 1;
+  repeated TrustAnchor trust_anchors = 2;
+  repeated NegativeTrustAnchor negative_trust_anchors = 3;
+  bool rfc5011 = 4;
+}
+
+enum RpzPolicyOverride {
+  RPZ_POLICY_OVERRIDE_GIVEN = 0;
+  RPZ_POLICY_OVERRIDE_DISABLED = 1; // match counted, no action
+  RPZ_POLICY_OVERRIDE_NXDOMAIN = 2;
+  RPZ_POLICY_OVERRIDE_NODATA = 3;
+  RPZ_POLICY_OVERRIDE_PASSTHRU = 4;
+  RPZ_POLICY_OVERRIDE_DROP = 5;
+  RPZ_POLICY_OVERRIDE_TCP_ONLY = 6;
+}
+
+enum TsigAlgorithm {
+  TSIG_ALGORITHM_NONE = 0;
+  TSIG_ALGORITHM_HMAC_SHA256 = 1;
+  TSIG_ALGORITHM_HMAC_SHA512 = 2;
+}
+
+message RpzFileSource {
+  BlobRef blob = 1; // zstd-compressed zone text, fetched via GetBlob like filter lists
+}
+
+message RpzTransferSource {
+  string primary = 1; // "ip:port"
+  string tsig_key_name = 2;
+  TsigAlgorithm tsig_algorithm = 3; // the secret arrives only in RpzTsigKeys
+  uint32 min_refresh_seconds = 4;   // 0 -> 60
+}
+
+message RpzZone {
+  string id = 1;   // UUID
+  string name = 2; // zone origin, "rpz.example."
+  oneof source {
+    RpzFileSource file = 3;
+    RpzTransferSource transfer = 4;
+  }
+  RpzPolicyOverride policy_override = 5;
+  uint64 refresh_nonce = 6; // incremented by POST /rpz-zones/{id}/refresh
+}
+
+// TSIG secrets of RPZ transfer zones. Sent only on the Connect stream; held in engine memory only;
+// never part of ConfigSnapshot, never persisted by the engine.
+message RpzTsigKey {
+  string zone_id = 1; // RpzZone.id
+  string key_name = 2;
+  TsigAlgorithm algorithm = 3;
+  bytes secret = 4;
+}
+
+message RpzTsigKeys {
+  repeated RpzTsigKey keys = 1; // the complete set; an absent zone has no key
+}
+
+message RecursionStats {
+  uint64 upstream_queries = 1;
+  uint64 mismatched_replies = 2;
+  uint64 tcp_fallbacks = 3;
+  uint64 work_limit_exceeded = 4;
+  uint32 infra_entries = 5;
+  uint64 lame_marked = 6;
+}
+
+enum TrustAnchorState {
+  TRUST_ANCHOR_STATE_UNSPECIFIED = 0;
+  TRUST_ANCHOR_STATE_CONFIGURED = 1;
+  TRUST_ANCHOR_STATE_ADD_PEND = 2;
+  TRUST_ANCHOR_STATE_VALID = 3;
+  TRUST_ANCHOR_STATE_MISSING = 4;
+  TRUST_ANCHOR_STATE_REVOKED = 5;
+}
+
+message TrustAnchorStatus {
+  string zone = 1;
+  uint32 key_tag = 2;
+  uint32 algorithm = 3;
+  TrustAnchorState state = 4;
+  int64 last_refresh_success_unix = 5;
+  int64 hold_down_until_unix = 6;
+  string last_error = 7;
+}
+
+message DnssecStats {
+  uint64 secure = 1;
+  uint64 insecure = 2;
+  uint64 bogus = 3;
+  uint64 indeterminate = 4;
+  repeated TrustAnchorStatus trust_anchors = 5;
+  uint32 active_negative_trust_anchors = 6;
+}
+
+message RpzZoneStatus {
+  string id = 1;
+  uint32 serial = 2;
+  uint64 records = 3;
+  uint64 skipped = 4;
+  uint64 hits = 5;
+  int64 last_success_unix = 6;
+  string last_error = 7;
+  bool stale = 8;
 }
