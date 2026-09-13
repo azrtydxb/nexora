@@ -1,0 +1,51 @@
+# Nexora dev toolbox on kw: the Linux arm64 environment every build and test runs in.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexora-dev
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: work
+  namespace: nexora-dev
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn-single
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toolbox
+  namespace: nexora-dev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: toolbox }
+  template:
+    metadata:
+      labels: { app: toolbox }
+    spec:
+      containers:
+        - name: toolbox
+          image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-1
+          command: ["sleep", "infinity"]
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_BIND_SERVICE", "SYS_PTRACE"]
+          resources:
+            requests: { cpu: "4", memory: 8Gi }
+            limits: { cpu: "7", memory: 16Gi }
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        - name: work
+          persistentVolumeClaim: { claimName: work }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 2Gi }

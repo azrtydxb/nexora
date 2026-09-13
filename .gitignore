@@ -1,0 +1,8 @@
+/target/
+/engine/target/
+node_modules/
+/web/dist/
+/mgmt/internal/webui/dist/
+*.binpb.tmp
+.DS_Store
+/.procoder/ask/QA.md
