@@ -11,7 +11,8 @@ import (
 const usage = `usage (a port of 0 lets the kernel choose; the READY line names the bound addresses):
   nexora-fixture dns --udp ADDR --tcp ADDR --dot ADDR --doh ADDR --control ADDR --cert-dir DIR
   nexora-fixture http --listen ADDR
-  nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F`
+  nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F
+  nexora-fixture authhier --ready-file F`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,6 +29,8 @@ func main() {
 		stop, addrs, err = runHTTP(os.Args[2:])
 	case "oidc":
 		stop, addrs, err = runOIDC(os.Args[2:])
+	case "authhier":
+		stop, addrs, err = runAuthhier(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
