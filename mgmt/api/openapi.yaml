@@ -990,12 +990,21 @@ components:
         updated_at: { type: string, format: date-time }
     ZoneCreate:
       type: object
-      required: [name, kind, default_ttl, soa]
+      required: [name, kind]
       properties:
         name: { type: string, maxLength: 255, description: "Absolute zone name." }
         kind: { type: string, enum: [primary, secondary] }
-        default_ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
-        soa: { $ref: "#/components/schemas/ZoneSOAInput" }
+        default_ttl:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            maximum: 2147483647,
+            description: "Default 3600 when omitted.",
+          }
+        soa:
+          allOf: [{ $ref: "#/components/schemas/ZoneSOAInput" }]
+          description: "Required for primary zones; secondary zones take the SOA of their primary."
         nameservers:
           {
             type: array,
@@ -2567,6 +2576,17 @@ paths:
         "204": { description: Deleted. }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /zones/{zoneId}/refresh:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: refreshZone
+      tags: [zones]
+      description: Secondary zones only. The management plane checks the primaries and transfers a newer version now.
+      responses:
+        "202": { description: Refresh scheduled. }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/records:
     parameters:
       - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }

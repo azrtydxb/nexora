@@ -118,15 +118,24 @@ func (h *handlers) GetZone(ctx context.Context, req GetZoneRequestObject) (GetZo
 
 func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) (CreateZoneResponseObject, error) {
 	b := req.Body
-	ttl, err := u32("default_ttl", b.DefaultTtl)
-	if err != nil {
-		return nil, err
+	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: 3600, Transfer: transferIn(b.Transfer)}
+	if b.DefaultTtl != nil {
+		ttl, err := u32("default_ttl", *b.DefaultTtl)
+		if err != nil {
+			return nil, err
+		}
+		in.DefaultTTL = ttl
 	}
-	soa, err := soaIn(b.Soa, zone.SOA{})
-	if err != nil {
-		return nil, err
+	switch {
+	case b.Soa != nil:
+		soa, err := soaIn(*b.Soa, zone.SOA{})
+		if err != nil {
+			return nil, err
+		}
+		in.SOA = soa
+	case b.Kind == ZoneCreateKindPrimary:
+		return nil, invalid("soa is required for primary zones")
 	}
-	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: ttl, SOA: soa, Transfer: transferIn(b.Transfer)}
 	if b.Nameservers != nil {
 		in.Nameservers = *b.Nameservers
 	}
@@ -144,6 +153,13 @@ func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) 
 		return nil, err
 	}
 	return CreateZone201JSONResponse(zoneOut(z)), nil
+}
+
+func (h *handlers) RefreshZone(ctx context.Context, req RefreshZoneRequestObject) (RefreshZoneResponseObject, error) {
+	if err := h.d.Zones.RefreshNow(ctx, req.ZoneId); err != nil {
+		return nil, err
+	}
+	return RefreshZone202Response{}, nil
 }
 
 func (h *handlers) UpdateZone(ctx context.Context, req UpdateZoneRequestObject) (UpdateZoneResponseObject, error) {

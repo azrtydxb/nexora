@@ -115,6 +115,7 @@ var Permissions = map[string]Role{
 	"updateZoneRecord":          RoleOperator,
 	"deleteZoneRecord":          RoleOperator,
 	"importZoneFile":            RoleOperator,
+	"refreshZone":               RoleOperator,
 
 	"listUsers":       RoleAdmin,
 	"createTsigKey":   RoleAdmin,

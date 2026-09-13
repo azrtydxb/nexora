@@ -83,6 +83,7 @@ export const permissions = {
   updateZoneRecord: "operator",
   deleteZoneRecord: "operator",
   importZoneFile: "operator",
+  refreshZone: "operator",
 
   listUsers: "admin",
   createUser: "admin",

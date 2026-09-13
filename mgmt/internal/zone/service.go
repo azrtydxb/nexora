@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/miekg/dns"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
@@ -77,6 +78,15 @@ func loadZone(ctx context.Context, q querier, id uuid.UUID, forUpdate bool) (*Zo
 // GetZone returns one zone.
 func (s *Service) GetZone(ctx context.Context, id uuid.UUID) (*Zone, error) {
 	return loadZone(ctx, s.Store.Pool, id, false)
+}
+
+// GetZoneByName returns the zone named name (absolute, any case).
+func (s *Service) GetZoneByName(ctx context.Context, name string) (*Zone, error) {
+	z, err := scanZone(s.Store.Pool.QueryRow(ctx, "SELECT "+zoneColumns+" FROM zones WHERE name = $1", dns.CanonicalName(name)))
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("zone %s: %w", name, store.ErrNotFound)
+	}
+	return z, err
 }
 
 // ListZones returns every zone ordered by name.
@@ -219,6 +229,10 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 	if err != nil {
 		return nil, err
 	}
+	if in.Kind == "secondary" {
+		// Placeholder SOA until the first transfer copies the primary's.
+		in.SOA = SOA{MName: name, RName: name}
+	}
 	in.SOA = withDefaults(in.SOA)
 	if err := validSOA(in.SOA); err != nil {
 		return nil, err
@@ -288,6 +302,8 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 			if _, err := Rebuild(ctx, tx, s.Signer, z, RebuildOptions{Force: true}, s.now()); err != nil {
 				return auth.Change{}, err
 			}
+		} else if err := RequestRefresh(ctx, tx, id, "create"); err != nil {
+			return auth.Change{}, err
 		}
 		if out, err = loadZone(ctx, tx, id, false); err != nil {
 			return auth.Change{}, err
@@ -392,6 +408,42 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 	}, actor)
 }
 
+// RefreshChannel is the pg_notify channel that wakes the secondary-zone refresh scheduler; the
+// payload is the zone id.
+const RefreshChannel = "nexora_zone_refresh"
+
+// Execer runs a statement (a pool or a transaction).
+type Execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// RequestRefresh makes secondary zone id due now with trigger ("notify", "manual" or "create") and
+// wakes the scheduler. It returns ErrNotFound when id is not a secondary zone.
+func RequestRefresh(ctx context.Context, q Execer, id uuid.UUID, trigger string) error {
+	tag, err := q.Exec(ctx, `UPDATE zones SET next_refresh_at = now(), refresh_trigger = $2, refresh_requests = refresh_requests + 1
+		WHERE id = $1 AND kind = 'secondary'`, id, trigger)
+	if err != nil {
+		return store.MapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("secondary zone %s: %w", id, store.ErrNotFound)
+	}
+	_, err = q.Exec(ctx, "SELECT pg_notify($1, $2)", RefreshChannel, id.String())
+	return store.MapError(err)
+}
+
+// RefreshNow schedules an immediate refresh of secondary zone id.
+func (s *Service) RefreshNow(ctx context.Context, id uuid.UUID) error {
+	z, err := s.GetZone(ctx, id)
+	if err != nil {
+		return err
+	}
+	if z.Kind != "secondary" {
+		return invalid("zone_not_secondary", "only secondary zones are refreshed from a primary")
+	}
+	return RequestRefresh(ctx, s.Store.Pool, id, "manual")
+}
+
 // DeleteZone removes the zone at revision.
 func (s *Service) DeleteZone(ctx context.Context, actor auth.Actor, id uuid.UUID, revision int64) error {
 	_, err := snapshot.Mutate(ctx, s.Store, s.Build, actor, func(tx pgx.Tx) (auth.Change, error) {
@@ -462,6 +514,51 @@ func insertRecord(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID, rr dns.RR) (
 		return nil, store.MapError(err)
 	}
 	return r, nil
+}
+
+// LoadRecords returns the stored records of zoneID as RRs.
+func LoadRecords(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID) ([]dns.RR, error) {
+	return loadRecordRRs(ctx, tx, zoneID)
+}
+
+// ApplyRecordChanges removes the stored records matching deleted (owner, type and RDATA; the TTL
+// is ignored) and adds added, where a record already stored only takes the new TTL. Every RRset
+// written takes the TTL of its last added record. SOA records are skipped.
+func ApplyRecordChanges(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID, deleted, added []dns.RR) error {
+	for _, rr := range deleted {
+		h := rr.Header()
+		if h.Rrtype == dns.TypeSOA {
+			continue
+		}
+		wire, err := nzf.FromRR(rr)
+		if err != nil {
+			return invalid("invalid_rdata", err.Error())
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM zone_records WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = $3
+			AND sha256(rdata_wire) = sha256($4::bytea)`, zoneID, h.Name, int32(h.Rrtype), wire.RData); err != nil {
+			return err
+		}
+	}
+	for _, rr := range added {
+		h := rr.Header()
+		if h.Rrtype == dns.TypeSOA {
+			continue
+		}
+		wire, err := nzf.FromRR(rr)
+		if err != nil {
+			return invalid("invalid_rdata", err.Error())
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO zone_records (zone_id, owner, rtype, ttl, rdata, rdata_wire) VALUES ($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (zone_id, lower(owner), rtype, sha256(rdata_wire)) DO UPDATE SET ttl = EXCLUDED.ttl,
+			revision = zone_records.revision + 1, updated_at = now() WHERE zone_records.ttl <> EXCLUDED.ttl`,
+			zoneID, h.Name, int32(h.Rrtype), int64(h.Ttl), RDataText(rr), wire.RData); err != nil {
+			return store.MapError(err)
+		}
+		if err := setRRsetTTL(ctx, tx, zoneID, h.Name, h.Rrtype, h.Ttl); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setRRsetTTL gives every record of the RRset the TTL just written.

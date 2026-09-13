@@ -33,6 +33,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/blocklist"
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
+	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/secrets"
@@ -40,6 +41,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
+	"github.com/piwi3910/nexora/mgmt/internal/xfrin"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
@@ -285,6 +287,12 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	fetcher := blocklist.NewFetcher(st, build, &http.Client{})
 	go fetcher.Run(ctx)
 
+	zones := &zone.Service{Store: st, Build: build, Now: time.Now}
+	tsigKeys := &tsigkey.Service{Store: st, Build: build, Box: box}
+	refresher := &xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}
+	scheduler := &xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}
+	go func() { _ = scheduler.Run(ctx) }()
+
 	authSvc := auth.NewService(st, cfg.SecureCookies)
 	if token, created, err := authSvc.EnsureSetupToken(ctx, instanceID); err != nil {
 		return fmt.Errorf("setup token: %w", err)
@@ -293,7 +301,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		stats.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter)
+		stats.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter, xfrin.NotifyIgnored)
 	dnsTLS := control.NewDNSTLSFanout()
 	if cfg.DNSTLSCertFile != "" {
 		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)
@@ -314,7 +322,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
-			Zones: &zone.Service{Store: st, Build: build, Now: time.Now}, TSIGKeys: &tsigkey.Service{Store: st, Build: build, Box: box},
+			Zones: zones, TSIGKeys: tsigKeys,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -335,6 +343,10 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		_ = stats.Record(ctx, st, engineID, s)
 		_ = stats.RecordM3(ctx, st, engineID, s)
 	}
+	controlServer.OnNotify = func(ctx context.Context, _ string, ev *controlv1.NotifyReceived) error {
+		return scheduler.Notify(ctx, ev.Zone, ev.Source)
+	}
+	controlServer.OnUpdate = (&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).Apply
 	controlv1.RegisterEngineControlServer(srv, controlServer)
 	if builtinLog != nil {
 		collogspb.RegisterLogsServiceServer(srv, builtinLog)

@@ -44,16 +44,56 @@ type subscriber struct {
 	// keyMaterial holds at most one pending KeyMaterial, owned by this subscriber: the send loop
 	// clears its secrets once sent and a replaced pending set is cleared at once.
 	keyMaterial chan *controlv1.KeyMaterial
+	// results carries UpdateResult replies. Unlike out, nothing replaces a queued result; one that
+	// does not fit is dropped and the engine answers SERVFAIL after its own timeout.
+	results chan *controlv1.ServerMessage
+	// updateSlots bounds the updates of this engine being applied at once.
+	updateSlots chan struct{}
 
 	mu                sync.Mutex
 	version           uint64 // highest version sent, applied or rejected
 	keysDigest        string // digest of the last key set queued ("" = none)
 	keyMaterialDigest string // digest of the last KeyMaterial queued ("" = none)
+	updateTokens      float64
+	updateRefilled    time.Time
 }
+
+const (
+	resultsQueue       = 64
+	maxInflightUpdates = 16
+	updateRate         = 50.0 // per second, per engine
+	updateBurst        = 100.0
+)
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
 	return &subscriber{engineID: engineID, version: applied, out: make(chan *controlv1.ServerMessage, 1),
-		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1)}
+		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1),
+		results: make(chan *controlv1.ServerMessage, resultsQueue), updateSlots: make(chan struct{}, maxInflightUpdates),
+		updateTokens: updateBurst}
+}
+
+// allowUpdate takes one token from the engine's update bucket (updateRate per second, updateBurst deep).
+func (s *subscriber) allowUpdate(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.updateRefilled.IsZero() {
+		s.updateTokens = min(updateBurst, s.updateTokens+now.Sub(s.updateRefilled).Seconds()*updateRate)
+	}
+	s.updateRefilled = now
+	if s.updateTokens < 1 {
+		return false
+	}
+	s.updateTokens--
+	return true
+}
+
+// result queues an UpdateResult without blocking.
+func (s *subscriber) result(r *controlv1.UpdateResult) {
+	select {
+	case s.results <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_UpdateResult{UpdateResult: r}}:
+	default:
+		slog.Warn("update result dropped: queue full", "engine", s.engineID, "request", r.RequestId)
+	}
 }
 
 // offerKeyMaterial queues a private copy of km unless this engine was already given the set with

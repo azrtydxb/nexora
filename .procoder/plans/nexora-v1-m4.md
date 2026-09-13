@@ -4590,6 +4590,13 @@ fn notify_from_other_source_or_for_unknown_zone_is_refused() {
 - [ ] Implement: `Zone` gains `kind` and `primaries: Vec<SocketAddr>` (set by the loader from `AuthZone`; `set_secondary_primaries` is the test setter). `handle_notify`: parse with `msg::Question` (opcode 4, qtype SOA, class IN) else FORMERR; zone hosted with `origin == qname` else NOTAUTH; zone kind primary → REFUSED; TSIG present → verify (`error_response` on failure) and accept when the key belongs to one of the zone's primaries; otherwise the source IP must equal a primary's IP → else REFUSED; accepted → response header with QR, AA, opcode 4, question copied (TSIG-signed when the request was), serial taken from an answer-section SOA when present, `sink.notify(...)` (`false` → `result="dropped"`, otherwise `forwarded`). Route opcode 4 in `dispatch::unparsed` (every transport; `parse_query` answers NOTIMP for opcode 4). Count `nexora_auth_notify_received{result}` in `metrics.auth`. The production `NotifySink` is `AuthState`: `try_send` of `EngineMessage { msg: Some(Msg::NotifyReceived(ev)) }` on the sender `control::session` attached (capacity 1024; `false` when detached or full). `unparsed` passes `&ctx.shared.auth` as the sink and returns the response as `AuthOutcome::Reply`. Mgmt: `Server.receive` gains `case *controlv1.EngineMessage_NotifyReceived:` calling `s.OnNotify(ctx, sub.engineID, m.NotifyReceived)` when set (errors are logged, the stream continues), and `main.go` sets `controlServer.OnNotify` to call `scheduler.Notify(ctx, ev.Zone, ev.Source)`.
 - [ ] Add OpenAPI `POST /zones/{zoneId}/refresh` `refreshZone` → 202 (sets `next_refresh_at = now()`, `last_trigger = manual`, `pg_notify`), 422 `zone_not_secondary` (`#/components/responses/Error`); permission operator (Go and `permissions.ts`). Regenerate the API. In `main.go` build `xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}` and `xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}` (sharing the `zone.Service` and `tsigkey.Service` passed in `api.Deps`) and `go scheduler.Run(ctx)`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` and `scripts/dev-exec.sh go test ./mgmt/... -count=1` — expect PASS.
+- As built (management plane; recorded after implementation):
+  - Pending refresh requests live in migration `mgmt/migrations/00401_zone_refresh_requests.sql`: `zones.refresh_trigger` (`''|notify|manual|create`, the trigger the scheduler passes to the next run, instead of overloading `last_trigger`) and `zones.refresh_requests` (a counter `Refresh` reads first; a request arriving during a refresh keeps `next_refresh_at = now()` instead of being overwritten by the new timer).
+  - `zone` gains `RefreshChannel`, `RequestRefresh(ctx, q Execer, id, trigger)` (used by `CreateZone`, `RefreshNow` and `Scheduler.Notify`), `GetZoneByName`, `LoadRecords` and `ApplyRecordChanges(ctx, tx, zoneID, deleted, added)` (delete on owner/type/RDATA ignoring TTL; insert-or-retime; RRset TTL follows), shared by IXFR application and dynamic updates.
+  - `ZoneCreate` no longer requires `soa` and `default_ttl` (secondaries take the primary's SOA; the e2e test posts none); a primary without `soa` is 400, `default_ttl` defaults to 3600. `refreshZone` 422 is `zone_not_secondary`.
+  - `Server.OnNotify` returns `error` (logged at info). `NotifyIgnored` (`nexora_mgmt_notify_ignored_total`) is registered in `main.go`.
+  - Refresher: with a primary TSIG key the SOA response must be signed and every transfer message must verify (`dns.Transfer` rejects unsigned messages); transfers are bounded to `zone.MaxImportRecords` RRs, 30 s per message and 10 min overall; every transferred RR must be class IN inside the zone; received SOA refresh/retry/expire are floored at 5 s. Scheduler runs at most 8 refreshes in parallel and re-checks due-ness under the advisory lock.
+  - Extra tests: `TestRefreshWithTSIGRequiresSignedPrimary`, `TestSchedulerLoadsOnCreateAndRefreshesOnNotify`. The plan's refresh test read `p.queries` without the mutex (race detector); reads now take `p.mu`.
 - [ ] Commit: `git add engine mgmt web/src/api/schema.d.ts web/src/auth/permissions.ts && git commit -m "feat(m4): secondary zones pulled by the management plane with NOTIFY forwarded by engines"`.
 
 ## Task 11: RFC 2136 dynamic updates authenticated with TSIG
@@ -4697,7 +4704,7 @@ func TestPrerequisitesRFC2136(t *testing.T) {
 	cases := []struct {
 		name  string
 		build func(m *dns.Msg)
-		rcode uint32
+		rcode int
 	}{
 		{"rrset exists passes", func(m *dns.Msg) { m.RRsetUsed([]dns.RR{rr(t, "old.dyn.test. 0 IN A 0.0.0.0")}); m.Insert([]dns.RR{rr(t, "p1.dyn.test. 300 IN A 192.0.2.10")}) }, dns.RcodeSuccess},
 		{"rrset exists fails", func(m *dns.Msg) { m.RRsetUsed([]dns.RR{rr(t, "none.dyn.test. 0 IN A 0.0.0.0")}); m.Insert([]dns.RR{rr(t, "p2.dyn.test. 300 IN A 192.0.2.11")}) }, dns.RcodeNXRrset},
@@ -4954,6 +4961,10 @@ func mustRR(t *testing.T, s string) dns.RR {
 }
 ```
 
+- As built (management plane; recorded after implementation):
+  - `Applier.Apply` also rejects messages over 65535 bytes (FORMERR), requires the TSIG owner to equal `req.TsigKey` and the key's algorithm to match (NOTAUTH), and re-checks the key against the locked zone row inside the transaction. Invalid SOA timers in an update are REFUSED; an update that would break `zone.CheckSet` (DS/DNAME rules) is REFUSED and rolled back. Inserted owners are stored lowercase.
+  - Per engine the control server bounds updates: 16 applying at once (further ones REFUSED "too many concurrent updates"), a token bucket of 50/s with burst 100 (REFUSED "update rate limit exceeded"), request ids ≤ 64 bytes; without `OnUpdate` the reply is NOTIMP. Test `TestNotifyAndUpdateAreForwardedWithoutBlockingTheStream` (`mgmt/internal/control/forward_test.go`, fixture hook `setupServers`).
+  - Extra test `TestTSIGAndUpdatePolicy` (unsigned REFUSED, key outside the zone policy REFUSED, wrong secret NOTAUTH, key differing from the engine's NOTAUTH, allowed key applied). The plan's case struct used `rcode uint32` (does not compile as a map index); it is `int`.
 - [ ] Run `scripts/dev-exec.sh make e2e-build` then `scripts/dev-exec.sh go test ./e2e/ -run TestSecondaryAndDynamicUpdate -count=1` — expect PASS.
 - [ ] Commit: `git add engine mgmt e2e && git commit -m "feat(m4): TSIG-authenticated RFC 2136 updates applied transactionally by the management plane"`.
 

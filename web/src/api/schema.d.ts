@@ -822,6 +822,25 @@ export interface paths {
         patch: operations["updateZone"];
         trace?: never;
     };
+    "/zones/{zoneId}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Secondary zones only. The management plane checks the primaries and transfers a newer version now. */
+        post: operations["refreshZone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/zones/{zoneId}/records": {
         parameters: {
             query?: never;
@@ -1590,9 +1609,13 @@ export interface components {
             name: string;
             /** @enum {string} */
             kind: "primary" | "secondary";
-            /** Format: int64 */
-            default_ttl: number;
-            soa: components["schemas"]["ZoneSOAInput"];
+            /**
+             * Format: int64
+             * @description Default 3600 when omitted.
+             */
+            default_ttl?: number;
+            /** @description Required for primary zones; secondary zones take the SOA of their primary. */
+            soa?: components["schemas"]["ZoneSOAInput"];
             /** @description Primary zones: at least one apex NS target. */
             nameservers?: string[];
             /** @description Secondary zones: at least one primary. */
@@ -3635,6 +3658,28 @@ export interface operations {
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    refreshZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zoneId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refresh scheduled. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
             422: components["responses"]["Error"];
         };
     };

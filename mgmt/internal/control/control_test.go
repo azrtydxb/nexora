@@ -42,6 +42,11 @@ func setup(t *testing.T, instances int) *fixture { return setupHub(t, instances,
 
 // setupHub is setup with a hook that configures each instance's hub before it runs.
 func setupHub(t *testing.T, instances int, adjust func(*store.Store, *control.Hub)) *fixture {
+	return setupServers(t, instances, adjust, nil)
+}
+
+// setupServers is setupHub with a hook that configures each instance's control server.
+func setupServers(t *testing.T, instances int, adjust func(*store.Store, *control.Hub), adjustServer func(*control.Server)) *fixture {
 	env := harness.New(t)
 	pg := env.StartPostgres()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -76,7 +81,11 @@ func setupHub(t *testing.T, instances int, adjust func(*store.Store, *control.Hu
 			t.Fatal(err)
 		}
 		srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
-		controlv1.RegisterEngineControlServer(srv, control.NewServer(st, ca, hub, id, control.NewDNSTLSFanout()))
+		cs := control.NewServer(st, ca, hub, id, control.NewDNSTLSFanout())
+		if adjustServer != nil {
+			adjustServer(cs)
+		}
+		controlv1.RegisterEngineControlServer(srv, cs)
 		l, _ := net.Listen("tcp", "127.0.0.1:0")
 		go func() { _ = srv.Serve(l) }()
 		t.Cleanup(srv.Stop)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/miekg/dns"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -36,6 +37,12 @@ type Server struct {
 
 	// OnStats, when set, receives every Stats message.
 	OnStats func(ctx context.Context, engineID string, s *controlv1.Stats)
+	// OnNotify, when set, receives every NOTIFY an engine accepted for a secondary zone; an error
+	// (NOTIFY ignored) is logged and the stream continues.
+	OnNotify func(ctx context.Context, engineID string, ev *controlv1.NotifyReceived) error
+	// OnUpdate, when set, applies a dynamic update an engine forwarded. It runs outside the receive
+	// loop with a 4 s context; without it every update is answered NOTIMP.
+	OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult
 
 	st         *store.Store
 	ca         *pki.CA
@@ -192,6 +199,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				if err := stream.Send(msg); err != nil {
 					return
 				}
+			case msg := <-sub.results:
+				if err := stream.Send(msg); err != nil {
+					return
+				}
 			case m := <-tlsCh:
 				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}); err != nil {
 					return
@@ -237,6 +248,15 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			if s.OnStats != nil {
 				s.OnStats(ctx, sub.engineID, m.Stats)
 			}
+		case *controlv1.EngineMessage_NotifyReceived:
+			if s.OnNotify != nil {
+				ev := m.NotifyReceived
+				if nerr := s.OnNotify(ctx, sub.engineID, ev); nerr != nil {
+					slog.Info("notify not acted on", "engine", sub.engineID, "zone", ev.Zone, "source", ev.Source, "err", nerr)
+				}
+			}
+		case *controlv1.EngineMessage_UpdateRequest:
+			s.update(ctx, sub, m.UpdateRequest)
 		case *controlv1.EngineMessage_TlsMaterialResult:
 			res := m.TlsMaterialResult
 			s.dnsTLS.Result(sub.engineID, res)
@@ -251,6 +271,53 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			return grpcError(err)
 		}
 	}
+}
+
+const (
+	// maxUpdateMessage bounds a forwarded UPDATE: one DNS message.
+	maxUpdateMessage = 65535
+	maxRequestID     = 64
+	updateTimeout    = 4 * time.Second
+)
+
+// update applies one forwarded dynamic update outside the receive loop, within the engine's rate
+// and concurrency bounds, and queues its result on sub.results.
+func (s *Server) update(ctx context.Context, sub *subscriber, req *controlv1.UpdateRequest) {
+	reply := func(rcode uint32, detail string) {
+		sub.result(&controlv1.UpdateResult{RequestId: req.RequestId, Rcode: rcode, Detail: detail})
+	}
+	switch {
+	case len(req.RequestId) > maxRequestID:
+		slog.Warn("update request id too long", "engine", sub.engineID)
+		return
+	case s.OnUpdate == nil:
+		reply(dns.RcodeNotImplemented, "dynamic updates are not enabled")
+		return
+	case len(req.Message) > maxUpdateMessage:
+		reply(dns.RcodeFormatError, "update message too large")
+		return
+	case !sub.allowUpdate(time.Now()):
+		reply(dns.RcodeRefused, "update rate limit exceeded")
+		return
+	}
+	select {
+	case sub.updateSlots <- struct{}{}:
+	default:
+		reply(dns.RcodeRefused, "too many concurrent updates")
+		return
+	}
+	go func() {
+		defer func() { <-sub.updateSlots }()
+		uctx, cancel := context.WithTimeout(ctx, updateTimeout)
+		defer cancel()
+		res := s.OnUpdate(uctx, sub.engineID, req)
+		if res == nil {
+			reply(dns.RcodeServerFailure, "")
+			return
+		}
+		res.RequestId = req.RequestId
+		sub.result(res)
+	}()
 }
 
 // GetBlob streams a blob in BlobChunkSize chunks.
