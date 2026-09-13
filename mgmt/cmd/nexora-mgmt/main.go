@@ -40,12 +40,14 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
-// version is set at build time with -ldflags "-X main.version=<tag>".
+// version is set at build time with -ldflags "-X main.version=<tag>"; main hands it to the API's
+// health report.
 var version = "dev"
 
 const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F"
 
 func main() {
+	api.Version = version
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()

@@ -6,34 +6,58 @@ Namespace `nexora` on the kw cluster (context `kw`). Deploy or redeploy everythi
 scripts/kw-deploy.sh [--tag sha-<7>] [--skip-build]
 ```
 
-It builds and pushes `nexora-engine` and `nexora-mgmt` (`scripts/build-image.sh`), applies the
-manifests here, creates the CA secret, runs `bootstrap.sh` against the API and rolls out the
-engines. It ends by printing `NEXORA_KW_DNS_ADDR` and `NEXORA_KW_API_URL`; the smoke test runs from
-the dev pod:
+It builds and pushes `nexora-engine` and `nexora-mgmt` (`scripts/build-image.sh`, which stamps the tag
+into both binaries), applies the manifests here, creates the CA and DNS TLS secrets, runs
+`bootstrap.sh` against the API and rolls out the engines. It ends by printing the smoke-test
+environment (`NEXORA_KW_DNS_ADDR`, `NEXORA_KW_API_URL`, `NEXORA_KW_ENCRYPTED_ADDR`,
+`NEXORA_KW_DNS_TLS_NAME`, `NEXORA_KW_ENGINES`, `NEXORA_KW_MGMT_LB_IP`).
+
+`TestKwSmoke` runs from the dev pod. It also needs the Nexora CA (verifies the DNS TLS certificate),
+the cluster CA (verifies the ingress; the pod does not trust it) and the admin password, copied
+into the pod once:
 
 ```sh
-scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local \
+k() { kubectl --context kw -n nexora "$@"; }
+pod() { kubectl --context kw -n nexora-dev exec -i deploy/toolbox -c toolbox -- sh -c "$1"; }
+k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-ca.crt'
+k get secret nexora-ingress-tls -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-cluster-ca.crt'
+k get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d | pod 'umask 077; cat > /work/kw-admin-password'
+
+scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=https://nexora.kw.local \
+  NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
+  NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES=8 \
+  NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
   go test -count=1 -v -run TestKwSmoke ./e2e/
 ```
 
-| File                | Objects                                                                           |
-| ------------------- | --------------------------------------------------------------------------------- |
-| `namespace.yaml`    | Namespace `nexora`                                                                |
-| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                              |
-| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                  |
-| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`   |
-| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                          |
-| `mgmt.yaml`         | `nexora-mgmt` (2 replicas), Services, LoadBalancer, Ingress `nexora.kw.local`     |
-| `engine.yaml`       | `nexora-engine` (3 replicas on distinct nodes), DNS LoadBalancer, metrics Service |
-| `bootstrap.sh`      | API bootstrap: admin, upstreams 1.1.1.1/9.9.9.9, block list, join token           |
+The smoke test creates and removes a policy group `kw-smoke-client` and rewrites under
+`nexora-smoke.test`.
+
+| File                | Objects                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `namespace.yaml`    | Namespace `nexora`                                                                     |
+| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                   |
+| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                       |
+| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`        |
+| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                               |
+| `mgmt.yaml`         | `nexora-mgmt` (2 replicas), Services, gRPC LoadBalancer, TLS Ingress `nexora.kw.local` |
+| `engine.yaml`       | DaemonSet `nexora-engine` (one per node), DNS LoadBalancer (`Local`), metrics Service  |
+| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams 1.1.1.1/9.9.9.9, block list, join token     |
 
 ## Addresses
 
-- GUI/API: `http://nexora.kw.local` and `https://nexora.kw.local` (ingress, certificate from the
-  `cluster-ca` ClusterIssuer), or directly `http://192.168.10.135`.
+- GUI/API: `https://nexora.kw.local` only (ingress, certificate from the `cluster-ca` ClusterIssuer;
+  plain `http://nexora.kw.local` answers 308 to HTTPS). Session cookies are `Secure`. The
+  LoadBalancer IP `192.168.10.135` has no HTTP port, so there is no cleartext login path.
 - Engine gRPC: `nexora-mgmt-grpc.nexora.svc.cluster.local:9443` in the cluster,
   `192.168.10.135:9443` outside (both in the server certificate).
-- DNS: `192.168.10.136:53` (UDP and TCP).
+- DNS on `192.168.10.136`: 53 UDP/TCP, DoT 853/TCP, DoQ 853/UDP, DoH `https://192.168.10.136/dns-query`
+  (443/TCP). The serving certificate names `dns.nexora.kw.local` and `192.168.10.136` and is issued
+  by the Nexora CA (`nexora-ca`), e.g.
+  `kdig @192.168.10.136 +tls-ca=/work/kw-ca.crt +tls-hostname=dns.nexora.kw.local example.com`
+  (`+https`, `+quic` likewise).
+- The DNS Service uses `externalTrafficPolicy: Local` and the engines run on every node, so engines
+  (per-client policy, query log) see the real client address.
 
 ## Secrets
 
@@ -54,13 +78,17 @@ No key material or password is in git. The secrets are created imperatively, onc
   kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d
   ```
 
+- `nexora-dns-tls` (type `kubernetes.io/tls`), the DoT/DoH/DoQ serving certificate, by
+  `scripts/kw-deploy.sh` with `nexora-mgmt ca issue-dns` from `nexora-ca` (90 days). nexora-mgmt
+  reloads it every 30 s and pushes it to the engines; to rotate, replace the Secret.
+
 - `nexora-join-token` (`join-token`), by `bootstrap.sh` from `POST /api/v1/join-tokens`
   (valid one year, reusable by every engine replica).
 - `nexora-db-app` is generated by CNPG.
 
-## Known M1 limits
+## Known limits
 
-- The DNS LoadBalancer uses `externalTrafficPolicy: Cluster`: kube-vip holds the VIP on a node that
-  may run no engine, so engines see node addresses, not client addresses.
-- Engine state is an `emptyDir`: a restarted engine pod enrolls as a new engine.
-- Session cookies are not `Secure`, so the GUI also works over plain HTTP.
+- Engine state is an `emptyDir`: a restarted engine pod enrolls as a new engine (M5 moves it to
+  `hostPath`).
+- kube-vip (ARP) holds `192.168.10.136` on one control-plane node; with `externalTrafficPolicy: Local`
+  external queries to the VIP are dropped while the engine on that node restarts.

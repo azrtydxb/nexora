@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Deploy Nexora M1 to kw (namespace nexora): build and push the images, apply deploy/kw, create
-# the CA secret, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
+# Deploy Nexora to kw (namespace nexora): build and push the images, apply deploy/kw, create the CA
+# and DNS TLS secrets, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
+# Ends by printing the environment TestKwSmoke needs (see deploy/kw/README.md).
 #   scripts/kw-deploy.sh [--tag TAG] [--skip-build]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,6 +46,17 @@ if ! k get secret nexora-ca >/dev/null 2>&1; then
 	rm -rf "$tmp/ca"
 fi
 
+# The DNS serving certificate for DoT/DoH/DoQ; its key only exists in the temporary directory and the Secret.
+if ! k get secret nexora-dns-tls >/dev/null 2>&1; then
+	(umask 077 && mkdir -p "$tmp/ca-in" &&
+		k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d >"$tmp/ca-in/ca.crt" &&
+		k get secret nexora-ca -o jsonpath='{.data.ca\.key}' | base64 -d >"$tmp/ca-in/ca.key")
+	(cd "$root" && go run ./mgmt/cmd/nexora-mgmt ca issue-dns --ca-cert "$tmp/ca-in/ca.crt" --ca-key "$tmp/ca-in/ca.key" \
+		--names dns.nexora.kw.local,192.168.10.136 --days 90 --out "$tmp/dnstls")
+	k create secret tls nexora-dns-tls --cert="$tmp/dnstls/tls.crt" --key="$tmp/dnstls/tls.key"
+	rm -rf "$tmp/ca-in" "$tmp/dnstls"
+fi
+
 sed "s/NEXORA_TAG/$tag/" "$kw/mgmt.yaml" | k apply -f -
 k rollout status deployment/nexora-mgmt --timeout=10m
 k rollout status deployment/nexora-otelcol --timeout=5m
@@ -52,8 +64,18 @@ k rollout status deployment/nexora-blocklist --timeout=5m
 
 "$kw/bootstrap.sh"
 
-sed "s/NEXORA_TAG/$tag/" "$kw/engine.yaml" | k apply -f -
-k rollout status deployment/nexora-engine --timeout=10m
+# Server-side apply: client-side apply merges Service ports by port number alone, so 853/UDP (DoQ)
+# would be dropped next to 853/TCP (DoT).
+sed "s/NEXORA_TAG/$tag/" "$kw/engine.yaml" | k apply --server-side --force-conflicts -f -
+k rollout status daemonset/nexora-engine --timeout=15m
+# M1 ran the engines as a Deployment; the DaemonSet replaces it once it serves on every node.
+k delete deployment nexora-engine --ignore-not-found
 dns_ip=$(k get service nexora-dns -o jsonpath='{.spec.loadBalancerIP}')
+mgmt_ip=$(k get service nexora-mgmt-lb -o jsonpath='{.spec.loadBalancerIP}')
+engines=$(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}')
 echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
-echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-http://nexora.kw.local}"
+echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.local}"
+echo "NEXORA_KW_ENCRYPTED_ADDR=${dns_ip}"
+echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local"
+echo "NEXORA_KW_ENGINES=${engines}"
+echo "NEXORA_KW_MGMT_LB_IP=${mgmt_ip}"

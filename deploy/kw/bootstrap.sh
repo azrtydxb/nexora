@@ -8,11 +8,20 @@
 set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
 ns=nexora
-api="${NEXORA_KW_API_URL:-http://nexora.kw.local}"
+api="${NEXORA_KW_API_URL:-https://nexora.kw.local}"
 k() { kubectl --context "$ctx" -n "$ns" "$@"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 jar="$tmp/cookies"
+
+# The ingress certificate comes from cert-manager's cluster-ca, which also stores its CA in the
+# Secret; curl trusts exactly that CA. The session cookie is Secure, so it only travels over HTTPS.
+for _ in $(seq 60); do
+	{ k get secret nexora-ingress-tls -o jsonpath='{.data.ca\.crt}' | base64 -d; } >"$tmp/ingress-ca.crt" 2>/dev/null || true
+	[ -s "$tmp/ingress-ca.crt" ] && break
+	sleep 2
+done
+curl() { command curl --cacert "$tmp/ingress-ca.crt" "$@"; }
 
 if ! k get secret nexora-admin >/dev/null 2>&1; then
 	k create secret generic nexora-admin --from-literal=username=admin \

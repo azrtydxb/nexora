@@ -4,6 +4,9 @@
 #
 #   scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine [-t tag] [-p linux/arm64] [context]
 #
+# The tag is passed as the build argument VERSION, which the Nexora Dockerfiles stamp into the
+# binaries (nexora-mgmt /api/v1/health, nexora-engine --version).
+#
 # Push credentials are read from the cluster (the `ci` account's dockerconfigjson)
 # into a temporary DOCKER_CONFIG that is deleted on exit, so no password is ever
 # written under $HOME.
@@ -20,17 +23,32 @@ while getopts ":f:n:t:p:" opt; do
 	n) name="$OPTARG" ;;
 	t) tag="$OPTARG" ;;
 	p) platform="$OPTARG" ;;
-	*) echo "usage: $0 -f dockerfile -n name [-t tag] [-p platform] [context]" >&2; exit 2 ;;
+	*)
+		echo "usage: $0 -f dockerfile -n name [-t tag] [-p platform] [context]" >&2
+		exit 2
+		;;
 	esac
 done
 shift $((OPTIND - 1))
 [ $# -gt 0 ] && context="$1"
-[ -n "$name" ] || { echo "-n name is required" >&2; exit 2; }
+[ -n "$name" ] || {
+	echo "-n name is required" >&2
+	exit 2
+}
 
 case "$platform" in
-linux/arm64) addr="tcp://192.168.10.130:1234"; kctx="kw" ;;
-linux/amd64) addr="tcp://192.168.10.211:1234"; kctx="novanas" ;;
-*) echo "no builder for $platform" >&2; exit 2 ;;
+linux/arm64)
+	addr="tcp://192.168.10.130:1234"
+	kctx="kw"
+	;;
+linux/amd64)
+	addr="tcp://192.168.10.211:1234"
+	kctx="novanas"
+	;;
+*)
+	echo "no builder for $platform" >&2
+	exit 2
+	;;
 esac
 
 if [ -z "$tag" ]; then
@@ -48,7 +66,10 @@ done
 mkdir -p "$work/docker"
 kubectl --context kw -n novaforge-dev get secret nexus-pull \
 	-o 'jsonpath={.data.\.dockerconfigjson}' | base64 -d >"$work/docker/config.json"
-grep -q '192.168.10.131:5000' "$work/docker/config.json" || { echo "no push credentials found" >&2; exit 1; }
+grep -q '192.168.10.131:5000' "$work/docker/config.json" || {
+	echo "no push credentials found" >&2
+	exit 1
+}
 
 image="192.168.10.131:5000/azrtydxb/${name}:${tag}"
 echo "building ${image} (${platform})"
@@ -59,5 +80,6 @@ DOCKER_CONFIG="$work/docker" buildctl --addr "$addr" \
 	--local dockerfile="$(dirname "$context/$dockerfile")" \
 	--opt filename="$(basename "$dockerfile")" \
 	--opt platform="$platform" \
+	--opt build-arg:VERSION="$tag" \
 	--output "type=image,name=${image},push=true"
 echo "pull as 192.168.10.131/azrtydxb/${name}:${tag}"

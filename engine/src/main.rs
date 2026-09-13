@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 #[derive(clap::Parser)]
-#[command(version)]
+#[command(version = nexora_engine::VERSION)]
 struct Args {
     #[arg(long, default_value = "/etc/nexora/engine.toml")]
     config: PathBuf,

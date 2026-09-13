@@ -4201,6 +4201,26 @@ The `nas.home.test` query from the "adults" client goes upstream, where the fixt
 
 ## Task 13: kw deployment, smoke subtests, GUI coverage and perf gate
 
+As built (reconciled with `.procoder/notes/plan-review.md` "After M1 kw deployment", which overrides
+the steps below where they differ):
+
+- Engines run as DaemonSet `nexora-engine` (one per node, control-plane taints tolerated) and the
+  `nexora-dns` Service uses `externalTrafficPolicy: Local`, so engines see real client addresses;
+  `scripts/kw-deploy.sh` waits for `daemonset/nexora-engine` and then deletes M1's Deployment.
+- Version stamping: `scripts/build-image.sh` passes `--opt build-arg:VERSION=<tag>`; the engine
+  Dockerfile compiles it in as `NEXORA_VERSION` (`nexora_engine::VERSION`, reported by `--version`
+  and as `engine_version`), and `nexora-mgmt` copies `main.version` into `api.Version` (`/api/v1/health`).
+- GUI/API only over HTTPS: ingress `nexora.kw.local` with `ssl-redirect`/`force-ssl-redirect`,
+  `NEXORA_SECURE_COOKIES=true`, `NEXORA_PUBLIC_URL=https://nexora.kw.local`; port 80 is removed from
+  `nexora-mgmt-lb` (gRPC 9443 only); `bootstrap.sh` talks HTTPS trusting the CA in `nexora-ingress-tls`.
+- `TestKwSmoke` requires, besides `NEXORA_KW_DNS_ADDR`/`NEXORA_KW_API_URL` (now `https://`),
+  `NEXORA_KW_ENCRYPTED_ADDR`, `NEXORA_KW_CA_FILE`, `NEXORA_KW_DNS_TLS_NAME`, `NEXORA_KW_ENGINES`,
+  `NEXORA_KW_MGMT_LB_IP`, `NEXORA_KW_ADMIN_PASSWORD_FILE` and optionally `NEXORA_KW_API_CA_FILE`
+  (all printed or documented by `scripts/kw-deploy.sh` / `deploy/kw/README.md`). Subtests:
+  `http-redirects-to-https`, `management-lb-has-no-cleartext-http`, `engine-version-stamped`, `dot`,
+  `doh-get`, `doh-post`, `doq`, `query-log-records-client-address`, `per-client-policy-and-rewrites`;
+  it also asserts the health version is not `dev` and the login cookie is `Secure` and `HttpOnly`.
+
 Files:
 
 - `deploy/kw/engine.yaml` (M1) — `engine.toml.tmpl` listener keys, container ports 853/tcp, 853/udp, 443/tcp, and dot/doq/doh ports on the existing `nexora-dns` LoadBalancer Service.

@@ -23,7 +23,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/webui"
 )
 
-// Version is the build version reported by getHealth (set with -ldflags -X).
+// Version is the build version reported by getHealth (set by nexora-mgmt from its stamped version).
 var Version = "dev"
 
 // maxBodyBytes bounds every API request body.

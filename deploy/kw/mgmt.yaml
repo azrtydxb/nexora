@@ -1,6 +1,7 @@
-# nexora-mgmt on kw: 2 replicas, GUI/API behind ingress nexora.kw.local and, with gRPC 9443 for
-# engines outside the cluster, on the LoadBalancer IP 192.168.10.135. NEXORA_TAG is substituted by
-# scripts/kw-deploy.sh. Needs the secrets nexora-db-app (CNPG) and nexora-ca (see README.md).
+# nexora-mgmt on kw: 2 replicas, GUI/API only over HTTPS on ingress https://nexora.kw.local (plain HTTP
+# redirects), gRPC 9443 for engines on the LoadBalancer IP 192.168.10.135 (no HTTP port there, so no
+# cleartext cookie login). NEXORA_TAG is substituted by scripts/kw-deploy.sh. Needs the secrets
+# nexora-db-app (CNPG), nexora-ca and nexora-dns-tls (see README.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,6 +32,8 @@ spec:
       containers:
         - name: mgmt
           image: 192.168.10.131/azrtydxb/nexora-mgmt:NEXORA_TAG
+          # kw tags are rebuilt in place (sha-<HEAD> of a working tree), so always pull.
+          imagePullPolicy: Always
           args: ["serve"]
           env:
             - name: NEXORA_DATABASE_URL
@@ -41,10 +44,19 @@ spec:
             - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
             - name: NEXORA_GRPC_SERVER_NAMES
               value: "nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,192.168.10.135"
-            - { name: NEXORA_PUBLIC_URL, value: "http://nexora.kw.local" }
-            # debt: cookies are not Secure so the GUI also works over plain HTTP on the
-            # LoadBalancer IP; revisit when kw access goes through the TLS ingress only.
-            - { name: NEXORA_SECURE_COOKIES, value: "false" }
+            - { name: NEXORA_PUBLIC_URL, value: "https://nexora.kw.local" }
+            - { name: NEXORA_SECURE_COOKIES, value: "true" }
+            # The DNS serving certificate pushed to engines for DoT/DoH/DoQ. The kubelet updates a
+            # Secret volume in place, so rotating the Secret rotates the certificate without restarts.
+            - {
+                name: NEXORA_DNS_TLS_CERT_FILE,
+                value: /etc/nexora/dns-tls/tls.crt,
+              }
+            - {
+                name: NEXORA_DNS_TLS_KEY_FILE,
+                value: /etc/nexora/dns-tls/tls.key,
+              }
+            - { name: NEXORA_DNS_TLS_RELOAD_INTERVAL, value: 30s }
             - { name: NEXORA_QUERYLOG_BACKEND, value: opensearch }
             - {
                 name: NEXORA_OPENSEARCH_URL,
@@ -75,9 +87,12 @@ spec:
             }
           volumeMounts:
             - { name: ca, mountPath: /etc/nexora/ca, readOnly: true }
+            - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
       volumes:
         - name: ca
           secret: { secretName: nexora-ca, defaultMode: 0440 }
+        - name: dns-tls
+          secret: { secretName: nexora-dns-tls, defaultMode: 0440 }
 ---
 apiVersion: v1
 kind: Service
@@ -106,8 +121,9 @@ spec:
   type: LoadBalancer
   loadBalancerIP: 192.168.10.135
   selector: { app.kubernetes.io/name: nexora-mgmt }
+  # gRPC only: the GUI/API is reachable solely through the TLS ingress, so session cookies never
+  # travel in cleartext.
   ports:
-    - { name: http, port: 80, targetPort: http }
     - { name: grpc, port: 9443, targetPort: grpc }
 ---
 apiVersion: networking.k8s.io/v1
@@ -117,7 +133,9 @@ metadata:
   namespace: nexora
   annotations:
     cert-manager.io/cluster-issuer: cluster-ca
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Plain HTTP answers 308 to https://nexora.kw.local; cookies are Secure.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
   tls:
