@@ -1,4 +1,5 @@
-//! Counters, the query-log ring, and (Task 9) their export.
+//! Counters, the query-log ring, and their export.
 
 pub mod metrics;
+pub mod otlp;
 pub mod querylog;

@@ -21,6 +21,15 @@ pub enum Transport {
     Tcp,
 }
 
+impl Transport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Transport::Udp => "udp",
+            Transport::Tcp => "tcp",
+        }
+    }
+}
+
 /// A borrowed view of a query's OPT record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OptView<'a> {

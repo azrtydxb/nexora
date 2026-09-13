@@ -16,7 +16,7 @@ use crate::telemetry::metrics::{Metrics, WorkerCounters};
 use crate::telemetry::querylog::{self, CacheOutcome, FilterOutcome, QueryRecord, RING_CAPACITY};
 use crate::upstream::{self, Question, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use crossbeam_queue::ArrayQueue;
 use rand::RngExt;
@@ -36,6 +36,11 @@ pub struct Shared {
     pub metrics: Metrics,
     pub querylog: ArrayQueue<QueryRecord>,
     pub cookie_secret: CookieSecret,
+    /// Empty until the engine has enrolled.
+    pub engine_id: ArcSwap<String>,
+    pub node_name: ArcSwap<String>,
+    /// The management-plane channel while the control stream is connected.
+    pub mgmt_channel: ArcSwapOption<tonic::transport::Channel>,
 }
 
 impl Shared {
@@ -48,6 +53,9 @@ impl Shared {
             metrics: Metrics::new(workers),
             querylog: ArrayQueue::new(RING_CAPACITY),
             cookie_secret: CookieSecret(secret),
+            engine_id: ArcSwap::from_pointee(String::new()),
+            node_name: ArcSwap::from_pointee(String::new()),
+            mgmt_channel: ArcSwapOption::empty(),
         })
     }
 }

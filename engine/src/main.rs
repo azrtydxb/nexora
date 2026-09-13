@@ -2,6 +2,7 @@ use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
 use nexora_engine::server::{self, Shared};
 use nexora_engine::snapshot::{self, ApplyOutcome, DirBlobs};
+use nexora_engine::telemetry::{metrics, otlp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ fn main() -> ExitCode {
     };
     clock::start_ticker();
     let shared = Shared::new(boot.worker_count());
+    shared.node_name.store(Arc::new(boot.node_name.clone()));
 
     if boot.is_standalone() {
         if !apply_standalone(&shared, &boot) {
@@ -62,6 +64,15 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    otlp::spawn_telemetry_thread(shared.clone());
+    {
+        let (addr, shared) = (boot.metrics_listen, shared.clone());
+        control.spawn(async move {
+            if let Err(e) = metrics::serve_metrics(addr, shared).await {
+                eprintln!("nexora-engine: metrics listener {addr}: {e}");
+            }
+        });
+    }
     if boot.is_standalone() {
         // Registered before workers serve long, so a SIGHUP never takes the default action.
         let hangup = {
