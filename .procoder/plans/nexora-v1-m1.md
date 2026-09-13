@@ -61,145 +61,121 @@ Plan-wide rules every task inherits:
 
 ## Task 1: Dev pod, sync/exec scripts and Makefile
 
+As built: the toolbox image, the pod manifest and the sync/exec scripts existed before this task (committed with the spec and architecture) and were verified working; this task reconciled them with the plan instead of recreating the pod. The Deployment is `toolbox` (container `toolbox`, label `app=toolbox`, PVC `work`), so every later `kubectl exec` uses `deploy/toolbox -c toolbox`.
+
 Files:
-- `deploy/dev/dev-pod.yaml` (create) — namespace `nexora-dev`, PVC, Deployment `nexora-dev`
-- `scripts/dev-sync.sh` (create) — rsync of the working tree into `/work/nexora` over `kubectl exec`
-- `scripts/dev-exec.sh` (create) — sync, then run a command in `/work/nexora` in the pod
+
+- `deploy/dev/Dockerfile` (existing) — toolbox image: Rust 1.97 + nightly + cargo-fuzz, Go 1.27, Node 26 + pnpm 10, protoc + protoc-gen-go v1.36.12 + protoc-gen-go-grpc 1.6.2, oapi-codegen v2.8.0, PostgreSQL 17, dnsperf, bind9, otelcol-contrib 0.160.0, Playwright chromium
+- `deploy/dev/dev-pod.yaml` (existing) — namespace `nexora-dev`, PVC `work` (100Gi `longhorn-single`), Deployment `toolbox`
+- `scripts/dev-sync.sh` (existing, modified) — rsync of the working tree into `/work/nexora` over `kubectl exec`; pod-side build outputs excluded
+- `scripts/dev-exec.sh` (existing, modified) — sync, then run a command in `/work/nexora` in the pod
 - `Makefile` (create) — in-pod targets `proto`, `engine-test`, `mgmt-test`, `web-test`, `e2e-build`, `e2e`, `lint`, `build`, `web-build`, `webui-placeholder`, `fuzz-smoke`
 - `scripts/dev-selftest.sh` (create) — asserts the pod has every toolchain M1 uses
 
 Interfaces:
-- Produces `scripts/dev-sync.sh` (no args; env `NEXORA_DEV_CONTEXT` default `kw`, `NEXORA_DEV_NAMESPACE` default `nexora-dev`) and `scripts/dev-exec.sh <cmd...>` (exit status of `<cmd>`), consumed by every later task.
-- Produces Makefile targets named above; `e2e-build` puts `nexora-engine`, `nexora-mgmt`, `nexora-fixture`, `perfgate` into `bin/` (the harness default `NEXORA_E2E_BIN_DIR`).
-- Consumes image `192.168.10.131/azrtydxb/nexora-dev:toolbox-1` built from the existing `deploy/dev/Dockerfile`.
 
-- [ ] Write the failing self-test `scripts/dev-selftest.sh`:
+- Produces `scripts/dev-sync.sh` (no args; env `NEXORA_DEV_CONTEXT` default `kw`, `NEXORA_DEV_NAMESPACE` default `nexora-dev`) and `scripts/dev-exec.sh <cmd...>` (exit status of `<cmd>`), consumed by every later task. One argument is run as a shell string (`scripts/dev-exec.sh 'make lint && make engine-test'`); several arguments are shell-quoted word by word (`scripts/dev-exec.sh bash -c 'cd web && pnpm install'`). The command runs under non-login `bash -c`; the image `ENV` supplies `PATH`, `CARGO_TARGET_DIR=/work/target`, `GOCACHE`, `GOMODCACHE`, `PNPM_HOME`.
+- In-pod files are copied back to the laptop with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - <paths> | tar -xf -`.
+- Produces Makefile targets named above; `e2e-build` puts `nexora-engine`, `nexora-mgmt`, `nexora-fixture`, `perfgate` into `bin/` (the harness default `NEXORA_E2E_BIN_DIR`).
+- Consumes image `192.168.10.131/azrtydxb/nexora-dev:toolbox-1` built from `deploy/dev/Dockerfile` with `scripts/build-image.sh -f Dockerfile -n nexora-dev -t toolbox-1 deploy/dev`.
+
+- [x] Write the self-test `scripts/dev-selftest.sh`:
 
 ```bash
 #!/usr/bin/env bash
 # Runs inside the dev pod: fails unless every M1 toolchain is present at the pinned version.
 set -euo pipefail
 fail=0
-check() { if ! out=$("$@" 2>&1); then echo "MISSING: $*"; fail=1; else echo "ok: $* -> ${out%%$'\n'*}"; fi; }
+check() { if ! out=$("$@" 2>&1); then
+	echo "MISSING: $*"
+	fail=1
+else echo "ok: $* -> ${out%%$'\n'*}"; fi; }
 check rustc --version
-rustc --version | grep -q '^rustc 1\.97' || { echo "WRONG rustc"; fail=1; }
+rustc --version | grep -q '^rustc 1\.97' || {
+	echo "WRONG rustc"
+	fail=1
+}
 check go version
-go version | grep -q 'go1\.27' || { echo "WRONG go"; fail=1; }
+go version | grep -q 'go1\.27' || {
+	echo "WRONG go"
+	fail=1
+}
 check node --version
-node --version | grep -q '^v26\.' || { echo "WRONG node"; fail=1; }
+node --version | grep -q '^v26\.' || {
+	echo "WRONG node"
+	fail=1
+}
 check pnpm --version
 check protoc --version
 check protoc-gen-go --version
+check protoc-gen-go-grpc --version
 check oapi-codegen --version
 check initdb --version
 check otelcol-contrib --version
-command -v dnsperf >/dev/null || { echo "MISSING: dnsperf"; fail=1; }
+command -v dnsperf >/dev/null || {
+	echo "MISSING: dnsperf"
+	fail=1
+}
 check cargo fuzz --help
 check rsync --version
-[ -d /work ] && [ -w /work ] || { echo "MISSING: writable /work"; fail=1; }
+[ -d /work ] && [ -w /work ] || {
+	echo "MISSING: writable /work"
+	fail=1
+}
 df -BG /work | awk 'NR==2 { if ($2+0 < 90) { print "PVC too small: " $2; exit 1 } }' || fail=1
-test "$(nproc)" -ge 7 || { echo "fewer than 7 CPUs: $(nproc)"; fail=1; }
+test "$(nproc)" -ge 7 || {
+	echo "fewer than 7 CPUs: $(nproc)"
+	fail=1
+}
 exit $fail
 ```
 
-- [ ] Run it before the pod exists: `bash scripts/dev-exec.sh bash scripts/dev-selftest.sh` — expect FAIL with `No such file or directory` (dev-exec.sh does not exist yet).
-- [ ] Write `deploy/dev/dev-pod.yaml`:
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: nexora-dev
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: nexora-dev-work
-  namespace: nexora-dev
-spec:
-  accessModes: ["ReadWriteOnce"]
-  storageClassName: longhorn-single
-  resources:
-    requests:
-      storage: 100Gi
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nexora-dev
-  namespace: nexora-dev
-  labels: {app.kubernetes.io/name: nexora-dev}
-spec:
-  replicas: 1
-  strategy: {type: Recreate}
-  selector:
-    matchLabels: {app.kubernetes.io/name: nexora-dev}
-  template:
-    metadata:
-      labels: {app.kubernetes.io/name: nexora-dev}
-    spec:
-      imagePullSecrets: [{name: nexus-pull}]
-      terminationGracePeriodSeconds: 5
-      containers:
-        - name: toolbox
-          image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-1
-          imagePullPolicy: IfNotPresent
-          command: ["sleep", "infinity"]
-          env:
-            - {name: CARGO_TARGET_DIR, value: /work/target}
-            - {name: GOCACHE, value: /work/cache/go-build}
-            - {name: GOMODCACHE, value: /work/cache/gomod}
-            - {name: PNPM_HOME, value: /work/cache/pnpm}
-            - {name: npm_config_store_dir, value: /work/cache/pnpm-store}
-          resources:
-            requests: {cpu: "2", memory: 4Gi}
-            limits: {cpu: "7", memory: 16Gi}
-          volumeMounts:
-            - {name: work, mountPath: /work}
-      volumes:
-        - name: work
-          persistentVolumeClaim: {claimName: nexora-dev-work}
-```
-
-- [ ] Write `scripts/dev-sync.sh` (it doubles as rsync's remote shell when called with `--rsh`):
+- [x] The pod already existed, so the "fails before the pod exists" run does not apply; the self-test is the guard against a regressed image.
+- [x] `deploy/dev/dev-pod.yaml` is kept as committed (applied; pod `toolbox-*` running on kw). Compared with the originally planned manifest it names the Deployment `toolbox` and the PVC `work`, sets no `env` (the image `ENV` covers the cache dirs), adds `NET_ADMIN`/`NET_BIND_SERVICE`/`SYS_PTRACE` capabilities and a 2Gi memory `/dev/shm` for Chromium, and requests 4 CPU / 8Gi (limit 7 CPU / 16Gi). To change it: edit, then `kubectl --context kw apply -f deploy/dev/dev-pod.yaml && kubectl --context kw -n nexora-dev rollout status deploy/toolbox --timeout=10m`.
+- [x] `scripts/dev-sync.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# Sync the working tree into the nexora-dev pod at /work/nexora (rsync over kubectl exec).
+# Mirror the working tree into the kw dev pod at /work/nexora (rsync over kubectl exec).
+# The remote "host" is literally `rsync` and --rsync-path is empty, so the exec'd
+# command becomes `rsync --server ...` inside the pod. Pod-side build outputs are
+# excluded so --delete leaves them alone.
 set -euo pipefail
 ctx="${NEXORA_DEV_CONTEXT:-kw}"
 ns="${NEXORA_DEV_NAMESPACE:-nexora-dev}"
-if [ "${1:-}" = "--rsh" ]; then
-	shift 2 # drop "--rsh" and the placeholder host rsync passes
-	exec kubectl --context "$ctx" -n "$ns" exec -i deploy/nexora-dev -c toolbox -- "$@"
-fi
-root="$(cd "$(dirname "$0")/.." && pwd)"
-kubectl --context "$ctx" -n "$ns" exec deploy/nexora-dev -c toolbox -- mkdir -p /work/nexora
-rsync -az --delete --blocking-io \
-	--exclude '/.git/' --exclude '/target/' --exclude '/engine/target/' --exclude 'node_modules/' \
-	--exclude '/web/dist/' --exclude '/bin/' --exclude '/web/test-results/' --exclude '/web/playwright-report/' \
-	--exclude '/mgmt/internal/webui/dist/' \
-	-e "$root/scripts/dev-sync.sh --rsh" \
-	"$root/" pod:/work/nexora/
+root=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+kubectl --context "$ctx" -n "$ns" exec deploy/toolbox -c toolbox -- mkdir -p /work/nexora
+rsync -a --delete --blocking-io \
+	--exclude /.git/ --exclude target/ --exclude node_modules/ --exclude /web/dist/ \
+	--exclude /bin/ --exclude /web/test-results/ --exclude /web/playwright-report/ \
+	--exclude /mgmt/internal/webui/dist/ \
+	--rsync-path= \
+	-e "kubectl --context $ctx -n $ns exec -i deploy/toolbox -c toolbox --" \
+	"$root/" rsync:/work/nexora/
 ```
 
-- [ ] Write `scripts/dev-exec.sh`:
+Until `mgmt/internal/` exists on the laptop (Task 12), a sync after `make webui-placeholder` prints harmless `cannot delete non-empty directory: mgmt/...` warnings.
+
+- [x] `scripts/dev-exec.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# Run a command inside the nexora-dev pod in /work/nexora after syncing the tree.
+# Sync, then run a command in the kw dev pod from /work/nexora (non-login bash).
+#   scripts/dev-exec.sh 'make engine-test && make lint'   # one argument: a shell string
+#   scripts/dev-exec.sh bash -c 'cd web && pnpm install'  # several arguments: quoted as words
 set -euo pipefail
-[ $# -gt 0 ] || { echo "usage: $0 <command...>" >&2; exit 2; }
+[ $# -gt 0 ] || {
+	echo "usage: $0 <command...>" >&2
+	exit 2
+}
 ctx="${NEXORA_DEV_CONTEXT:-kw}"
 ns="${NEXORA_DEV_NAMESPACE:-nexora-dev}"
 "$(dirname "$0")/dev-sync.sh"
-tty=""; [ -t 0 ] && tty="-t"
-cmd=$(printf '%q ' "$@")
-exec kubectl --context "$ctx" -n "$ns" exec -i $tty deploy/nexora-dev -c toolbox -- \
-	bash -lc "cd /work/nexora && $cmd"
+if [ $# -eq 1 ]; then cmd="$1"; else cmd=$(printf '%q ' "$@"); fi
+exec kubectl --context "$ctx" -n "$ns" exec -i deploy/toolbox -c toolbox -- bash -c "cd /work/nexora && $cmd"
 ```
 
-- [ ] Write `Makefile` (runs inside the dev pod):
+- [x] Write `Makefile` (runs inside the dev pod):
 
 ```makefile
 SHELL := /bin/bash
@@ -263,13 +239,14 @@ fuzz-smoke:
 	cd engine/fuzz && cargo +nightly fuzz run parse_query -- -max_total_time=60
 ```
 
-- [ ] Make scripts executable and apply the pod: `chmod +x scripts/dev-sync.sh scripts/dev-exec.sh scripts/dev-selftest.sh && kubectl --context kw create namespace nexora-dev --dry-run=client -o yaml | kubectl --context kw apply -f - && kubectl --context kw -n novaforge-dev get secret nexus-pull -o json | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.ownerReferences)' | kubectl --context kw -n nexora-dev apply -f - && kubectl --context kw apply -f deploy/dev/dev-pod.yaml && kubectl --context kw -n nexora-dev rollout status deploy/nexora-dev --timeout=10m` — expect `deployment "nexora-dev" successfully rolled out`.
-- [ ] Run `scripts/dev-exec.sh bash scripts/dev-selftest.sh` — expect PASS: every line starts with `ok:` and exit status 0.
-- [ ] Commit: `git add deploy/dev/dev-pod.yaml scripts/dev-sync.sh scripts/dev-exec.sh scripts/dev-selftest.sh Makefile && git commit -m "dev: nexora-dev pod, sync/exec scripts and Makefile"`.
+- [x] Run `scripts/dev-exec.sh bash scripts/dev-selftest.sh` — expect PASS: every line starts with `ok:` and exit status 0.
+- [x] Run `scripts/dev-exec.sh 'make webui-placeholder && make -n e2e-build lint proto >/dev/null && echo parse-ok'` — expect `parse-ok`.
+- [x] Commit: `git add scripts/dev-sync.sh scripts/dev-exec.sh scripts/dev-selftest.sh Makefile .procoder/plans/nexora-v1-m1.md && git commit -m "M1 Task 1: dev self-test, Makefile, sync/exec reconciled with the plan"`.
 
 ## Task 2: Repository skeleton, control proto and code generation
 
 Files:
+
 - `go.mod`, `go.sum` (create) — module `github.com/piwi3910/nexora`
 - `Cargo.toml` (create) — workspace `members = ["engine"]`, `exclude = ["engine/fuzz"]`
 - `Cargo.lock` (create, generated)
@@ -285,6 +262,7 @@ Files:
 - `engine/tests/proto_roundtrip.rs` (create)
 
 Interfaces:
+
 - Proto package `nexora.control.v1`, Go import `controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"`, Rust path `nexora_engine::proto`.
 - Service `EngineControl { rpc Enroll(EnrollRequest) returns (EnrollResponse); rpc Connect(stream EngineMessage) returns (stream ServerMessage); rpc GetBlob(GetBlobRequest) returns (stream BlobChunk); }`.
 - Messages produced here and consumed by Tasks 7, 8, 9, 10, 13, 16, 18: `ConfigSnapshot`, `ResolverConfig`, `CacheConfig`, `Upstream`, `FilterConfig`, `BlobRef`, `TelemetryConfig`, `Hello`, `Applied`, `Rejected`, `Stats`, `UpstreamStatus`, `VersionAhead`, enums `UpstreamStrategy`, `UpstreamProtocol`, `BlockMode`.
@@ -665,13 +643,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 - [ ] Write `engine/src/proto.rs` as `tonic::include_proto!("nexora.control.v1");`, `engine/src/lib.rs` as `pub mod proto;`, and `engine/src/main.rs` as a clap stub: `#[derive(clap::Parser)] struct Args { #[arg(long, default_value = "/etc/nexora/engine.toml")] config: std::path::PathBuf }` with `fn main() { let _args = <Args as clap::Parser>::parse(); }`.
-- [ ] Generate Go code and lock files: `scripts/dev-exec.sh bash -c 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto && go mod tidy && cargo generate-lockfile'`, then copy the generated files back: `kubectl --context kw -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /work/nexora -cf - go.sum Cargo.lock gen/go | tar -xf -` (the full `make proto` target also runs oapi-codegen and openapi-typescript, whose inputs arrive in Tasks 15 and 19; this step runs protoc directly).
+- [ ] Generate Go code and lock files: `scripts/dev-exec.sh bash -c 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto && go mod tidy && cargo generate-lockfile'`, then copy the generated files back: `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - go.sum Cargo.lock gen/go | tar -xf -` (the full `make proto` target also runs oapi-codegen and openapi-typescript, whose inputs arrive in Tasks 15 and 19; this step runs protoc directly).
 - [ ] Run `scripts/dev-exec.sh go test ./gen/... && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test proto_roundtrip` — expect PASS: `ok github.com/piwi3910/nexora/gen/go/nexora/control/v1` and `test config_snapshot_round_trips ... ok`.
 - [ ] Commit: `git add go.mod go.sum Cargo.toml Cargo.lock rust-toolchain.toml engine proto gen && git commit -m "proto: EngineControl contract, Go/Rust codegen and repository skeleton"`.
 
 ## Task 3: Zero-copy query parser, EDNS/cookies, and the fuzz workflow
 
 Files:
+
 - `engine/src/wire.rs` (create) — `parse_query`, `NameKey`, response writers, RR walker
 - `engine/src/edns.rs` (create) — OPT parsing/writing, DNS cookies (RFC 7873/9018), size limits
 - `engine/src/lib.rs` (modify) — add `pub mod wire; pub mod edns;`
@@ -681,6 +660,7 @@ Files:
 - `.github/workflows/fuzz.yml` (create) — 1 hour `cargo fuzz run parse_query`
 
 Interfaces (produced; consumed by Tasks 4, 5, 7, 8):
+
 - `pub struct NameKey { len: u8, buf: [u8; 255] }` — lowercase uncompressed wire name; `impl NameKey { pub fn as_wire(&self) -> &[u8]; pub fn from_wire_lowercase(wire: &[u8]) -> Option<NameKey> }`; derives `Clone, Copy, PartialEq, Eq, Hash`.
 - `pub struct QueryView<'a> { pub id: u16, pub flags: u16, pub qname: &'a [u8], pub key: NameKey, pub qtype: u16, pub qclass: u16, pub question_end: usize, pub opt: Option<edns::OptView<'a>> }` with `pub fn rd(&self) -> bool; pub fn cd(&self) -> bool; pub fn do_bit(&self) -> bool`.
 - `#[derive(Debug, PartialEq, Eq, thiserror::Error)] pub enum ParseError { #[error("short")] TooShort, #[error("formerr")] FormErr, #[error("notimp")] NotImp, #[error("response")] IsResponse }`.
@@ -937,7 +917,7 @@ fuzz_target!(|data: &[u8]| {
 });
 ```
 
-- [ ] Add a seed-corpus writer test in `engine/src/wire.rs` tests: `#[test] #[ignore] fn write_fuzz_seeds()` writing `query("example.com.", A)`, the EDNS-cookie query, the compressed-name packet and a 255-octet name into `concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/parse_query/")` as `a.bin`, `edns_cookie.bin`, `compressed_name.bin`, `long_name.bin`; run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib write_fuzz_seeds -- --ignored` and copy the four files back with `kubectl --context kw -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /work/nexora -cf - engine/fuzz/corpus | tar -xf -`.
+- [ ] Add a seed-corpus writer test in `engine/src/wire.rs` tests: `#[test] #[ignore] fn write_fuzz_seeds()` writing `query("example.com.", A)`, the EDNS-cookie query, the compressed-name packet and a 255-octet name into `concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/parse_query/")` as `a.bin`, `edns_cookie.bin`, `compressed_name.bin`, `long_name.bin`; run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib write_fuzz_seeds -- --ignored` and copy the four files back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - engine/fuzz/corpus | tar -xf -`.
 - [ ] Run the fuzz smoke locally in the pod: `scripts/dev-exec.sh make fuzz-smoke` — expect PASS: libFuzzer prints `Done` with no `crash-` artifact.
 - [ ] Write `.github/workflows/fuzz.yml`:
 
@@ -982,12 +962,14 @@ jobs:
 ## Task 4: Coarse clock and wire-format response cache with the allocation guard
 
 Files:
+
 - `engine/src/clock.rs` (create) — coarse monotonic seconds clock
 - `engine/src/cache.rs` (create) — `Cache`, `CacheKey`, `CachedResponse`, serve writer
 - `engine/src/lib.rs` (modify) — add `pub mod clock; pub mod cache;`
 - `engine/tests/cache_alloc.rs` (create) — counting-allocator test of the cache serve path (the full packet-path guard `cache_hit_path_does_not_allocate` is added in Task 8)
 
 Interfaces:
+
 - Consumes `wire::{QueryView, NameKey, walk_response, ResponseInfo}`, `edns::{ReplyOpt, write_opt, OPT_BASE_LEN, OPT_COOKIE_LEN}` from Task 3.
 - `clock.rs`: `pub fn now_secs() -> u32` (seconds since process start + 1, read from a static `AtomicU32`); `pub fn start_ticker() -> std::thread::JoinHandle<()>` (thread `nexora-clock`, updates every 100 ms, idempotent); `pub fn now_micros() -> u64` (monotonic, `Instant`-based, used only for stage timestamps). Cache functions take `now: u32` explicitly, so tests never need to drive the clock.
 - `cache.rs`:
@@ -1175,7 +1157,7 @@ fn cache_lookup_and_serve_do_not_allocate() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect FAIL with `unresolved import `crate::cache`` / `could not find `cache` in `nexora_engine``.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect FAIL with ``unresolved import `crate::cache` `` / ``could not find `cache` in `nexora_engine` ``.
 - [ ] Implement `engine/src/clock.rs`: `static START: OnceLock<Instant>`, `static NOW: AtomicU32`; `start_ticker` spawns one thread (guarded by `OnceLock<JoinHandle>` semantics via `std::sync::Once`) that stores `START.elapsed().as_secs() as u32 + 1` every 100 ms; `now_secs` loads `NOW` with `Ordering::Relaxed` (calls the elapsed computation directly when the ticker has not started, which happens only in tests).
 - [ ] Implement `engine/src/cache.rs`: `struct EntryWeighter; impl quick_cache::Weighter<CacheKey, Arc<CachedResponse>> for EntryWeighter { fn weight(&self, _: &CacheKey, v: &Arc<CachedResponse>) -> u64 { (v.wire.len() + v.ttl_offsets.len() * 2 + 96) as u64 } }`; `Cache::new` builds `quick_cache::sync::Cache::with_weighter(estimated_items = max_bytes / 256, weight_capacity = max_bytes, EntryWeighter)`. `insert` calls `wire::walk_response(upstream, query)` and refuses (`NotCacheable`) for: parse error, TC=1, rcode SERVFAIL/REFUSED/other than NOERROR/NXDOMAIN, NOERROR with answers whose min TTL is 0, NXDOMAIN/NODATA without SOA; positive TTL = `min_ttl_of_answers.clamp(min_ttl, max_ttl)`; negative TTL = `negative_ttl.min(negative_max_ttl)`; builds `wire` as the upstream bytes with the OPT RR removed (ARCOUNT decremented) and the question name lowercased, recomputes `ttl_offsets` on the stripped copy, `stale_deadline = now + ttl + stale_window`. `lookup`: `get(key)`; `now < inserted_at + ttl` -> `Fresh`; `now < stale_deadline` -> `Stale`; else `Miss`. `write_cached` computes `full = entry.wire.len() + opt_len` first; when `full > limit` writes header + question only with TC=1, ANCOUNT/NSCOUNT/ARCOUNT=0 plus the OPT; otherwise copies `entry.wire` into `out`, writes `q.id`, copies RD from the query, copies `q.qname` bytes over offset 12 (client casing), writes each TTL as `ttl - elapsed` (`ServeMode::Fresh`, saturating) or `30` (`ServeMode::Stale`), then appends `edns::write_opt` and increments ARCOUNT when `opt` is `Some`. No `Vec`, `Box` or `String` is created in `lookup` or `write_cached`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect PASS: `6 passed` and `test cache_lookup_and_serve_do_not_allocate ... ok`.
@@ -1184,6 +1166,7 @@ fn cache_lookup_and_serve_do_not_allocate() {
 ## Task 5: Upstream UDP/TCP transports with anti-spoofing and health scoring
 
 Files:
+
 - `engine/src/upstream/mod.rs` (create) — `UpstreamSpec`, `UpstreamSet`, `Health`, strategy, `WorkerUpstreams`, `forward`
 - `engine/src/upstream/udp.rs` (create) — per-worker pool of 16 connected sockets
 - `engine/src/upstream/tcp.rs` (create) — one-shot TCP exchange
@@ -1191,6 +1174,7 @@ Files:
 - `engine/tests/upstream_udp_tcp.rs` (create)
 
 Interfaces:
+
 - Consumes `wire::{NameKey, question_matches}` (Task 3), `clock::now_secs` (Task 4).
 - `upstream/mod.rs`:
   - `#[derive(Clone, Copy, PartialEq, Eq, Debug)] pub struct Question { pub key: NameKey, pub qtype: u16, pub qclass: u16 }`
@@ -1377,7 +1361,7 @@ fn strategies_order_candidates() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test upstream_udp_tcp` — expect FAIL with `could not find `upstream` in `nexora_engine``.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test upstream_udp_tcp` — expect FAIL with ``could not find `upstream` in `nexora_engine` ``.
 - [ ] Implement `upstream/udp.rs`: each pooled socket is created with `socket2::Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))`, `set_nonblocking(true)`, bound to `0.0.0.0:0` / `[::]:0` (kernel-random port), `connect(addr)`, converted into `tokio::net::UdpSocket`. State per socket: `pending: RefCell<FxHashMap<u16, (Question, tokio::sync::oneshot::Sender<Bytes>)>>`, `sent: Cell<u32>`, `retired: Cell<bool>`. On first use a `tokio::task::spawn_local` reader loop calls `recv` into a 4096-byte buffer; a datagram is accepted only when `len >= 12`, QR=1, the ID is in `pending`, and `wire::question_matches(reply, &q.key, q.qtype, q.qclass)`; otherwise `mismatched.fetch_add(1)`. Accepted replies remove the pending entry and send `Bytes::copy_from_slice`. The reader exits when `retired` and `pending` is empty. `exchange` picks sockets round-robin; when a socket's `sent` reaches `QUERIES_PER_SOCKET` it is marked retired and replaced in the slot with a fresh socket (`sockets_created` increments). IDs come from `rand::rng().random::<u16>()` retried until not present in that socket's `pending`. The query is copied into a stack `[u8; 1232]`-sized buffer (fallback `Vec` for larger) with the new ID, sent, and awaited with `tokio::time::timeout`; on timeout the pending entry is removed and `UpstreamError::Timeout` returned. The returned bytes get the original client query ID written back.
 - [ ] Implement `upstream/tcp.rs`: `TcpStream::connect` inside the timeout, set `TCP_NODELAY`, random ID, write 2-byte length + query, read 2-byte length + body; reply must have QR=1, the sent ID and a matching question, else `UpstreamError::Malformed`; the original ID is restored.
 - [ ] Implement `upstream/mod.rs`: `Health::default()` sets `ewma_rtt_us = 0` meaning unmeasured (sorted after measured ones for `Fastest`, stable by position); `record_failure` increments `consecutive_failures`, `failures`, and at 3 stores `down_until = now + 5` and clears `probe_taken`; `is_up(now)` is `consecutive_failures < 3`; `admit(now)` returns true when up, or when `now >= down_until` and `probe_taken.compare_exchange(false, true)` succeeds; `record_success` zeroes failures, clears `probe_taken`, and updates `ewma = 0.8*ewma + 0.2*rtt_us` (first sample stored directly). `order` pushes indices where `is_up(now) || now >= down_until` (up, or due a probe), sorted by position (`Ordered`) or by `ewma_rtt_us` (`Fastest`). `WorkerUpstreams` holds `RefCell<FxHashMap<String, Rc<Transport>>>` where `enum Transport { Udp(UdpPool), Tcp(SocketAddr), Dot(dot::DotClient), Doh(doh::DohClient) }` (the `Dot`/`Doh` variants are added in Task 6). `forward` records `start = Instant::now()`, iterates `order` output, calls `health.admit(now)`; for each attempt uses `min(spec.timeout, OVERALL_DEADLINE - elapsed)`; UDP replies with TC=1 are retried over TCP to the same address; success calls `record_success(rtt)` and increments `queries`; errors call `record_failure`; returns `NoneAvailable` when the order is empty and `Deadline` when the overall 2000 ms elapses.
@@ -1387,6 +1371,7 @@ fn strategies_order_candidates() {
 ## Task 6: DoT and DoH upstreams, and cross-worker request coalescing
 
 Files:
+
 - `engine/src/upstream/dot.rs` (create) — persistent pipelined DoT connection per worker
 - `engine/src/upstream/doh.rs` (create) — reqwest HTTP/2 POST client per worker
 - `engine/src/upstream/mod.rs` (modify) — `Transport::Dot`/`Transport::Doh`, `client_tls_config`
@@ -1396,6 +1381,7 @@ Files:
 - `engine/tests/inflight.rs` (create)
 
 Interfaces:
+
 - Consumes `upstream::{Question, UpstreamError}` (Task 5), `cache::CacheKey` (Task 4), `wire::question_matches` (Task 3).
 - `upstream/mod.rs`: `pub fn client_tls_config(ca_pem: &str) -> Result<Arc<rustls::ClientConfig>, UpstreamError>` — empty `ca_pem` uses `webpki_roots::TLS_SERVER_ROOTS`, otherwise only the PEM certificates.
 - `upstream/dot.rs`: `pub struct DotClient`; `impl DotClient { pub fn new(addr: SocketAddr, server_name: &str, ca_pem: &str, mismatched: Arc<CachePadded<AtomicU64>>) -> Result<DotClient, UpstreamError>; pub async fn exchange(&self, query: &[u8], question: &Question, timeout: Duration) -> Result<Bytes, UpstreamError>; pub fn connections_opened(&self) -> u64 }`.
@@ -1597,7 +1583,7 @@ async fn doh_posts_dns_message_over_http2() {
 ```
 
 - [ ] Add `http-body-util = "0.1"` and `hyper = { version = "1.11", features = ["server", "http1", "http2"] }` to `engine/Cargo.toml` (`http2` is used by this test's DoH server; `http-body-util` is also used by the metrics server in Task 9). `DohClient::new` honours `NEXORA_DOH_RESOLVE` (comma-separated `host=ip` pairs, applied with `reqwest::ClientBuilder::resolve(host, SocketAddr::new(ip, url_port))`) so tests and the e2e fixture can use certificate names that are not in DNS.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test inflight --test upstream_encrypted` — expect FAIL with `could not find `inflight` in `nexora_engine`` and `could not find `dot` in `upstream``.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test inflight --test upstream_encrypted` — expect FAIL with ``could not find `inflight` in `nexora_engine` `` and ``could not find `dot` in `upstream` ``.
 - [ ] Implement `inflight.rs`: shard index = `rustc_hash::FxHasher` hash of the key `& 63`; `join` locks the shard, returns `Follower(pending.tx.subscribe())` when present, else inserts `Arc<Pending>` built from `watch::channel(None)` and returns `Leader(LeaderGuard { inflight: *const/Arc ref, key, pending, done: false })` (the guard holds `&'static`-free ownership by storing `Arc<InFlightInner>`; `InFlight` wraps `Arc<Inner>` so guards can outlive a borrow). `complete` removes the map entry first, then `tx.send_replace(Some(r))`, sets `done`. `wait` loops `rx.changed()` until the value is `Some`, checking `borrow()` first so a value already sent is returned immediately; a closed channel yields `ServFail`.
 - [ ] Implement `upstream/dot.rs`: lazily connects (`TcpStream::connect` + `TlsConnector::from(client_tls_config(ca_pem)?).connect(ServerName::try_from(server_name))`, TLS errors mapped to `UpstreamError::Tls`); the connection is `Rc<DotConn { writer: tokio::sync::Mutex<WriteHalf<TlsStream<TcpStream>>>, pending: RefCell<FxHashMap<u16, (Question, oneshot::Sender<Bytes>)>>, dead: Cell<bool> }>` with a `spawn_local` reader that reads length-prefixed replies and routes by ID with the same QR/ID/question checks as UDP (mismatches counted); on read error it marks `dead`, drops all pending senders (waiters see `UpstreamError::Io`), and the next `exchange` reconnects (`connections_opened` increments). IDs are random and unique within the connection's `pending`; the original ID is restored in the returned bytes.
 - [ ] Implement `upstream/doh.rs`: `reqwest::Client::builder()` (the only TLS backend compiled in is rustls, from the `rustls` feature) with `.http2_prior_knowledge()`, `tls_built_in_root_certs(false)` plus `add_root_certificate(reqwest::Certificate::from_pem(ca_pem))` when `ca_pem` is non-empty, `pool_max_idle_per_host(1)`, the `NEXORA_DOH_RESOLVE` overrides, `timeout` per request. The URL must be `https` (else `UpstreamError::Tls("doh url must be https")`). `exchange` copies the query with ID 0, POSTs with `content-type: application/dns-message` and `accept: application/dns-message`, requires status 200 (else `Http(status)`), validates QR=1 and question, and writes the original ID into the reply.
@@ -1608,6 +1594,7 @@ async fn doh_posts_dns_message_over_http2() {
 ## Task 7: Filter sets, ACL, applied runtime and snapshot validation/persistence
 
 Files:
+
 - `engine/src/filter.rs` (create) — blocklist/allowlist matcher and block replies
 - `engine/src/acl.rs` (create) — client CIDR allow list
 - `engine/src/runtime.rs` (create) — `Runtime` built from a `ConfigSnapshot`
@@ -1617,6 +1604,7 @@ Files:
 - `engine/tests/snapshot_apply.rs` (create)
 
 Interfaces:
+
 - Consumes `proto::{ConfigSnapshot, BlobRef, UpstreamProtocol, UpstreamStrategy, BlockMode as ProtoBlockMode}` (Task 2), `wire::{QueryView, NameKey, write_synth_reply, SynthAnswer, RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_NOERROR}`, `edns::ReplyOpt` (Task 3), `cache::{Cache, CacheSettings}` (Task 4), `upstream::{UpstreamSet, UpstreamSpec, Protocol, Strategy}` (Task 5).
 - `filter.rs`: `#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum BlockMode { NullIp, NxDomain, Refused }`; `#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum FilterDecision { None, Blocked, Allowed }`; `#[derive(Debug, Default, PartialEq, Eq)] pub struct ListStats { pub entries: usize, pub invalid_lines: usize }`; `pub struct FilterSet { pub mode: BlockMode, pub ttl: u32, .. }`; `impl FilterSet { pub fn empty() -> FilterSet; pub fn build(blocklists: &[Vec<u8>], allowlists: &[Vec<u8>], mode: BlockMode, ttl: u32) -> (FilterSet, ListStats); pub fn decide(&self, name_wire: &[u8]) -> FilterDecision; pub fn cloaked(&self, cname_targets: &[NameKey]) -> bool; pub fn write_block_reply(&self, q: &QueryView<'_>, out: &mut [u8], opt: Option<&ReplyOpt>) -> usize }`; `pub fn decode_blob(zstd_bytes: &[u8]) -> std::io::Result<Vec<u8>>`; `pub fn domain_to_wire(domain: &[u8]) -> Option<Box<[u8]>>`.
 - `acl.rs`: `pub struct Acl`; `impl Acl { pub fn parse(cidrs: &[String]) -> Result<Acl, String>; pub fn allows(&self, ip: std::net::IpAddr) -> bool }`.
@@ -1765,7 +1753,7 @@ fn acl_matches_v4_v6_and_mapped() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test snapshot_apply` — expect FAIL with `could not find `snapshot` in `nexora_engine``.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test snapshot_apply` — expect FAIL with ``could not find `snapshot` in `nexora_engine` ``.
 - [ ] Implement `acl.rs` with `Vec<ipnet::Ipv4Net>` and `Vec<ipnet::Ipv6Net>`; `allows` converts IPv4-mapped IPv6 (`to_ipv4_mapped`) to IPv4 first and scans the vectors (M1 lists are short; the management plane seeds 8 CIDRs); parse errors return `format!("invalid cidr {c}: {e}")`.
 - [ ] Implement `filter.rs`: `domain_to_wire` accepts lines of `[a-z0-9-_.]` ASCII (uppercase lowered), rejects empty labels, labels starting or ending with `-`, labels > 63, total > 253 text octets, and lines containing whitespace or `#`; returns the uncompressed wire name including the root byte. `build` decodes every line of every list (both already decompressed), inserts valid names into `FxHashSet<Box<[u8]>>` (`blocked` / `allowed`), counts invalid non-empty lines. `decide(name_wire)` walks label offsets `0, 1+len0, ...` and for each suffix slice checks `allowed.contains(suffix)` first (returns `Allowed` on the first allowlisted suffix), then `blocked.contains(suffix)` (returns `Blocked`); a name matching both at different depths is `Allowed`. `cloaked` returns true when any target decides `Blocked`. `write_block_reply`: `NullIp` answers A `0.0.0.0` / AAAA `::` with `ttl`, other qtypes NOERROR/NODATA; `NxDomain` -> NXDOMAIN; `Refused` -> REFUSED (via `wire::write_synth_reply`). `decode_blob` is `zstd::decode_all` capped at 512 MiB output.
 - [ ] Add `pub fn clear(&self) { self.inner.clear() }` to `Cache` in `engine/src/cache.rs`.
@@ -1777,6 +1765,7 @@ fn acl_matches_v4_v6_and_mapped() {
 ## Task 8: Per-core UDP/TCP listeners, query pipeline, counters, query-log ring and standalone engine binary
 
 Files:
+
 - `engine/src/bootstrap.rs` (create) — `engine.toml` parsing and validation
 - `engine/src/telemetry/mod.rs` (create) — `pub mod metrics; pub mod querylog; pub mod otlp;` (`otlp` arrives in Task 9; this task declares `metrics` and `querylog`)
 - `engine/src/telemetry/metrics.rs` (create) — per-worker `CachePadded<AtomicU64>` counters
@@ -1791,6 +1780,7 @@ Files:
 - `engine/tests/server_pipeline.rs` (create)
 
 Interfaces:
+
 - Consumes everything from Tasks 3–7: `wire::parse_query`, `edns::{reply_limit, server_cookie, CookieSecret, ReplyOpt, Transport}`, `cache::{Cache, CacheKey, Lookup, ServeMode, write_cached}`, `upstream::{forward, Question, WorkerUpstreams}`, `inflight::{InFlight, Join, Resolution, wait}`, `filter::FilterDecision`, `runtime::Runtime`, `snapshot::{apply, load, load_file, DirBlobs, ApplyOutcome}`.
 - `bootstrap.rs`: `#[derive(Debug, Clone, serde::Deserialize)] #[serde(deny_unknown_fields)] pub struct Bootstrap { pub node_name: String, pub state_dir: PathBuf, #[serde(default)] pub management_urls: Vec<String>, #[serde(default = "default_join_token_file")] pub join_token_file: PathBuf, #[serde(default = "default_listen")] pub listen_udp: Vec<SocketAddr>, #[serde(default = "default_listen")] pub listen_tcp: Vec<SocketAddr>, #[serde(default = "default_metrics_listen")] pub metrics_listen: SocketAddr, #[serde(default)] pub workers: usize, #[serde(default)] pub standalone_snapshot: String, #[serde(default)] pub standalone_blob_dir: String }`; `pub fn load(path: &Path) -> anyhow::Result<Bootstrap>`; `impl Bootstrap { pub fn worker_count(&self) -> usize; pub fn is_standalone(&self) -> bool }`. Defaults: `listen_udp`/`listen_tcp` = `["0.0.0.0:53", "[::]:53"]`, `metrics_listen` = `0.0.0.0:9153`, `join_token_file` = `/etc/nexora/join-token`.
 - `telemetry/metrics.rs`: `pub const DURATION_BOUNDS_US: [u64; 15] = [50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000];`; `pub const RCODE_SLOTS: usize = 7;` (0..=5 plus "other"); `pub const TRANSPORT_SLOTS: usize = 2;`; `pub struct WorkerCounters { pub queries: [[CachePadded<AtomicU64>; RCODE_SLOTS]; TRANSPORT_SLOTS], pub duration_buckets: [CachePadded<AtomicU64>; 16], pub duration_sum_us: CachePadded<AtomicU64>, pub cache_hits: CachePadded<AtomicU64>, pub cache_misses: CachePadded<AtomicU64>, pub stale_served: CachePadded<AtomicU64>, pub filter_blocked: CachePadded<AtomicU64>, pub mismatched_replies: Arc<CachePadded<AtomicU64>> }`; `impl WorkerCounters { pub fn observe(&self, t: Transport, rcode: u8, duration_us: u64) }`; `#[derive(Clone, Copy)] pub enum Signal { Logs = 0, Traces = 1, Metrics = 2 }`; `pub struct Metrics { pub workers: Box<[WorkerCounters]>, pub export_dropped: [CachePadded<AtomicU64>; 3], pub config_version: AtomicU64, pub control_connected: AtomicBool }`; `impl Metrics { pub fn new(workers: usize) -> Metrics; pub fn sum_queries(&self) -> u64; pub fn sum_cache_hits(&self) -> u64; pub fn sum_cache_misses(&self) -> u64; pub fn dropped(&self, s: Signal) -> u64 }`.
@@ -2034,7 +2024,7 @@ fn malformed_and_notimp() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test hot_path_alloc --test server_pipeline` — expect FAIL with `could not find `server` in `nexora_engine``.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test hot_path_alloc --test server_pipeline` — expect FAIL with ``could not find `server` in `nexora_engine` ``.
 - [ ] Implement `bootstrap.rs`: `load` reads TOML, validates `node_name` against `^[a-z0-9-]{1,63}$` (manual byte check), `state_dir` non-empty, `management_urls` non-empty unless `standalone_snapshot` is non-empty, every management URL starts with `https://`; errors name the field. `worker_count` returns `workers` or `std::thread::available_parallelism()`.
 - [ ] Implement `telemetry/metrics.rs` and `telemetry/querylog.rs` as specified; `observe` maps rcode > 5 to slot 6 and finds the first bound `>= duration_us` (slot 15 = +Inf) with a linear scan of the 15 constants; `push` calls `ring.push(r)` and on `Err` increments `export_dropped[Signal::Logs]`.
 - [ ] Add `prepare_uncached` to `cache.rs`: builds a `CachedResponse` from any parseable upstream reply (including TTL 0, SERVFAIL, TC) with `inserted_at = 0`, `ttl = u32::MAX`, OPT stripped and TTL offsets computed, so `write_cached(.., now = 0, ServeMode::Fresh, ..)` emits the upstream TTLs unchanged.
@@ -2050,6 +2040,7 @@ fn malformed_and_notimp() {
 ## Task 9: Prometheus endpoint, OTLP logs/traces/metrics export and stats snapshot
 
 Files:
+
 - `engine/src/telemetry/metrics.rs` (modify) — `render`, `stats`, `serve_metrics`
 - `engine/src/telemetry/otlp.rs` (create) — `nexora-telemetry` thread: batching, bounded queue, log/trace/metric export
 - `engine/src/telemetry/mod.rs` (modify) — add `pub mod otlp;`
@@ -2058,6 +2049,7 @@ Files:
 - `engine/tests/telemetry_export.rs` (create)
 
 Interfaces:
+
 - Consumes `Shared`, `QueryRecord`, `CacheOutcome`, `FilterOutcome`, `Metrics`, `Signal`, `DURATION_BOUNDS_US` (Task 8), `Runtime`/`TelemetrySettings` (Task 7), `proto::{Stats, UpstreamStatus}` (Task 2), `opentelemetry_proto::tonic::{collector::{logs::v1::*, trace::v1::*, metrics::v1::*}, logs::v1::LogRecord, trace::v1::Span, common::v1::{AnyValue, KeyValue}}`.
 - `metrics.rs`: `impl Metrics { pub fn render(&self, rt: &Runtime) -> String; pub fn stats(&self, rt: &Runtime) -> Stats }`; `pub async fn serve_metrics(addr: SocketAddr, shared: Arc<Shared>) -> std::io::Result<()>` (hyper 1 HTTP/1.1; `GET /metrics` -> 200 `text/plain; version=0.0.4`; anything else 404). Exposed names exactly: `nexora_queries_total{transport,rcode}`, `nexora_query_duration_seconds` (histogram, buckets from `DURATION_BOUNDS_US` in seconds), `nexora_cache_hits_total`, `nexora_cache_misses_total`, `nexora_cache_stale_served_total`, `nexora_cache_entries`, `nexora_cache_bytes`, `nexora_filter_blocked_total`, `nexora_upstream_up{upstream}`, `nexora_upstream_rtt_seconds{upstream}`, `nexora_upstream_queries_total{upstream}`, `nexora_upstream_failures_total{upstream}`, `nexora_upstream_mismatched_replies_total`, `nexora_export_dropped_total{signal}`, `nexora_config_version`, `nexora_control_connected`.
 - `otlp.rs`: `pub const BATCH_MAX: usize = 1000; pub const BATCH_INTERVAL: Duration = Duration::from_secs(1); pub const MAX_QUEUED_BATCHES: usize = 8; pub const EXPORT_TIMEOUT: Duration = Duration::from_secs(2); pub const METRICS_INTERVAL: Duration = Duration::from_secs(15);`; `pub fn spawn_telemetry_thread(shared: Arc<Shared>) -> std::thread::JoinHandle<()>`; `pub fn log_record(r: &QueryRecord, upstream_name: &str, engine_id: &str) -> LogRecord`; `pub fn should_trace(r: &QueryRecord, t: &TelemetrySettings, seq: u64) -> bool`; `pub fn spans_for(r: &QueryRecord, trace_id: [u8; 16], upstream_name: &str) -> Vec<Span>`; `pub fn resource(shared: &Shared) -> opentelemetry_proto::tonic::resource::v1::Resource` (`service.name=nexora-engine`, `nexora.engine.id`, `host.name` = node name).
@@ -2205,7 +2197,7 @@ fn metrics_endpoint_exposes_every_architecture_name() {
 }
 ```
 
-- [ ] Add `tokio-stream = { version = "0.1", features = ["net"] }` under `[dev-dependencies]` in `engine/Cargo.toml` and run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test telemetry_export` — expect FAIL with `could not find `otlp` in `telemetry``.
+- [ ] Add `tokio-stream = { version = "0.1", features = ["net"] }` under `[dev-dependencies]` in `engine/Cargo.toml` and run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test telemetry_export` — expect FAIL with ``could not find `otlp` in `telemetry` ``.
 - [ ] Implement `Metrics::render` with a `prometheus_client::registry::Registry` rebuilt per scrape: sum each per-worker counter across `workers`, emit counters/gauges through `prometheus_client::encoding::text::encode` using `Family<Labels, Counter>` / `Gauge` / a `Histogram`-shaped custom `EncodeMetric` built from the summed cumulative bucket counts (no per-packet registry work); upstream gauges come from `rt.upstreams.health[i]` (`up` = `is_up(clock::now_secs())`, rtt = `ewma_rtt_us / 1e6`) labelled by upstream `name`; `nexora_export_dropped_total` has `signal` in `logs|traces|metrics`. `Metrics::stats` fills every `Stats` field from the same sums.
 - [ ] Implement `serve_metrics` with `hyper::server::conn::http1::Builder` over `tokio::net::TcpListener`, one task per connection.
 - [ ] Implement `otlp.rs`: the thread runs a `current_thread` runtime; every 100 ms it drains `shared.querylog` (`pop` until empty or `BATCH_MAX`) into the current batch; a batch closes at `BATCH_MAX` records or `BATCH_INTERVAL` age. Closed batches enter a `VecDeque` capped at `MAX_QUEUED_BATCHES`; pushing onto a full queue pops the oldest and adds its length to `export_dropped[Logs]`. One export at a time: destination is `shared.mgmt_channel` when `querylog_to_management` (no channel -> batch dropped and counted), else a lazily built `tonic::transport::Endpoint::from_shared(otlp_endpoint).connect_timeout(Duration::from_millis(500)).timeout(EXPORT_TIMEOUT).connect_lazy()` rebuilt whenever the endpoint string changes; empty endpoint and no management export -> records are discarded without counting. A failed or timed-out export adds the batch length to `export_dropped[Logs]`. Records where `should_trace` holds (sequence counter increments per record) produce `spans_for` spans with a random trace ID, exported via `TraceServiceClient` to `otlp_endpoint` (failures add span counts to `export_dropped[Traces]`). Every `METRICS_INTERVAL` it sends an `ExportMetricsServiceRequest` of the summed counters (`nexora.queries`, `nexora.cache.hits`, `nexora.cache.misses`, `nexora.filter.blocked`, `nexora.upstream.up` per upstream) to `otlp_endpoint`, a failure increments `export_dropped[Metrics]` by 1. `log_record` sets `time_unix_nano`, `severity_text = "INFO"`, body = question name, and the ten attributes named in `docs/architecture.md` (`nexora.upstream` empty string when `upstream == u8::MAX`). `spans_for` builds root `dns.query` spanning `duration_us` with attributes `dns.question.name`, `dns.question.type`, `dns.response.code`, and children `nexora.filter` `[0, filter_us]`, `nexora.cache` `[filter_us, cache_us]`, `nexora.upstream` `[upstream_start_us, upstream_start_us + upstream_us]` with attribute `nexora.upstream`; a root with rcode 2 gets `status.code = STATUS_CODE_ERROR`.
@@ -2216,6 +2208,7 @@ fn metrics_endpoint_exposes_every_architecture_name() {
 ## Task 10: End-to-end harness and fixture servers
 
 Files:
+
 - `e2e/fixtures/cmd/nexora-fixture/main.go` (create) — subcommand dispatch `dns | http | oidc`
 - `e2e/fixtures/cmd/nexora-fixture/dns.go` (create) — fixture upstream over UDP, TCP, DoT, DoH with a control API
 - `e2e/fixtures/cmd/nexora-fixture/http.go` (create) — blocklist file server with failure toggle
@@ -2232,6 +2225,7 @@ Files:
 - `e2e/harness/harness_test.go` (create)
 
 Interfaces (produced; consumed by Tasks 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
+
 - `harness.New(t *testing.T) *Env`; `type Env struct { T *testing.T; Dir string }`; `func (e *Env) FreePort() int`; `func (e *Env) Bin(name string) string` (looks in `NEXORA_E2E_BIN_DIR`, then `<repo>/bin`, then `<repo>/target/release`, then `$CARGO_TARGET_DIR/release`; `t.Fatal` when missing); `func (e *Env) Start(name string, args, env []string) *Proc`; `type Proc struct { Name string; Cmd *exec.Cmd; LogPath string }`; `func (p *Proc) Stop()` (SIGTERM, 5 s, SIGKILL); `func (p *Proc) Kill()`; `func (p *Proc) Signal(sig os.Signal)`; `func (p *Proc) WaitLog(re *regexp.Regexp, timeout time.Duration) []string`; `func Eventually(t *testing.T, timeout time.Duration, cond func() error)`.
 - `type DNSFixture struct { UDP, TCP, DoT, DoH, Control, CACertPEM, TLSName string }`; `func (e *Env) StartDNSFixture() *DNSFixture`; `func (f *DNSFixture) Count(t *testing.T, name string, qtype uint16) int`; `func (f *DNSFixture) Total(t *testing.T) int`; `func (f *DNSFixture) SetMode(t *testing.T, mode string)` (`normal|blackhole|servfail`); `func (f *DNSFixture) SetDelay(t *testing.T, d time.Duration)`; `func (f *DNSFixture) Reset(t *testing.T)`.
 - `type HTTPFixture struct { Base string }`; `func (e *Env) StartHTTPFixture() *HTTPFixture`; `func (f *HTTPFixture) SetList(t *testing.T, name, body string)`; `func (f *HTTPFixture) SetFailing(t *testing.T, name string, failing bool)`; `func (f *HTTPFixture) Hits(t *testing.T, name string) int`; `func (f *HTTPFixture) URL(name string) string`.
@@ -2470,7 +2464,8 @@ standalone_blob_dir = %q
 `, n, stateDir, dnsPort, dnsPort, metricsPort, snapPath, blobDir)
 ```
 
-  Then starts `nexora-engine --config <path>` with `NEXORA_DOH_RESOLVE=fixture.nexora.test=127.0.0.1` and waits (10 s) for `WaitVersion(snap.Version)`. The process environment passes `NEXORA_DOH_RESOLVE` so DoH certificates for `fixture.nexora.test` resolve to loopback. `Reload` rewrites blobs + snapshot, sends SIGHUP and waits for the version. `Metric` GETs `/metrics`, parses with `github.com/prometheus/common/expfmt` (`TextParser`), returns the sum of samples whose labels include `labels`.
+Then starts `nexora-engine --config <path>` with `NEXORA_DOH_RESOLVE=fixture.nexora.test=127.0.0.1` and waits (10 s) for `WaitVersion(snap.Version)`. The process environment passes `NEXORA_DOH_RESOLVE` so DoH certificates for `fixture.nexora.test` resolve to loopback. `Reload` rewrites blobs + snapshot, sends SIGHUP and waits for the version. `Metric` GETs `/metrics`, parses with `github.com/prometheus/common/expfmt` (`TextParser`), returns the sum of samples whose labels include `labels`.
+
 - [ ] Implement `dnsclient.go` with `miekg/dns`: `Query` sets RD, adds OPT when `EDNSSize > 0` or `Cookie != nil` (`dns.EDNS0_COOKIE{Code: dns.EDNS0COOKIE, Cookie: hex.EncodeToString(cookie)}`), uses `Net: "tcp"` when `TCP`, default timeout 2 s, and returns the round-trip time.
 - [ ] Implement `postgres.go`: data dir `<Dir>/pg`; when `os.Geteuid() == 0` look up user `dev`, `chown -R` the dir and run `initdb`/`pg_ctl` with `SysProcAttr.Credential{Uid, Gid}`; `initdb -D <dir> -U nexora --auth=trust -E UTF8`; `pg_ctl -D <dir> -o "-p <port> -k <dir> -c listen_addresses=127.0.0.1 -c fsync=off" -l <dir>/log start -w`; `createdb -h 127.0.0.1 -p <port> -U nexora nexora`; `URL = "postgres://nexora@127.0.0.1:<port>/nexora?sslmode=disable"`; cleanup runs `pg_ctl stop -m immediate`.
 - [ ] Implement `otelcol.go`: writes this config (sections omitted when the corresponding field is empty) and starts `otelcol-contrib --config <path>`, waiting until the OTLP gRPC port accepts connections:
@@ -2479,25 +2474,36 @@ standalone_blob_dir = %q
 receivers:
   otlp:
     protocols:
-      grpc: {endpoint: "127.0.0.1:{{.GRPCPort}}"}
+      grpc: { endpoint: "127.0.0.1:{{.GRPCPort}}" }
 processors:
-  batch: {timeout: 200ms}
+  batch: { timeout: 200ms }
 exporters:
-  debug: {verbosity: basic}
-  file: {path: "{{.DebugFile}}"}
+  debug: { verbosity: basic }
+  file: { path: "{{.DebugFile}}" }
   opensearch:
-    http: {endpoint: "{{.OpenSearchURL}}", tls: {insecure_skip_verify: true}}
+    http:
+      { endpoint: "{{.OpenSearchURL}}", tls: { insecure_skip_verify: true } }
     logs_index: "nexora-querylog"
     logs_index_time_format: "yyyy.MM.dd"
   otlp/jaeger:
     endpoint: "{{.JaegerOTLP}}"
-    tls: {insecure: true}
+    tls: { insecure: true }
 service:
-  telemetry: {metrics: {level: none}}
+  telemetry: { metrics: { level: none } }
   pipelines:
-    logs: {receivers: [otlp], processors: [batch], exporters: [debug, file, opensearch]}
-    traces: {receivers: [otlp], processors: [batch], exporters: [debug, otlp/jaeger]}
-    metrics: {receivers: [otlp], processors: [batch], exporters: [debug]}
+    logs:
+      {
+        receivers: [otlp],
+        processors: [batch],
+        exporters: [debug, file, opensearch],
+      }
+    traces:
+      {
+        receivers: [otlp],
+        processors: [batch],
+        exporters: [debug, otlp/jaeger],
+      }
+    metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
 ```
 
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 ./e2e/fixtures/... ./e2e/harness/...'` — expect PASS: `ok github.com/piwi3910/nexora/e2e/fixtures/cmd/nexora-fixture` and `ok github.com/piwi3910/nexora/e2e/harness`.
@@ -2506,11 +2512,13 @@ service:
 ## Task 11: Forwarding acceptance tests over the wire
 
 Files:
+
 - `e2e/forward_test.go` (create) — `TestForwardCacheTTL`, `TestUpstreamFailover`, `TestDedupAllWaitersAnswered`
 - `e2e/edns_test.go` (create) — `TestEDNSTruncationTCP`
 - `e2e/main_test.go` (create) — `TestMain` that exits 1 with a clear message when the binaries are missing, and the `hexDecode` helper
 
 Interfaces:
+
 - Consumes `harness.New`, `StartDNSFixture`, `StartStandaloneEngine`, `BaseSnapshot`, `UDPUpstream`, `DoTUpstream`, `DoHUpstream`, `MustQuery`, `Query`, `QueryOpts`, `UniqueName`, `DNSFixture.{Count,SetMode,SetDelay}`, `Engine.Metric` (Task 10); engine behaviour from Tasks 3–9.
 - Produces acceptance tests `TestForwardCacheTTL` (subtests `udp`, `dot`, `doh`), `TestUpstreamFailover`, `TestDedupAllWaitersAnswered`, `TestEDNSTruncationTCP`.
 
@@ -2765,6 +2773,7 @@ func TestMain(m *testing.M) {
 ## Task 12: Management plane foundations — env config, PostgreSQL store and schema, PKI, CLI
 
 Files:
+
 - `mgmt/internal/config/config.go` (create), `mgmt/internal/config/config_test.go` (create)
 - `mgmt/migrations/00001_init.sql` (create) — full M1 schema
 - `mgmt/migrations/embed.go` (create) — `package migrations; //go:embed *.sql; var FS embed.FS`
@@ -2775,6 +2784,7 @@ Files:
 - `mgmt/cmd/nexora-mgmt/main.go` (create) — `serve | migrate | ca init --out <dir> | user create --admin` dispatch (this task wires `migrate` and `ca init`; `serve` is wired in Task 13 and extended in Tasks 15, 17, 18; `user create --admin` in Task 15)
 
 Interfaces (produced):
+
 - `config.Load(getenv func(string) string) (config.Config, error)`; `type Config struct { DatabaseURL, HTTPListen, GRPCListen, CACertFile, CAKeyFile string; GRPCServerNames []string; PublicURL string; SecureCookies bool; OIDC OIDCConfig; QueryLogBackend string; QueryLogBuiltinCapacity int; OpenSearch OpenSearchConfig; OTLPEndpoint string }`; `type OIDCConfig struct { Issuer, ClientID, ClientSecretFile, AdminGroup, OperatorGroup string }`; `func (o OIDCConfig) Enabled() bool`; `type OpenSearchConfig struct { URL, Index, Username, PasswordFile string }`. Env vars and defaults exactly per `docs/architecture.md`: `NEXORA_HTTP_LISTEN=:8080`, `NEXORA_GRPC_LISTEN=:9443`, `NEXORA_SECURE_COOKIES=true`, `NEXORA_QUERYLOG_BACKEND=builtin`, `NEXORA_QUERYLOG_BUILTIN_CAPACITY=200000`, `NEXORA_OPENSEARCH_INDEX=nexora-querylog-*`.
 - `store.Open(ctx context.Context, url string) (*store.Store, error)`; `type Store struct { Pool *pgxpool.Pool }`; `func (s *Store) Migrate(ctx context.Context) error`; `func (s *Store) Close()`; `func (s *Store) InTx(ctx context.Context, fn func(pgx.Tx) error) error` (READ COMMITTED, retried up to 3 times on SQLSTATE `40001`/`40P01`); `var ErrNotFound, ErrConflict, ErrUnavailable error`; `func MapError(err error) error` (connection/pool errors and SQLSTATE class `08` -> `ErrUnavailable`, `pgx.ErrNoRows` -> `ErrNotFound`, unique violation `23505` -> `ErrConflict`).
 - SQL tables: `users`, `sessions`, `api_tokens`, `setup_tokens`, `oidc_login_states`, `audit_log`, `config_versions`, `resolver_settings`, `upstreams`, `access_control`, `blobs`, `filter_lists`, `allowlist`, `join_tokens`, `engines`, `engine_stats`, `instances`.
@@ -2981,7 +2991,8 @@ func TestMigrateSeedsAndMapsErrors(t *testing.T) {
 }
 ```
 
-  with `type pgxTx = pgx.Tx` declared in the test file (`import "github.com/jackc/pgx/v5"`), and add `func StopPostgres(t *testing.T, pg *Postgres)` (runs `pg_ctl stop -m immediate`) to `e2e/harness/postgres.go`.
+with `type pgxTx = pgx.Tx` declared in the test file (`import "github.com/jackc/pgx/v5"`), and add `func StopPostgres(t *testing.T, pg *Postgres)` (runs `pg_ctl stop -m immediate`) to `e2e/harness/postgres.go`.
+
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/config/... ./mgmt/internal/pki/... ./mgmt/internal/store/...` — expect FAIL with `no required module provides package github.com/piwi3910/nexora/mgmt/internal/config`.
 - [ ] Write `mgmt/migrations/00001_init.sql`:
 
@@ -3194,6 +3205,7 @@ drop table engine_stats, engines, join_tokens, allowlist, filter_lists, blobs, a
 ## Task 13: Snapshot builder, transactional mutations with audit, and the EngineControl gRPC server
 
 Files:
+
 - `mgmt/internal/auth/audit.go` (create) — `Actor`, `Change`, `WriteAudit` (the rest of `internal/auth` arrives in Task 14)
 - `mgmt/internal/snapshot/snapshot.go` (create) — `Build`, `Mutate`, `Latest`, `PublishRaw`, `EnsureInitial`
 - `mgmt/internal/snapshot/snapshot_test.go` (create)
@@ -3206,6 +3218,7 @@ Files:
 - `mgmt/cmd/nexora-mgmt/main.go` (modify) — `serve`: config, store, migrate, CA, instance heartbeat, initial snapshot, hub, gRPC listener
 
 Interfaces:
+
 - Consumes `store.{Store, InTx, MapError, ErrNotFound}`, `pki.{CA, SignEngineCSR, ServerCertificate, NewJoinToken, HashSecret, EngineCertValidity}`, `config.Config` (Task 12); `controlv1` (Task 2).
 - `auth.Actor{ Type string /* user|api_token|system */; ID, Name string }`; `auth.Change{ Action, TargetType, TargetID string; Before, After any }`; `func WriteAudit(ctx context.Context, tx pgx.Tx, a Actor, c Change, configVersion *uint64) error` (inserts `audit_log` with `diff = {"before": Before, "after": After}` as jsonb).
 - `snapshot.BuildConfig{ QueryLogToManagement bool; DefaultOTLPEndpoint string }`; `func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*controlv1.ConfigSnapshot, error)`; `func Mutate(ctx context.Context, st *store.Store, cfg BuildConfig, a auth.Actor, fn func(tx pgx.Tx) (auth.Change, error)) (uint64, error)`; `func Latest(ctx context.Context, q Querier) (uint64, *controlv1.ConfigSnapshot, error)` with `type Querier interface { QueryRow(ctx context.Context, sql string, args ...any) pgx.Row }`; `func PublishRaw(ctx context.Context, st *store.Store, snap *controlv1.ConfigSnapshot, createdBy string) (uint64, error)` (assigns the next version into `snap.Version`, stores it unvalidated, notifies — used by tests and by nothing in production code paths); `func EnsureInitial(ctx context.Context, st *store.Store, cfg BuildConfig) (uint64, error)`; `const NotifyChannel = "nexora_config"`.
@@ -3589,7 +3602,7 @@ func TestNotifyFansOutToEngineOnOtherInstance(t *testing.T) {
 }
 ```
 
-  plus these helpers at the bottom of the same file:
+plus these helpers at the bottom of the same file:
 
 ```go
 func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
@@ -3614,7 +3627,8 @@ func mustRecvErr(c controlv1.EngineControlClient, ctx context.Context) (*control
 }
 ```
 
-  (add `crypto/sha256`, `encoding/hex`, `fmt` to the imports).
+(add `crypto/sha256`, `encoding/hex`, `fmt` to the imports).
+
 - [ ] Run `scripts/dev-exec.sh go test -count=1 ./mgmt/internal/snapshot/... ./mgmt/internal/control/...` — expect FAIL with `no required module provides package github.com/piwi3910/nexora/mgmt/internal/snapshot`.
 - [ ] Implement `auth/audit.go` per the interface (`json.Marshal` of `{"before": c.Before, "after": c.After}`).
 - [ ] Implement `snapshot.go`. `Mutate`:
@@ -3655,7 +3669,8 @@ func Mutate(ctx context.Context, st *store.Store, cfg BuildConfig, a auth.Actor,
 }
 ```
 
-  `Build` reads `resolver_settings`, enabled `upstreams order by position, name`, `access_control.allow_cidrs::text[]` (host CIDRs rendered by `host()`/`masklen()` as `a.b.c.d/n`), `filter_lists` with `enabled and current_blob_sha256 is not null` joined to `blobs.size` split by `kind`, and `allowlist.domains`: when non-empty it normalises (lowercase, sorted, unique), zstd-compresses with `klauspost/compress/zstd` (`SpeedDefault`, no checksum-dependent options), upserts into `blobs` (`on conflict do nothing`) and appends the `BlobRef{Name: "allowlist"}`. Enum mapping: `ordered|fastest`, `udp|tcp|dot|doh`, `null_ip|nxdomain|refused`. `Telemetry.OtlpEndpoint` = `resolver_settings.otlp_endpoint` when non-empty else `cfg.DefaultOTLPEndpoint`. `EnsureInitial` runs `Mutate` with actor `{system, "bootstrap", "system"}` and change `{Action: "initialSnapshot", TargetType: "config", TargetID: "1"}` only when `config_versions` is empty (checked under the same advisory lock). `PublishRaw` inserts under the lock with the given snapshot bytes and notifies. `Latest` selects the max version row and unmarshals it.
+`Build` reads `resolver_settings`, enabled `upstreams order by position, name`, `access_control.allow_cidrs::text[]` (host CIDRs rendered by `host()`/`masklen()` as `a.b.c.d/n`), `filter_lists` with `enabled and current_blob_sha256 is not null` joined to `blobs.size` split by `kind`, and `allowlist.domains`: when non-empty it normalises (lowercase, sorted, unique), zstd-compresses with `klauspost/compress/zstd` (`SpeedDefault`, no checksum-dependent options), upserts into `blobs` (`on conflict do nothing`) and appends the `BlobRef{Name: "allowlist"}`. Enum mapping: `ordered|fastest`, `udp|tcp|dot|doh`, `null_ip|nxdomain|refused`. `Telemetry.OtlpEndpoint` = `resolver_settings.otlp_endpoint` when non-empty else `cfg.DefaultOTLPEndpoint`. `EnsureInitial` runs `Mutate` with actor `{system, "bootstrap", "system"}` and change `{Action: "initialSnapshot", TargetType: "config", TargetID: "1"}` only when `config_versions` is empty (checked under the same advisory lock). `PublishRaw` inserts under the lock with the given snapshot bytes and notifies. `Latest` selects the max version row and unmarshals it.
+
 - [ ] Implement `control/tls.go`: server certificate from `ca.ServerCertificate(serverNames, 30*24*time.Hour)` (re-issued in memory at each start), `ClientAuth: tls.VerifyClientCertIfGiven`, `ClientCAs: ca.Pool()`, `MinVersion: tls.VersionTLS13`, `NextProtos: ["h2"]`; `EngineID` reads `peer.FromContext` -> `credentials.TLSInfo.State.VerifiedChains[0][0].Subject.CommonName` and returns `status.Error(codes.Unauthenticated, "client certificate required")` when absent.
 - [ ] Implement `control/jointokens.go`: `CreateJoinToken` inserts `join_tokens(name, secret_hash, created_by, expires_at)` and returns `pki.NewJoinToken(ca.Fingerprint())`'s token; `lookupJoinToken(ctx, tx, secret)` selects `where secret_hash=$1 and revoked_at is null and expires_at > now() for update`.
 - [ ] Implement `control/server.go`: `Enroll` validates `node_name` (`^[a-z0-9-]{1,63}$`), looks up the join token, inserts `engines(id, node_name, join_token_id, certificate_serial, engine_version)` with `gen_random_uuid()` returned, signs the CSR with CN = id, increments `uses`, returns the DER and `ca.Cert.Raw`. `Connect` resolves `EngineID`, loads the engine (not deleted), requires `Hello` first, updates `node_name, engine_version, connected_instance=$instance, last_seen_at=now()`, then compares `Hello.applied_version` with `Latest`: lower -> send `ServerMessage_Snapshot`; higher -> set `version_ahead=true` and send `ServerMessage_VersionAhead{ServerVersion}`; equal -> nothing. It registers a `*subscriber{engineID, applied uint64, out chan *controlv1.ServerMessage (cap 1, latest wins)}` with the hub, runs a sender goroutine, and loops `Recv`: `Applied` -> `applied_version=$v, persist_error=$e, version_ahead=false, rejected_version=null, rejected_reason='' where rejected_version <= $v or rejected_version is null`; `Rejected` -> `rejected_version=$v, rejected_reason=$r`; `Stats` -> `last_seen_at=now()` and `OnStats` when non-nil. On exit it unregisters and sets `connected_instance=null where connected_instance=$instance`. `GetBlob` requires `EngineID`, selects `data` by sha256, and sends `BlobChunkSize` slices.
@@ -3667,6 +3682,7 @@ func Mutate(ctx context.Context, st *store.Store, cfg BuildConfig, a auth.Actor,
 ## Task 14: Authentication and authorization — passwords, sessions, API tokens, RBAC, setup token, OIDC
 
 Files:
+
 - `mgmt/internal/auth/password.go` (create) — argon2id hashing
 - `mgmt/internal/auth/permissions.go` (create) — `Role`, `Permissions` keyed by operationId, `Public`, `Authorize`
 - `mgmt/internal/auth/service.go` (create) — users, sessions, API tokens, setup token, request authentication
@@ -3675,6 +3691,7 @@ Files:
 - `mgmt/internal/auth/service_test.go` (create) — database + OIDC fixture tests
 
 Interfaces:
+
 - Consumes `store.{Store, InTx, MapError, ErrNotFound, ErrConflict}`, `config.{Config, OIDCConfig}` (Task 12); `auth.Actor` (Task 13); harness `StartPostgres`, `StartOIDCFixture` (Task 10).
 - `password.go`: `func HashPassword(pw string) (string, error)` producing `$argon2id$v=19$m=65536,t=3,p=2$<b64 salt>$<b64 hash>` (16-byte salt, 32-byte key); `func VerifyPassword(encoded, pw string) (bool, error)` (constant-time compare); `const MinPasswordLength = 12`.
 - `permissions.go`: `type Role string`; `const RoleViewer Role = "viewer"; RoleOperator Role = "operator"; RoleAdmin Role = "admin"`; `func ParseRole(s string) (Role, error)`; `func (r Role) AtLeast(min Role) bool`; `var Public = map[string]bool{...}`; `var Permissions = map[string]Role{...}`; `func Authorize(p Principal, operationID string) error` (returns `ErrForbidden`; an operationId absent from both maps is forbidden).
@@ -3949,6 +3966,7 @@ func TestOIDCLoginAndProviderDown(t *testing.T) {
 ## Task 15: OpenAPI spec, HTTP API handlers, embedded GUI serving and `serve`/`user create`
 
 Files:
+
 - `mgmt/api/openapi.yaml` (create) — HTTP API source of truth (OpenAPI 3.1)
 - `mgmt/api/oapi-codegen.yaml` (create) — codegen config
 - `mgmt/internal/api/gen.go` (create, generated by `make proto`, committed)
@@ -3964,6 +3982,7 @@ Files:
 - `mgmt/cmd/nexora-mgmt/main.go` (modify) — `serve` adds HTTP listener, setup token log, stats hook; `user create --admin --username U --email E --password-file F`
 
 Interfaces:
+
 - Consumes `auth.*` (Task 14), `snapshot.{Mutate, BuildConfig, Latest}`, `control.{CreateJoinToken, JoinToken}` (Task 13), `store.*`, `pki.CA`, `config.Config` (Task 12).
 - `api.Deps{ Store *store.Store; Auth *auth.Service; OIDC *auth.OIDC; CA *pki.CA; Build snapshot.BuildConfig; QueryLog querylog.Backend; InstanceID string; PublicURL string; Metrics http.Handler; RefreshFilterList func(ctx context.Context, p auth.Principal, id string) error }`; `func api.NewHandler(d api.Deps) http.Handler` (routes: `/api/v1/*` strict server, `/metrics` -> `d.Metrics` when non-nil, everything else -> `webui.Handler()`).
 - `querylog.Backend interface { Name() string; Search(ctx context.Context, q Query) (Page, error) }`; `type Query struct { From, To time.Time; Client, Name, QType, RCode, Cache, Filter string; Limit int; Cursor string }`; `type Record struct { Time time.Time; Client, Name, QType, RCode, Cache, Filter, Upstream, Transport, EngineID string; DurationUS int64 }`; `type Page struct { Records []Record; NextCursor string }`; `var ErrBackendUnavailable = errors.New("query log backend unavailable")`; `type Noop struct{}` returning an empty page (used until Task 18 wires real adapters and by tests).
@@ -3976,417 +3995,1331 @@ Interfaces:
 
 ```yaml
 openapi: 3.1.0
-info: {title: Nexora management API, version: 1.0.0}
-servers: [{url: /api/v1}]
-security: [{session: []}, {bearer: []}]
+info: { title: Nexora management API, version: 1.0.0 }
+servers: [{ url: /api/v1 }]
+security: [{ session: [] }, { bearer: [] }]
 components:
   securitySchemes:
-    session: {type: apiKey, in: cookie, name: nexora_session}
-    bearer: {type: http, scheme: bearer}
+    session: { type: apiKey, in: cookie, name: nexora_session }
+    bearer: { type: http, scheme: bearer }
   parameters:
-    Id: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
-    Revision: {name: revision, in: query, required: true, schema: {type: integer, format: int64}}
+    Id:
+      {
+        name: id,
+        in: path,
+        required: true,
+        schema: { type: string, format: uuid },
+      }
+    Revision:
+      {
+        name: revision,
+        in: query,
+        required: true,
+        schema: { type: integer, format: int64 },
+      }
   responses:
-    Error: {description: error, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    Error:
+      {
+        description: error,
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/Error" } },
+          },
+      }
   schemas:
     Error:
       type: object
       required: [code, message]
-      properties: {code: {type: string}, message: {type: string}}
+      properties: { code: { type: string }, message: { type: string } }
     Health:
       type: object
       required: [status, database, version]
-      properties: {status: {type: string, enum: [ok, degraded]}, database: {type: string, enum: [ok, unavailable]}, version: {type: string}}
-    SetupStatus: {type: object, required: [required], properties: {required: {type: boolean}}}
+      properties:
+        {
+          status: { type: string, enum: [ok, degraded] },
+          database: { type: string, enum: [ok, unavailable] },
+          version: { type: string },
+        }
+    SetupStatus:
+      {
+        type: object,
+        required: [required],
+        properties: { required: { type: boolean } },
+      }
     SetupRequest:
       type: object
       required: [token, username, email, password]
-      properties: {token: {type: string}, username: {type: string}, email: {type: string}, password: {type: string, minLength: 12}}
+      properties:
+        {
+          token: { type: string },
+          username: { type: string },
+          email: { type: string },
+          password: { type: string, minLength: 12 },
+        }
     LoginRequest:
       type: object
       required: [username, password]
-      properties: {username: {type: string}, password: {type: string}}
-    AuthProviders: {type: object, required: [local, oidc], properties: {local: {type: boolean}, oidc: {type: boolean}}}
-    Role: {type: string, enum: [viewer, operator, admin]}
+      properties: { username: { type: string }, password: { type: string } }
+    AuthProviders:
+      {
+        type: object,
+        required: [local, oidc],
+        properties: { local: { type: boolean }, oidc: { type: boolean } },
+      }
+    Role: { type: string, enum: [viewer, operator, admin] }
     User:
       type: object
-      required: [id, username, email, role, source, disabled, revision, created_at]
+      required:
+        [id, username, email, role, source, disabled, revision, created_at]
       properties:
-        id: {type: string, format: uuid}
-        username: {type: string}
-        email: {type: string}
-        role: {$ref: '#/components/schemas/Role'}
-        source: {type: string, enum: [local, oidc]}
-        disabled: {type: boolean}
-        revision: {type: integer, format: int64}
-        created_at: {type: string, format: date-time}
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        source: { type: string, enum: [local, oidc] }
+        disabled: { type: boolean }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
     UserCreate:
       type: object
       required: [username, email, password, role]
-      properties: {username: {type: string}, email: {type: string}, password: {type: string, minLength: 12}, role: {$ref: '#/components/schemas/Role'}}
+      properties:
+        {
+          username: { type: string },
+          email: { type: string },
+          password: { type: string, minLength: 12 },
+          role: { $ref: "#/components/schemas/Role" },
+        }
     UserUpdate:
       type: object
       required: [revision, email, role, disabled]
-      properties: {revision: {type: integer, format: int64}, email: {type: string}, role: {$ref: '#/components/schemas/Role'}, disabled: {type: boolean}, password: {type: string, minLength: 12}}
+      properties:
+        {
+          revision: { type: integer, format: int64 },
+          email: { type: string },
+          role: { $ref: "#/components/schemas/Role" },
+          disabled: { type: boolean },
+          password: { type: string, minLength: 12 },
+        }
     Upstream:
       type: object
-      required: [id, name, protocol, address, tls_server_name, doh_url, timeout_ms, ca_certificate_pem, position, enabled, revision]
+      required:
+        [
+          id,
+          name,
+          protocol,
+          address,
+          tls_server_name,
+          doh_url,
+          timeout_ms,
+          ca_certificate_pem,
+          position,
+          enabled,
+          revision,
+        ]
       properties:
-        id: {type: string, format: uuid}
-        name: {type: string}
-        protocol: {type: string, enum: [udp, tcp, dot, doh]}
-        address: {type: string}
-        tls_server_name: {type: string}
-        doh_url: {type: string}
-        timeout_ms: {type: integer, minimum: 50, maximum: 5000}
-        ca_certificate_pem: {type: string}
-        position: {type: integer}
-        enabled: {type: boolean}
-        revision: {type: integer, format: int64}
+        id: { type: string, format: uuid }
+        name: { type: string }
+        protocol: { type: string, enum: [udp, tcp, dot, doh] }
+        address: { type: string }
+        tls_server_name: { type: string }
+        doh_url: { type: string }
+        timeout_ms: { type: integer, minimum: 50, maximum: 5000 }
+        ca_certificate_pem: { type: string }
+        position: { type: integer }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
     UpstreamInput:
       type: object
       required: [name, protocol, timeout_ms, enabled, position]
       properties:
-        name: {type: string, minLength: 1, maxLength: 64}
-        protocol: {type: string, enum: [udp, tcp, dot, doh]}
-        address: {type: string}
-        tls_server_name: {type: string}
-        doh_url: {type: string}
-        timeout_ms: {type: integer, minimum: 50, maximum: 5000}
-        ca_certificate_pem: {type: string}
-        position: {type: integer, minimum: 0}
-        enabled: {type: boolean}
-        revision: {type: integer, format: int64, description: required on update}
+        name: { type: string, minLength: 1, maxLength: 64 }
+        protocol: { type: string, enum: [udp, tcp, dot, doh] }
+        address: { type: string }
+        tls_server_name: { type: string }
+        doh_url: { type: string }
+        timeout_ms: { type: integer, minimum: 50, maximum: 5000 }
+        ca_certificate_pem: { type: string }
+        position: { type: integer, minimum: 0 }
+        enabled: { type: boolean }
+        revision:
+          { type: integer, format: int64, description: required on update }
     ResolverSettings:
       type: object
-      required: [strategy, cache_max_bytes, cache_min_ttl, cache_max_ttl, cache_negative_max_ttl, cache_stale_window, block_mode, block_ttl, otlp_endpoint, trace_sample_one_in, trace_slow_threshold_us, revision]
+      required:
+        [
+          strategy,
+          cache_max_bytes,
+          cache_min_ttl,
+          cache_max_ttl,
+          cache_negative_max_ttl,
+          cache_stale_window,
+          block_mode,
+          block_ttl,
+          otlp_endpoint,
+          trace_sample_one_in,
+          trace_slow_threshold_us,
+          revision,
+        ]
       properties:
-        strategy: {type: string, enum: [ordered, fastest]}
-        cache_max_bytes: {type: integer, format: int64, minimum: 1048576}
-        cache_min_ttl: {type: integer, minimum: 0}
-        cache_max_ttl: {type: integer, minimum: 0}
-        cache_negative_max_ttl: {type: integer, minimum: 0}
-        cache_stale_window: {type: integer, minimum: 0}
-        block_mode: {type: string, enum: [null_ip, nxdomain, refused]}
-        block_ttl: {type: integer, minimum: 0}
-        otlp_endpoint: {type: string}
-        trace_sample_one_in: {type: integer, minimum: 0}
-        trace_slow_threshold_us: {type: integer, minimum: 0}
-        revision: {type: integer, format: int64}
+        strategy: { type: string, enum: [ordered, fastest] }
+        cache_max_bytes: { type: integer, format: int64, minimum: 1048576 }
+        cache_min_ttl: { type: integer, minimum: 0 }
+        cache_max_ttl: { type: integer, minimum: 0 }
+        cache_negative_max_ttl: { type: integer, minimum: 0 }
+        cache_stale_window: { type: integer, minimum: 0 }
+        block_mode: { type: string, enum: [null_ip, nxdomain, refused] }
+        block_ttl: { type: integer, minimum: 0 }
+        otlp_endpoint: { type: string }
+        trace_sample_one_in: { type: integer, minimum: 0 }
+        trace_slow_threshold_us: { type: integer, minimum: 0 }
+        revision: { type: integer, format: int64 }
     AccessControl:
       type: object
       required: [allow_cidrs, revision]
-      properties: {allow_cidrs: {type: array, items: {type: string}}, revision: {type: integer, format: int64}}
+      properties:
+        {
+          allow_cidrs: { type: array, items: { type: string } },
+          revision: { type: integer, format: int64 },
+        }
     FilterList:
       type: object
-      required: [id, name, kind, url, refresh_interval_seconds, enabled, entry_count, invalid_line_count, last_error, stale, revision]
+      required:
+        [
+          id,
+          name,
+          kind,
+          url,
+          refresh_interval_seconds,
+          enabled,
+          entry_count,
+          invalid_line_count,
+          last_error,
+          stale,
+          revision,
+        ]
       properties:
-        id: {type: string, format: uuid}
-        name: {type: string}
-        kind: {type: string, enum: [block, allow]}
-        url: {type: string}
-        refresh_interval_seconds: {type: integer, minimum: 300}
-        enabled: {type: boolean}
-        current_blob_sha256: {type: [string, 'null']}
-        entry_count: {type: integer}
-        invalid_line_count: {type: integer}
-        last_success_at: {type: [string, 'null'], format: date-time}
-        last_attempt_at: {type: [string, 'null'], format: date-time}
-        last_error: {type: string}
-        stale: {type: boolean, description: last attempt failed or last success older than 2 x refresh interval}
-        revision: {type: integer, format: int64}
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [block, allow] }
+        url: { type: string }
+        refresh_interval_seconds: { type: integer, minimum: 300 }
+        enabled: { type: boolean }
+        current_blob_sha256: { type: [string, "null"] }
+        entry_count: { type: integer }
+        invalid_line_count: { type: integer }
+        last_success_at: { type: [string, "null"], format: date-time }
+        last_attempt_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        stale:
+          {
+            type: boolean,
+            description: last attempt failed or last success older than 2 x refresh interval,
+          }
+        revision: { type: integer, format: int64 }
     FilterListInput:
       type: object
       required: [name, kind, url, refresh_interval_seconds, enabled]
       properties:
-        name: {type: string, minLength: 1, maxLength: 64}
-        kind: {type: string, enum: [block, allow]}
-        url: {type: string, pattern: '^https?://'}
-        refresh_interval_seconds: {type: integer, minimum: 300}
-        enabled: {type: boolean}
-        revision: {type: integer, format: int64}
+        name: { type: string, minLength: 1, maxLength: 64 }
+        kind: { type: string, enum: [block, allow] }
+        url: { type: string, pattern: "^https?://" }
+        refresh_interval_seconds: { type: integer, minimum: 300 }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
     Allowlist:
       type: object
       required: [domains, revision]
-      properties: {domains: {type: array, items: {type: string}}, revision: {type: integer, format: int64}}
+      properties:
+        {
+          domains: { type: array, items: { type: string } },
+          revision: { type: integer, format: int64 },
+        }
     Engine:
       type: object
-      required: [id, node_name, engine_version, enrolled_at, connected, applied_version, rejected_reason, persist_error, version_ahead, status]
+      required:
+        [
+          id,
+          node_name,
+          engine_version,
+          enrolled_at,
+          connected,
+          applied_version,
+          rejected_reason,
+          persist_error,
+          version_ahead,
+          status,
+        ]
       properties:
-        id: {type: string, format: uuid}
-        node_name: {type: string}
-        engine_version: {type: string}
-        enrolled_at: {type: string, format: date-time}
-        last_seen_at: {type: [string, 'null'], format: date-time}
-        connected: {type: boolean}
-        applied_version: {type: integer, format: int64}
-        rejected_version: {type: [integer, 'null'], format: int64}
-        rejected_reason: {type: string}
-        persist_error: {type: string}
-        version_ahead: {type: boolean}
-        status: {type: string, enum: [current, behind, rejected, ahead, disconnected]}
+        id: { type: string, format: uuid }
+        node_name: { type: string }
+        engine_version: { type: string }
+        enrolled_at: { type: string, format: date-time }
+        last_seen_at: { type: [string, "null"], format: date-time }
+        connected: { type: boolean }
+        applied_version: { type: integer, format: int64 }
+        rejected_version: { type: [integer, "null"], format: int64 }
+        rejected_reason: { type: string }
+        persist_error: { type: string }
+        version_ahead: { type: boolean }
+        status:
+          {
+            type: string,
+            enum: [current, behind, rejected, ahead, disconnected],
+          }
     JoinToken:
       type: object
       required: [id, name, created_by, created_at, expires_at, uses]
       properties:
-        id: {type: string, format: uuid}
-        name: {type: string}
-        created_by: {type: string}
-        created_at: {type: string, format: date-time}
-        expires_at: {type: string, format: date-time}
-        revoked_at: {type: [string, 'null'], format: date-time}
-        uses: {type: integer}
+        id: { type: string, format: uuid }
+        name: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        uses: { type: integer }
     JoinTokenCreate:
       type: object
       required: [name, ttl_seconds]
-      properties: {name: {type: string}, ttl_seconds: {type: integer, minimum: 60, maximum: 31536000}}
+      properties:
+        {
+          name: { type: string },
+          ttl_seconds: { type: integer, minimum: 60, maximum: 31536000 },
+        }
     JoinTokenCreated:
       type: object
       required: [join_token, token]
-      properties: {join_token: {$ref: '#/components/schemas/JoinToken'}, token: {type: string}}
+      properties:
+        {
+          join_token: { $ref: "#/components/schemas/JoinToken" },
+          token: { type: string },
+        }
     ConfigVersion:
       type: object
       required: [version, created_at, created_by, summary]
-      properties: {version: {type: integer, format: int64}, created_at: {type: string, format: date-time}, created_by: {type: string}, summary: {type: string}}
+      properties:
+        {
+          version: { type: integer, format: int64 },
+          created_at: { type: string, format: date-time },
+          created_by: { type: string },
+          summary: { type: string },
+        }
     ApiToken:
       type: object
       required: [id, user_id, name, prefix, role, created_at]
       properties:
-        id: {type: string, format: uuid}
-        user_id: {type: string, format: uuid}
-        name: {type: string}
-        prefix: {type: string}
-        role: {$ref: '#/components/schemas/Role'}
-        created_at: {type: string, format: date-time}
-        expires_at: {type: [string, 'null'], format: date-time}
-        last_used_at: {type: [string, 'null'], format: date-time}
-        revoked_at: {type: [string, 'null'], format: date-time}
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
     ApiTokenCreate:
       type: object
       required: [name, role]
-      properties: {name: {type: string}, role: {$ref: '#/components/schemas/Role'}, expires_at: {type: [string, 'null'], format: date-time}}
+      properties:
+        {
+          name: { type: string },
+          role: { $ref: "#/components/schemas/Role" },
+          expires_at: { type: [string, "null"], format: date-time },
+        }
     ApiTokenCreated:
       type: object
       required: [api_token, token]
-      properties: {api_token: {$ref: '#/components/schemas/ApiToken'}, token: {type: string}}
+      properties:
+        {
+          api_token: { $ref: "#/components/schemas/ApiToken" },
+          token: { type: string },
+        }
     AuditEvent:
       type: object
-      required: [id, at, actor_type, actor_id, actor_name, action, target_type, target_id, diff]
+      required:
+        [
+          id,
+          at,
+          actor_type,
+          actor_id,
+          actor_name,
+          action,
+          target_type,
+          target_id,
+          diff,
+        ]
       properties:
-        id: {type: integer, format: int64}
-        at: {type: string, format: date-time}
-        actor_type: {type: string, enum: [user, api_token, system]}
-        actor_id: {type: string}
-        actor_name: {type: string}
-        action: {type: string}
-        target_type: {type: string}
-        target_id: {type: string}
-        diff: {type: object, additionalProperties: true}
-        config_version: {type: [integer, 'null'], format: int64}
+        id: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        actor_type: { type: string, enum: [user, api_token, system] }
+        actor_id: { type: string }
+        actor_name: { type: string }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string }
+        diff: { type: object, additionalProperties: true }
+        config_version: { type: [integer, "null"], format: int64 }
     QueryLogRecord:
       type: object
-      required: [time, client, name, qtype, rcode, cache, filter, upstream, transport, engine_id, duration_us]
+      required:
+        [
+          time,
+          client,
+          name,
+          qtype,
+          rcode,
+          cache,
+          filter,
+          upstream,
+          transport,
+          engine_id,
+          duration_us,
+        ]
       properties:
-        time: {type: string, format: date-time}
-        client: {type: string}
-        name: {type: string}
-        qtype: {type: string}
-        rcode: {type: string}
-        cache: {type: string, enum: [hit, miss, stale, none]}
-        filter: {type: string, enum: [none, blocked, allowed]}
-        upstream: {type: string}
-        transport: {type: string}
-        engine_id: {type: string}
-        duration_us: {type: integer, format: int64}
+        time: { type: string, format: date-time }
+        client: { type: string }
+        name: { type: string }
+        qtype: { type: string }
+        rcode: { type: string }
+        cache: { type: string, enum: [hit, miss, stale, none] }
+        filter: { type: string, enum: [none, blocked, allowed] }
+        upstream: { type: string }
+        transport: { type: string }
+        engine_id: { type: string }
+        duration_us: { type: integer, format: int64 }
     QueryLogPage:
       type: object
       required: [backend, records, next_cursor]
-      properties: {backend: {type: string}, records: {type: array, items: {$ref: '#/components/schemas/QueryLogRecord'}}, next_cursor: {type: string}}
+      properties:
+        {
+          backend: { type: string },
+          records:
+            {
+              type: array,
+              items: { $ref: "#/components/schemas/QueryLogRecord" },
+            },
+          next_cursor: { type: string },
+        }
     Dashboard:
       type: object
-      required: [queries_total, blocked_total, qps, cache_hit_ratio, engines_total, engines_connected, upstreams, series]
+      required:
+        [
+          queries_total,
+          blocked_total,
+          qps,
+          cache_hit_ratio,
+          engines_total,
+          engines_connected,
+          upstreams,
+          series,
+        ]
       properties:
-        queries_total: {type: integer, format: int64}
-        blocked_total: {type: integer, format: int64}
-        qps: {type: number}
-        cache_hit_ratio: {type: number}
-        engines_total: {type: integer}
-        engines_connected: {type: integer}
+        queries_total: { type: integer, format: int64 }
+        blocked_total: { type: integer, format: int64 }
+        qps: { type: number }
+        cache_hit_ratio: { type: number }
+        engines_total: { type: integer }
+        engines_connected: { type: integer }
         upstreams:
           type: array
-          items: {type: object, required: [name, up_engines, total_engines, rtt_ms], properties: {name: {type: string}, up_engines: {type: integer}, total_engines: {type: integer}, rtt_ms: {type: number}}}
+          items:
+            {
+              type: object,
+              required: [name, up_engines, total_engines, rtt_ms],
+              properties:
+                {
+                  name: { type: string },
+                  up_engines: { type: integer },
+                  total_engines: { type: integer },
+                  rtt_ms: { type: number },
+                },
+            }
         series:
           type: array
-          items: {type: object, required: [at, qps], properties: {at: {type: string, format: date-time}, qps: {type: number}}}
+          items:
+            {
+              type: object,
+              required: [at, qps],
+              properties:
+                {
+                  at: { type: string, format: date-time },
+                  qps: { type: number },
+                },
+            }
 paths:
   /health:
-    get: {operationId: getHealth, security: [], responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}, '503': {description: degraded, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}}}
+    get:
+      {
+        operationId: getHealth,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Health" } },
+                  },
+              },
+            "503":
+              {
+                description: degraded,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Health" } },
+                  },
+              },
+          },
+      }
   /setup:
-    get: {operationId: getSetupStatus, security: [], responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/SetupStatus'}}}}}}
+    get:
+      {
+        operationId: getSetupStatus,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/SetupStatus" } },
+                  },
+              },
+          },
+      }
     post:
       operationId: completeSetup
       security: []
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SetupRequest'}}}}
-      responses: {'201': {description: created; sets the session cookie, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/SetupRequest" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; sets the session cookie,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /auth/login:
     post:
       operationId: login
       security: []
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/LoginRequest'}}}}
-      responses: {'200': {description: logged in; sets the session cookie, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}, '401': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/LoginRequest" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: logged in; sets the session cookie,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "401": { $ref: "#/components/responses/Error" },
+        }
   /auth/logout:
-    post: {operationId: logout, responses: {'204': {description: logged out}}}
+    post:
+      { operationId: logout, responses: { "204": { description: logged out } } }
   /auth/me:
-    get: {operationId: getCurrentUser, responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}, '401': {$ref: '#/components/responses/Error'}}}
+    get:
+      {
+        operationId: getCurrentUser,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/User" } },
+                  },
+              },
+            "401": { $ref: "#/components/responses/Error" },
+          },
+      }
   /auth/providers:
-    get: {operationId: listAuthProviders, security: [], responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/AuthProviders'}}}}}}
+    get:
+      {
+        operationId: listAuthProviders,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/AuthProviders" },
+                      },
+                  },
+              },
+          },
+      }
   /auth/oidc/start:
     get:
       operationId: startOidcLogin
       security: []
-      parameters: [{name: return_to, in: query, schema: {type: string}}]
-      responses: {'302': {description: redirect to the identity provider}, '503': {$ref: '#/components/responses/Error'}}
+      parameters: [{ name: return_to, in: query, schema: { type: string } }]
+      responses:
+        {
+          "302": { description: redirect to the identity provider },
+          "503": { $ref: "#/components/responses/Error" },
+        }
   /auth/oidc/callback:
     get:
       operationId: oidcCallback
       security: []
-      parameters: [{name: state, in: query, required: true, schema: {type: string}}, {name: code, in: query, required: true, schema: {type: string}}]
-      responses: {'302': {description: redirect into the GUI with the session cookie set}, '401': {$ref: '#/components/responses/Error'}}
+      parameters:
+        [
+          { name: state, in: query, required: true, schema: { type: string } },
+          { name: code, in: query, required: true, schema: { type: string } },
+        ]
+      responses:
+        {
+          "302":
+            { description: redirect into the GUI with the session cookie set },
+          "401": { $ref: "#/components/responses/Error" },
+        }
   /dashboard:
-    get: {operationId: getDashboard, responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Dashboard'}}}}}}
+    get:
+      {
+        operationId: getDashboard,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Dashboard" } },
+                  },
+              },
+          },
+      }
   /upstreams:
-    get: {operationId: listUpstreams, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Upstream'}}}}}}}
+    get:
+      {
+        operationId: listUpstreams,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/Upstream" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
     post:
       operationId: createUpstream
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UpstreamInput'}}}}
-      responses: {'201': {description: created, content: {application/json: {schema: {$ref: '#/components/schemas/Upstream'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UpstreamInput" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Upstream" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /upstreams/{id}:
     put:
       operationId: updateUpstream
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UpstreamInput'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/Upstream'}}}}, '400': {$ref: '#/components/responses/Error'}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UpstreamInput" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Upstream" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
     delete:
       operationId: deleteUpstream
-      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Revision'}]
-      responses: {'204': {description: deleted}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /resolver-settings:
-    get: {operationId: getResolverSettings, responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/ResolverSettings'}}}}}}
+    get:
+      {
+        operationId: getResolverSettings,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          { $ref: "#/components/schemas/ResolverSettings" },
+                      },
+                  },
+              },
+          },
+      }
     put:
       operationId: updateResolverSettings
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResolverSettings'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/ResolverSettings'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/ResolverSettings" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/ResolverSettings" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /access-control:
-    get: {operationId: getAccessControl, responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/AccessControl'}}}}}}
+    get:
+      {
+        operationId: getAccessControl,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/AccessControl" },
+                      },
+                  },
+              },
+          },
+      }
     put:
       operationId: updateAccessControl
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AccessControl'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/AccessControl'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/AccessControl" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/AccessControl" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /filter-lists:
-    get: {operationId: listFilterLists, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/FilterList'}}}}}}}
+    get:
+      {
+        operationId: listFilterLists,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/FilterList" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
     post:
       operationId: createFilterList
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FilterListInput'}}}}
-      responses: {'201': {description: created, content: {application/json: {schema: {$ref: '#/components/schemas/FilterList'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/FilterListInput" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /filter-lists/{id}:
     get:
       operationId: getFilterList
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/FilterList'}}}}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
     put:
       operationId: updateFilterList
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/FilterListInput'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/FilterList'}}}}, '400': {$ref: '#/components/responses/Error'}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/FilterListInput" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
     delete:
       operationId: deleteFilterList
-      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Revision'}]
-      responses: {'204': {description: deleted}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /filter-lists/{id}/refresh:
     post:
       operationId: refreshFilterList
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'200': {description: refresh attempted; body is the list after the attempt, content: {application/json: {schema: {$ref: '#/components/schemas/FilterList'}}}}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: refresh attempted; body is the list after the attempt,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
   /allowlist:
-    get: {operationId: getAllowlist, responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Allowlist'}}}}}}
+    get:
+      {
+        operationId: getAllowlist,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Allowlist" } },
+                  },
+              },
+          },
+      }
     put:
       operationId: updateAllowlist
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Allowlist'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/Allowlist'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/Allowlist" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Allowlist" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /engines:
-    get: {operationId: listEngines, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Engine'}}}}}}}
+    get:
+      {
+        operationId: listEngines,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/Engine" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
   /engines/{id}:
     get:
       operationId: getEngine
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Engine'}}}}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Engine" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
     delete:
       operationId: deleteEngine
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'204': {description: deleted}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+        }
   /join-tokens:
-    get: {operationId: listJoinTokens, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/JoinToken'}}}}}}}
+    get:
+      {
+        operationId: listJoinTokens,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/JoinToken" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
     post:
       operationId: createJoinToken
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/JoinTokenCreate'}}}}
-      responses: {'201': {description: created; token shown once, content: {application/json: {schema: {$ref: '#/components/schemas/JoinTokenCreated'}}}}, '400': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/JoinTokenCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; token shown once,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/JoinTokenCreated" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+        }
   /join-tokens/{id}:
     delete:
       operationId: revokeJoinToken
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'204': {description: revoked}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: revoked },
+          "404": { $ref: "#/components/responses/Error" },
+        }
   /config-versions:
     get:
       operationId: listConfigVersions
-      parameters: [{name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}]
-      responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/ConfigVersion'}}}}}}
+      parameters:
+        [
+          {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 50 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: "#/components/schemas/ConfigVersion" },
+                        },
+                    },
+                },
+            },
+        }
   /users:
-    get: {operationId: listUsers, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/User'}}}}}}}
+    get:
+      {
+        operationId: listUsers,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/User" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
     post:
       operationId: createUser
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UserCreate'}}}}
-      responses: {'201': {description: created, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}, '400': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UserCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /users/{id}:
     put:
       operationId: updateUser
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UserUpdate'}}}}
-      responses: {'200': {description: updated, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}, '400': {$ref: '#/components/responses/Error'}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UserUpdate" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
     delete:
       operationId: deleteUser
-      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Revision'}]
-      responses: {'204': {description: deleted}, '404': {$ref: '#/components/responses/Error'}, '409': {$ref: '#/components/responses/Error'}}
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
   /api-tokens:
-    get: {operationId: listApiTokens, responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/ApiToken'}}}}}}}
+    get:
+      {
+        operationId: listApiTokens,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/ApiToken" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
     post:
       operationId: createApiToken
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ApiTokenCreate'}}}}
-      responses: {'201': {description: created; token shown once, content: {application/json: {schema: {$ref: '#/components/schemas/ApiTokenCreated'}}}}, '400': {$ref: '#/components/responses/Error'}, '403': {$ref: '#/components/responses/Error'}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/ApiTokenCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; token shown once,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/ApiTokenCreated" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "403": { $ref: "#/components/responses/Error" },
+        }
   /api-tokens/{id}:
     delete:
       operationId: revokeApiToken
-      parameters: [{$ref: '#/components/parameters/Id'}]
-      responses: {'204': {description: revoked}, '404': {$ref: '#/components/responses/Error'}}
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: revoked },
+          "404": { $ref: "#/components/responses/Error" },
+        }
   /audit:
     get:
       operationId: listAuditEvents
-      parameters: [{name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}, {name: before_id, in: query, schema: {type: integer, format: int64}}]
-      responses: {'200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}}}}}
+      parameters:
+        [
+          {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 100 },
+          },
+          {
+            name: before_id,
+            in: query,
+            schema: { type: integer, format: int64 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: "#/components/schemas/AuditEvent" },
+                        },
+                    },
+                },
+            },
+        }
   /query-log:
     get:
       operationId: searchQueryLog
       parameters:
-        - {name: from, in: query, schema: {type: string, format: date-time}}
-        - {name: to, in: query, schema: {type: string, format: date-time}}
-        - {name: client, in: query, schema: {type: string}}
-        - {name: name, in: query, schema: {type: string}}
-        - {name: qtype, in: query, schema: {type: string}}
-        - {name: rcode, in: query, schema: {type: string}}
-        - {name: cache, in: query, schema: {type: string}}
-        - {name: filter, in: query, schema: {type: string}}
-        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
-        - {name: cursor, in: query, schema: {type: string}}
-      responses: {'200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/QueryLogPage'}}}}, '503': {$ref: '#/components/responses/Error'}}
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: client, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: qtype, in: query, schema: { type: string } }
+        - { name: rcode, in: query, schema: { type: string } }
+        - { name: cache, in: query, schema: { type: string } }
+        - { name: filter, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 100 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/QueryLogPage" } },
+                },
+            },
+          "503": { $ref: "#/components/responses/Error" },
+        }
 ```
 
 - [ ] Write `mgmt/api/oapi-codegen.yaml`:
@@ -4622,7 +5555,7 @@ func TestCSRFAndDatabaseDown(t *testing.T) {
 ```
 
 - [ ] Add `func DisabledOIDC() config.OIDCConfig { return config.OIDCConfig{} }` to `mgmt/internal/auth/oidc.go`, then run `scripts/dev-exec.sh go test -count=1 ./mgmt/internal/api/...` — expect FAIL with `no required module provides package github.com/piwi3910/nexora/mgmt/internal/api` (or `undefined: api.NewHandler` once `gen.go` exists).
-- [ ] Generate: `scripts/dev-exec.sh bash -c 'cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml'` and copy `mgmt/internal/api/gen.go` back with `kubectl --context kw -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /work/nexora -cf - mgmt/internal/api/gen.go | tar -xf -`.
+- [ ] Generate: `scripts/dev-exec.sh bash -c 'cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml'` and copy `mgmt/internal/api/gen.go` back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - mgmt/internal/api/gen.go | tar -xf -`.
 - [ ] Implement `server.go`: chi router with `middleware.RequestID`, `middleware.Recoverer`; `/api/v1` mounts `HandlerWithOptions(NewStrictHandlerWithOptions(handlers, []StrictMiddlewareFunc{authz}, StrictHTTPServerOptions{RequestErrorHandlerFunc: writeError(400,"invalid_request"), ResponseErrorHandlerFunc: mapError}))`. A plain `http` middleware before the strict handler rejects non-GET/HEAD requests whose `Content-Type` media type is not `application/json` with 415 `unsupported_media_type`. The `authz` strict middleware receives `operationID`: `auth.Public[operationID]` passes; otherwise `Auth.Authenticate` (401) then `auth.Authorize` (403), storing the `Principal` in the context (`api.PrincipalFrom(ctx)`). `mapError` maps `store.ErrUnavailable` -> 503 `unavailable`, `store.ErrNotFound` -> 404, `store.ErrConflict` -> 409 `conflict`, `auth.ErrForbidden` -> 403, `auth.ErrUnauthenticated`/`ErrInvalidCredentials` -> 401, `querylog.ErrBackendUnavailable` -> 503 `querylog_unavailable`, `errValidation` (a local type carrying a message) -> 400 `invalid_request`, anything else -> 500 `internal` with a generic message.
 - [ ] Implement `handlers_dns.go`. Every mutation calls `snapshot.Mutate(ctx, d.Store, d.Build, principal.Actor(), fn)` where `fn` performs the row change with optimistic concurrency (`update ... set ..., revision = revision + 1 where id=$1 and revision=$2 returning ...`; zero rows -> `select 1 ... where id=$1` distinguishes `ErrNotFound` from `ErrConflict`) and returns `auth.Change{Action: operationID, TargetType, TargetID, Before, After}` with the row before and after. Validation before `Mutate`: UDP/TCP/DoT `address` parses with `netip.ParseAddrPort`; DoT requires `tls_server_name`; DoH requires `doh_url` with scheme `https`; `ca_certificate_pem` parses with `x509` when non-empty; CIDRs parse with `netip.ParsePrefix`; allowlist domains lowercased and matched by `^[a-z0-9_-]+(\.[a-z0-9_-]+)*$`; resolver settings `cache_max_bytes >= 1048576`, `cache_max_ttl >= cache_min_ttl`. `refreshFilterList` calls `d.RefreshFilterList(ctx, principal, id)` (supplied by `blocklist.Fetcher.RefreshNow` in Task 17; a nil field yields 400 `invalid_request` with message `filter list fetching is not enabled on this instance`) and returns the list row read after the attempt.
 - [ ] Implement `handlers_fleet.go`: `listEngines`/`getEngine` compute `connected` as `connected_instance is not null and instances.heartbeat_at > now() - interval '15 seconds'`, and `status`: `ahead` when `version_ahead`, `disconnected` when not connected, `rejected` when `rejected_version` > `applied_version`, `current` when `applied_version` = latest version, else `behind`; `deleteEngine` sets `deleted_at` (audit via `Mutate` with no snapshot content change); `createJoinToken` uses `control.CreateJoinToken` inside `Mutate` and returns the token once; `revokeJoinToken` sets `revoked_at`; `listConfigVersions` orders by version desc; `getDashboard` returns `stats.Dashboard`.
@@ -4636,6 +5569,7 @@ func TestCSRFAndDatabaseDown(t *testing.T) {
 ## Task 16: Engine management-plane client and control-plane acceptance tests
 
 Files:
+
 - `engine/src/control.rs` (create) — join token, pinned enrollment, identity storage, `Connect` loop, blob fetch, stats
 - `engine/src/lib.rs` (modify) — add `pub mod control;`
 - `engine/src/main.rs` (modify) — managed mode runs `control::run` on the `nexora-control` runtime
@@ -4646,6 +5580,7 @@ Files:
 - `e2e/control_test.go` (create) — `TestInvalidSnapshotRejected`, `TestMgmtStatelessHA`
 
 Interfaces:
+
 - Consumes `proto::engine_control_client::EngineControlClient`, `proto::{EnrollRequest, EngineMessage, engine_message::Msg, Hello, Applied, Rejected, ServerMessage, server_message::Msg as ServerMsg, GetBlobRequest}` (Task 2); `snapshot::{apply, ApplyOutcome, DirBlobs, verify_blob, SnapshotError}` (Task 7); `server::Shared` (Tasks 8–9); `Metrics::stats` (Task 9); `bootstrap::Bootstrap` (Task 8). Management side from Tasks 13 and 15: `POST /api/v1/join-tokens`, `GET /api/v1/engines`, `GET /api/v1/engines/{id}`, `POST /api/v1/upstreams`, `PUT /api/v1/upstreams/{id}`, `GET /api/v1/config-versions`, `POST /api/v1/setup`, `POST /api/v1/api-tokens`.
 - `control.rs`: `#[derive(Debug, thiserror::Error)] pub enum ControlError { #[error("join token: {0}")] JoinToken(String), #[error("enroll: {0}")] Enroll(String), #[error("tls: {0}")] Tls(String), #[error("grpc: {0}")] Grpc(#[from] tonic::Status), #[error("transport: {0}")] Transport(#[from] tonic::transport::Error), #[error("io: {0}")] Io(#[from] std::io::Error) }`; `pub struct JoinToken { pub secret: String, pub ca_fingerprint: String }`; `pub fn parse_join_token(s: &str) -> Result<JoinToken, ControlError>`; `pub struct Identity { pub engine_id: String, pub cert_pem: String, pub key_pem: String, pub ca_pem: String }`; `pub fn load_identity(state_dir: &Path) -> std::io::Result<Option<Identity>>`; `pub fn save_identity(state_dir: &Path, id: &Identity) -> std::io::Result<()>` (files `identity/engine_id`, `identity/cert.pem`, `identity/key.pem` mode 0600, `identity/ca.pem`); `pub async fn fetch_pinned_ca(url: &str, fingerprint: &str) -> Result<String, ControlError>`; `pub async fn enroll(url: &str, token: &JoinToken, node_name: &str) -> Result<Identity, ControlError>`; `pub async fn channel(url: &str, id: &Identity) -> Result<tonic::transport::Channel, ControlError>`; `pub async fn fetch_blobs(client: &mut EngineControlClient<Channel>, snap: &ConfigSnapshot, blob_dir: &Path) -> Result<(), SnapshotError>`; `pub fn backoff(attempt: u32) -> Duration` (500 ms × 2^attempt capped at 30 s, ±20 % jitter); `pub async fn run(shared: Arc<Shared>, boot: Bootstrap)`; stderr lines `nexora-engine: enrolled as <id>`, `nexora-engine: control connected to <url>`, `nexora-engine: applied version <v>`, `nexora-engine: rejected version <v>: <reason>`, `nexora-engine: management plane at version <s> is behind engine version <a>`.
 - `e2e/harness/mgmt.go`: `type CA struct { Dir, CertFile, KeyFile string }`; `func (e *Env) InitCA() *CA`; `type MgmtOptions struct { QueryLogBackend, OpenSearchURL, OTLPEndpoint string; OIDC *OIDCFixture; OIDCAdminGroup, OIDCOperatorGroup string; ExtraEnv []string }`; `type Mgmt struct { HTTPAddr, GRPCAddr, BaseURL, GRPCURL string; Proc *Proc }`; `func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt`; `func (m *Mgmt) SetupToken(t *testing.T) string` (from the log line `setup token: `, empty when another instance created it); `type API struct { T *testing.T; Base string; HC *http.Client; Bearer string }`; `func (e *Env) NewAPI(baseURL string) *API` (cookie jar, `DisableKeepAlives: true`); `func (a *API) Do(method, path string, body, out any) (int, error)`; `func (a *API) Must(method, path string, body, out any, want int)`; `func Bootstrap(t *testing.T, e *Env, setupToken, baseURL string) *API` (completes setup as `admin` / `admin-password-e2e`, creates an admin API token, returns a bearer client); `func (a *API) CreateJoinToken() string`; `func (a *API) LatestVersion() uint64`; `func (a *API) WaitEngine(nodeName string, timeout time.Duration, cond func(EngineView) bool) EngineView`; `type EngineView struct { ID, NodeName, Status, RejectedReason string; AppliedVersion uint64; RejectedVersion *uint64; Connected bool }`; `func (e *Env) StartManagedEngine(nodeName string, grpcURLs []string, joinToken string) *Engine`; `func PublishRawSnapshot(t *testing.T, pgURL string, snap *controlv1.ConfigSnapshot) uint64`.
@@ -4822,8 +5757,9 @@ func TestMgmtStatelessHA(t *testing.T) {
 }
 ```
 
-  with `func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }` added to `e2e/main_test.go` (import `regexp`).
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect FAIL with `could not find `control` in `nexora_engine``; run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect FAIL with `env.InitCA undefined`.
+with `func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }` added to `e2e/main_test.go` (import `regexp`).
+
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --test control_unit` — expect FAIL with ``could not find `control` in `nexora_engine` ``; run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestInvalidSnapshotRejected|TestMgmtStatelessHA" ./e2e/'` — expect FAIL with `env.InitCA undefined`.
 - [ ] Modify `mgmt/internal/control/tls.go` so the served `tls.Certificate.Certificate` is `[leafDER, ca.Cert.Raw]`.
 - [ ] Implement `control.rs`:
   - `parse_join_token` trims, splits on `.` into exactly `nxj1`, a non-empty `[A-Z2-7]+` secret and 64 lowercase hex.
@@ -4842,6 +5778,7 @@ func TestMgmtStatelessHA(t *testing.T) {
 ## Task 17: Blocklist subscriptions — fetcher, parser, normalised blobs, and the subscription acceptance test
 
 Files:
+
 - `mgmt/internal/blocklist/parse.go` (create) — hosts / AdBlock / domain-list parser, normaliser, zstd blob
 - `mgmt/internal/blocklist/fetcher.go` (create) — scheduled and on-demand refresh under advisory locks
 - `mgmt/internal/blocklist/parse_test.go` (create)
@@ -4850,10 +5787,11 @@ Files:
 - `e2e/blocklist_test.go` (create) — `TestBlocklistSubscription`
 
 Interfaces:
+
 - Consumes `snapshot.{Mutate, BuildConfig}`, `auth.{Actor, Change, Principal}` (Tasks 13–14), `store.Store` (Task 12), `api.Deps.RefreshFilterList` (Task 15); harness `StartHTTPFixture`, `HTTPFixture.{SetList, SetFailing, URL}`, `StartMgmt`, `Bootstrap`, `StartManagedEngine`, `API.WaitEngine`, `LatestVersion` (Tasks 10, 16); engine filter from Task 7.
 - `blocklist.ParseStats{ Entries, Invalid int }`; `func Parse(r io.Reader) ([]string, ParseStats, error)`; `func Normalize(domains []string) []byte`; `func Compress(text []byte) (data []byte, sha256hex string, err error)`; `const MaxListBytes = 256 << 20`; `func NewFetcher(st *store.Store, build snapshot.BuildConfig, hc *http.Client) *Fetcher`; `func (f *Fetcher) Run(ctx context.Context)` (every 30 s selects `enabled` lists where `last_attempt_at is null or last_attempt_at < now() - refresh_interval_seconds * interval '1 second'`); `func (f *Fetcher) RefreshNow(ctx context.Context, p auth.Principal, id string) error`.
 - Advisory lock key: `pg_try_advisory_lock(hashtext('filter_list:' || $1))` on a dedicated pooled connection, released with `pg_advisory_unlock` after the attempt; when not acquired the call returns nil (another instance is fetching).
-- Line grammar: blank lines and lines starting with `#` or `!` and `[Adblock` headers are ignored (not counted); `0.0.0.0 d`, `127.0.0.1 d`, `:: d`, `::1 d` (extra hostnames on the line each count) -> `d`; `||d^` and `||d^$<options>` -> `d`; a bare `d` -> `d`; `localhost`, `localhost.localdomain`, `broadcasthost`, `0.0.0.0` hostnames are ignored; any other line (including `@@` exceptions, regexes, paths, cosmetic `##` filters) is counted in `Invalid`. Domains are converted with `golang.org/x/net/idna` `Lookup.ToASCII`, lowercased, trailing dot removed, and must match `^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)+$` or are counted invalid.
+- Line grammar: blank lines and lines starting with `#` or `!` and `[Adblock` headers are ignored (not counted); `0.0.0.0 d`, `127.0.0.1 d`, `:: d`, `::1 d` (extra hostnames on the line each count) -> `d`; `||d^` and `||d^$<options>` -> `d`; a bare `d` -> `d`; `localhost`, `localhost.localdomain`, `broadcasthost`, `0.0.0.0` hostnames are ignored; any other line (including `@@` exceptions, regexes, paths, cosmetic `##` filters) is counted in `Invalid`. Domains are converted with `golang.org/x/net/idna` `Lookup.ToASCII`, lowercased, trailing dot removed, and must match `^[a-z0-9_]{1}([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9_]{1}([a-z0-9_-]{0,61}[a-z0-9_])?)+$` or are counted invalid.
 
 - [ ] Write the failing unit test `mgmt/internal/blocklist/parse_test.go`:
 
@@ -5032,6 +5970,7 @@ func TestBlocklistSubscription(t *testing.T) {
 ## Task 18: Query-log backends, fleet metrics, shared test services, and the observability acceptance tests
 
 Files:
+
 - `mgmt/internal/querylog/builtin.go` (create) — OTLP `LogsService` receiver on the gRPC port + in-memory ring
 - `mgmt/internal/querylog/opensearch.go` (create) — OpenSearch adapter over `attributes.*`
 - `mgmt/internal/querylog/builtin_test.go`, `mgmt/internal/querylog/opensearch_test.go` (create)
@@ -5048,6 +5987,7 @@ Files:
 - `deploy/dev/dev-pod.yaml` (modify) — env `NEXORA_E2E_OPENSEARCH_URL`, `NEXORA_E2E_JAEGER_QUERY_URL`
 
 Interfaces:
+
 - Consumes `querylog.{Backend, Query, Record, Page, ErrBackendUnavailable}`, `stats.Record`, `api.Deps` (Task 15); `control.EngineID` (Task 13); `config.{Config, OpenSearchConfig}` (Task 12); engine OTLP export (Task 9) and control client (Task 16); harness from Tasks 10 and 16.
 - `querylog.NewBuiltin(capacity int) *Builtin`; `func (b *Builtin) Export(ctx context.Context, req *collogspb.ExportLogsServiceRequest) (*collogspb.ExportLogsServiceResponse, error)` (requires `control.EngineID(ctx)`; converts each LogRecord's attributes into a `Record`); `func (b *Builtin) Search(ctx context.Context, q Query) (Page, error)` (newest first; cursor = decimal sequence number); `Name() == "builtin"`.
 - `querylog.NewOpenSearch(cfg config.OpenSearchConfig) (*OpenSearch, error)`; `Search` posts to `/<index>/_search` a `bool.filter` of `range @timestamp`, `term attributes.client.address`, `match_phrase attributes.dns.question.name`, `term attributes.dns.question.type`, `term attributes.dns.response.code`, `term attributes.nexora.cache`, `term attributes.nexora.filter`, `sort [{"@timestamp": "desc"}]`, `search_after` from the base64 JSON cursor; transport errors and HTTP >= 500 -> `ErrBackendUnavailable`; `Name() == "opensearch"`.
@@ -5056,7 +5996,7 @@ Interfaces:
 - `dnsperf.Options{ Server string; Port int; Names []string; QType string; Seconds, Clients, Threads int; MaxQPS int }`; `dnsperf.Result{ QPS float64; Sent, Completed, Lost uint64; LatencyAvgSeconds float64; P99Seconds float64 }`; `func Run(ctx context.Context, o Options) (Result, error)` (writes a data file of `<name> <qtype>` lines, runs `dnsperf -s -p -d -l -c -T -O latency-histogram [-Q]`); `func Parse(out string) (Result, error)`.
 - `harness.RunDnsperf(t *testing.T, server string, names []string, seconds int) dnsperf.Result`; `harness.OpenSearchURL(t) string`, `harness.JaegerQueryURL(t) string` (both `t.Fatal` with the variable name when unset); `harness.JaegerOTLPEndpoint(t) string` = host of the Jaeger query URL with port 4317.
 
-- [ ] Capture real dnsperf 2.14 output as test data, querying the dev pod's cluster resolver at 50 QPS: `scripts/dev-exec.sh bash -c 'mkdir -p bench/dnsperf/testdata && printf "kubernetes.default.svc.cluster.local A\n" > /tmp/q.txt && dnsperf -s $(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf) -d /tmp/q.txt -l 3 -Q 50 -O latency-histogram > bench/dnsperf/testdata/output.txt'`, then copy it back with `kubectl --context kw -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /work/nexora -cf - bench/dnsperf/testdata | tar -xf -`. The parser below is written against this file.
+- [ ] Capture real dnsperf 2.14 output as test data, querying the dev pod's cluster resolver at 50 QPS: `scripts/dev-exec.sh bash -c 'mkdir -p bench/dnsperf/testdata && printf "kubernetes.default.svc.cluster.local A\n" > /tmp/q.txt && dnsperf -s $(awk "/^nameserver/{print \$2; exit}" /etc/resolv.conf) -d /tmp/q.txt -l 3 -Q 50 -O latency-histogram > bench/dnsperf/testdata/output.txt'`, then copy it back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - bench/dnsperf/testdata | tar -xf -`. The parser below is written against this file.
 - [ ] Write the failing test `bench/dnsperf/dnsperf_test.go`:
 
 ```go
@@ -5180,7 +6120,8 @@ func TestOpenSearchQueriesAttributesAndReportsUnavailable(t *testing.T) {
 }
 ```
 
-  (`Ingest(engineID string, req *collogspb.ExportLogsServiceRequest)` is the method `Export` calls after authenticating.)
+(`Ingest(engineID string, req *collogspb.ExportLogsServiceRequest)` is the method `Export` calls after authenticating.)
+
 - [ ] Write the failing test `mgmt/internal/stats/collector_test.go` (Postgres via harness): insert a `users`-free engine row (`insert into engines(node_name, certificate_serial, connected_instance) ...` after inserting an `instances` row), call `stats.Record` twice 10 s apart (`Stats.UnixMs` values differing by 10 000, `QueriesTotal` 1000 then 3000, one upstream `{Name: "fx", Up: true}`, 15 buckets), then `prometheus.NewPedanticRegistry()`, `reg.MustRegister(stats.NewCollector(st))`, `reg.Gather()` and assert families `nexora_fleet_qps` (value 200 for engine label), `nexora_fleet_query_duration_seconds`, `nexora_fleet_cache_hit_ratio`, `nexora_fleet_upstream_up` exist:
 
 ```go
@@ -5233,7 +6174,8 @@ func TestCollectorExportsFleetMetrics(t *testing.T) {
 }
 ```
 
-  (imports: `context`, `testing`, `time`, `github.com/prometheus/client_golang/prometheus`, `dto "github.com/prometheus/client_model/go"`, harness, controlv1, `stats`, `store`).
+(imports: `context`, `testing`, `time`, `github.com/prometheus/client_golang/prometheus`, `dto "github.com/prometheus/client_model/go"`, harness, controlv1, `stats`, `store`).
+
 - [ ] Write the failing acceptance tests `e2e/observability_test.go`:
 
 ```go
@@ -5393,46 +6335,60 @@ func TestOTelSinkDownNoBackpressure(t *testing.T) {
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
-metadata: {name: opensearch, namespace: nexora, labels: {app.kubernetes.io/name: opensearch}}
+metadata:
+  {
+    name: opensearch,
+    namespace: nexora,
+    labels: { app.kubernetes.io/name: opensearch },
+  }
 spec:
   serviceName: opensearch
   replicas: 1
-  selector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+  selector: { matchLabels: { app.kubernetes.io/name: opensearch } }
   template:
-    metadata: {labels: {app.kubernetes.io/name: opensearch}}
+    metadata: { labels: { app.kubernetes.io/name: opensearch } }
     spec:
       initContainers:
         - name: sysctl
           image: busybox:1.37
           command: ["sysctl", "-w", "vm.max_map_count=262144"]
-          securityContext: {privileged: true}
+          securityContext: { privileged: true }
       containers:
         - name: opensearch
           image: opensearchproject/opensearch:3.8.0
           env:
-            - {name: discovery.type, value: single-node}
-            - {name: DISABLE_SECURITY_PLUGIN, value: "true"}
-            - {name: DISABLE_INSTALL_DEMO_CONFIG, value: "true"}
-            - {name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g"}
-          ports: [{name: http, containerPort: 9200}]
-          readinessProbe: {httpGet: {path: /_cluster/health, port: 9200}, periodSeconds: 10}
+            - { name: discovery.type, value: single-node }
+            - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
+            - { name: DISABLE_INSTALL_DEMO_CONFIG, value: "true" }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
+          ports: [{ name: http, containerPort: 9200 }]
+          readinessProbe:
+            {
+              httpGet: { path: /_cluster/health, port: 9200 },
+              periodSeconds: 10,
+            }
           resources:
-            requests: {cpu: 500m, memory: 2Gi}
-            limits: {cpu: "2", memory: 3Gi}
-          volumeMounts: [{name: data, mountPath: /usr/share/opensearch/data}]
+            requests: { cpu: 500m, memory: 2Gi }
+            limits: { cpu: "2", memory: 3Gi }
+          volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
   volumeClaimTemplates:
-    - metadata: {name: data}
-      spec: {accessModes: [ReadWriteOnce], storageClassName: longhorn-single, resources: {requests: {storage: 20Gi}}}
+    - metadata: { name: data }
+      spec:
+        {
+          accessModes: [ReadWriteOnce],
+          storageClassName: longhorn-single,
+          resources: { requests: { storage: 20Gi } },
+        }
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: opensearch, namespace: nexora}
+metadata: { name: opensearch, namespace: nexora }
 spec:
-  selector: {app.kubernetes.io/name: opensearch}
-  ports: [{name: http, port: 9200, targetPort: 9200}]
+  selector: { app.kubernetes.io/name: opensearch }
+  ports: [{ name: http, port: 9200, targetPort: 9200 }]
 ```
 
-- [ ] Apply and wire the shared services: `kubectl --context kw apply -f deploy/kw/namespace.yaml -f deploy/kw/opensearch.yaml && kubectl --context kw -n nexora rollout status statefulset/opensearch --timeout=10m`; find the Jaeger query service with `kubectl --context kw -n observability get svc -o wide` and set, in `deploy/dev/dev-pod.yaml` container `env`, `NEXORA_E2E_OPENSEARCH_URL=http://opensearch.nexora.svc.cluster.local:9200` and `NEXORA_E2E_JAEGER_QUERY_URL=http://<jaeger query service>.observability.svc.cluster.local:16686` (the service exposing port 16686; `harness.JaegerOTLPEndpoint` uses the same host on port 4317, so pick the Jaeger service that exposes both ports, as the all-in-one and collector-with-query services do), then `kubectl --context kw apply -f deploy/dev/dev-pod.yaml && kubectl --context kw -n nexora-dev rollout status deploy/nexora-dev` and verify `scripts/dev-exec.sh bash -c 'curl -fsS $NEXORA_E2E_OPENSEARCH_URL/_cluster/health && curl -fsS $NEXORA_E2E_JAEGER_QUERY_URL/api/services && h=${NEXORA_E2E_JAEGER_QUERY_URL#http://}; bash -c "</dev/tcp/${h%%:*}/4317"'` — expect JSON from both and a successful TCP connect to port 4317.
+- [ ] Apply and wire the shared services: `kubectl --context kw apply -f deploy/kw/namespace.yaml -f deploy/kw/opensearch.yaml && kubectl --context kw -n nexora rollout status statefulset/opensearch --timeout=10m`; find the Jaeger query service with `kubectl --context kw -n observability get svc -o wide` and set, in `deploy/dev/dev-pod.yaml` container `env`, `NEXORA_E2E_OPENSEARCH_URL=http://opensearch.nexora.svc.cluster.local:9200` and `NEXORA_E2E_JAEGER_QUERY_URL=http://<jaeger query service>.observability.svc.cluster.local:16686` (the service exposing port 16686; `harness.JaegerOTLPEndpoint` uses the same host on port 4317, so pick the Jaeger service that exposes both ports, as the all-in-one and collector-with-query services do), then `kubectl --context kw apply -f deploy/dev/dev-pod.yaml && kubectl --context kw -n nexora-dev rollout status deploy/toolbox` and verify `scripts/dev-exec.sh bash -c 'curl -fsS $NEXORA_E2E_OPENSEARCH_URL/_cluster/health && curl -fsS $NEXORA_E2E_JAEGER_QUERY_URL/api/services && h=${NEXORA_E2E_JAEGER_QUERY_URL#http://}; bash -c "</dev/tcp/${h%%:*}/4317"'` — expect JSON from both and a successful TCP connect to port 4317.
 - [ ] Implement `bench/dnsperf/dnsperf.go`: `Parse` reads `Queries sent:`, `Queries completed:`, `Queries lost:`, `Queries per second:`, `Average Latency (s):` and the latency histogram lines in the captured `testdata/output.txt` format, computing `P99Seconds` as the upper bound of the first bucket whose cumulative count reaches 99 % of completed queries; missing `Queries per second:` -> error `dnsperf output has no QPS line`. `Run` defaults `Clients=16`, `Threads=4`, `QType="A"`.
 - [ ] Implement `builtin.go` (ring of `Record` with a monotonically increasing sequence, `sync.RWMutex`; `Export` -> `control.EngineID` then `Ingest`; filters are case-insensitive substring for `Name`, exact for others), `opensearch.go` (`opensearchapi.NewClient(opensearchapi.Config{Client: opensearch.Config{Addresses: []string{cfg.URL}, Username, Password (from PasswordFile)}})`, 5 s request timeout), `stats/collector.go` (`prometheus.MustNewConstMetric`, `prometheus.MustNewConstHistogram` with bucket bounds converted to seconds), and `api/metrics.go`.
 - [ ] Wire `serve`: `reg := prometheus.NewRegistry()`, register `collectors.NewGoCollector()`, `collectors.NewProcessCollector(...)`, `stats.NewCollector(st)`, `api.NewMetrics(reg)`; query-log backend `builtin` -> `b := querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)` and `collogspb.RegisterLogsServiceServer(grpcServer, b)`; `opensearch` -> `querylog.NewOpenSearch(cfg.OpenSearch)`; `Deps.QueryLog` and `Deps.Metrics = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})`.
@@ -5444,6 +6400,7 @@ spec:
 ## Task 19: GUI foundation, auth screens, Playwright harness and `TestAuthRBACAuditOIDC`
 
 Files:
+
 - `web/package.json`, `web/pnpm-lock.yaml`, `web/tsconfig.json`, `web/vite.config.ts`, `web/index.html`, `web/eslint.config.js` (create)
 - `web/src/main.tsx`, `web/src/app/router.tsx`, `web/src/index.css`, `web/src/lib/utils.ts` (create)
 - `web/src/api/schema.d.ts` (create, generated by `pnpm run gen:api`, committed), `web/src/api/client.ts` (create) — openapi-fetch client and `ApiError`
@@ -5458,6 +6415,7 @@ Files:
 - `e2e/auth_test.go` (create) — `TestAuthRBACAuditOIDC`
 
 Interfaces:
+
 - Consumes the HTTP API from Task 15 (operationIds listed in Task 14), session cookie `nexora_session`, OIDC routes `/api/v1/auth/oidc/start` and `/api/v1/auth/oidc/callback`; harness `StartMgmt`, `MgmtOptions.OIDC`, `StartOIDCFixture`, `Bootstrap`, `NewAPI` (Tasks 10, 16).
 - `web/src/api/client.ts`: `export const api = createClient<paths>({ baseUrl: "/api/v1", credentials: "same-origin", headers: { "Content-Type": "application/json" } })`; `export class ApiError extends Error { status: number; code: string }`; `export function unwrap<T>(r: { data?: T; error?: { code: string; message: string }; response: Response }): T`.
 - `web/src/auth/AuthProvider.tsx`: `export function useCurrentUser(): { user: components["schemas"]["User"] | null; loading: boolean }`; `export function RequireAuth({ children }: { children: React.ReactNode })` (redirects to `/setup` when `getSetupStatus.required`, else `/login?return_to=<path>` on 401); `export function useCan(operationId: OperationId): boolean`.
@@ -5574,7 +6532,14 @@ export const test = base.extend<{ page: Page }>({
       page.on("request", (req) => {
         const url = new URL(req.url());
         if (url.pathname.startsWith("/api/v1/")) {
-          appendFileSync(file, JSON.stringify({ method: req.method(), path: url.pathname.slice("/api/v1".length), test: testInfo.titlePath.join(" > ") }) + "\n");
+          appendFileSync(
+            file,
+            JSON.stringify({
+              method: req.method(),
+              path: url.pathname.slice("/api/v1".length),
+              test: testInfo.titlePath.join(" > "),
+            }) + "\n",
+          );
         }
       });
     }
@@ -5610,21 +6575,42 @@ export async function logout(page: Page) {
 ```ts
 import { test, expect, env, login, logout } from "./fixtures";
 
-test("viewer cannot change config, operator can, audit shows actor and diff", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_VIEWER_USER"), env("NEXORA_E2E_VIEWER_PASSWORD"));
+test("viewer cannot change config, operator can, audit shows actor and diff", async ({
+  page,
+}) => {
+  await login(
+    page,
+    env("NEXORA_E2E_VIEWER_USER"),
+    env("NEXORA_E2E_VIEWER_PASSWORD"),
+  );
   await page.getByTestId("nav-upstreams").click();
   await expect(page.getByTestId("upstream-row-seed")).toBeVisible();
   await expect(page.getByTestId("upstream-add")).toHaveCount(0);
   await expect(page.getByTestId("upstream-edit-seed")).toHaveCount(0);
   await expect(page.getByTestId("nav-audit")).toHaveCount(0);
   const denied = await page.evaluate(async () => {
-    const r = await fetch("/api/v1/upstreams", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "viewer-write", protocol: "udp", address: "192.0.2.53:53", timeout_ms: 250, enabled: true, position: 9 }) });
+    const r = await fetch("/api/v1/upstreams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "viewer-write",
+        protocol: "udp",
+        address: "192.0.2.53:53",
+        timeout_ms: 250,
+        enabled: true,
+        position: 9,
+      }),
+    });
     return r.status;
   });
   expect(denied).toBe(403);
   await logout(page);
 
-  await login(page, env("NEXORA_E2E_OPERATOR_USER"), env("NEXORA_E2E_OPERATOR_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_OPERATOR_USER"),
+    env("NEXORA_E2E_OPERATOR_PASSWORD"),
+  );
   await page.getByTestId("nav-upstreams").click();
   await page.getByTestId("upstream-add").click();
   await page.getByTestId("upstream-name").fill("operator-added");
@@ -5634,23 +6620,38 @@ test("viewer cannot change config, operator can, audit shows actor and diff", as
   await page.getByTestId("upstream-edit-operator-added").click();
   await page.getByTestId("upstream-timeout").fill("400");
   await page.getByTestId("upstream-save").click();
-  await expect(page.getByTestId("upstream-row-operator-added")).toContainText("400");
+  await expect(page.getByTestId("upstream-row-operator-added")).toContainText(
+    "400",
+  );
   await logout(page);
 
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-audit").click();
-  const row = page.locator('[data-testid="audit-row"][data-action="updateUpstream"]').filter({ hasText: env("NEXORA_E2E_OPERATOR_USER") }).first();
+  const row = page
+    .locator('[data-testid="audit-row"][data-action="updateUpstream"]')
+    .filter({ hasText: env("NEXORA_E2E_OPERATOR_USER") })
+    .first();
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.locator('[data-testid^="audit-diff-"]').first()).toContainText("400");
+  await expect(
+    page.locator('[data-testid^="audit-diff-"]').first(),
+  ).toContainText("400");
   await logout(page);
 });
 
 test("OIDC login works", async ({ page }) => {
   await page.goto("/login");
   await page.getByTestId("login-oidc").click();
-  await page.getByRole("button", { name: `Sign in as ${env("NEXORA_E2E_OIDC_USER")}` }).click();
-  await expect(page.getByTestId("user-menu")).toContainText(env("NEXORA_E2E_OIDC_USER"));
+  await page
+    .getByRole("button", { name: `Sign in as ${env("NEXORA_E2E_OIDC_USER")}` })
+    .click();
+  await expect(page.getByTestId("user-menu")).toContainText(
+    env("NEXORA_E2E_OIDC_USER"),
+  );
   await page.getByTestId("nav-audit").click();
   await expect(page.getByTestId("audit-row").first()).toBeVisible();
   await logout(page);
@@ -5662,11 +6663,19 @@ test("OIDC login works", async ({ page }) => {
 ```ts
 import { test, expect, env, login, logout } from "./fixtures";
 
-test("local login still works while the OIDC provider is down", async ({ page }) => {
+test("local login still works while the OIDC provider is down", async ({
+  page,
+}) => {
   await page.goto("/login");
   await page.getByTestId("login-oidc").click();
-  await expect(page.getByTestId("login-error")).toContainText("identity provider unavailable");
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await expect(page.getByTestId("login-error")).toContainText(
+    "identity provider unavailable",
+  );
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await logout(page);
 });
 ```
@@ -5755,7 +6764,7 @@ func TestAuthRBACAuditOIDC(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run TestAuthRBACAuditOIDC ./e2e/'` — expect FAIL with `undefined: harness.RunPlaywright`.
-- [ ] Scaffold and install: write `web/tsconfig.json` (`"strict": true`, `"jsx": "react-jsx"`, `"moduleResolution": "bundler"`, `"paths": {"@/*": ["./src/*"]}`, `"types": ["node"]`), `web/index.html` (`<div id="root">`, `<script type="module" src="/src/main.tsx">`), `web/src/index.css` (`@import "tailwindcss";` plus the CSS variables `--background`, `--foreground`, `--primary`, `--primary-foreground`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--accent`, `--accent-foreground`, `--muted`, `--muted-foreground` mapped via `@theme inline` so the ported component classes such as `bg-primary` resolve), `web/eslint.config.js` (`@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks`), then run `scripts/dev-exec.sh bash -c 'cd web && pnpm install && pnpm run gen:api'` and copy `web/pnpm-lock.yaml` and `web/src/api/schema.d.ts` back with `kubectl --context kw -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /work/nexora -cf - web/pnpm-lock.yaml web/src/api/schema.d.ts | tar -xf -`.
+- [ ] Scaffold and install: write `web/tsconfig.json` (`"strict": true`, `"jsx": "react-jsx"`, `"moduleResolution": "bundler"`, `"paths": {"@/*": ["./src/*"]}`, `"types": ["node"]`), `web/index.html` (`<div id="root">`, `<script type="module" src="/src/main.tsx">`), `web/src/index.css` (`@import "tailwindcss";` plus the CSS variables `--background`, `--foreground`, `--primary`, `--primary-foreground`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, `--accent`, `--accent-foreground`, `--muted`, `--muted-foreground` mapped via `@theme inline` so the ported component classes such as `bg-primary` resolve), `web/eslint.config.js` (`@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks`), then run `scripts/dev-exec.sh bash -c 'cd web && pnpm install && pnpm run gen:api'` and copy `web/pnpm-lock.yaml` and `web/src/api/schema.d.ts` back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - web/pnpm-lock.yaml web/src/api/schema.d.ts | tar -xf -`.
 - [ ] Port the UI components: copy `alert, badge, button, card, dialog, input, label, select, separator, switch, table, tabs, textarea, tooltip` from `~/Development/nexora-reference/Nexora/components/ui/*.tsx` into `web/src/components/ui/`, removing any `"use client"` directives and keeping the `@/lib/utils` import; write `web/src/lib/utils.ts` as `export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }`.
 - [ ] Write `web/src/auth/permissions.ts` exporting `export type Role = "viewer" | "operator" | "admin"` and `export const permissions: Record<string, Role | "public">` with exactly the operationIds and roles listed in Task 14, and `web/scripts/check-permissions.mjs` that parses `mgmt/internal/auth/permissions.go` with the regex `/"(\w+)":\s*Role(Viewer|Operator|Admin)/g` and the `Public` map with `/"(\w+)":\s*true/g`, reads `web/src/auth/permissions.ts` as text with `/(\w+):\s*"(viewer|operator|admin|public)"/g`, compares the two maps in both directions, and exits 1 listing every mismatch.
 - [ ] Implement `client.ts`, `AuthProvider.tsx` (`useQuery({ queryKey: ["me"], queryFn: () => api.GET("/auth/me") })`; `useCan(op)` compares the user's role with `permissions[op]` using viewer < operator < admin), `router.tsx` (`createBrowserRouter`), `main.tsx` (`QueryClientProvider` with `retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2`), `AppShell.tsx` (sidebar links carrying `data-testid="nav-<route>"` rendered only when `useCan` of that screen's list operation holds — `listUsers`, `listApiTokens`, `listAuditEvents`, `listJoinTokens` gate users, API tokens, audit and the join-token panel; a `health-badge` fed by `getHealth` every 15 s showing `ok` or `degraded`; `user-menu` showing the username with a `logout` item calling `POST /auth/logout`).
@@ -5771,6 +6780,7 @@ func TestAuthRBACAuditOIDC(t *testing.T) {
 ## Task 20: Remaining GUI screens, `TestGUICoverage` and `TestQueryLogBackends`
 
 Files:
+
 - `web/src/pages/DashboardPage.tsx`, `QueryLogPage.tsx`, `AccessControlPage.tsx`, `FilteringPage.tsx`, `EnginesPage.tsx`, `UsersPage.tsx`, `ApiTokensPage.tsx`, `SettingsPage.tsx` (create)
 - `web/src/app/router.tsx` (modify) — all M1 routes
 - `web/e2e/screens/00-setup.spec.ts`, `01-dashboard.spec.ts`, `02-upstreams.spec.ts`, `03-access-control.spec.ts`, `04-filtering.spec.ts`, `05-engines.spec.ts`, `06-users.spec.ts`, `07-api-tokens.spec.ts`, `08-audit.spec.ts`, `09-settings.spec.ts`, `10-query-log.spec.ts`, `11-oidc.spec.ts` (create)
@@ -5779,6 +6789,7 @@ Files:
 - `e2e/gui_test.go` (create) — `TestGUICoverage`, `TestQueryLogBackends`
 
 Interfaces:
+
 - Consumes `web/e2e/fixtures.ts` (`test`, `expect`, `env`, `login`, `logout`), `AppShell`, `useCan`, `api` client (Task 19); every operationId from Task 15; harness `RunPlaywright`, `StartMgmt`, `StartManagedEngine`, `StartOtelcol`, `OpenSearchURL`, `NewAPI`, `MustQuery` (Tasks 10, 16, 18, 19).
 - `harness.Operation{ ID, Method, Path string }`; `func LoadOperations(t *testing.T) []Operation` (reads `<repo>/mgmt/api/openapi.yaml` with `gopkg.in/yaml.v3`); `func MatchOperation(ops []Operation, method, path string) (string, bool)` (path templates `{x}` match one non-empty segment; the query string is ignored); `func CoveredOperations(t *testing.T, ops []Operation, coverageDir string) map[string]bool` (reads every `requests-*.jsonl`).
 - Test ids (exact): dashboard `dashboard-qps`, `dashboard-cache-hit-ratio`, `dashboard-engines`, `dashboard-chart`; access control `acl-cidr-input`, `acl-add`, `acl-remove-<cidr>`, `acl-save`, `acl-row-<cidr>`; filtering `list-add`, `list-name`, `list-kind`, `list-url`, `list-interval`, `list-save`, `list-row-<name>`, `list-open-<name>`, `list-detail`, `list-refresh`, `list-edit`, `list-delete`, `list-stale-<name>`, `allowlist-input`, `allowlist-add`, `allowlist-save`, `allowlist-row-<domain>`; engines `engine-row-<node>`, `engine-open-<node>`, `engine-detail`, `engine-delete`, `jointoken-add`, `jointoken-name`, `jointoken-save`, `jointoken-value`, `jointoken-row-<name>`, `jointoken-revoke-<name>`; users `user-add`, `user-username`, `user-email`, `user-password`, `user-role`, `user-save`, `user-row-<username>`, `user-edit-<username>`, `user-disabled`, `user-delete-<username>`; API tokens `token-add`, `token-name`, `token-role`, `token-save`, `token-value`, `token-row-<name>`, `token-revoke-<name>`; settings `settings-strategy`, `settings-cache-max-bytes`, `settings-block-mode`, `settings-block-ttl`, `settings-otlp-endpoint`, `settings-sample-one-in`, `settings-save`, `version-row` (one per config version); query log `querylog-name`, `querylog-client`, `querylog-search`, `querylog-row`, `querylog-backend`, `querylog-unavailable`; shared `confirm-delete`.
@@ -5794,22 +6805,32 @@ test("first-run setup creates the admin", async ({ page }) => {
   await page.getByTestId("setup-token").fill(env("NEXORA_E2E_SETUP_TOKEN"));
   await page.getByTestId("setup-username").fill(env("NEXORA_E2E_ADMIN_USER"));
   await page.getByTestId("setup-email").fill("admin@example.test");
-  await page.getByTestId("setup-password").fill(env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await page
+    .getByTestId("setup-password")
+    .fill(env("NEXORA_E2E_ADMIN_PASSWORD"));
   await page.getByTestId("setup-submit").click();
-  await expect(page.getByTestId("user-menu")).toContainText(env("NEXORA_E2E_ADMIN_USER"));
+  await expect(page.getByTestId("user-menu")).toContainText(
+    env("NEXORA_E2E_ADMIN_USER"),
+  );
   await expect(page.getByTestId("health-badge")).toContainText("ok");
 });
 ```
 
-  `web/e2e/screens/01-dashboard.spec.ts`:
+`web/e2e/screens/01-dashboard.spec.ts`:
 
 ```ts
 import { test, expect, env, login, logout } from "../fixtures";
 
 test("dashboard shows fleet stats", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-dashboard").click();
-  await expect(page.getByTestId("dashboard-engines")).toContainText(/\d+ \/ \d+/);
+  await expect(page.getByTestId("dashboard-engines")).toContainText(
+    /\d+ \/ \d+/,
+  );
   await expect(page.getByTestId("dashboard-qps")).toBeVisible();
   await expect(page.getByTestId("dashboard-cache-hit-ratio")).toBeVisible();
   await expect(page.getByTestId("dashboard-chart")).toBeVisible();
@@ -5817,21 +6838,29 @@ test("dashboard shows fleet stats", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/02-upstreams.spec.ts`:
+`web/e2e/screens/02-upstreams.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("upstreams create, edit, delete", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-upstreams").click();
   await page.getByTestId("upstream-add").click();
   await page.getByTestId("upstream-name").fill("gui-doh");
   await page.getByTestId("upstream-protocol").click();
   await page.getByRole("option", { name: "doh" }).click();
-  await page.getByTestId("upstream-doh-url").fill("https://dns.example.test/dns-query");
+  await page
+    .getByTestId("upstream-doh-url")
+    .fill("https://dns.example.test/dns-query");
   await page.getByTestId("upstream-save").click();
-  await expect(page.getByTestId("upstream-row-gui-doh")).toContainText("https://dns.example.test/dns-query");
+  await expect(page.getByTestId("upstream-row-gui-doh")).toContainText(
+    "https://dns.example.test/dns-query",
+  );
   await page.getByTestId("upstream-edit-gui-doh").click();
   await page.getByTestId("upstream-timeout").fill("900");
   await page.getByTestId("upstream-save").click();
@@ -5842,13 +6871,17 @@ test("upstreams create, edit, delete", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/03-access-control.spec.ts`:
+`web/e2e/screens/03-access-control.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("access control list edit", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-access-control").click();
   await expect(page.getByTestId("acl-row-127.0.0.0/8")).toBeVisible();
   await page.getByTestId("acl-cidr-input").fill("198.51.100.0/24");
@@ -5862,13 +6895,17 @@ test("access control list edit", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/04-filtering.spec.ts`:
+`web/e2e/screens/04-filtering.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("filter lists and allowlist", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-filtering").click();
   await page.getByTestId("list-add").click();
   await page.getByTestId("list-name").fill("gui-list");
@@ -5896,15 +6933,21 @@ test("filter lists and allowlist", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/05-engines.spec.ts`:
+`web/e2e/screens/05-engines.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("engines and join tokens", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-engines").click();
-  await expect(page.getByTestId("engine-row-gui-engine")).toContainText("current");
+  await expect(page.getByTestId("engine-row-gui-engine")).toContainText(
+    "current",
+  );
   await page.getByTestId("engine-open-gui-engine-2").click();
   await expect(page.getByTestId("engine-detail")).toContainText("gui-engine-2");
   await page.getByTestId("engine-delete").click();
@@ -5917,17 +6960,23 @@ test("engines and join tokens", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.getByTestId("jointoken-revoke-gui-token").click();
   await page.getByTestId("confirm-delete").click();
-  await expect(page.getByTestId("jointoken-row-gui-token")).toContainText("revoked");
+  await expect(page.getByTestId("jointoken-row-gui-token")).toContainText(
+    "revoked",
+  );
 });
 ```
 
-  `web/e2e/screens/06-users.spec.ts`:
+`web/e2e/screens/06-users.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("users create, edit, delete", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-users").click();
   await page.getByTestId("user-add").click();
   await page.getByTestId("user-username").fill("gui-user");
@@ -5946,13 +6995,17 @@ test("users create, edit, delete", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/07-api-tokens.spec.ts`:
+`web/e2e/screens/07-api-tokens.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("api tokens create and revoke", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-api-tokens").click();
   await page.getByTestId("token-add").click();
   await page.getByTestId("token-name").fill("gui-ci");
@@ -5965,28 +7018,40 @@ test("api tokens create and revoke", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/08-audit.spec.ts`:
+`web/e2e/screens/08-audit.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("audit log lists changes with diffs", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-audit").click();
-  const row = page.locator('[data-testid="audit-row"][data-action="createUser"]').first();
+  const row = page
+    .locator('[data-testid="audit-row"][data-action="createUser"]')
+    .first();
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.locator('[data-testid^="audit-diff-"]').first()).toContainText("gui-user");
+  await expect(
+    page.locator('[data-testid^="audit-diff-"]').first(),
+  ).toContainText("gui-user");
 });
 ```
 
-  `web/e2e/screens/09-settings.spec.ts`:
+`web/e2e/screens/09-settings.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("resolver settings and config versions", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-settings").click();
   const before = await page.getByTestId("version-row").count();
   await page.getByTestId("settings-block-ttl").fill("120");
@@ -5997,21 +7062,30 @@ test("resolver settings and config versions", async ({ page }) => {
 });
 ```
 
-  `web/e2e/screens/10-query-log.spec.ts`:
+`web/e2e/screens/10-query-log.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "../fixtures";
 
 test("query log search", async ({ page }) => {
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-query-log").click();
   await page.getByTestId("querylog-name").fill(env("NEXORA_E2E_QUERY_NAME"));
   await page.getByTestId("querylog-search").click();
-  await expect(page.getByTestId("querylog-row").filter({ hasText: env("NEXORA_E2E_QUERY_NAME") }).first()).toBeVisible();
+  await expect(
+    page
+      .getByTestId("querylog-row")
+      .filter({ hasText: env("NEXORA_E2E_QUERY_NAME") })
+      .first(),
+  ).toBeVisible();
 });
 ```
 
-  `web/e2e/screens/11-oidc.spec.ts`:
+`web/e2e/screens/11-oidc.spec.ts`:
 
 ```ts
 import { test, expect, env, logout } from "../fixtures";
@@ -6019,8 +7093,12 @@ import { test, expect, env, logout } from "../fixtures";
 test("OIDC sign-in round trip", async ({ page }) => {
   await page.goto("/login");
   await page.getByTestId("login-oidc").click();
-  await page.getByRole("button", { name: `Sign in as ${env("NEXORA_E2E_OIDC_USER")}` }).click();
-  await expect(page.getByTestId("user-menu")).toContainText(env("NEXORA_E2E_OIDC_USER"));
+  await page
+    .getByRole("button", { name: `Sign in as ${env("NEXORA_E2E_OIDC_USER")}` })
+    .click();
+  await expect(page.getByTestId("user-menu")).toContainText(
+    env("NEXORA_E2E_OIDC_USER"),
+  );
   await logout(page);
 });
 ```
@@ -6030,14 +7108,25 @@ test("OIDC sign-in round trip", async ({ page }) => {
 ```ts
 import { test, expect, env, login } from "./fixtures";
 
-test("a query made against the engine appears in the query log within 10 s", async ({ page }) => {
+test("a query made against the engine appears in the query log within 10 s", async ({
+  page,
+}) => {
   const queryAt = Number(env("NEXORA_E2E_QUERY_AT"));
   const name = env("NEXORA_E2E_QUERY_NAME");
-  await login(page, env("NEXORA_E2E_ADMIN_USER"), env("NEXORA_E2E_ADMIN_PASSWORD"));
+  await login(
+    page,
+    env("NEXORA_E2E_ADMIN_USER"),
+    env("NEXORA_E2E_ADMIN_PASSWORD"),
+  );
   await page.getByTestId("nav-query-log").click();
-  await expect(page.getByTestId("querylog-backend")).toHaveText(env("NEXORA_E2E_QUERYLOG_BACKEND"));
+  await expect(page.getByTestId("querylog-backend")).toHaveText(
+    env("NEXORA_E2E_QUERYLOG_BACKEND"),
+  );
   await page.getByTestId("querylog-name").fill(name);
-  const row = page.getByTestId("querylog-row").filter({ hasText: name }).first();
+  const row = page
+    .getByTestId("querylog-row")
+    .filter({ hasText: name })
+    .first();
   while (Date.now() < queryAt + 10_000) {
     await page.getByTestId("querylog-search").click();
     if (await row.isVisible()) break;
@@ -6166,7 +7255,8 @@ func TestQueryLogBackends(t *testing.T) {
 }
 ```
 
-  and add `func RepoRoot(t *testing.T) string` (walks up from the working directory to the directory containing `go.mod`) to `e2e/harness/harness.go`.
+and add `func RepoRoot(t *testing.T) string` (walks up from the working directory to the directory containing `go.mod`) to `e2e/harness/harness.go`.
+
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestGUICoverage|TestQueryLogBackends" ./e2e/'` — expect FAIL with `undefined: harness.LoadOperations`; after adding `openapi.go`, the next run is expected to FAIL with `OpenAPI operations have no covering Playwright test` listing the screens not yet built (for example `getDashboard (GET /dashboard)`), which proves the coverage comparison bites before the screens exist.
 - [ ] Implement `e2e/harness/openapi.go` per the interface.
 - [ ] Implement `DashboardPage.tsx`: `getDashboard` every 10 s; `dashboard-qps` (QPS rounded), `dashboard-cache-hit-ratio` (percent), `dashboard-engines` (`<connected> / <total>`), a Recharts `LineChart` of `series` inside `data-testid="dashboard-chart"`, and an upstream health table.
@@ -6180,6 +7270,7 @@ func TestQueryLogBackends(t *testing.T) {
 ## Task 21: Two-tier dnsperf performance gate
 
 Files:
+
 - `bench/cmd/perfgate/main.go` (create) — `run`, `serve`, `load`, `compare`, `absolute` subcommands
 - `bench/cmd/perfgate/gate.go` (create) — threshold logic
 - `bench/cmd/perfgate/gate_test.go` (create)
@@ -6187,6 +7278,7 @@ Files:
 - `.github/workflows/perf-gate.yml` (create)
 
 Interfaces:
+
 - Consumes `bench/dnsperf.{Run, Options, Result}` (Task 18), `e2e/fixtures/cmd/nexora-fixture` binary (Task 10), `nexora-engine` standalone mode (Task 8).
 - `corpus.Names(n int) []string` returns `perf-<i>.example.` for `i` in `[0, n)`.
 - `func Compare(base, head []dnsperf.Result, maxDrop float64) (Verdict, error)` where `type Verdict struct { BaseQPS, HeadQPS, Drop float64; Pass bool }` uses the median QPS of each side; `Pass` is `head >= base*(1-maxDrop)`.
@@ -6256,7 +7348,14 @@ func TestAbsoluteThresholds(t *testing.T) {
 name: perf-gate
 on:
   pull_request:
-    paths: ["engine/**", "proto/**", "Cargo.lock", "bench/**", ".github/workflows/perf-gate.yml"]
+    paths:
+      [
+        "engine/**",
+        "proto/**",
+        "Cargo.lock",
+        "bench/**",
+        ".github/workflows/perf-gate.yml",
+      ]
   schedule:
     - cron: "0 3 * * *"
   push:
@@ -6275,9 +7374,9 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-        with: {path: head}
+        with: { path: head }
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
-        with: {path: base, ref: "${{ github.event.pull_request.base.sha }}"}
+        with: { path: base, ref: "${{ github.event.pull_request.base.sha }}" }
       - name: Toolchains
         run: |
           sudo apt-get update && sudo apt-get install -y protobuf-compiler dnsperf
@@ -6299,7 +7398,7 @@ jobs:
         run: ./perfgate compare --base base-1.json,base-2.json,base-3.json --head head-1.json,head-2.json,head-3.json --max-drop 0.05
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
-        with: {name: perf-relative, path: "*.json"}
+        with: { name: perf-relative, path: "*.json" }
 
   absolute:
     name: absolute gate on the reference box (nightly, release tags)
@@ -6333,7 +7432,7 @@ jobs:
         run: ssh -i ~/.ssh/nexora-ref "$REF_HOST" 'kill $(cat /tmp/perfgate.pid) || true'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
-        with: {name: perf-absolute, path: absolute.json}
+        with: { name: perf-absolute, path: absolute.json }
 ```
 
 - [ ] Validate the workflow syntax: `scripts/dev-exec.sh bash -c 'go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/perf-gate.yml .github/workflows/fuzz.yml'` — expect PASS with no output.
@@ -6342,6 +7441,7 @@ jobs:
 ## Task 22: Container images and CI workflows
 
 Files:
+
 - `deploy/docker/engine.Dockerfile` (create)
 - `deploy/docker/mgmt.Dockerfile` (create)
 - `.dockerignore` (create)
@@ -6351,6 +7451,7 @@ Files:
 - `.github/workflows/ci.yml` (create) — engine, management plane and GUI unit tests and lint
 
 Interfaces:
+
 - Consumes `make build` outputs (Tasks 1, 8, 15, 20) and `scripts/build-image.sh -f <dockerfile relative to context> -n <name> -t <tag> <context>`.
 - Produces images `192.168.10.131:5000/azrtydxb/nexora-engine:<tag>` and `.../nexora-mgmt:<tag>` (pulled as `192.168.10.131/azrtydxb/<name>:<tag>`), consumed by Task 23. Engine image: entrypoint `/usr/local/bin/nexora-engine`, default args `--config /etc/nexora/engine.toml`, user 10001, ports 53/udp, 53/tcp, 9153/tcp. Management image: entrypoint `/nexora-mgmt`, default args `serve`, user nonroot, ports 8080, 9443.
 
@@ -6435,7 +7536,7 @@ CMD ["serve"]
 ```yaml
 name: ci
 on:
-  push: {branches: [main]}
+  push: { branches: [main] }
   pull_request: {}
 permissions:
   contents: read
@@ -6476,7 +7577,8 @@ jobs:
       - run: cd web && pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run lint && pnpm run build
 ```
 
-  `TestOIDCLoginAndProviderDown` is skipped in CI because it needs the `nexora-fixture` binary; it runs in the dev pod through `make mgmt-test` after `make e2e-build`. The end-to-end suite runs in the dev pod (`make e2e`), not on GitHub runners.
+`TestOIDCLoginAndProviderDown` is skipped in CI because it needs the `nexora-fixture` binary; it runs in the dev pod through `make mgmt-test` after `make e2e-build`. The end-to-end suite runs in the dev pod (`make e2e`), not on GitHub runners.
+
 - [ ] Write `.github/workflows/images.yml` (multi-arch via QEMU/buildx; tags `sha-<short>` on main, `vX.Y.Z` on tags):
 
 ```yaml
@@ -6498,14 +7600,19 @@ jobs:
     strategy:
       matrix:
         image:
-          - {name: nexora-engine, file: deploy/docker/engine.Dockerfile}
-          - {name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile}
+          - { name: nexora-engine, file: deploy/docker/engine.Dockerfile }
+          - { name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile }
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
-        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+        with:
+          {
+            registry: ghcr.io,
+            username: "${{ github.actor }}",
+            password: "${{ secrets.GITHUB_TOKEN }}",
+          }
       - id: meta
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
@@ -6525,6 +7632,7 @@ jobs:
 ## Task 23: First deployment to kw and `TestKwSmoke`
 
 Files:
+
 - `deploy/kw/cnpg-cluster.yaml` (create) — CNPG cluster `nexora-db`
 - `deploy/kw/mgmt-grpc-lb.yaml` (create) — LoadBalancer Service for gRPC 9443 (applied first so its IP can go into the server certificate SANs)
 - `deploy/kw/mgmt.yaml` (create) — `nexora-mgmt` Deployment (2 replicas), ClusterIP Services, Ingress `nexora.kw.local`
@@ -6535,6 +7643,7 @@ Files:
 - `e2e/main_test.go` (modify) — remove the binary check from `TestMain` (the harness `Bin` already fails tests that need binaries) so `TestKwSmoke` runs without local builds
 
 Interfaces:
+
 - Consumes images from Task 22, `deploy/kw/namespace.yaml` and `deploy/kw/opensearch.yaml` from Task 18, env contract of `nexora-mgmt serve` (Tasks 12–18), `engine.toml` bootstrap keys (Task 8), API operations `completeSetup`, `login`, `createApiToken`, `listUpstreams`, `createUpstream`, `createJoinToken` (Task 15).
 - `scripts/kw-deploy.sh [--tag TAG] --admin-password-file FILE` — prints `NEXORA_KW_DNS_ADDR=<ip>:53` and `NEXORA_KW_API_URL=http://nexora.kw.local` at the end.
 - Kubernetes objects in namespace `nexora`: `Cluster nexora-db` (app secret `nexora-db-app`, key `uri`), `Secret nexora-ca` (`ca.crt`, `ca.key`), `Secret nexora-join-token` (`join-token`), `Deployment nexora-mgmt`, `Service nexora-mgmt` (8080), `Service nexora-mgmt-grpc` (ClusterIP 9443), `Service nexora-mgmt-grpc-lb` (LoadBalancer 9443), `Ingress nexora` (`nexora.kw.local`, class `nginx`), `Deployment nexora-otelcol` + `Service nexora-otelcol` (4317), `ConfigMap nexora-engine-config`, `Deployment nexora-engine`, `Service nexora-dns` (LoadBalancer, 53/UDP and 53/TCP, `externalTrafficPolicy: Local`), `Service nexora-engine-metrics` (9153).
@@ -6642,16 +7751,16 @@ func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
-metadata: {name: nexora-db, namespace: nexora}
+metadata: { name: nexora-db, namespace: nexora }
 spec:
   instances: 2
   imageName: ghcr.io/cloudnative-pg/postgresql:17
-  storage: {size: 10Gi, storageClass: longhorn-single}
+  storage: { size: 10Gi, storageClass: longhorn-single }
   bootstrap:
-    initdb: {database: nexora, owner: nexora}
+    initdb: { database: nexora, owner: nexora }
   resources:
-    requests: {cpu: 250m, memory: 512Mi}
-    limits: {cpu: "1", memory: 1Gi}
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
 ```
 
 - [ ] Write `deploy/kw/mgmt-grpc-lb.yaml`:
@@ -6659,11 +7768,11 @@ spec:
 ```yaml
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-mgmt-grpc-lb, namespace: nexora}
+metadata: { name: nexora-mgmt-grpc-lb, namespace: nexora }
 spec:
   type: LoadBalancer
-  selector: {app.kubernetes.io/name: nexora-mgmt}
-  ports: [{name: grpc, port: 9443, targetPort: 9443}]
+  selector: { app.kubernetes.io/name: nexora-mgmt }
+  ports: [{ name: grpc, port: 9443, targetPort: 9443 }]
 ```
 
 - [ ] Write `deploy/kw/mgmt.yaml`:
@@ -6671,74 +7780,99 @@ spec:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: nexora-mgmt, namespace: nexora, labels: {app.kubernetes.io/name: nexora-mgmt}}
+metadata:
+  {
+    name: nexora-mgmt,
+    namespace: nexora,
+    labels: { app.kubernetes.io/name: nexora-mgmt },
+  }
 spec:
   replicas: 2
-  selector: {matchLabels: {app.kubernetes.io/name: nexora-mgmt}}
+  selector: { matchLabels: { app.kubernetes.io/name: nexora-mgmt } }
   template:
-    metadata: {labels: {app.kubernetes.io/name: nexora-mgmt}}
+    metadata: { labels: { app.kubernetes.io/name: nexora-mgmt } }
     spec:
-      imagePullSecrets: [{name: nexus-pull}]
+      imagePullSecrets: [{ name: nexus-pull }]
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
-              podAffinityTerm: {topologyKey: kubernetes.io/hostname, labelSelector: {matchLabels: {app.kubernetes.io/name: nexora-mgmt}}}
+              podAffinityTerm:
+                {
+                  topologyKey: kubernetes.io/hostname,
+                  labelSelector:
+                    { matchLabels: { app.kubernetes.io/name: nexora-mgmt } },
+                }
       containers:
         - name: mgmt
           image: 192.168.10.131/azrtydxb/nexora-mgmt:NEXORA_TAG
           args: ["serve"]
           env:
             - name: NEXORA_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: nexora-db-app, key: uri}}
-            - {name: NEXORA_HTTP_LISTEN, value: ":8080"}
-            - {name: NEXORA_GRPC_LISTEN, value: ":9443"}
-            - {name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt}
-            - {name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key}
-            - {name: NEXORA_GRPC_SERVER_NAMES, value: "nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,NEXORA_GRPC_LB_IP"}
-            - {name: NEXORA_PUBLIC_URL, value: "http://nexora.kw.local"}
-            - {name: NEXORA_SECURE_COOKIES, value: "false"}
-            - {name: NEXORA_QUERYLOG_BACKEND, value: opensearch}
-            - {name: NEXORA_OPENSEARCH_URL, value: "http://opensearch.nexora.svc.cluster.local:9200"}
-            - {name: NEXORA_OPENSEARCH_INDEX, value: "nexora-querylog-*"}
-            - {name: NEXORA_OTLP_ENDPOINT, value: "http://nexora-otelcol.nexora.svc.cluster.local:4317"}
+              valueFrom: { secretKeyRef: { name: nexora-db-app, key: uri } }
+            - { name: NEXORA_HTTP_LISTEN, value: ":8080" }
+            - { name: NEXORA_GRPC_LISTEN, value: ":9443" }
+            - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
+            - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
+            - {
+                name: NEXORA_GRPC_SERVER_NAMES,
+                value: "nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,NEXORA_GRPC_LB_IP",
+              }
+            - { name: NEXORA_PUBLIC_URL, value: "http://nexora.kw.local" }
+            - { name: NEXORA_SECURE_COOKIES, value: "false" }
+            - { name: NEXORA_QUERYLOG_BACKEND, value: opensearch }
+            - {
+                name: NEXORA_OPENSEARCH_URL,
+                value: "http://opensearch.nexora.svc.cluster.local:9200",
+              }
+            - { name: NEXORA_OPENSEARCH_INDEX, value: "nexora-querylog-*" }
+            - {
+                name: NEXORA_OTLP_ENDPOINT,
+                value: "http://nexora-otelcol.nexora.svc.cluster.local:4317",
+              }
           ports:
-            - {name: http, containerPort: 8080}
-            - {name: grpc, containerPort: 9443}
-          readinessProbe: {httpGet: {path: /api/v1/health, port: http}, periodSeconds: 5}
-          livenessProbe: {tcpSocket: {port: grpc}, periodSeconds: 10}
+            - { name: http, containerPort: 8080 }
+            - { name: grpc, containerPort: 9443 }
+          readinessProbe:
+            { httpGet: { path: /api/v1/health, port: http }, periodSeconds: 5 }
+          livenessProbe: { tcpSocket: { port: grpc }, periodSeconds: 10 }
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
-            limits: {cpu: "1", memory: 512Mi}
-          volumeMounts: [{name: ca, mountPath: /etc/nexora/ca, readOnly: true}]
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts:
+            [{ name: ca, mountPath: /etc/nexora/ca, readOnly: true }]
       volumes:
         - name: ca
-          secret: {secretName: nexora-ca, defaultMode: 0400}
+          secret: { secretName: nexora-ca, defaultMode: 0400 }
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-mgmt, namespace: nexora}
+metadata: { name: nexora-mgmt, namespace: nexora }
 spec:
-  selector: {app.kubernetes.io/name: nexora-mgmt}
-  ports: [{name: http, port: 8080, targetPort: http}]
+  selector: { app.kubernetes.io/name: nexora-mgmt }
+  ports: [{ name: http, port: 8080, targetPort: http }]
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-mgmt-grpc, namespace: nexora}
+metadata: { name: nexora-mgmt-grpc, namespace: nexora }
 spec:
-  selector: {app.kubernetes.io/name: nexora-mgmt}
-  ports: [{name: grpc, port: 9443, targetPort: grpc}]
+  selector: { app.kubernetes.io/name: nexora-mgmt }
+  ports: [{ name: grpc, port: 9443, targetPort: grpc }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata: {name: nexora, namespace: nexora}
+metadata: { name: nexora, namespace: nexora }
 spec:
   ingressClassName: nginx
   rules:
     - host: nexora.kw.local
       http:
         paths:
-          - {path: /, pathType: Prefix, backend: {service: {name: nexora-mgmt, port: {name: http}}}}
+          - {
+              path: /,
+              pathType: Prefix,
+              backend: { service: { name: nexora-mgmt, port: { name: http } } },
+            }
 ```
 
 - [ ] Write `deploy/kw/otelcol.yaml` (`NEXORA_JAEGER_OTLP` is substituted by `scripts/kw-deploy.sh`):
@@ -6746,7 +7880,7 @@ spec:
 ```yaml
 apiVersion: v1
 kind: ConfigMap
-metadata: {name: nexora-otelcol, namespace: nexora}
+metadata: { name: nexora-otelcol, namespace: nexora }
 data:
   config.yaml: |
     receivers:
@@ -6772,32 +7906,37 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: nexora-otelcol, namespace: nexora, labels: {app.kubernetes.io/name: nexora-otelcol}}
+metadata:
+  {
+    name: nexora-otelcol,
+    namespace: nexora,
+    labels: { app.kubernetes.io/name: nexora-otelcol },
+  }
 spec:
   replicas: 1
-  selector: {matchLabels: {app.kubernetes.io/name: nexora-otelcol}}
+  selector: { matchLabels: { app.kubernetes.io/name: nexora-otelcol } }
   template:
-    metadata: {labels: {app.kubernetes.io/name: nexora-otelcol}}
+    metadata: { labels: { app.kubernetes.io/name: nexora-otelcol } }
     spec:
       containers:
         - name: otelcol
           image: otel/opentelemetry-collector-contrib:0.160.0
           args: ["--config=/conf/config.yaml"]
-          ports: [{name: otlp-grpc, containerPort: 4317}]
+          ports: [{ name: otlp-grpc, containerPort: 4317 }]
           resources:
-            requests: {cpu: 100m, memory: 256Mi}
-            limits: {cpu: "1", memory: 512Mi}
-          volumeMounts: [{name: conf, mountPath: /conf}]
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts: [{ name: conf, mountPath: /conf }]
       volumes:
         - name: conf
-          configMap: {name: nexora-otelcol}
+          configMap: { name: nexora-otelcol }
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-otelcol, namespace: nexora}
+metadata: { name: nexora-otelcol, namespace: nexora }
 spec:
-  selector: {app.kubernetes.io/name: nexora-otelcol}
-  ports: [{name: otlp-grpc, port: 4317, targetPort: otlp-grpc}]
+  selector: { app.kubernetes.io/name: nexora-otelcol }
+  ports: [{ name: otlp-grpc, port: 4317, targetPort: otlp-grpc }]
 ```
 
 - [ ] Write `deploy/kw/engine.yaml`:
@@ -6805,7 +7944,7 @@ spec:
 ```yaml
 apiVersion: v1
 kind: ConfigMap
-metadata: {name: nexora-engine-config, namespace: nexora}
+metadata: { name: nexora-engine-config, namespace: nexora }
 data:
   engine.toml.tmpl: |
     node_name = "NODE_NAME"
@@ -6819,74 +7958,99 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: nexora-engine, namespace: nexora, labels: {app.kubernetes.io/name: nexora-engine}}
+metadata:
+  {
+    name: nexora-engine,
+    namespace: nexora,
+    labels: { app.kubernetes.io/name: nexora-engine },
+  }
 spec:
   replicas: 3
-  selector: {matchLabels: {app.kubernetes.io/name: nexora-engine}}
+  selector: { matchLabels: { app.kubernetes.io/name: nexora-engine } }
   template:
-    metadata: {labels: {app.kubernetes.io/name: nexora-engine}}
+    metadata: { labels: { app.kubernetes.io/name: nexora-engine } }
     spec:
-      imagePullSecrets: [{name: nexus-pull}]
+      imagePullSecrets: [{ name: nexus-pull }]
       securityContext:
-        sysctls: [{name: net.ipv4.ip_unprivileged_port_start, value: "0"}]
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - topologyKey: kubernetes.io/hostname
-              labelSelector: {matchLabels: {app.kubernetes.io/name: nexora-engine}}
+              labelSelector:
+                { matchLabels: { app.kubernetes.io/name: nexora-engine } }
       initContainers:
         - name: render-config
           image: busybox:1.37
-          command: ["sh", "-c", "sed \"s/NODE_NAME/$(echo \"$POD_NAME\" | cut -c1-63)/\" /tmpl/engine.toml.tmpl > /etc/nexora/engine.toml"]
-          env: [{name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}]
+          command:
+            [
+              "sh",
+              "-c",
+              'sed "s/NODE_NAME/$(echo "$POD_NAME" | cut -c1-63)/" /tmpl/engine.toml.tmpl > /etc/nexora/engine.toml',
+            ]
+          env:
+            [
+              {
+                name: POD_NAME,
+                valueFrom: { fieldRef: { fieldPath: metadata.name } },
+              },
+            ]
           volumeMounts:
-            - {name: tmpl, mountPath: /tmpl}
-            - {name: config, mountPath: /etc/nexora}
+            - { name: tmpl, mountPath: /tmpl }
+            - { name: config, mountPath: /etc/nexora }
       containers:
         - name: engine
           image: 192.168.10.131/azrtydxb/nexora-engine:NEXORA_TAG
           args: ["--config", "/etc/nexora/engine.toml"]
           ports:
-            - {name: dns-udp, containerPort: 53, protocol: UDP}
-            - {name: dns-tcp, containerPort: 53, protocol: TCP}
-            - {name: metrics, containerPort: 9153}
-          readinessProbe: {tcpSocket: {port: dns-tcp}, periodSeconds: 5}
-          livenessProbe: {httpGet: {path: /metrics, port: metrics}, periodSeconds: 10}
+            - { name: dns-udp, containerPort: 53, protocol: UDP }
+            - { name: dns-tcp, containerPort: 53, protocol: TCP }
+            - { name: metrics, containerPort: 9153 }
+          readinessProbe: { tcpSocket: { port: dns-tcp }, periodSeconds: 5 }
+          livenessProbe:
+            { httpGet: { path: /metrics, port: metrics }, periodSeconds: 10 }
           resources:
-            requests: {cpu: 500m, memory: 256Mi}
-            limits: {cpu: "2", memory: 1Gi}
-          securityContext: {runAsNonRoot: true, runAsUser: 10001, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+            requests: { cpu: 500m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
+          securityContext:
+            {
+              runAsNonRoot: true,
+              runAsUser: 10001,
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: true,
+              capabilities: { drop: [ALL] },
+            }
           volumeMounts:
-            - {name: config, mountPath: /etc/nexora, readOnly: true}
-            - {name: join, mountPath: /etc/nexora/join, readOnly: true}
-            - {name: state, mountPath: /var/lib/nexora}
+            - { name: config, mountPath: /etc/nexora, readOnly: true }
+            - { name: join, mountPath: /etc/nexora/join, readOnly: true }
+            - { name: state, mountPath: /var/lib/nexora }
       volumes:
         - name: tmpl
-          configMap: {name: nexora-engine-config}
+          configMap: { name: nexora-engine-config }
         - name: config
           emptyDir: {}
         - name: join
-          secret: {secretName: nexora-join-token}
+          secret: { secretName: nexora-join-token }
         - name: state
           emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-dns, namespace: nexora}
+metadata: { name: nexora-dns, namespace: nexora }
 spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
-  selector: {app.kubernetes.io/name: nexora-engine}
+  selector: { app.kubernetes.io/name: nexora-engine }
   ports:
-    - {name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP}
-    - {name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP}
+    - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: nexora-engine-metrics, namespace: nexora}
+metadata: { name: nexora-engine-metrics, namespace: nexora }
 spec:
-  selector: {app.kubernetes.io/name: nexora-engine}
-  ports: [{name: metrics, port: 9153, targetPort: metrics}]
+  selector: { app.kubernetes.io/name: nexora-engine }
+  ports: [{ name: metrics, port: 9153, targetPort: metrics }]
 ```
 
 - [ ] Write `scripts/kw-deploy.sh`:
@@ -6924,7 +8088,7 @@ k wait --for=condition=Ready cluster/nexora-db --timeout=15m
 
 if ! k get secret nexora-ca >/dev/null 2>&1; then
 	"$root/scripts/dev-exec.sh" bash -c 'rm -rf /tmp/nexora-ca && go run ./mgmt/cmd/nexora-mgmt ca init --out /tmp/nexora-ca'
-	kubectl --context "$ctx" -n nexora-dev exec deploy/nexora-dev -c toolbox -- tar -C /tmp/nexora-ca -cf - ca.crt ca.key | tar -C "$tmp" -xf -
+	kubectl --context "$ctx" -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /tmp/nexora-ca -cf - ca.crt ca.key | tar -C "$tmp" -xf -
 	k create secret generic nexora-ca --from-file=ca.crt="$tmp/ca.crt" --from-file=ca.key="$tmp/ca.key"
 fi
 
