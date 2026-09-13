@@ -6,5 +6,5 @@ P=/Users/pascal/.claude/plugins/cache/procoder/procoder/3.6.0/hooks/launcher.sh
 for f in "$@"; do
 	abs=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
 	"$P" format "$abs" >"$abs.fmt" 2>/dev/null || true
-	if [ -s "$abs.fmt" ]; then mv "$abs.fmt" "$abs"; else rm -f "$abs.fmt"; fi
+	if [ -s "$abs.fmt" ]; then cat "$abs.fmt" >"$abs"; fi; rm -f "$abs.fmt"
 done

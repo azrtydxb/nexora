@@ -8078,22 +8078,26 @@ jobs:
 Files:
 
 - `deploy/kw/cnpg-cluster.yaml` (create) — CNPG cluster `nexora-db`
-- `deploy/kw/mgmt-grpc-lb.yaml` (create) — LoadBalancer Service for gRPC 9443 (applied first so its IP can go into the server certificate SANs)
-- `deploy/kw/mgmt.yaml` (create) — `nexora-mgmt` Deployment (2 replicas), ClusterIP Services, Ingress `nexora.kw.local`
+- `deploy/kw/mgmt.yaml` (create) — `nexora-mgmt` Deployment (2 replicas), ClusterIP Services, LoadBalancer `nexora-mgmt-lb` (HTTP 80 and gRPC 9443 on 192.168.10.135), Ingress `nexora.kw.local`
 - `deploy/kw/otelcol.yaml` (create) — OpenTelemetry Collector (OpenSearch logs, Jaeger traces)
-- `deploy/kw/engine.yaml` (create) — `nexora-engine` Deployment (3 replicas, one per node), config template, DNS LoadBalancer
-- `scripts/kw-deploy.sh` (create) — build, apply, bootstrap (CA, setup, upstreams, join token), roll out
+- `deploy/kw/blocklist.yaml` (create) — in-cluster static block list (busybox httpd over a ConfigMap) so the smoke test observes blocking without internet lists
+- `deploy/kw/engine.yaml` (create) — `nexora-engine` Deployment (3 replicas, one per node), config template, DNS LoadBalancer on 192.168.10.136
+- `deploy/kw/bootstrap.sh` (create) — API bootstrap: admin (Secret `nexora-admin`), upstreams, block list subscription, join token Secret
+- `deploy/kw/README.md` (create) — deploy commands, addresses, and the imperative secret commands
+- `scripts/kw-deploy.sh` (create) — build, apply, CA secret, `bootstrap.sh`, roll out
 - `e2e/kw_smoke_test.go` (create) — `TestKwSmoke`
 - `e2e/main_test.go` (modify) — remove the binary check from `TestMain` (the harness `Bin` already fails tests that need binaries) so `TestKwSmoke` runs without local builds
 
+As built (deviations from the first draft of this task, all driven by kw): the gRPC LoadBalancer is folded into `mgmt.yaml` as `nexora-mgmt-lb` with a fixed IP (so no apply-then-read of the IP for the certificate SANs) and also serves HTTP for direct GUI access; no `nexus-pull` secret (kw pulls anonymously through :443); CNPG on storageClass `longhorn` with `postgresql:17.6`; images tagged `sha-<7>`; the admin password is generated into the Secret `nexora-admin` instead of `--admin-password-file`; the Jaeger endpoint `jaeger.observability.svc:4317` is fixed in `otelcol.yaml`; the CA is generated with `go run` on the laptop into a temp directory; the DNS LoadBalancer uses `externalTrafficPolicy: Cluster` because kube-vip (ARP, no per-service election) holds VIPs on control-plane nodes that may run no engine; engines spread with `topologySpreadConstraints`; pods set `fsGroup` and secret mode 0440 (non-root processes could not read 0400 secrets); the engine init container creates `/etc/nexora/join` (runc cannot create the join secret mount point inside the read-only config mount); the ingress also serves TLS from the `cluster-ca` ClusterIssuer; `TestKwSmoke` additionally checks that `ads.nexora-smoke.test` is blocked over UDP and TCP.
+
 Interfaces:
 
-- Consumes images from Task 22, `deploy/kw/namespace.yaml` and `deploy/kw/opensearch.yaml` from Task 18, env contract of `nexora-mgmt serve` (Tasks 12–18), `engine.toml` bootstrap keys (Task 8), API operations `completeSetup`, `login`, `createApiToken`, `listUpstreams`, `createUpstream`, `createJoinToken` (Task 15).
-- `scripts/kw-deploy.sh [--tag TAG] --admin-password-file FILE` — prints `NEXORA_KW_DNS_ADDR=<ip>:53` and `NEXORA_KW_API_URL=http://nexora.kw.local` at the end.
-- Kubernetes objects in namespace `nexora`: `Cluster nexora-db` (app secret `nexora-db-app`, key `uri`), `Secret nexora-ca` (`ca.crt`, `ca.key`), `Secret nexora-join-token` (`join-token`), `Deployment nexora-mgmt`, `Service nexora-mgmt` (8080), `Service nexora-mgmt-grpc` (ClusterIP 9443), `Service nexora-mgmt-grpc-lb` (LoadBalancer 9443), `Ingress nexora` (`nexora.kw.local`, class `nginx`), `Deployment nexora-otelcol` + `Service nexora-otelcol` (4317), `ConfigMap nexora-engine-config`, `Deployment nexora-engine`, `Service nexora-dns` (LoadBalancer, 53/UDP and 53/TCP, `externalTrafficPolicy: Local`), `Service nexora-engine-metrics` (9153).
+- Consumes images from Task 22, `deploy/kw/namespace.yaml` and `deploy/kw/opensearch.yaml` from Task 18, env contract of `nexora-mgmt serve` (Tasks 12–18), `engine.toml` bootstrap keys (Task 8), API operations `getSetupStatus`, `completeSetup`, `login`, `listUpstreams`, `createUpstream`, `listFilterLists`, `createFilterList`, `refreshFilterList`, `createJoinToken` (Task 15).
+- `scripts/kw-deploy.sh [--tag TAG] [--skip-build]` — prints `NEXORA_KW_DNS_ADDR=192.168.10.136:53` and `NEXORA_KW_API_URL=http://nexora.kw.local` at the end. `deploy/kw/bootstrap.sh` is idempotent and reads `NEXORA_KW_API_URL` (default `http://nexora.kw.local`).
+- Kubernetes objects in namespace `nexora`: `Cluster nexora-db` (app secret `nexora-db-app`, key `uri`), `Secret nexora-ca` (`ca.crt`, `ca.key`), `Secret nexora-admin` (`username`, `password`), `Secret nexora-join-token` (`join-token`), `Deployment nexora-mgmt`, `Service nexora-mgmt` (8080), `Service nexora-mgmt-grpc` (ClusterIP 9443), `Service nexora-mgmt-lb` (LoadBalancer 192.168.10.135: 80, 9443), `Ingress nexora` (`nexora.kw.local`, class `nginx`, TLS secret `nexora-ingress-tls`), `Deployment nexora-otelcol` + `Service nexora-otelcol` (4317), `Deployment nexora-blocklist` + `Service nexora-blocklist` (80), `ConfigMap nexora-engine-config`, `Deployment nexora-engine`, `Service nexora-dns` (LoadBalancer 192.168.10.136, 53/UDP and 53/TCP), `Service nexora-engine-metrics` (9153).
 - `TestKwSmoke` reads `NEXORA_KW_DNS_ADDR` and `NEXORA_KW_API_URL` and skips when either is unset.
 
-- [ ] Write the failing test `e2e/kw_smoke_test.go`:
+- [x] Write the failing test `e2e/kw_smoke_test.go`:
 
 ```go
 package e2e
@@ -8101,6 +8105,7 @@ package e2e
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -8110,6 +8115,12 @@ import (
 	"github.com/miekg/dns"
 )
 
+// kwBlockedName is listed by the in-cluster static block list that deploy/kw/bootstrap.sh
+// subscribes to (deploy/kw/blocklist.yaml).
+const kwBlockedName = "ads.nexora-smoke.test."
+
+// TestKwSmoke checks the kw deployment from inside the cluster network: management health and GUI,
+// three connected engines, forwarding over UDP and TCP through the DNS LoadBalancer, and blocking.
 func TestKwSmoke(t *testing.T) {
 	dnsAddr, apiURL := os.Getenv("NEXORA_KW_DNS_ADDR"), strings.TrimSuffix(os.Getenv("NEXORA_KW_API_URL"), "/")
 	if dnsAddr == "" || apiURL == "" {
@@ -8144,7 +8155,7 @@ func TestKwSmoke(t *testing.T) {
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if strings.Contains(string(body), "nexora_fleet_engines_connected 3") {
+			if strings.Contains(string(body), "\nnexora_fleet_engines_connected 3\n") {
 				break
 			}
 		}
@@ -8170,409 +8181,26 @@ func TestKwSmoke(t *testing.T) {
 		if second.Answer[0].Header().Ttl > first.Answer[0].Header().Ttl {
 			t.Fatalf("%s TTL grew between queries: %d -> %d", network, first.Answer[0].Header().Ttl, second.Answer[0].Header().Ttl)
 		}
+
+		b := new(dns.Msg)
+		b.SetQuestion(kwBlockedName, dns.TypeA)
+		blocked, _, err := c.Exchange(b, dnsAddr)
+		if err != nil || blocked.Rcode != dns.RcodeSuccess || len(blocked.Answer) == 0 {
+			t.Fatalf("%s blocked query: %v %v", network, blocked, err)
+		}
+		if a, ok := blocked.Answer[0].(*dns.A); !ok || !a.A.Equal(net.IPv4zero) {
+			t.Fatalf("%s %s was not blocked: %v", network, kwBlockedName, blocked.Answer)
+		}
 	}
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=192.0.2.1:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -run TestKwSmoke ./e2e/` — expect FAIL with `health:` or a connection error (nothing is deployed yet).
-- [ ] Modify `e2e/main_test.go` to contain only the helpers:
-
-```go
-package e2e
-
-import (
-	"encoding/hex"
-	"regexp"
-)
-
-func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }
-
-func regexpMust(s string) *regexp.Regexp { return regexp.MustCompile(s) }
-```
-
-- [ ] Write `deploy/kw/cnpg-cluster.yaml`:
-
-```yaml
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata: { name: nexora-db, namespace: nexora }
-spec:
-  instances: 2
-  imageName: ghcr.io/cloudnative-pg/postgresql:17
-  storage: { size: 10Gi, storageClass: longhorn-single }
-  bootstrap:
-    initdb: { database: nexora, owner: nexora }
-  resources:
-    requests: { cpu: 250m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1Gi }
-```
-
-- [ ] Write `deploy/kw/mgmt-grpc-lb.yaml`:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-mgmt-grpc-lb, namespace: nexora }
-spec:
-  type: LoadBalancer
-  selector: { app.kubernetes.io/name: nexora-mgmt }
-  ports: [{ name: grpc, port: 9443, targetPort: 9443 }]
-```
-
-- [ ] Write `deploy/kw/mgmt.yaml`:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  {
-    name: nexora-mgmt,
-    namespace: nexora,
-    labels: { app.kubernetes.io/name: nexora-mgmt },
-  }
-spec:
-  replicas: 2
-  selector: { matchLabels: { app.kubernetes.io/name: nexora-mgmt } }
-  template:
-    metadata: { labels: { app.kubernetes.io/name: nexora-mgmt } }
-    spec:
-      imagePullSecrets: [{ name: nexus-pull }]
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                {
-                  topologyKey: kubernetes.io/hostname,
-                  labelSelector:
-                    { matchLabels: { app.kubernetes.io/name: nexora-mgmt } },
-                }
-      containers:
-        - name: mgmt
-          image: 192.168.10.131/azrtydxb/nexora-mgmt:NEXORA_TAG
-          args: ["serve"]
-          env:
-            - name: NEXORA_DATABASE_URL
-              valueFrom: { secretKeyRef: { name: nexora-db-app, key: uri } }
-            - { name: NEXORA_HTTP_LISTEN, value: ":8080" }
-            - { name: NEXORA_GRPC_LISTEN, value: ":9443" }
-            - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
-            - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
-            - {
-                name: NEXORA_GRPC_SERVER_NAMES,
-                value: "nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,NEXORA_GRPC_LB_IP",
-              }
-            - { name: NEXORA_PUBLIC_URL, value: "http://nexora.kw.local" }
-            - { name: NEXORA_SECURE_COOKIES, value: "false" }
-            - { name: NEXORA_QUERYLOG_BACKEND, value: opensearch }
-            - {
-                name: NEXORA_OPENSEARCH_URL,
-                value: "http://opensearch.nexora.svc.cluster.local:9200",
-              }
-            - { name: NEXORA_OPENSEARCH_INDEX, value: "nexora-querylog-*" }
-            - {
-                name: NEXORA_OTLP_ENDPOINT,
-                value: "http://nexora-otelcol.nexora.svc.cluster.local:4317",
-              }
-          ports:
-            - { name: http, containerPort: 8080 }
-            - { name: grpc, containerPort: 9443 }
-          readinessProbe:
-            { httpGet: { path: /api/v1/health, port: http }, periodSeconds: 5 }
-          livenessProbe: { tcpSocket: { port: grpc }, periodSeconds: 10 }
-          resources:
-            requests: { cpu: 100m, memory: 128Mi }
-            limits: { cpu: "1", memory: 512Mi }
-          volumeMounts:
-            [{ name: ca, mountPath: /etc/nexora/ca, readOnly: true }]
-      volumes:
-        - name: ca
-          secret: { secretName: nexora-ca, defaultMode: 0400 }
----
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-mgmt, namespace: nexora }
-spec:
-  selector: { app.kubernetes.io/name: nexora-mgmt }
-  ports: [{ name: http, port: 8080, targetPort: http }]
----
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-mgmt-grpc, namespace: nexora }
-spec:
-  selector: { app.kubernetes.io/name: nexora-mgmt }
-  ports: [{ name: grpc, port: 9443, targetPort: grpc }]
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata: { name: nexora, namespace: nexora }
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: nexora.kw.local
-      http:
-        paths:
-          - {
-              path: /,
-              pathType: Prefix,
-              backend: { service: { name: nexora-mgmt, port: { name: http } } },
-            }
-```
-
-- [ ] Write `deploy/kw/otelcol.yaml` (`NEXORA_JAEGER_OTLP` is substituted by `scripts/kw-deploy.sh`):
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata: { name: nexora-otelcol, namespace: nexora }
-data:
-  config.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc: {endpoint: "0.0.0.0:4317"}
-    processors:
-      batch: {timeout: 1s}
-    exporters:
-      debug: {verbosity: basic}
-      opensearch:
-        http: {endpoint: "http://opensearch.nexora.svc.cluster.local:9200"}
-        logs_index: nexora-querylog
-        logs_index_time_format: "yyyy.MM.dd"
-      otlp/jaeger:
-        endpoint: "NEXORA_JAEGER_OTLP"
-        tls: {insecure: true}
-    service:
-      pipelines:
-        logs: {receivers: [otlp], processors: [batch], exporters: [opensearch]}
-        traces: {receivers: [otlp], processors: [batch], exporters: [otlp/jaeger]}
-        metrics: {receivers: [otlp], processors: [batch], exporters: [debug]}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  {
-    name: nexora-otelcol,
-    namespace: nexora,
-    labels: { app.kubernetes.io/name: nexora-otelcol },
-  }
-spec:
-  replicas: 1
-  selector: { matchLabels: { app.kubernetes.io/name: nexora-otelcol } }
-  template:
-    metadata: { labels: { app.kubernetes.io/name: nexora-otelcol } }
-    spec:
-      containers:
-        - name: otelcol
-          image: otel/opentelemetry-collector-contrib:0.160.0
-          args: ["--config=/conf/config.yaml"]
-          ports: [{ name: otlp-grpc, containerPort: 4317 }]
-          resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits: { cpu: "1", memory: 512Mi }
-          volumeMounts: [{ name: conf, mountPath: /conf }]
-      volumes:
-        - name: conf
-          configMap: { name: nexora-otelcol }
----
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-otelcol, namespace: nexora }
-spec:
-  selector: { app.kubernetes.io/name: nexora-otelcol }
-  ports: [{ name: otlp-grpc, port: 4317, targetPort: otlp-grpc }]
-```
-
-- [ ] Write `deploy/kw/engine.yaml`:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata: { name: nexora-engine-config, namespace: nexora }
-data:
-  engine.toml.tmpl: |
-    node_name = "NODE_NAME"
-    state_dir = "/var/lib/nexora"
-    management_urls = ["https://nexora-mgmt-grpc.nexora.svc.cluster.local:9443"]
-    join_token_file = "/etc/nexora/join/join-token"
-    listen_udp = ["0.0.0.0:53"]
-    listen_tcp = ["0.0.0.0:53"]
-    metrics_listen = "0.0.0.0:9153"
-    workers = 2
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  {
-    name: nexora-engine,
-    namespace: nexora,
-    labels: { app.kubernetes.io/name: nexora-engine },
-  }
-spec:
-  replicas: 3
-  selector: { matchLabels: { app.kubernetes.io/name: nexora-engine } }
-  template:
-    metadata: { labels: { app.kubernetes.io/name: nexora-engine } }
-    spec:
-      imagePullSecrets: [{ name: nexus-pull }]
-      securityContext:
-        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - topologyKey: kubernetes.io/hostname
-              labelSelector:
-                { matchLabels: { app.kubernetes.io/name: nexora-engine } }
-      initContainers:
-        - name: render-config
-          image: busybox:1.37
-          command:
-            [
-              "sh",
-              "-c",
-              'sed "s/NODE_NAME/$(echo "$POD_NAME" | cut -c1-63)/" /tmpl/engine.toml.tmpl > /etc/nexora/engine.toml',
-            ]
-          env:
-            [
-              {
-                name: POD_NAME,
-                valueFrom: { fieldRef: { fieldPath: metadata.name } },
-              },
-            ]
-          volumeMounts:
-            - { name: tmpl, mountPath: /tmpl }
-            - { name: config, mountPath: /etc/nexora }
-      containers:
-        - name: engine
-          image: 192.168.10.131/azrtydxb/nexora-engine:NEXORA_TAG
-          args: ["--config", "/etc/nexora/engine.toml"]
-          ports:
-            - { name: dns-udp, containerPort: 53, protocol: UDP }
-            - { name: dns-tcp, containerPort: 53, protocol: TCP }
-            - { name: metrics, containerPort: 9153 }
-          readinessProbe: { tcpSocket: { port: dns-tcp }, periodSeconds: 5 }
-          livenessProbe:
-            { httpGet: { path: /metrics, port: metrics }, periodSeconds: 10 }
-          resources:
-            requests: { cpu: 500m, memory: 256Mi }
-            limits: { cpu: "2", memory: 1Gi }
-          securityContext:
-            {
-              runAsNonRoot: true,
-              runAsUser: 10001,
-              allowPrivilegeEscalation: false,
-              readOnlyRootFilesystem: true,
-              capabilities: { drop: [ALL] },
-            }
-          volumeMounts:
-            - { name: config, mountPath: /etc/nexora, readOnly: true }
-            - { name: join, mountPath: /etc/nexora/join, readOnly: true }
-            - { name: state, mountPath: /var/lib/nexora }
-      volumes:
-        - name: tmpl
-          configMap: { name: nexora-engine-config }
-        - name: config
-          emptyDir: {}
-        - name: join
-          secret: { secretName: nexora-join-token }
-        - name: state
-          emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-dns, namespace: nexora }
-spec:
-  type: LoadBalancer
-  externalTrafficPolicy: Local
-  selector: { app.kubernetes.io/name: nexora-engine }
-  ports:
-    - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
-    - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
----
-apiVersion: v1
-kind: Service
-metadata: { name: nexora-engine-metrics, namespace: nexora }
-spec:
-  selector: { app.kubernetes.io/name: nexora-engine }
-  ports: [{ name: metrics, port: 9153, targetPort: metrics }]
-```
-
-- [ ] Write `scripts/kw-deploy.sh`:
-
-```bash
-#!/usr/bin/env bash
-# Deploy Nexora M1 to the kw cluster (namespace nexora) and bootstrap it.
-set -euo pipefail
-root="$(cd "$(dirname "$0")/.." && pwd)"
-ctx=kw; ns=nexora
-tag="m1-$(git -C "$root" rev-parse --short HEAD)"
-pwfile=""
-while [ $# -gt 0 ]; do
-	case "$1" in
-	--tag) tag="$2"; shift 2 ;;
-	--admin-password-file) pwfile="$2"; shift 2 ;;
-	*) echo "usage: $0 [--tag TAG] --admin-password-file FILE" >&2; exit 2 ;;
-	esac
-done
-[ -n "$pwfile" ] && [ -r "$pwfile" ] || { echo "--admin-password-file is required" >&2; exit 2; }
-k() { kubectl --context "$ctx" -n "$ns" "$@"; }
-api="http://nexora.kw.local"
-jaeger_otlp="${NEXORA_KW_JAEGER_OTLP:?set NEXORA_KW_JAEGER_OTLP to the Jaeger OTLP gRPC host:port in namespace observability (the host found in Task 18)}"
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-
-"$root/scripts/build-image.sh" -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" "$root"
-"$root/scripts/build-image.sh" -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag" "$root"
-
-kubectl --context "$ctx" apply -f "$root/deploy/kw/namespace.yaml"
-kubectl --context "$ctx" -n novaforge-dev get secret nexus-pull -o json \
-	| jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.ownerReferences)' \
-	| k apply -f -
-k apply -f "$root/deploy/kw/opensearch.yaml" -f "$root/deploy/kw/cnpg-cluster.yaml"
-k wait --for=condition=Ready cluster/nexora-db --timeout=15m
-
-if ! k get secret nexora-ca >/dev/null 2>&1; then
-	"$root/scripts/dev-exec.sh" bash -c 'rm -rf /tmp/nexora-ca && go run ./mgmt/cmd/nexora-mgmt ca init --out /tmp/nexora-ca'
-	kubectl --context "$ctx" -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /tmp/nexora-ca -cf - ca.crt ca.key | tar -C "$tmp" -xf -
-	k create secret generic nexora-ca --from-file=ca.crt="$tmp/ca.crt" --from-file=ca.key="$tmp/ca.key"
-fi
-
-k apply -f "$root/deploy/kw/mgmt-grpc-lb.yaml"
-k wait --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' service/nexora-mgmt-grpc-lb --timeout=5m
-grpc_ip=$(k get service nexora-mgmt-grpc-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-sed -e "s/NEXORA_TAG/$tag/" -e "s/NEXORA_GRPC_LB_IP/$grpc_ip/" "$root/deploy/kw/mgmt.yaml" | k apply -f -
-k rollout status deployment/nexora-mgmt --timeout=10m
-
-jar="$tmp/cookies"
-if curl -fsS "$api/api/v1/setup" | jq -e '.required' >/dev/null; then
-	token=$(k logs -l app.kubernetes.io/name=nexora-mgmt --tail=-1 | sed -n 's/.*setup token: \([^ ]*\).*/\1/p' | head -1)
-	[ -n "$token" ] || { echo "setup token not found in nexora-mgmt logs" >&2; exit 1; }
-	jq -n --arg t "$token" --rawfile p "$pwfile" '{token:$t, username:"admin", email:"admin@kw.local", password:($p|rtrimstr("\n"))}' \
-		| curl -fsS -c "$jar" -H 'Content-Type: application/json' -d @- "$api/api/v1/setup" >/dev/null
-else
-	jq -n --rawfile p "$pwfile" '{username:"admin", password:($p|rtrimstr("\n"))}' \
-		| curl -fsS -c "$jar" -H 'Content-Type: application/json' -d @- "$api/api/v1/auth/login" >/dev/null
-fi
-call() { curl -fsS -b "$jar" -H 'Content-Type: application/json' "$@"; }
-
-if [ "$(call "$api/api/v1/upstreams" | jq length)" = "0" ]; then
-	call -d '{"name":"cloudflare","protocol":"udp","address":"1.1.1.1:53","timeout_ms":250,"enabled":true,"position":0}' "$api/api/v1/upstreams" >/dev/null
-	call -d '{"name":"quad9","protocol":"udp","address":"9.9.9.9:53","timeout_ms":250,"enabled":true,"position":1}' "$api/api/v1/upstreams" >/dev/null
-fi
-if ! k get secret nexora-join-token >/dev/null 2>&1; then
-	join=$(call -d '{"name":"kw-engines","ttl_seconds":31536000}' "$api/api/v1/join-tokens" | jq -r .token)
-	k create secret generic nexora-join-token --from-literal=join-token="$join"
-fi
-
-sed "s|NEXORA_JAEGER_OTLP|$jaeger_otlp|" "$root/deploy/kw/otelcol.yaml" | k apply -f -
-sed "s/NEXORA_TAG/$tag/" "$root/deploy/kw/engine.yaml" | k apply -f -
-k rollout status deployment/nexora-otelcol --timeout=5m
-k rollout status deployment/nexora-engine --timeout=10m
-k wait --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' service/nexora-dns --timeout=5m
-dns_ip=$(k get service nexora-dns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
-echo "NEXORA_KW_API_URL=${api}"
-```
-
-- [ ] Deploy: `chmod +x scripts/kw-deploy.sh && NEXORA_KW_JAEGER_OTLP=<jaeger host>:4317 scripts/kw-deploy.sh --admin-password-file ~/.config/nexora/kw-admin-password` — expect the final two lines `NEXORA_KW_DNS_ADDR=<ip>:53` and `NEXORA_KW_API_URL=http://nexora.kw.local`, and `kubectl --context kw -n nexora get pods` shows 2 `nexora-mgmt`, 3 `nexora-engine`, 1 `nexora-otelcol`, 1 `opensearch-0` and 2 `nexora-db-*` pods `Running`.
-- [ ] Run the smoke test from the dev pod with the printed values: `scripts/dev-exec.sh env NEXORA_KW_DNS_ADDR=<ip>:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -v -run TestKwSmoke ./e2e/` — expect PASS: `--- PASS: TestKwSmoke`.
-- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh e2e/kw_smoke_test.go e2e/main_test.go && git commit -m "deploy: first Nexora deployment on kw with smoke test"`.
+- [x] Run `scripts/dev-exec.sh 'env NEXORA_KW_DNS_ADDR=192.0.2.1:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -run TestKwSmoke ./e2e/'` — expect FAIL with `health:` or a connection error (as run: `health: 404 map[]`, the ingress had no `nexora.kw.local` rule yet).
+- [x] Modify `e2e/main_test.go` to contain only the `hexDecode` helper (drop `TestMain`).
+- [x] Write `deploy/kw/cnpg-cluster.yaml`, `deploy/kw/otelcol.yaml`, `deploy/kw/blocklist.yaml`, `deploy/kw/mgmt.yaml`, `deploy/kw/engine.yaml` (see the files; the notes above list what differs from the first draft).
+- [x] Write `deploy/kw/bootstrap.sh` (waits for `/api/v1/health` through the ingress, creates `nexora-admin` with `openssl rand -base64 24` when missing, completes setup with the token from the `nexora-mgmt` logs or logs in, creates upstreams `1.1.1.1:53` and `9.9.9.9:53` when none exist, subscribes and refreshes the `kw-smoke` block list `http://nexora-blocklist.nexora.svc.cluster.local/smoke.txt`, creates `nexora-join-token` from a one-year join token when missing) and `scripts/kw-deploy.sh`, plus `deploy/kw/README.md`.
+- [x] Build the images: `scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine -t sha-cf25008 .` and the same for `nexora-mgmt` — both printed `pull as 192.168.10.131/azrtydxb/<name>:sha-cf25008`.
+- [x] Deploy: `scripts/kw-deploy.sh --tag sha-cf25008 --skip-build` — expect the final lines `NEXORA_KW_DNS_ADDR=192.168.10.136:53` and `NEXORA_KW_API_URL=http://nexora.kw.local`; `kubectl --context kw -n nexora get pods` shows 2 `nexora-mgmt`, 3 `nexora-engine` on distinct nodes, 1 `nexora-otelcol`, 1 `nexora-blocklist`, 1 `opensearch-0` and 2 `nexora-db-*` pods `Running`. A second run is a no-op (all objects `unchanged`, bootstrap logs in).
+- [x] Run the smoke test from the dev pod: `scripts/dev-exec.sh 'env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -v -run TestKwSmoke ./e2e/'` — expect PASS: `--- PASS: TestKwSmoke`.
+- [x] Manual checks: `dig @192.168.10.136 example.com` answers; `dig @192.168.10.136 ads.nexora-smoke.test` answers `0.0.0.0`; GUI login as `admin` over `http://192.168.10.135` and `http://nexora.kw.local` (Playwright chromium in the dev pod) shows three engines `current` at the latest config version.
+- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh e2e/kw_smoke_test.go e2e/main_test.go .procoder && git commit -m "deploy: first Nexora deployment on kw with smoke test"`.

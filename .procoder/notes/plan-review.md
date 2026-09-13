@@ -24,3 +24,10 @@
 - RESOLVED: `nexora-engine --version` missing (clap `#[command(version)]`).
 - RESOLVED: perfgate pre-picks free ports (same race as harness). -> perfgate reads the fixture's and engine's READY lines.
 - First bench datapoint (arm64 dev pod, loaded, 2 workers, not reference box): 144k-195k QPS cache-hit, p99 ~1.6 ms.
+
+## After M1 kw deployment (2026-09-13)
+
+- DNS LoadBalancer uses `externalTrafficPolicy: Cluster`, so engines see node/pod IPs, not client IPs. M2 per-client policy on kw needs real client IPs: switch engines to a DaemonSet (engine on every node) with `externalTrafficPolicy: Local`, or PROXY v2 where supported. Must be fixed in M2 Task 13 (kw) and verified by a smoke subtest that checks the query log shows the dev pod's IP.
+- `/health` version is `dev`: build-image.sh must pass `--opt build-arg:VERSION=sha-<7>` and Dockerfiles must stamp it.
+- Session cookies not `Secure` on kw (HTTP ingress). Serve GUI over HTTPS on kw (cert-manager cluster-ca already issues `nexora.kw.local`) and set `NEXORA_SECURE_COOKIES=true`; plain-HTTP LoadBalancer access then becomes a redirect.
+- Engine restart re-enrolls as a new engine (emptyDir state) — M5 moves to hostPath (accepted until then).

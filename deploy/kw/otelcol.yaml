@@ -1,0 +1,78 @@
+# OpenTelemetry Collector: engine query-log records to OpenSearch (read back by nexora-mgmt),
+# traces to the cluster Jaeger in namespace observability.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexora-otelcol
+  namespace: nexora
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: "0.0.0.0:4317" }
+    processors:
+      batch: { timeout: 1s }
+    exporters:
+      debug: { verbosity: basic }
+      opensearch:
+        http: { endpoint: "http://opensearch.nexora.svc.cluster.local:9200" }
+        logs_index: nexora-querylog
+        logs_index_time_format: "yyyy.MM.dd"
+      otlp/jaeger:
+        endpoint: "jaeger.observability.svc:4317"
+        tls: { insecure: true }
+    service:
+      pipelines:
+        logs: { receivers: [otlp], processors: [batch], exporters: [opensearch] }
+        traces: { receivers: [otlp], processors: [batch], exporters: [otlp/jaeger] }
+        metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexora-otelcol
+  namespace: nexora
+  labels: { app.kubernetes.io/name: nexora-otelcol }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: nexora-otelcol }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: nexora-otelcol }
+    spec:
+      securityContext:
+        {
+          runAsNonRoot: true,
+          runAsUser: 10001,
+          seccompProfile: { type: RuntimeDefault },
+        }
+      containers:
+        - name: otelcol
+          image: 192.168.10.131/otel/opentelemetry-collector-contrib:0.160.0
+          args: ["--config=/conf/config.yaml"]
+          ports: [{ name: otlp-grpc, containerPort: 4317 }]
+          readinessProbe: { tcpSocket: { port: otlp-grpc }, periodSeconds: 5 }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          securityContext:
+            {
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: true,
+              capabilities: { drop: [ALL] },
+            }
+          volumeMounts: [{ name: conf, mountPath: /conf, readOnly: true }]
+      volumes:
+        - name: conf
+          configMap: { name: nexora-otelcol }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-otelcol
+  namespace: nexora
+spec:
+  selector: { app.kubernetes.io/name: nexora-otelcol }
+  ports: [{ name: otlp-grpc, port: 4317, targetPort: otlp-grpc }]

@@ -1,0 +1,20 @@
+# Nexora's PostgreSQL on kw. CNPG generates the application password into the secret
+# nexora-db-app (key `uri` is the connection string nexora-mgmt reads); it is never written down.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nexora-db
+  namespace: nexora
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+  bootstrap:
+    initdb:
+      database: nexora
+      owner: nexora
+  storage:
+    storageClass: longhorn
+    size: 10Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }

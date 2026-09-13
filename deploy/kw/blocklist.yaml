@@ -1,0 +1,61 @@
+# A static block list served inside the cluster, so TestKwSmoke can observe blocking without
+# depending on an internet list. deploy/kw/bootstrap.sh subscribes to
+# http://nexora-blocklist.nexora.svc.cluster.local/smoke.txt.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexora-blocklist
+  namespace: nexora
+data:
+  smoke.txt: |
+    # Names blocked on kw for the smoke test.
+    ads.nexora-smoke.test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexora-blocklist
+  namespace: nexora
+  labels: { app.kubernetes.io/name: nexora-blocklist }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: nexora-blocklist }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: nexora-blocklist }
+    spec:
+      securityContext:
+        {
+          runAsNonRoot: true,
+          runAsUser: 65534,
+          seccompProfile: { type: RuntimeDefault },
+        }
+      containers:
+        - name: httpd
+          image: 192.168.10.131/library/busybox:1.37
+          command: ["httpd", "-f", "-v", "-p", "8080", "-h", "/www"]
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { tcpSocket: { port: http }, periodSeconds: 5 }
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 100m, memory: 32Mi }
+          securityContext:
+            {
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: true,
+              capabilities: { drop: [ALL] },
+            }
+          volumeMounts: [{ name: www, mountPath: /www, readOnly: true }]
+      volumes:
+        - name: www
+          configMap: { name: nexora-blocklist }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-blocklist
+  namespace: nexora
+spec:
+  selector: { app.kubernetes.io/name: nexora-blocklist }
+  ports: [{ name: http, port: 80, targetPort: http }]
