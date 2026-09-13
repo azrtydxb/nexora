@@ -4,7 +4,7 @@ CARGO_TARGET_DIR ?= $(CURDIR)/target
 BIN := $(CURDIR)/bin
 GO_PKGS := $(foreach d,mgmt gen bench,$(if $(wildcard $(d)),./$(d)/...))
 
-.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench
+.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench images
 
 proto:
 	protoc -I proto \
@@ -67,3 +67,8 @@ bench:
 	go build -o $(BIN)/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
 	go build -o $(BIN)/perfgate ./bench/cmd/perfgate
 	$(BIN)/perfgate run --engine $(BIN)/nexora-engine --fixture $(BIN)/nexora-fixture --names 10000 --seconds 20 --workers 2 --out $(BIN)/perf.json
+
+# Engine and management plane images on the kw BuildKit (laptop; arm64), tagged dev-<sha>[-dirty].
+images:
+	scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine .
+	scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt .

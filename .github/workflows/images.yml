@@ -1,0 +1,128 @@
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  # Push on :5000 (the hosted repository); the cluster pulls the same images through :443.
+  REGISTRY: 192.168.10.131:5000/azrtydxb
+jobs:
+  # Each architecture builds natively on its own publish runner (kw is arm64 with no emulation,
+  # novanas is amd64) and pushes by digest; `merge` then tags the multi-arch manifest list.
+  # These jobs drive the runner's Docker daemon, so unlike the test jobs they run without
+  # `container:`, as the org's other image workflows do.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: nexora-engine, file: deploy/docker/engine.Dockerfile }
+          - { name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile }
+        arch:
+          - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb-publish }
+          - {
+              name: amd64,
+              platform: linux/amd64,
+              runner: arc-azrtydxb-amd64-publish,
+            }
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
+      - name: Set up buildx
+        run: |
+          # BuildKit runs in its own container without the cluster CA, so both Nexus ports are
+          # marked insecure; :443 fronts the docker.io proxy used as a mirror. A mirror that fails
+          # TLS silently falls back to Docker Hub, which is why :443 needs its entry too.
+          cat > /tmp/buildkitd.toml <<'TOML'
+          [registry."192.168.10.131"]
+            insecure = true
+          [registry."192.168.10.131:5000"]
+            insecure = true
+          [registry."docker.io"]
+            mirrors = ["192.168.10.131"]
+          TOML
+          docker buildx create --name nexora --driver docker-container \
+            --platform "${{ matrix.arch.platform }}" --buildkitd-config /tmp/buildkitd.toml --use
+          docker buildx inspect --bootstrap
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: 192.168.10.131:5000
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          builder: nexora
+          platforms: ${{ matrix.arch.platform }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }}
+          # ignore-error: a cache write must never fail a publish.
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }},mode=max,image-manifest=true,ignore-error=true
+          provenance: false
+          sbom: false
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: mkdir -p /tmp/digests && touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    strategy:
+      matrix:
+        image: [nexora-engine, nexora-mgmt]
+    runs-on: arc-azrtydxb-publish
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - id: meta
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
+      # `imagetools create` talks to the registry from this client, not from BuildKit, so it needs
+      # the cluster CA; Go reads SSL_CERT_FILE, and the bundle keeps the public roots.
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cat /etc/ssl/certs/ca-certificates.crt /tmp/cluster-ca.crt > /tmp/ca-bundle.crt
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/tmp/ca-bundle.crt"
+            echo "SSL_CERT_FILE=/tmp/ca-bundle.crt"
+            echo "GIT_SSL_CAINFO=/tmp/ca-bundle.crt"
+          } >> "$GITHUB_ENV"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: 192.168.10.131:5000
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+      - name: Create the multi-arch manifest list
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          refs=()
+          for d in *; do refs+=("$IMAGE@sha256:$d"); done
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "${refs[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"

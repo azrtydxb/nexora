@@ -1,0 +1,11 @@
+.git
+target
+engine/target
+**/node_modules
+**/*.tsbuildinfo
+web/dist
+web/test-results
+web/playwright-report
+mgmt/internal/webui/dist
+bin
+.procoder

@@ -34,7 +34,10 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
-const usage = "usage: nexora-mgmt serve | migrate | ca init --out <dir> | user create --admin --username U --email E --password-file F"
+// version is set at build time with -ldflags "-X main.version=<tag>".
+var version = "dev"
+
+const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> | user create --admin --username U --email E --password-file F"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -46,6 +49,8 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var err error
 	switch {
+	case len(args) == 1 && args[0] == "version":
+		fmt.Fprintf(stdout, "nexora-mgmt %s\n", version)
 	case len(args) == 1 && args[0] == "serve":
 		err = serve(ctx, stdout)
 	case len(args) == 1 && args[0] == "migrate":
