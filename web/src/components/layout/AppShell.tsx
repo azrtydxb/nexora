@@ -9,17 +9,25 @@ import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet } from "react-router";
 import {
   ChevronDown,
+  Cpu,
+  Funnel,
+  KeyRound,
+  LayoutDashboard,
   LogOut,
   Moon,
   ScrollText,
   Server,
+  Settings,
+  ShieldCheck,
   Sun,
+  TextSearch,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
 import { api } from "@/api/client";
 import { useCan, useCurrentUser, useLogout } from "@/auth/AuthProvider";
-import type { OperationId } from "@/auth/permissions";
+import { roleCan, type OperationId } from "@/auth/permissions";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -31,9 +39,27 @@ type NavItem = {
   op: OperationId;
 };
 
-// Each screen is listed only once it exists; the item shows when the user may call the screen's
-// list operation.
+// Each item shows when the user may call the screen's list operation.
 const navGroups: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Overview",
+    items: [
+      {
+        route: "dashboard",
+        path: "/",
+        label: "Dashboard",
+        icon: LayoutDashboard,
+        op: "getDashboard",
+      },
+      {
+        route: "query-log",
+        path: "/query-log",
+        label: "Query log",
+        icon: TextSearch,
+        op: "searchQueryLog",
+      },
+    ],
+  },
   {
     label: "Resolver",
     items: [
@@ -44,11 +70,58 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         icon: Server,
         op: "listUpstreams",
       },
+      {
+        route: "filtering",
+        path: "/filtering",
+        label: "Filtering",
+        icon: Funnel,
+        op: "listFilterLists",
+      },
+      {
+        route: "access-control",
+        path: "/access-control",
+        label: "Access control",
+        icon: ShieldCheck,
+        op: "getAccessControl",
+      },
+      {
+        route: "settings",
+        path: "/settings",
+        label: "Settings",
+        icon: Settings,
+        op: "getResolverSettings",
+      },
+    ],
+  },
+  {
+    label: "Fleet",
+    items: [
+      {
+        route: "engines",
+        path: "/engines",
+        label: "Engines",
+        icon: Cpu,
+        op: "listEngines",
+      },
     ],
   },
   {
     label: "Administration",
     items: [
+      {
+        route: "users",
+        path: "/users",
+        label: "Users",
+        icon: Users,
+        op: "listUsers",
+      },
+      {
+        route: "api-tokens",
+        path: "/api-tokens",
+        label: "API tokens",
+        icon: KeyRound,
+        op: "listApiTokens",
+      },
       {
         route: "audit",
         path: "/audit",
@@ -96,6 +169,9 @@ function Sidebar() {
 }
 
 function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
+  const { user } = useCurrentUser();
+  // A group whose every screen is out of the user's reach (Administration for non-admins) is hidden.
+  if (!items.some((i) => roleCan(user?.role, i.op))) return null;
   return (
     <div className="flex items-center gap-1 md:flex-col md:items-stretch">
       <div className="hidden px-2 pb-1 text-xs font-medium text-white/40 md:block">
@@ -115,6 +191,7 @@ function NavEntry({ item }: { item: NavItem }) {
   return (
     <NavLink
       to={item.path}
+      end={item.path === "/"}
       data-testid={`nav-${item.route}`}
       className={({ isActive }) =>
         cn(

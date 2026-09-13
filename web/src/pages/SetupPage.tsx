@@ -2,7 +2,11 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router";
 
 import { api, unwrap } from "@/api/client";
-import { useSetupStatus, useSignedIn } from "@/auth/AuthProvider";
+import {
+  useCurrentUser,
+  useSetupStatus,
+  useSignedIn,
+} from "@/auth/AuthProvider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +17,7 @@ export function SetupPage() {
   const setup = useSetupStatus();
   const navigate = useNavigate();
   const signedIn = useSignedIn();
+  const { user } = useCurrentUser();
   const [form, setForm] = useState({
     token: "",
     username: "",
@@ -23,8 +28,10 @@ export function SetupPage() {
   const [busy, setBusy] = useState(false);
 
   if (setup.isPending) return null;
+  // Completing setup signs the new admin in and clears the query cache, so this page can see
+  // `required: false` before its navigation to / commits; a signed-in user goes to / then too.
   if (setup.data && !setup.data.required)
-    return <Navigate to="/login" replace />;
+    return <Navigate to={user ? "/" : "/login"} replace />;
 
   const field = (key: keyof typeof form) => ({
     value: form[key],

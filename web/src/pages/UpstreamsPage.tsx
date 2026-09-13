@@ -39,11 +39,12 @@ import {
 type Upstream = Schemas["Upstream"];
 type Protocol = Upstream["protocol"];
 
+// Labels lead with the short protocol name that the table badges show.
 const protocolLabels: Record<Protocol, string> = {
-  udp: "UDP",
-  tcp: "TCP",
-  dot: "DNS over TLS",
-  doh: "DNS over HTTPS",
+  udp: "udp",
+  tcp: "tcp",
+  dot: "dot · DNS over TLS",
+  doh: "doh · DNS over HTTPS",
 };
 
 const conflictMessage =

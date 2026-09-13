@@ -7033,18 +7033,25 @@ Files:
 
 - `web/src/pages/DashboardPage.tsx`, `QueryLogPage.tsx`, `AccessControlPage.tsx`, `FilteringPage.tsx`, `EnginesPage.tsx`, `UsersPage.tsx`, `ApiTokensPage.tsx`, `SettingsPage.tsx` (create)
 - `web/src/app/router.tsx` (modify) — all M1 routes
+- `web/src/components/layout/AppShell.tsx` (modify) — navigation for every screen, grouped Overview / Resolver / Fleet / Administration (a group is hidden when none of its screens is allowed)
+- `web/src/components/common.tsx` (create) — shared `ConfirmDialog` (`confirm-delete`), `ErrorAlert`/`errorMessage` (409 revision conflicts read "… was changed by someone else — reload to see the latest version"), `MessageRow` (loading/empty rows), `SecretValue` (one-time token with copy), `StatusDot`, `SavedNote`, `Fact`, `useRevealRef`, `roles`, date/duration formatters
+- `web/src/components/ListEditor.tsx` (create) — the local-draft string-list editor shared by access control and the allowlist (`<prefix>-input|add|save`, rows `<prefix>-row-<v>`, `<prefix>-remove-<v>`; the ACL input keeps the id `acl-cidr-input`)
+- `web/src/pages/UpstreamsPage.tsx` (modify) — protocol option labels lead with the short name (`doh · DNS over HTTPS`) so `02-upstreams.spec.ts` can pick the option named `doh`
+- `web/src/pages/SetupPage.tsx` (modify) — completing setup clears the query cache, so the still-mounted page could see `required: false` and redirect to `/login` before its navigation to `/` committed (an intermittent `00-setup.spec.ts` failure); a signed-in user is now sent to `/`
 - `web/e2e/screens/00-setup.spec.ts`, `01-dashboard.spec.ts`, `02-upstreams.spec.ts`, `03-access-control.spec.ts`, `04-filtering.spec.ts`, `05-engines.spec.ts`, `06-users.spec.ts`, `07-api-tokens.spec.ts`, `08-audit.spec.ts`, `09-settings.spec.ts`, `10-query-log.spec.ts`, `11-oidc.spec.ts` (create)
 - `web/e2e/querylog.spec.ts` (create)
-- `e2e/harness/openapi.go` (create) — operation matcher over `mgmt/api/openapi.yaml`
+- `e2e/harness/openapi.go` (create) — operation matcher over `mgmt/api/openapi.yaml`, plus `RepoRoot` (placed here rather than in `harness.go`, which a concurrent hardening task owned)
+- `e2e/harness/openapi_test.go` (create) — `TestOperationCoverageMatching`: template, method, segment-count and query-string rules and the JSONL reader
+- `go.mod`, `go.sum` (modify) — `go.yaml.in/yaml/v3` (already in the module graph) becomes a direct requirement instead of adding `gopkg.in/yaml.v3`
 - `e2e/gui_test.go` (create) — `TestGUICoverage`, `TestQueryLogBackends`
 
 Interfaces:
 
 - Consumes `web/e2e/fixtures.ts` (`test`, `expect`, `env`, `login`, `logout`), `AppShell`, `useCan`, `api` client (Task 19); every operationId from Task 15; harness `RunPlaywright`, `StartMgmt`, `StartManagedEngine`, `StartOtelcol`, `OpenSearchURL`, `NewAPI`, `MustQuery` (Tasks 10, 16, 18, 19).
-- `harness.Operation{ ID, Method, Path string }`; `func LoadOperations(t *testing.T) []Operation` (reads `<repo>/mgmt/api/openapi.yaml` with `gopkg.in/yaml.v3`); `func MatchOperation(ops []Operation, method, path string) (string, bool)` (path templates `{x}` match one non-empty segment; the query string is ignored); `func CoveredOperations(t *testing.T, ops []Operation, coverageDir string) map[string]bool` (reads every `requests-*.jsonl`).
+- `harness.Operation{ ID, Method, Path string }`; `func LoadOperations(t *testing.T) []Operation` (reads `<repo>/mgmt/api/openapi.yaml` with `go.yaml.in/yaml/v3`); `func MatchOperation(ops []Operation, method, path string) (string, bool)` (path templates `{x}` match one non-empty segment; the query string is ignored); `func CoveredOperations(t *testing.T, ops []Operation, coverageDir string) map[string]bool` (reads every `requests-*.jsonl`).
 - Test ids (exact): dashboard `dashboard-qps`, `dashboard-cache-hit-ratio`, `dashboard-engines`, `dashboard-chart`; access control `acl-cidr-input`, `acl-add`, `acl-remove-<cidr>`, `acl-save`, `acl-row-<cidr>`; filtering `list-add`, `list-name`, `list-kind`, `list-url`, `list-interval`, `list-save`, `list-row-<name>`, `list-open-<name>`, `list-detail`, `list-refresh`, `list-edit`, `list-delete`, `list-stale-<name>`, `allowlist-input`, `allowlist-add`, `allowlist-save`, `allowlist-row-<domain>`; engines `engine-row-<node>`, `engine-open-<node>`, `engine-detail`, `engine-delete`, `jointoken-add`, `jointoken-name`, `jointoken-save`, `jointoken-value`, `jointoken-row-<name>`, `jointoken-revoke-<name>`; users `user-add`, `user-username`, `user-email`, `user-password`, `user-role`, `user-save`, `user-row-<username>`, `user-edit-<username>`, `user-disabled`, `user-delete-<username>`; API tokens `token-add`, `token-name`, `token-role`, `token-save`, `token-value`, `token-row-<name>`, `token-revoke-<name>`; settings `settings-strategy`, `settings-cache-max-bytes`, `settings-block-mode`, `settings-block-ttl`, `settings-otlp-endpoint`, `settings-sample-one-in`, `settings-save`, `version-row` (one per config version); query log `querylog-name`, `querylog-client`, `querylog-search`, `querylog-row`, `querylog-backend`, `querylog-unavailable`; shared `confirm-delete`.
 
-- [ ] Write the failing screen specs. `web/e2e/screens/00-setup.spec.ts`:
+- [x] Write the failing screen specs. Three specs reload right after a save click, which could abort the in-flight PUT; they wait for the save confirmation first (`Access control saved`, `Allowlist saved`, `Settings saved`), and `09-settings.spec.ts` waits for the first `version-row` before counting (a synchronisation fix, not a weaker assertion). `web/e2e/screens/00-setup.spec.ts`:
 
 ```ts
 import { test, expect, env } from "../fixtures";
@@ -7137,6 +7144,7 @@ test("access control list edit", async ({ page }) => {
   await page.getByTestId("acl-cidr-input").fill("198.51.100.0/24");
   await page.getByTestId("acl-add").click();
   await page.getByTestId("acl-save").click();
+  await expect(page.getByText("Access control saved")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("acl-row-198.51.100.0/24")).toBeVisible();
   await page.getByTestId("acl-cidr-input").fill("not-a-cidr");
@@ -7174,6 +7182,7 @@ test("filter lists and allowlist", async ({ page }) => {
   await page.getByTestId("allowlist-input").fill("ok.gui.test");
   await page.getByTestId("allowlist-add").click();
   await page.getByTestId("allowlist-save").click();
+  await expect(page.getByText("Allowlist saved")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("allowlist-row-ok.gui.test")).toBeVisible();
   await page.getByTestId("list-open-gui-list").click();
@@ -7303,9 +7312,11 @@ test("resolver settings and config versions", async ({ page }) => {
     env("NEXORA_E2E_ADMIN_PASSWORD"),
   );
   await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("version-row").first()).toBeVisible();
   const before = await page.getByTestId("version-row").count();
   await page.getByTestId("settings-block-ttl").fill("120");
   await page.getByTestId("settings-save").click();
+  await expect(page.getByText("Settings saved")).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("settings-block-ttl")).toHaveValue("120");
   await expect(page.getByTestId("version-row")).toHaveCount(before + 1);
@@ -7353,7 +7364,7 @@ test("OIDC sign-in round trip", async ({ page }) => {
 });
 ```
 
-- [ ] Write the failing spec `web/e2e/querylog.spec.ts`:
+- [x] Write the failing spec `web/e2e/querylog.spec.ts`:
 
 ```ts
 import { test, expect, env, login } from "./fixtures";
@@ -7388,7 +7399,7 @@ test("a query made against the engine appears in the query log within 10 s", asy
 });
 ```
 
-- [ ] Write the failing Go tests `e2e/gui_test.go`:
+- [x] Write the failing Go tests `e2e/gui_test.go`:
 
 ```go
 package e2e
@@ -7505,17 +7516,17 @@ func TestQueryLogBackends(t *testing.T) {
 }
 ```
 
-and add `func RepoRoot(t *testing.T) string` (walks up from the working directory to the directory containing `go.mod`) to `e2e/harness/harness.go`.
+and add `func RepoRoot(t *testing.T) string` (walks up from the working directory to the directory containing `go.mod`) to `e2e/harness/openapi.go`.
 
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -run "TestGUICoverage|TestQueryLogBackends" ./e2e/'` — expect FAIL with `undefined: harness.LoadOperations`; after adding `openapi.go`, the next run is expected to FAIL with `OpenAPI operations have no covering Playwright test` listing the screens not yet built (for example `getDashboard (GET /dashboard)`), which proves the coverage comparison bites before the screens exist.
-- [ ] Implement `e2e/harness/openapi.go` per the interface.
-- [ ] Implement `DashboardPage.tsx`: `getDashboard` every 10 s; `dashboard-qps` (QPS rounded), `dashboard-cache-hit-ratio` (percent), `dashboard-engines` (`<connected> / <total>`), a Recharts `LineChart` of `series` inside `data-testid="dashboard-chart"`, and an upstream health table.
-- [ ] Implement `QueryLogPage.tsx`: filter inputs `querylog-name`, `querylog-client` (plus qtype/rcode/cache/filter selects), `querylog-search` runs `searchQueryLog` with `limit=100`; results table rows `querylog-row` showing time, client, name, type, rcode, cache, filter, upstream, duration; `querylog-backend` shows `page.backend`; a 503 `querylog_unavailable` renders `querylog-unavailable` with `Query log backend unavailable` while the rest of the app keeps working; "Next page" uses `next_cursor`.
-- [ ] Implement `AccessControlPage.tsx` (`getAccessControl`; rows `acl-row-<cidr>` with `acl-remove-<cidr>`; `acl-cidr-input` validated client-side with an IPv4/IPv6 prefix regex showing `Invalid CIDR`; `acl-save` PUTs with `revision`), `FilteringPage.tsx` (lists table with `list-row-<name>` showing kind, URL, interval, `<entry_count> entries`, last success, and `list-stale-<name>` badge when `stale`; `list-open-<name>` opens `list-detail` via `getFilterList` with `list-refresh` (`refreshFilterList`), `list-edit`, `list-delete`; form fields `list-name`, `list-kind`, `list-url`, `list-interval`, `list-save`; allowlist editor `allowlist-input`, `allowlist-add`, rows `allowlist-row-<domain>`, `allowlist-save`), `EnginesPage.tsx` (engines table `engine-row-<node>` with status badge text from `Engine.status`, applied version, rejected reason; `engine-open-<node>` -> `getEngine` detail `engine-detail` with `engine-delete`; join tokens panel shown when `useCan("listJoinTokens")`: `jointoken-add` dialog with `jointoken-name`, TTL select, `jointoken-save`, one-time `jointoken-value` display, rows `jointoken-row-<name>` showing `revoked` when revoked, `jointoken-revoke-<name>`), `UsersPage.tsx` (`user-*` ids; the edit dialog includes `user-role` select and `user-disabled` switch and sends `revision`), `ApiTokensPage.tsx` (`token-*` ids; `token-role` select limited to roles at or below the current user's; one-time `token-value`), `SettingsPage.tsx` (resolver settings form with `settings-*` ids sending `revision`, and a config version history table from `listConfigVersions` with rows `version-row`).
-- [ ] Update `router.tsx` with every M1 route and make `/` render `DashboardPage`.
-- [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestGUICoverage|TestQueryLogBackends" ./e2e/'` — expect PASS: `--- PASS: TestGUICoverage`, `--- PASS: TestQueryLogBackends/builtin`, `--- PASS: TestQueryLogBackends/opensearch`.
-- [ ] Run `scripts/dev-exec.sh make web-test` — expect PASS.
-- [ ] Commit: `git add web e2e/gui_test.go e2e/harness/openapi.go e2e/harness/harness.go go.mod go.sum && git commit -m "web: all M1 screens; e2e GUI coverage and query-log backend tests"`.
+- [x] Run `go vet ./e2e/` — FAIL: `undefined: harness.RepoRoot` (then `LoadOperations`); the coverage comparison itself is proven by `TestOperationCoverageMatching` (mutating the empty-segment rule fails it), since before the screens existed the screen specs fail inside `RunPlaywright` ahead of the comparison. Original expectation: FAIL with `undefined: harness.LoadOperations`; after adding `openapi.go`, the next run is expected to FAIL with `OpenAPI operations have no covering Playwright test` listing the screens not yet built (for example `getDashboard (GET /dashboard)`), which proves the coverage comparison bites before the screens exist.
+- [x] Implement `e2e/harness/openapi.go` per the interface.
+- [x] Implement `DashboardPage.tsx`: `getDashboard` every 10 s; `dashboard-qps` (QPS rounded), `dashboard-cache-hit-ratio` (percent), `dashboard-engines` (`<connected> / <total>`), a Recharts `LineChart` of `series` inside `data-testid="dashboard-chart"`, and an upstream health table.
+- [x] Implement `QueryLogPage.tsx`: filter inputs `querylog-name`, `querylog-client` (plus qtype/rcode/cache/filter selects), `querylog-search` runs `searchQueryLog` with `limit=100`; results table rows `querylog-row` showing time, client, name, type, rcode, cache, filter, upstream, duration; `querylog-backend` shows `page.backend`; a 503 `querylog_unavailable` renders `querylog-unavailable` with `Query log backend unavailable` while the rest of the app keeps working; "Next page" uses `next_cursor`.
+- [x] Implement `AccessControlPage.tsx` (`getAccessControl`; rows `acl-row-<cidr>` with `acl-remove-<cidr>`; `acl-cidr-input` validated client-side with an IPv4/IPv6 prefix regex showing `Invalid CIDR`; `acl-save` PUTs with `revision`), `FilteringPage.tsx` (lists table with `list-row-<name>` showing kind, URL, interval, `<entry_count> entries`, last success, and `list-stale-<name>` badge when `stale`; `list-open-<name>` opens `list-detail` via `getFilterList` with `list-refresh` (`refreshFilterList`), `list-edit`, `list-delete`; form fields `list-name`, `list-kind`, `list-url`, `list-interval`, `list-save`; allowlist editor `allowlist-input`, `allowlist-add`, rows `allowlist-row-<domain>`, `allowlist-save`), `EnginesPage.tsx` (engines table `engine-row-<node>` with status badge text from `Engine.status`, applied version, rejected reason; `engine-open-<node>` -> `getEngine` detail `engine-detail` with `engine-delete`; join tokens panel shown when `useCan("listJoinTokens")`: `jointoken-add` dialog with `jointoken-name`, TTL select, `jointoken-save`, one-time `jointoken-value` display, rows `jointoken-row-<name>` showing `revoked` when revoked, `jointoken-revoke-<name>`), `UsersPage.tsx` (`user-*` ids; the edit dialog includes `user-role` select and `user-disabled` switch and sends `revision`), `ApiTokensPage.tsx` (`token-*` ids; `token-role` select limited to roles at or below the current user's; one-time `token-value`), `SettingsPage.tsx` (resolver settings form with `settings-*` ids sending `revision`, and a config version history table from `listConfigVersions` with rows `version-row`).
+- [x] Update `router.tsx` with every M1 route and make `/` render `DashboardPage`.
+- [x] Run `scripts/dev-exec.sh bash -c 'make e2e-build && go test -count=1 -v -run "TestGUICoverage|TestQueryLogBackends" ./e2e/'` (with `NEXORA_E2E_OPENSEARCH_URL=http://opensearch.nexora.svc:9200`, `NEXORA_E2E_JAEGER_QUERY_URL=http://jaeger.observability.svc:16686`, `NEXORA_E2E_BIN_DIR=/work/nexora/bin`) — expect PASS: `--- PASS: TestGUICoverage`, `--- PASS: TestQueryLogBackends/builtin`, `--- PASS: TestQueryLogBackends/opensearch`.
+- [x] Run `scripts/dev-exec.sh make web-test` — expect PASS.
+- [ ] Commit (by the lead): `git add web e2e/gui_test.go e2e/harness/openapi.go e2e/harness/openapi_test.go go.mod go.sum && git commit -m "web: all M1 screens; e2e GUI coverage and query-log backend tests"`.
 
 ## Task 21: Two-tier dnsperf performance gate
 
