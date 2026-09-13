@@ -552,6 +552,242 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/resolution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getResolutionSettings"];
+        put: operations["updateResolutionSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forward-zones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listForwardZones"];
+        put?: never;
+        post: operations["createForwardZone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/forward-zones/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateForwardZone"];
+        post?: never;
+        delete: operations["deleteForwardZone"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDnssecSettings"];
+        put: operations["updateDnssecSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDnssecStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/trust-anchors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listTrustAnchors"];
+        put?: never;
+        post: operations["createTrustAnchor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/trust-anchors/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteTrustAnchor"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/negative-trust-anchors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listNegativeTrustAnchors"];
+        put?: never;
+        post: operations["createNegativeTrustAnchor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dnssec/negative-trust-anchors/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteNegativeTrustAnchor"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rpz-zones": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRpzZones"];
+        put?: never;
+        post: operations["createRpzZone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rpz-zones/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["reorderRpzZones"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rpz-zones/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRpzZone"];
+        put: operations["updateRpzZone"];
+        post?: never;
+        delete: operations["deleteRpzZone"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rpz-zones/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["uploadRpzZoneFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rpz-zones/{id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["refreshRpzZone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -943,6 +1179,182 @@ export interface components {
                 /** Format: date-time */
                 updated_at: string;
             }[];
+        };
+        ResolutionSettings: {
+            /** @enum {string} */
+            mode: "forward" | "recursive";
+            qname_minimisation: boolean;
+            aggressive_nsec: boolean;
+            max_upstream_queries: number;
+            max_delegation_depth: number;
+            authority_port: number;
+            root_hints: components["schemas"]["RootHint"][];
+            /** Format: int64 */
+            revision: number;
+        };
+        RootHint: {
+            name: string;
+            addresses: string[];
+        };
+        ForwardZoneInput: {
+            domain: string;
+            addresses: string[];
+            validate: boolean;
+        };
+        ForwardZoneUpdate: components["schemas"]["ForwardZoneInput"] & {
+            /** Format: int64 */
+            revision: number;
+        };
+        ForwardZone: {
+            /** Format: uuid */
+            id: string;
+            domain: string;
+            addresses: string[];
+            validate: boolean;
+            /** Format: int64 */
+            revision: number;
+        };
+        DnssecSettings: {
+            validation: boolean;
+            /** @description Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation */
+            validate_forwarded: boolean;
+            rfc5011: boolean;
+            /** Format: int64 */
+            revision: number;
+        };
+        TrustAnchorInput: {
+            zone: string;
+            ds: string;
+        };
+        TrustAnchor: {
+            /** Format: uuid */
+            id: string;
+            zone: string;
+            ds: string;
+            /** @enum {string} */
+            source: "iana" | "operator";
+            /** Format: date-time */
+            created_at: string;
+        };
+        NegativeTrustAnchorInput: {
+            domain: string;
+            /** @default  */
+            reason: string;
+            /**
+             * Format: date-time
+             * @description in the future and at most 30 days ahead
+             */
+            expires_at: string;
+        };
+        NegativeTrustAnchor: {
+            /** Format: uuid */
+            id: string;
+            domain: string;
+            reason: string;
+            /** Format: date-time */
+            expires_at: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DnssecStatus: {
+            engines: {
+                /** Format: uuid */
+                engine_id: string;
+                engine_name: string;
+                /** Format: date-time */
+                reported_at: string;
+                /** Format: int64 */
+                secure: number;
+                /** Format: int64 */
+                insecure: number;
+                /** Format: int64 */
+                bogus: number;
+                /** Format: int64 */
+                indeterminate: number;
+                active_negative_trust_anchors: number;
+                trust_anchors: {
+                    zone: string;
+                    key_tag: number;
+                    algorithm: number;
+                    /** @enum {string} */
+                    state: "configured" | "add_pend" | "valid" | "missing" | "revoked";
+                    /** Format: date-time */
+                    last_refresh_success: string | null;
+                    /** Format: date-time */
+                    hold_down_until: string | null;
+                    last_error: string;
+                }[];
+            }[];
+        };
+        RpzZoneInput: {
+            name: string;
+            /** @enum {string} */
+            source_type: "file" | "transfer";
+            /** @description ip:port, transfer only */
+            primary?: string | null;
+            tsig_key_name?: string | null;
+            /** @enum {string|null} */
+            tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
+            /** @description base64, 16-64 bytes; stored sealed under NEXORA_KEK_FILE; omit on update to keep the stored secret */
+            tsig_secret?: string | null;
+            min_refresh_seconds: number;
+            /** @enum {string} */
+            policy_override: "given" | "disabled" | "nxdomain" | "nodata" | "passthru" | "drop" | "tcp_only";
+        };
+        RpzZoneUpdate: {
+            primary?: string | null;
+            tsig_key_name?: string | null;
+            /** @enum {string|null} */
+            tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
+            tsig_secret?: string | null;
+            min_refresh_seconds: number;
+            /** @enum {string} */
+            policy_override: "given" | "disabled" | "nxdomain" | "nodata" | "passthru" | "drop" | "tcp_only";
+            /** Format: int64 */
+            revision: number;
+        };
+        RpzZone: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            position: number;
+            /** @enum {string} */
+            source_type: "file" | "transfer";
+            primary: string | null;
+            tsig_key_name: string | null;
+            tsig_algorithm: string | null;
+            tsig_secret_set: boolean;
+            min_refresh_seconds: number;
+            policy_override: string;
+            file_records: number | null;
+            /** Format: int64 */
+            revision: number;
+            status: {
+                /** Format: uuid */
+                engine_id: string;
+                engine_name: string;
+                /** Format: int64 */
+                serial: number;
+                /** Format: int64 */
+                records: number;
+                /** Format: int64 */
+                skipped: number;
+                /** Format: int64 */
+                hits: number;
+                /** Format: date-time */
+                last_success: string | null;
+                last_error: string;
+                stale: boolean;
+            }[];
+        };
+        RpzZoneFile: {
+            content: string;
+            /** Format: int64 */
+            revision: number;
+        };
+        RpzZoneOrder: {
+            ids: string[];
         };
     };
     responses: {
@@ -2231,6 +2643,550 @@ export interface operations {
                     "application/json": components["schemas"]["DnsTlsStatus"];
                 };
             };
+        };
+    };
+    getResolutionSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Global resolution mode and recursion settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolutionSettings"];
+                };
+            };
+        };
+    };
+    updateResolutionSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolutionSettings"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolutionSettings"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    listForwardZones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Forward zones ordered by domain. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardZone"][];
+                };
+            };
+        };
+    };
+    createForwardZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardZoneInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardZone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    updateForwardZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardZoneUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardZone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteForwardZone: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getDnssecSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Global DNSSEC validation settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnssecSettings"];
+                };
+            };
+        };
+    };
+    updateDnssecSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DnssecSettings"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnssecSettings"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getDnssecStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest DNSSEC report of every engine. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnssecStatus"];
+                };
+            };
+        };
+    };
+    listTrustAnchors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trust anchors ordered by zone and DS. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustAnchor"][];
+                };
+            };
+        };
+    };
+    createTrustAnchor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustAnchorInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustAnchor"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteTrustAnchor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    listNegativeTrustAnchors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Negative trust anchors ordered by domain. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NegativeTrustAnchor"][];
+                };
+            };
+        };
+    };
+    createNegativeTrustAnchor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NegativeTrustAnchorInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NegativeTrustAnchor"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteNegativeTrustAnchor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    listRpzZones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description RPZ zones in policy order with per-engine status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpzZone"][];
+                };
+            };
+        };
+    };
+    createRpzZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RpzZoneInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpzZone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    reorderRpzZones: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RpzZoneOrder"];
+            };
+        };
+        responses: {
+            /** @description Reordered. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    getRpzZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The zone. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpzZone"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    updateRpzZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RpzZoneUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpzZone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    deleteRpzZone: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    uploadRpzZoneFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RpzZoneFile"];
+            };
+        };
+        responses: {
+            /** @description Uploaded and validated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RpzZone"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    refreshRpzZone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Engines refresh the zone now. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
 }

@@ -22,6 +22,8 @@ type Config struct {
 	// DNS serving certificate (DoT, DoH, DoQ) pushed to engines; both files or neither.
 	DNSTLSCertFile, DNSTLSKeyFile string
 	DNSTLSReloadInterval          time.Duration
+	// KEKFile holds the base64 32-byte key-encryption key sealing secrets at rest ("" = none).
+	KEKFile string
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -56,6 +58,7 @@ func Load(getenv func(string) string) (Config, error) {
 		OTLPEndpoint:    getenv("NEXORA_OTLP_ENDPOINT"),
 		DNSTLSCertFile:  getenv("NEXORA_DNS_TLS_CERT_FILE"),
 		DNSTLSKeyFile:   getenv("NEXORA_DNS_TLS_KEY_FILE"),
+		KEKFile:         getenv("NEXORA_KEK_FILE"),
 		OIDC: OIDCConfig{
 			Issuer:           getenv("NEXORA_OIDC_ISSUER"),
 			ClientID:         getenv("NEXORA_OIDC_CLIENT_ID"),

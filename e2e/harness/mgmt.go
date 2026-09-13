@@ -227,6 +227,16 @@ func Bootstrap(t *testing.T, e *Env, setupToken, baseURL string) *API {
 	return admin
 }
 
+// DisableForwardedValidation turns off DNSSEC validation of answers from the global upstreams, for
+// tests whose fixture upstreams serve unsigned synthetic data under the real root trust anchor.
+func (a *API) DisableForwardedValidation() {
+	a.T.Helper()
+	var s map[string]any
+	a.Must("GET", "/dnssec/settings", nil, &s, http.StatusOK)
+	s["validate_forwarded"] = false
+	a.Must("PUT", "/dnssec/settings", s, nil, http.StatusOK)
+}
+
 // CreateJoinToken creates a one-hour join token and returns the full token string.
 func (a *API) CreateJoinToken() string {
 	a.T.Helper()

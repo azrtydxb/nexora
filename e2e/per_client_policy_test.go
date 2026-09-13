@@ -51,6 +51,7 @@ func TestPerClientPolicy(t *testing.T) {
 	hf.SetList(t, "ads.txt", "ads.example.test\n")
 	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{DNSTLS: true})
 	op := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+	op.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	op.Must(http.MethodPost, "/upstreams", map[string]any{"name": "fixture", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 0}, nil, http.StatusCreated)
 	eng := env.StartManagedEngineWith("policy-1", []string{mg.GRPCURL}, op.CreateJoinToken(), harness.EngineOptions{DoH: true})
 	proxied := env.StartManagedEngineWith("policy-2", []string{mg.GRPCURL}, op.CreateJoinToken(), harness.EngineOptions{DoT: true, ProxyProtocolDoT: true, ProxyTrustedCIDRs: []string{"127.0.0.1/32"}})

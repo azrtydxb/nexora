@@ -596,6 +596,277 @@ components:
               applied: { type: boolean }
               error: { type: string }
               updated_at: { type: string, format: date-time }
+    ResolutionSettings:
+      type: object
+      required:
+        [
+          mode,
+          qname_minimisation,
+          aggressive_nsec,
+          max_upstream_queries,
+          max_delegation_depth,
+          authority_port,
+          root_hints,
+          revision,
+        ]
+      properties:
+        mode: { type: string, enum: [forward, recursive] }
+        qname_minimisation: { type: boolean }
+        aggressive_nsec: { type: boolean }
+        max_upstream_queries: { type: integer, minimum: 1, maximum: 1000 }
+        max_delegation_depth: { type: integer, minimum: 1, maximum: 64 }
+        authority_port: { type: integer, minimum: 1, maximum: 65535 }
+        root_hints:
+          { type: array, items: { $ref: "#/components/schemas/RootHint" } }
+        revision: { type: integer, format: int64 }
+    RootHint:
+      type: object
+      required: [name, addresses]
+      properties:
+        name: { type: string }
+        addresses: { type: array, minItems: 1, items: { type: string } }
+    ForwardZoneInput:
+      type: object
+      required: [domain, addresses, validate]
+      properties:
+        domain: { type: string, maxLength: 255 }
+        addresses:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 16,
+            items: { type: string, description: "ip:port" },
+          }
+        validate: { type: boolean }
+    ForwardZoneUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/ForwardZoneInput" }
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: integer, format: int64 }
+    ForwardZone:
+      type: object
+      required: [id, domain, addresses, validate, revision]
+      properties:
+        id: { type: string, format: uuid }
+        domain: { type: string }
+        addresses: { type: array, items: { type: string } }
+        validate: { type: boolean }
+        revision: { type: integer, format: int64 }
+    DnssecSettings:
+      type: object
+      required: [validation, validate_forwarded, rfc5011, revision]
+      properties:
+        validation: { type: boolean }
+        validate_forwarded:
+          {
+            type: boolean,
+            description: "Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation",
+          }
+        rfc5011: { type: boolean }
+        revision: { type: integer, format: int64 }
+    TrustAnchorInput:
+      type: object
+      required: [zone, ds]
+      properties:
+        zone: { type: string, maxLength: 255 }
+        ds: { type: string, maxLength: 200 }
+    TrustAnchor:
+      type: object
+      required: [id, zone, ds, source, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        zone: { type: string }
+        ds: { type: string }
+        source: { type: string, enum: [iana, operator] }
+        created_at: { type: string, format: date-time }
+    NegativeTrustAnchorInput:
+      type: object
+      required: [domain, expires_at]
+      properties:
+        domain: { type: string, maxLength: 255 }
+        reason: { type: string, maxLength: 500, default: "" }
+        expires_at:
+          {
+            type: string,
+            format: date-time,
+            description: "in the future and at most 30 days ahead",
+          }
+    NegativeTrustAnchor:
+      type: object
+      required: [id, domain, reason, expires_at, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        domain: { type: string }
+        reason: { type: string }
+        expires_at: { type: string, format: date-time }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+    DnssecStatus:
+      type: object
+      required: [engines]
+      properties:
+        engines:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                engine_id,
+                engine_name,
+                reported_at,
+                secure,
+                insecure,
+                bogus,
+                indeterminate,
+                active_negative_trust_anchors,
+                trust_anchors,
+              ]
+            properties:
+              engine_id: { type: string, format: uuid }
+              engine_name: { type: string }
+              reported_at: { type: string, format: date-time }
+              secure: { type: integer, format: int64 }
+              insecure: { type: integer, format: int64 }
+              bogus: { type: integer, format: int64 }
+              indeterminate: { type: integer, format: int64 }
+              active_negative_trust_anchors: { type: integer }
+              trust_anchors:
+                type: array
+                items:
+                  type: object
+                  required:
+                    [
+                      zone,
+                      key_tag,
+                      algorithm,
+                      state,
+                      last_refresh_success,
+                      hold_down_until,
+                      last_error,
+                    ]
+                  properties:
+                    zone: { type: string }
+                    key_tag: { type: integer }
+                    algorithm: { type: integer }
+                    state:
+                      {
+                        type: string,
+                        enum: [configured, add_pend, valid, missing, revoked],
+                      }
+                    last_refresh_success:
+                      { type: [string, "null"], format: date-time }
+                    hold_down_until:
+                      { type: [string, "null"], format: date-time }
+                    last_error: { type: string }
+    RpzZoneInput:
+      type: object
+      required: [name, source_type, min_refresh_seconds, policy_override]
+      properties:
+        name: { type: string, maxLength: 255 }
+        source_type: { type: string, enum: [file, transfer] }
+        primary:
+          { type: [string, "null"], description: "ip:port, transfer only" }
+        tsig_key_name: { type: [string, "null"] }
+        tsig_algorithm:
+          { type: [string, "null"], enum: [hmac-sha256, hmac-sha512, null] }
+        tsig_secret:
+          {
+            type: [string, "null"],
+            writeOnly: true,
+            description: "base64, 16-64 bytes; stored sealed under NEXORA_KEK_FILE; omit on update to keep the stored secret",
+          }
+        min_refresh_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        policy_override:
+          {
+            type: string,
+            enum: [given, disabled, nxdomain, nodata, passthru, drop, tcp_only],
+          }
+    RpzZoneUpdate:
+      type: object
+      required: [min_refresh_seconds, policy_override, revision]
+      properties:
+        primary: { type: [string, "null"] }
+        tsig_key_name: { type: [string, "null"] }
+        tsig_algorithm:
+          { type: [string, "null"], enum: [hmac-sha256, hmac-sha512, null] }
+        tsig_secret: { type: [string, "null"], writeOnly: true }
+        min_refresh_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        policy_override:
+          {
+            type: string,
+            enum: [given, disabled, nxdomain, nodata, passthru, drop, tcp_only],
+          }
+        revision: { type: integer, format: int64 }
+    RpzZone:
+      type: object
+      required:
+        [
+          id,
+          name,
+          position,
+          source_type,
+          primary,
+          tsig_key_name,
+          tsig_algorithm,
+          tsig_secret_set,
+          min_refresh_seconds,
+          policy_override,
+          file_records,
+          revision,
+          status,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        position: { type: integer }
+        source_type: { type: string, enum: [file, transfer] }
+        primary: { type: [string, "null"] }
+        tsig_key_name: { type: [string, "null"] }
+        tsig_algorithm: { type: [string, "null"] }
+        tsig_secret_set: { type: boolean }
+        min_refresh_seconds: { type: integer }
+        policy_override: { type: string }
+        file_records: { type: [integer, "null"] }
+        revision: { type: integer, format: int64 }
+        status:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                engine_id,
+                engine_name,
+                serial,
+                records,
+                skipped,
+                hits,
+                last_success,
+                last_error,
+                stale,
+              ]
+            properties:
+              engine_id: { type: string, format: uuid }
+              engine_name: { type: string }
+              serial: { type: integer, format: int64 }
+              records: { type: integer, format: int64 }
+              skipped: { type: integer, format: int64 }
+              hits: { type: integer, format: int64 }
+              last_success: { type: [string, "null"], format: date-time }
+              last_error: { type: string }
+              stale: { type: boolean }
+    RpzZoneFile:
+      type: object
+      required: [content, revision]
+      properties:
+        content: { type: string, maxLength: 3145728 }
+        revision: { type: integer, format: int64 }
+    RpzZoneOrder:
+      type: object
+      required: [ids]
+      properties:
+        ids: { type: array, items: { type: string, format: uuid } }
 paths:
   /health:
     get:
@@ -1685,3 +1956,313 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DnsTlsStatus" }
+  /resolution:
+    get:
+      operationId: getResolutionSettings
+      tags: [resolution]
+      responses:
+        "200":
+          description: Global resolution mode and recursion settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResolutionSettings" }
+    put:
+      operationId: updateResolutionSettings
+      tags: [resolution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolutionSettings" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResolutionSettings" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /forward-zones:
+    get:
+      operationId: listForwardZones
+      tags: [resolution]
+      responses:
+        "200":
+          description: Forward zones ordered by domain.
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/ForwardZone" },
+                }
+    post:
+      operationId: createForwardZone
+      tags: [resolution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForwardZoneInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForwardZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /forward-zones/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    put:
+      operationId: updateForwardZone
+      tags: [resolution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForwardZoneUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForwardZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteForwardZone
+      tags: [resolution]
+      parameters:
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dnssec/settings:
+    get:
+      operationId: getDnssecSettings
+      tags: [dnssec]
+      responses:
+        "200":
+          description: Global DNSSEC validation settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnssecSettings" }
+    put:
+      operationId: updateDnssecSettings
+      tags: [dnssec]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DnssecSettings" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnssecSettings" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dnssec/status:
+    get:
+      operationId: getDnssecStatus
+      tags: [dnssec]
+      responses:
+        "200":
+          description: Latest DNSSEC report of every engine.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnssecStatus" }
+  /dnssec/trust-anchors:
+    get:
+      operationId: listTrustAnchors
+      tags: [dnssec]
+      responses:
+        "200":
+          description: Trust anchors ordered by zone and DS.
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/TrustAnchor" },
+                }
+    post:
+      operationId: createTrustAnchor
+      tags: [dnssec]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TrustAnchorInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrustAnchor" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dnssec/trust-anchors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      operationId: deleteTrustAnchor
+      tags: [dnssec]
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dnssec/negative-trust-anchors:
+    get:
+      operationId: listNegativeTrustAnchors
+      tags: [dnssec]
+      responses:
+        "200":
+          description: Negative trust anchors ordered by domain.
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/NegativeTrustAnchor" },
+                }
+    post:
+      operationId: createNegativeTrustAnchor
+      tags: [dnssec]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NegativeTrustAnchorInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NegativeTrustAnchor" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dnssec/negative-trust-anchors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    delete:
+      operationId: deleteNegativeTrustAnchor
+      tags: [dnssec]
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+  /rpz-zones:
+    get:
+      operationId: listRpzZones
+      tags: [rpz]
+      responses:
+        "200":
+          description: RPZ zones in policy order with per-engine status.
+          content:
+            application/json:
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/RpzZone" } }
+    post:
+      operationId: createRpzZone
+      tags: [rpz]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RpzZoneInput" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RpzZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /rpz-zones/order:
+    put:
+      operationId: reorderRpzZones
+      tags: [rpz]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RpzZoneOrder" }
+      responses:
+        "204": { description: Reordered. }
+        "400": { $ref: "#/components/responses/Error" }
+  /rpz-zones/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    get:
+      operationId: getRpzZone
+      tags: [rpz]
+      responses:
+        "200":
+          description: The zone.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RpzZone" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updateRpzZone
+      tags: [rpz]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RpzZoneUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RpzZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteRpzZone
+      tags: [rpz]
+      parameters:
+        - $ref: "#/components/parameters/Revision"
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /rpz-zones/{id}/file:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    put:
+      operationId: uploadRpzZoneFile
+      tags: [rpz]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RpzZoneFile" }
+      responses:
+        "200":
+          description: Uploaded and validated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RpzZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /rpz-zones/{id}/refresh:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+    post:
+      operationId: refreshRpzZone
+      tags: [rpz]
+      responses:
+        "202": { description: Engines refresh the zone now. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }

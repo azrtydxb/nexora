@@ -44,6 +44,33 @@ func (e AuditEventActorType) Valid() bool {
 	}
 }
 
+// Defines values for DnssecStatusEnginesTrustAnchorsState.
+const (
+	AddPend    DnssecStatusEnginesTrustAnchorsState = "add_pend"
+	Configured DnssecStatusEnginesTrustAnchorsState = "configured"
+	Missing    DnssecStatusEnginesTrustAnchorsState = "missing"
+	Revoked    DnssecStatusEnginesTrustAnchorsState = "revoked"
+	Valid      DnssecStatusEnginesTrustAnchorsState = "valid"
+)
+
+// Valid indicates whether the value is a known member of the DnssecStatusEnginesTrustAnchorsState enum.
+func (e DnssecStatusEnginesTrustAnchorsState) Valid() bool {
+	switch e {
+	case AddPend:
+		return true
+	case Configured:
+		return true
+	case Missing:
+		return true
+	case Revoked:
+		return true
+	case Valid:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EngineStatus.
 const (
 	Ahead        EngineStatus = "ahead"
@@ -212,21 +239,39 @@ func (e QueryLogRecordFilter) Valid() bool {
 	}
 }
 
+// Defines values for ResolutionSettingsMode.
+const (
+	Forward   ResolutionSettingsMode = "forward"
+	Recursive ResolutionSettingsMode = "recursive"
+)
+
+// Valid indicates whether the value is a known member of the ResolutionSettingsMode enum.
+func (e ResolutionSettingsMode) Valid() bool {
+	switch e {
+	case Forward:
+		return true
+	case Recursive:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ResolverSettingsBlockMode.
 const (
-	NullIp   ResolverSettingsBlockMode = "null_ip"
-	Nxdomain ResolverSettingsBlockMode = "nxdomain"
-	Refused  ResolverSettingsBlockMode = "refused"
+	ResolverSettingsBlockModeNullIp   ResolverSettingsBlockMode = "null_ip"
+	ResolverSettingsBlockModeNxdomain ResolverSettingsBlockMode = "nxdomain"
+	ResolverSettingsBlockModeRefused  ResolverSettingsBlockMode = "refused"
 )
 
 // Valid indicates whether the value is a known member of the ResolverSettingsBlockMode enum.
 func (e ResolverSettingsBlockMode) Valid() bool {
 	switch e {
-	case NullIp:
+	case ResolverSettingsBlockModeNullIp:
 		return true
-	case Nxdomain:
+	case ResolverSettingsBlockModeNxdomain:
 		return true
-	case Refused:
+	case ResolverSettingsBlockModeRefused:
 		return true
 	default:
 		return false
@@ -316,19 +361,163 @@ func (e RewriteUpdateType) Valid() bool {
 
 // Defines values for Role.
 const (
-	Admin    Role = "admin"
-	Operator Role = "operator"
-	Viewer   Role = "viewer"
+	RoleAdmin    Role = "admin"
+	RoleOperator Role = "operator"
+	RoleViewer   Role = "viewer"
 )
 
 // Valid indicates whether the value is a known member of the Role enum.
 func (e Role) Valid() bool {
 	switch e {
-	case Admin:
+	case RoleAdmin:
 		return true
-	case Operator:
+	case RoleOperator:
 		return true
-	case Viewer:
+	case RoleViewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneSourceType.
+const (
+	RpzZoneSourceTypeFile     RpzZoneSourceType = "file"
+	RpzZoneSourceTypeTransfer RpzZoneSourceType = "transfer"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneSourceType enum.
+func (e RpzZoneSourceType) Valid() bool {
+	switch e {
+	case RpzZoneSourceTypeFile:
+		return true
+	case RpzZoneSourceTypeTransfer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneInputPolicyOverride.
+const (
+	RpzZoneInputPolicyOverrideDisabled RpzZoneInputPolicyOverride = "disabled"
+	RpzZoneInputPolicyOverrideDrop     RpzZoneInputPolicyOverride = "drop"
+	RpzZoneInputPolicyOverrideGiven    RpzZoneInputPolicyOverride = "given"
+	RpzZoneInputPolicyOverrideNodata   RpzZoneInputPolicyOverride = "nodata"
+	RpzZoneInputPolicyOverrideNxdomain RpzZoneInputPolicyOverride = "nxdomain"
+	RpzZoneInputPolicyOverridePassthru RpzZoneInputPolicyOverride = "passthru"
+	RpzZoneInputPolicyOverrideTcpOnly  RpzZoneInputPolicyOverride = "tcp_only"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneInputPolicyOverride enum.
+func (e RpzZoneInputPolicyOverride) Valid() bool {
+	switch e {
+	case RpzZoneInputPolicyOverrideDisabled:
+		return true
+	case RpzZoneInputPolicyOverrideDrop:
+		return true
+	case RpzZoneInputPolicyOverrideGiven:
+		return true
+	case RpzZoneInputPolicyOverrideNodata:
+		return true
+	case RpzZoneInputPolicyOverrideNxdomain:
+		return true
+	case RpzZoneInputPolicyOverridePassthru:
+		return true
+	case RpzZoneInputPolicyOverrideTcpOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneInputSourceType.
+const (
+	RpzZoneInputSourceTypeFile     RpzZoneInputSourceType = "file"
+	RpzZoneInputSourceTypeTransfer RpzZoneInputSourceType = "transfer"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneInputSourceType enum.
+func (e RpzZoneInputSourceType) Valid() bool {
+	switch e {
+	case RpzZoneInputSourceTypeFile:
+		return true
+	case RpzZoneInputSourceTypeTransfer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneInputTsigAlgorithm.
+const (
+	RpzZoneInputTsigAlgorithmHmacSha256  RpzZoneInputTsigAlgorithm = "hmac-sha256"
+	RpzZoneInputTsigAlgorithmHmacSha512  RpzZoneInputTsigAlgorithm = "hmac-sha512"
+	RpzZoneInputTsigAlgorithmLessThannil RpzZoneInputTsigAlgorithm = "<nil>"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneInputTsigAlgorithm enum.
+func (e RpzZoneInputTsigAlgorithm) Valid() bool {
+	switch e {
+	case RpzZoneInputTsigAlgorithmHmacSha256:
+		return true
+	case RpzZoneInputTsigAlgorithmHmacSha512:
+		return true
+	case RpzZoneInputTsigAlgorithmLessThannil:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneUpdatePolicyOverride.
+const (
+	RpzZoneUpdatePolicyOverrideDisabled RpzZoneUpdatePolicyOverride = "disabled"
+	RpzZoneUpdatePolicyOverrideDrop     RpzZoneUpdatePolicyOverride = "drop"
+	RpzZoneUpdatePolicyOverrideGiven    RpzZoneUpdatePolicyOverride = "given"
+	RpzZoneUpdatePolicyOverrideNodata   RpzZoneUpdatePolicyOverride = "nodata"
+	RpzZoneUpdatePolicyOverrideNxdomain RpzZoneUpdatePolicyOverride = "nxdomain"
+	RpzZoneUpdatePolicyOverridePassthru RpzZoneUpdatePolicyOverride = "passthru"
+	RpzZoneUpdatePolicyOverrideTcpOnly  RpzZoneUpdatePolicyOverride = "tcp_only"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneUpdatePolicyOverride enum.
+func (e RpzZoneUpdatePolicyOverride) Valid() bool {
+	switch e {
+	case RpzZoneUpdatePolicyOverrideDisabled:
+		return true
+	case RpzZoneUpdatePolicyOverrideDrop:
+		return true
+	case RpzZoneUpdatePolicyOverrideGiven:
+		return true
+	case RpzZoneUpdatePolicyOverrideNodata:
+		return true
+	case RpzZoneUpdatePolicyOverrideNxdomain:
+		return true
+	case RpzZoneUpdatePolicyOverridePassthru:
+		return true
+	case RpzZoneUpdatePolicyOverrideTcpOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RpzZoneUpdateTsigAlgorithm.
+const (
+	RpzZoneUpdateTsigAlgorithmHmacSha256  RpzZoneUpdateTsigAlgorithm = "hmac-sha256"
+	RpzZoneUpdateTsigAlgorithmHmacSha512  RpzZoneUpdateTsigAlgorithm = "hmac-sha512"
+	RpzZoneUpdateTsigAlgorithmLessThannil RpzZoneUpdateTsigAlgorithm = "<nil>"
+)
+
+// Valid indicates whether the value is a known member of the RpzZoneUpdateTsigAlgorithm enum.
+func (e RpzZoneUpdateTsigAlgorithm) Valid() bool {
+	switch e {
+	case RpzZoneUpdateTsigAlgorithmHmacSha256:
+		return true
+	case RpzZoneUpdateTsigAlgorithmHmacSha512:
+		return true
+	case RpzZoneUpdateTsigAlgorithmLessThannil:
 		return true
 	default:
 		return false
@@ -350,6 +539,24 @@ func (e SafeSearchYoutube) Valid() bool {
 	case SafeSearchYoutubeOff:
 		return true
 	case SafeSearchYoutubeStrict:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TrustAnchorSource.
+const (
+	TrustAnchorSourceIana     TrustAnchorSource = "iana"
+	TrustAnchorSourceOperator TrustAnchorSource = "operator"
+)
+
+// Valid indicates whether the value is a known member of the TrustAnchorSource enum.
+func (e TrustAnchorSource) Valid() bool {
+	switch e {
+	case TrustAnchorSourceIana:
+		return true
+	case TrustAnchorSourceOperator:
 		return true
 	default:
 		return false
@@ -532,6 +739,42 @@ type DnsTlsStatus struct {
 	} `json:"engines"`
 }
 
+// DnssecSettings defines model for DnssecSettings.
+type DnssecSettings struct {
+	Revision int64 `json:"revision"`
+	Rfc5011  bool  `json:"rfc5011"`
+
+	// ValidateForwarded Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation
+	ValidateForwarded bool `json:"validate_forwarded"`
+	Validation        bool `json:"validation"`
+}
+
+// DnssecStatus defines model for DnssecStatus.
+type DnssecStatus struct {
+	Engines []struct {
+		ActiveNegativeTrustAnchors int                `json:"active_negative_trust_anchors"`
+		Bogus                      int64              `json:"bogus"`
+		EngineId                   openapi_types.UUID `json:"engine_id"`
+		EngineName                 string             `json:"engine_name"`
+		Indeterminate              int64              `json:"indeterminate"`
+		Insecure                   int64              `json:"insecure"`
+		ReportedAt                 time.Time          `json:"reported_at"`
+		Secure                     int64              `json:"secure"`
+		TrustAnchors               []struct {
+			Algorithm          int                                  `json:"algorithm"`
+			HoldDownUntil      *time.Time                           `json:"hold_down_until"`
+			KeyTag             int                                  `json:"key_tag"`
+			LastError          string                               `json:"last_error"`
+			LastRefreshSuccess *time.Time                           `json:"last_refresh_success"`
+			State              DnssecStatusEnginesTrustAnchorsState `json:"state"`
+			Zone               string                               `json:"zone"`
+		} `json:"trust_anchors"`
+	} `json:"engines"`
+}
+
+// DnssecStatusEnginesTrustAnchorsState defines model for DnssecStatus.Engines.TrustAnchors.State.
+type DnssecStatusEnginesTrustAnchorsState string
+
 // Engine defines model for Engine.
 type Engine struct {
 	AppliedVersion  int64              `json:"applied_version"`
@@ -593,6 +836,30 @@ type FilterListInput struct {
 // FilterListInputKind defines model for FilterListInput.Kind.
 type FilterListInputKind string
 
+// ForwardZone defines model for ForwardZone.
+type ForwardZone struct {
+	Addresses []string           `json:"addresses"`
+	Domain    string             `json:"domain"`
+	Id        openapi_types.UUID `json:"id"`
+	Revision  int64              `json:"revision"`
+	Validate  bool               `json:"validate"`
+}
+
+// ForwardZoneInput defines model for ForwardZoneInput.
+type ForwardZoneInput struct {
+	Addresses []string `json:"addresses"`
+	Domain    string   `json:"domain"`
+	Validate  bool     `json:"validate"`
+}
+
+// ForwardZoneUpdate defines model for ForwardZoneUpdate.
+type ForwardZoneUpdate struct {
+	Addresses []string `json:"addresses"`
+	Domain    string   `json:"domain"`
+	Revision  int64    `json:"revision"`
+	Validate  bool     `json:"validate"`
+}
+
 // GlobalSafeSearch defines model for GlobalSafeSearch.
 type GlobalSafeSearch struct {
 	Bing       bool                    `json:"bing"`
@@ -645,6 +912,25 @@ type JoinTokenCreated struct {
 type LoginRequest struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// NegativeTrustAnchor defines model for NegativeTrustAnchor.
+type NegativeTrustAnchor struct {
+	CreatedAt time.Time          `json:"created_at"`
+	CreatedBy string             `json:"created_by"`
+	Domain    string             `json:"domain"`
+	ExpiresAt time.Time          `json:"expires_at"`
+	Id        openapi_types.UUID `json:"id"`
+	Reason    string             `json:"reason"`
+}
+
+// NegativeTrustAnchorInput defines model for NegativeTrustAnchorInput.
+type NegativeTrustAnchorInput struct {
+	Domain string `json:"domain"`
+
+	// ExpiresAt in the future and at most 30 days ahead
+	ExpiresAt time.Time `json:"expires_at"`
+	Reason    *string   `json:"reason,omitempty"`
 }
 
 // PolicyGroup defines model for PolicyGroup.
@@ -709,6 +995,21 @@ type QueryLogRecordCache string
 
 // QueryLogRecordFilter defines model for QueryLogRecord.Filter.
 type QueryLogRecordFilter string
+
+// ResolutionSettings defines model for ResolutionSettings.
+type ResolutionSettings struct {
+	AggressiveNsec     bool                   `json:"aggressive_nsec"`
+	AuthorityPort      int                    `json:"authority_port"`
+	MaxDelegationDepth int                    `json:"max_delegation_depth"`
+	MaxUpstreamQueries int                    `json:"max_upstream_queries"`
+	Mode               ResolutionSettingsMode `json:"mode"`
+	QnameMinimisation  bool                   `json:"qname_minimisation"`
+	Revision           int64                  `json:"revision"`
+	RootHints          []RootHint             `json:"root_hints"`
+}
+
+// ResolutionSettingsMode defines model for ResolutionSettings.Mode.
+type ResolutionSettingsMode string
 
 // ResolverSettings defines model for ResolverSettings.
 type ResolverSettings struct {
@@ -782,6 +1083,95 @@ type RewriteUpdateType string
 // Role defines model for Role.
 type Role string
 
+// RootHint defines model for RootHint.
+type RootHint struct {
+	Addresses []string `json:"addresses"`
+	Name      string   `json:"name"`
+}
+
+// RpzZone defines model for RpzZone.
+type RpzZone struct {
+	FileRecords       *int               `json:"file_records"`
+	Id                openapi_types.UUID `json:"id"`
+	MinRefreshSeconds int                `json:"min_refresh_seconds"`
+	Name              string             `json:"name"`
+	PolicyOverride    string             `json:"policy_override"`
+	Position          int                `json:"position"`
+	Primary           *string            `json:"primary"`
+	Revision          int64              `json:"revision"`
+	SourceType        RpzZoneSourceType  `json:"source_type"`
+	Status            []struct {
+		EngineId    openapi_types.UUID `json:"engine_id"`
+		EngineName  string             `json:"engine_name"`
+		Hits        int64              `json:"hits"`
+		LastError   string             `json:"last_error"`
+		LastSuccess *time.Time         `json:"last_success"`
+		Records     int64              `json:"records"`
+		Serial      int64              `json:"serial"`
+		Skipped     int64              `json:"skipped"`
+		Stale       bool               `json:"stale"`
+	} `json:"status"`
+	TsigAlgorithm *string `json:"tsig_algorithm"`
+	TsigKeyName   *string `json:"tsig_key_name"`
+	TsigSecretSet bool    `json:"tsig_secret_set"`
+}
+
+// RpzZoneSourceType defines model for RpzZone.SourceType.
+type RpzZoneSourceType string
+
+// RpzZoneFile defines model for RpzZoneFile.
+type RpzZoneFile struct {
+	Content  string `json:"content"`
+	Revision int64  `json:"revision"`
+}
+
+// RpzZoneInput defines model for RpzZoneInput.
+type RpzZoneInput struct {
+	MinRefreshSeconds int                        `json:"min_refresh_seconds"`
+	Name              string                     `json:"name"`
+	PolicyOverride    RpzZoneInputPolicyOverride `json:"policy_override"`
+
+	// Primary ip:port, transfer only
+	Primary       *string                    `json:"primary,omitempty"`
+	SourceType    RpzZoneInputSourceType     `json:"source_type"`
+	TsigAlgorithm *RpzZoneInputTsigAlgorithm `json:"tsig_algorithm,omitempty"`
+	TsigKeyName   *string                    `json:"tsig_key_name,omitempty"`
+
+	// TsigSecret base64, 16-64 bytes; stored sealed under NEXORA_KEK_FILE; omit on update to keep the stored secret
+	TsigSecret *string `json:"tsig_secret,omitempty"`
+}
+
+// RpzZoneInputPolicyOverride defines model for RpzZoneInput.PolicyOverride.
+type RpzZoneInputPolicyOverride string
+
+// RpzZoneInputSourceType defines model for RpzZoneInput.SourceType.
+type RpzZoneInputSourceType string
+
+// RpzZoneInputTsigAlgorithm defines model for RpzZoneInput.TsigAlgorithm.
+type RpzZoneInputTsigAlgorithm string
+
+// RpzZoneOrder defines model for RpzZoneOrder.
+type RpzZoneOrder struct {
+	Ids []openapi_types.UUID `json:"ids"`
+}
+
+// RpzZoneUpdate defines model for RpzZoneUpdate.
+type RpzZoneUpdate struct {
+	MinRefreshSeconds int                         `json:"min_refresh_seconds"`
+	PolicyOverride    RpzZoneUpdatePolicyOverride `json:"policy_override"`
+	Primary           *string                     `json:"primary,omitempty"`
+	Revision          int64                       `json:"revision"`
+	TsigAlgorithm     *RpzZoneUpdateTsigAlgorithm `json:"tsig_algorithm,omitempty"`
+	TsigKeyName       *string                     `json:"tsig_key_name,omitempty"`
+	TsigSecret        *string                     `json:"tsig_secret,omitempty"`
+}
+
+// RpzZoneUpdatePolicyOverride defines model for RpzZoneUpdate.PolicyOverride.
+type RpzZoneUpdatePolicyOverride string
+
+// RpzZoneUpdateTsigAlgorithm defines model for RpzZoneUpdate.TsigAlgorithm.
+type RpzZoneUpdateTsigAlgorithm string
+
 // SafeSearch defines model for SafeSearch.
 type SafeSearch struct {
 	Bing       bool              `json:"bing"`
@@ -804,6 +1194,24 @@ type SetupRequest struct {
 // SetupStatus defines model for SetupStatus.
 type SetupStatus struct {
 	Required bool `json:"required"`
+}
+
+// TrustAnchor defines model for TrustAnchor.
+type TrustAnchor struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Ds        string             `json:"ds"`
+	Id        openapi_types.UUID `json:"id"`
+	Source    TrustAnchorSource  `json:"source"`
+	Zone      string             `json:"zone"`
+}
+
+// TrustAnchorSource defines model for TrustAnchor.Source.
+type TrustAnchorSource string
+
+// TrustAnchorInput defines model for TrustAnchorInput.
+type TrustAnchorInput struct {
+	Ds   string `json:"ds"`
+	Zone string `json:"zone"`
 }
 
 // Upstream defines model for Upstream.
@@ -908,6 +1316,11 @@ type DeleteFilterListParams struct {
 	Revision Revision `form:"revision" json:"revision"`
 }
 
+// DeleteForwardZoneParams defines parameters for DeleteForwardZone.
+type DeleteForwardZoneParams struct {
+	Revision Revision `form:"revision" json:"revision"`
+}
+
 // DeletePolicyGroupParams defines parameters for DeletePolicyGroup.
 type DeletePolicyGroupParams struct {
 	Revision int64 `form:"revision" json:"revision"`
@@ -938,6 +1351,11 @@ type DeleteRewriteParams struct {
 	Revision int64 `form:"revision" json:"revision"`
 }
 
+// DeleteRpzZoneParams defines parameters for DeleteRpzZone.
+type DeleteRpzZoneParams struct {
+	Revision Revision `form:"revision" json:"revision"`
+}
+
 // DeleteUpstreamParams defines parameters for DeleteUpstream.
 type DeleteUpstreamParams struct {
 	Revision Revision `form:"revision" json:"revision"`
@@ -960,11 +1378,26 @@ type CreateApiTokenJSONRequestBody = ApiTokenCreate
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// CreateNegativeTrustAnchorJSONRequestBody defines body for CreateNegativeTrustAnchor for application/json ContentType.
+type CreateNegativeTrustAnchorJSONRequestBody = NegativeTrustAnchorInput
+
+// UpdateDnssecSettingsJSONRequestBody defines body for UpdateDnssecSettings for application/json ContentType.
+type UpdateDnssecSettingsJSONRequestBody = DnssecSettings
+
+// CreateTrustAnchorJSONRequestBody defines body for CreateTrustAnchor for application/json ContentType.
+type CreateTrustAnchorJSONRequestBody = TrustAnchorInput
+
 // CreateFilterListJSONRequestBody defines body for CreateFilterList for application/json ContentType.
 type CreateFilterListJSONRequestBody = FilterListInput
 
 // UpdateFilterListJSONRequestBody defines body for UpdateFilterList for application/json ContentType.
 type UpdateFilterListJSONRequestBody = FilterListInput
+
+// CreateForwardZoneJSONRequestBody defines body for CreateForwardZone for application/json ContentType.
+type CreateForwardZoneJSONRequestBody = ForwardZoneInput
+
+// UpdateForwardZoneJSONRequestBody defines body for UpdateForwardZone for application/json ContentType.
+type UpdateForwardZoneJSONRequestBody = ForwardZoneUpdate
 
 // CreateJoinTokenJSONRequestBody defines body for CreateJoinToken for application/json ContentType.
 type CreateJoinTokenJSONRequestBody = JoinTokenCreate
@@ -975,6 +1408,9 @@ type CreatePolicyGroupJSONRequestBody = PolicyGroupInput
 // UpdatePolicyGroupJSONRequestBody defines body for UpdatePolicyGroup for application/json ContentType.
 type UpdatePolicyGroupJSONRequestBody = PolicyGroupUpdate
 
+// UpdateResolutionSettingsJSONRequestBody defines body for UpdateResolutionSettings for application/json ContentType.
+type UpdateResolutionSettingsJSONRequestBody = ResolutionSettings
+
 // UpdateResolverSettingsJSONRequestBody defines body for UpdateResolverSettings for application/json ContentType.
 type UpdateResolverSettingsJSONRequestBody = ResolverSettings
 
@@ -983,6 +1419,18 @@ type CreateRewriteJSONRequestBody = RewriteInput
 
 // UpdateRewriteJSONRequestBody defines body for UpdateRewrite for application/json ContentType.
 type UpdateRewriteJSONRequestBody = RewriteUpdate
+
+// CreateRpzZoneJSONRequestBody defines body for CreateRpzZone for application/json ContentType.
+type CreateRpzZoneJSONRequestBody = RpzZoneInput
+
+// ReorderRpzZonesJSONRequestBody defines body for ReorderRpzZones for application/json ContentType.
+type ReorderRpzZonesJSONRequestBody = RpzZoneOrder
+
+// UpdateRpzZoneJSONRequestBody defines body for UpdateRpzZone for application/json ContentType.
+type UpdateRpzZoneJSONRequestBody = RpzZoneUpdate
+
+// UploadRpzZoneFileJSONRequestBody defines body for UploadRpzZoneFile for application/json ContentType.
+type UploadRpzZoneFileJSONRequestBody = RpzZoneFile
 
 // UpdateGlobalSafeSearchJSONRequestBody defines body for UpdateGlobalSafeSearch for application/json ContentType.
 type UpdateGlobalSafeSearchJSONRequestBody = GlobalSafeSearch
@@ -1053,6 +1501,33 @@ type ServerInterface interface {
 	// (GET /dashboard)
 	GetDashboard(w http.ResponseWriter, r *http.Request)
 
+	// (GET /dnssec/negative-trust-anchors)
+	ListNegativeTrustAnchors(w http.ResponseWriter, r *http.Request)
+
+	// (POST /dnssec/negative-trust-anchors)
+	CreateNegativeTrustAnchor(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /dnssec/negative-trust-anchors/{id})
+	DeleteNegativeTrustAnchor(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /dnssec/settings)
+	GetDnssecSettings(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /dnssec/settings)
+	UpdateDnssecSettings(w http.ResponseWriter, r *http.Request)
+
+	// (GET /dnssec/status)
+	GetDnssecStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /dnssec/trust-anchors)
+	ListTrustAnchors(w http.ResponseWriter, r *http.Request)
+
+	// (POST /dnssec/trust-anchors)
+	CreateTrustAnchor(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /dnssec/trust-anchors/{id})
+	DeleteTrustAnchor(w http.ResponseWriter, r *http.Request, id Id)
+
 	// (GET /engines)
 	ListEngines(w http.ResponseWriter, r *http.Request)
 
@@ -1079,6 +1554,18 @@ type ServerInterface interface {
 
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /forward-zones)
+	ListForwardZones(w http.ResponseWriter, r *http.Request)
+
+	// (POST /forward-zones)
+	CreateForwardZone(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /forward-zones/{id})
+	DeleteForwardZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteForwardZoneParams)
+
+	// (PUT /forward-zones/{id})
+	UpdateForwardZone(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -1110,6 +1597,12 @@ type ServerInterface interface {
 	// (GET /query-log)
 	SearchQueryLog(w http.ResponseWriter, r *http.Request, params SearchQueryLogParams)
 
+	// (GET /resolution)
+	GetResolutionSettings(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /resolution)
+	UpdateResolutionSettings(w http.ResponseWriter, r *http.Request)
+
 	// (GET /resolver-settings)
 	GetResolverSettings(w http.ResponseWriter, r *http.Request)
 
@@ -1127,6 +1620,30 @@ type ServerInterface interface {
 
 	// (PUT /rewrites/{id})
 	UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (GET /rpz-zones)
+	ListRpzZones(w http.ResponseWriter, r *http.Request)
+
+	// (POST /rpz-zones)
+	CreateRpzZone(w http.ResponseWriter, r *http.Request)
+
+	// (PUT /rpz-zones/order)
+	ReorderRpzZones(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /rpz-zones/{id})
+	DeleteRpzZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteRpzZoneParams)
+
+	// (GET /rpz-zones/{id})
+	GetRpzZone(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PUT /rpz-zones/{id})
+	UpdateRpzZone(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PUT /rpz-zones/{id}/file)
+	UploadRpzZoneFile(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /rpz-zones/{id}/refresh)
+	RefreshRpzZone(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /safe-search)
 	GetGlobalSafeSearch(w http.ResponseWriter, r *http.Request)
@@ -1252,6 +1769,51 @@ func (_ Unimplemented) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /dnssec/negative-trust-anchors)
+func (_ Unimplemented) ListNegativeTrustAnchors(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /dnssec/negative-trust-anchors)
+func (_ Unimplemented) CreateNegativeTrustAnchor(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /dnssec/negative-trust-anchors/{id})
+func (_ Unimplemented) DeleteNegativeTrustAnchor(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dnssec/settings)
+func (_ Unimplemented) GetDnssecSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /dnssec/settings)
+func (_ Unimplemented) UpdateDnssecSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dnssec/status)
+func (_ Unimplemented) GetDnssecStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dnssec/trust-anchors)
+func (_ Unimplemented) ListTrustAnchors(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /dnssec/trust-anchors)
+func (_ Unimplemented) CreateTrustAnchor(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /dnssec/trust-anchors/{id})
+func (_ Unimplemented) DeleteTrustAnchor(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /engines)
 func (_ Unimplemented) ListEngines(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1294,6 +1856,26 @@ func (_ Unimplemented) UpdateFilterList(w http.ResponseWriter, r *http.Request, 
 
 // (POST /filter-lists/{id}/refresh)
 func (_ Unimplemented) RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /forward-zones)
+func (_ Unimplemented) ListForwardZones(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /forward-zones)
+func (_ Unimplemented) CreateForwardZone(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /forward-zones/{id})
+func (_ Unimplemented) DeleteForwardZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteForwardZoneParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /forward-zones/{id})
+func (_ Unimplemented) UpdateForwardZone(w http.ResponseWriter, r *http.Request, id Id) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1347,6 +1929,16 @@ func (_ Unimplemented) SearchQueryLog(w http.ResponseWriter, r *http.Request, pa
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /resolution)
+func (_ Unimplemented) GetResolutionSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /resolution)
+func (_ Unimplemented) UpdateResolutionSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /resolver-settings)
 func (_ Unimplemented) GetResolverSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -1374,6 +1966,46 @@ func (_ Unimplemented) DeleteRewrite(w http.ResponseWriter, r *http.Request, id 
 
 // (PUT /rewrites/{id})
 func (_ Unimplemented) UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rpz-zones)
+func (_ Unimplemented) ListRpzZones(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /rpz-zones)
+func (_ Unimplemented) CreateRpzZone(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /rpz-zones/order)
+func (_ Unimplemented) ReorderRpzZones(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /rpz-zones/{id})
+func (_ Unimplemented) DeleteRpzZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteRpzZoneParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rpz-zones/{id})
+func (_ Unimplemented) GetRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /rpz-zones/{id})
+func (_ Unimplemented) UpdateRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /rpz-zones/{id}/file)
+func (_ Unimplemented) UploadRpzZoneFile(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /rpz-zones/{id}/refresh)
+func (_ Unimplemented) RefreshRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1789,6 +2421,156 @@ func (siw *ServerInterfaceWrapper) GetDashboard(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListNegativeTrustAnchors operation middleware
+func (siw *ServerInterfaceWrapper) ListNegativeTrustAnchors(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNegativeTrustAnchors(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNegativeTrustAnchor operation middleware
+func (siw *ServerInterfaceWrapper) CreateNegativeTrustAnchor(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNegativeTrustAnchor(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNegativeTrustAnchor operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNegativeTrustAnchor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNegativeTrustAnchor(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDnssecSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetDnssecSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDnssecSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateDnssecSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateDnssecSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateDnssecSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDnssecStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetDnssecStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDnssecStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTrustAnchors operation middleware
+func (siw *ServerInterfaceWrapper) ListTrustAnchors(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTrustAnchors(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateTrustAnchor operation middleware
+func (siw *ServerInterfaceWrapper) CreateTrustAnchor(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateTrustAnchor(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteTrustAnchor operation middleware
+func (siw *ServerInterfaceWrapper) DeleteTrustAnchor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteTrustAnchor(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListEngines operation middleware
 func (siw *ServerInterfaceWrapper) ListEngines(w http.ResponseWriter, r *http.Request) {
 
@@ -1994,6 +2776,102 @@ func (siw *ServerInterfaceWrapper) RefreshFilterList(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RefreshFilterList(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListForwardZones operation middleware
+func (siw *ServerInterfaceWrapper) ListForwardZones(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListForwardZones(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateForwardZone operation middleware
+func (siw *ServerInterfaceWrapper) CreateForwardZone(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateForwardZone(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteForwardZone operation middleware
+func (siw *ServerInterfaceWrapper) DeleteForwardZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteForwardZoneParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteForwardZone(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateForwardZone operation middleware
+func (siw *ServerInterfaceWrapper) UpdateForwardZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateForwardZone(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2343,6 +3221,34 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetResolutionSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetResolutionSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResolutionSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateResolutionSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateResolutionSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateResolutionSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetResolverSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetResolverSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -2477,6 +3383,194 @@ func (siw *ServerInterfaceWrapper) UpdateRewrite(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateRewrite(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRpzZones operation middleware
+func (siw *ServerInterfaceWrapper) ListRpzZones(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRpzZones(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRpzZone operation middleware
+func (siw *ServerInterfaceWrapper) CreateRpzZone(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRpzZone(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReorderRpzZones operation middleware
+func (siw *ServerInterfaceWrapper) ReorderRpzZones(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReorderRpzZones(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRpzZone operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRpzZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteRpzZoneParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRpzZone(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRpzZone operation middleware
+func (siw *ServerInterfaceWrapper) GetRpzZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRpzZone(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRpzZone operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRpzZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRpzZone(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadRpzZoneFile operation middleware
+func (siw *ServerInterfaceWrapper) UploadRpzZoneFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadRpzZoneFile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshRpzZone operation middleware
+func (siw *ServerInterfaceWrapper) RefreshRpzZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshRpzZone(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3023,6 +4117,75 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/settings/dns-tls", wrapper.GetDnsTlsStatus)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/resolution", wrapper.GetResolutionSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/resolution", wrapper.UpdateResolutionSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/forward-zones", wrapper.ListForwardZones)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/forward-zones", wrapper.CreateForwardZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/forward-zones/{id}", wrapper.DeleteForwardZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/forward-zones/{id}", wrapper.UpdateForwardZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dnssec/settings", wrapper.GetDnssecSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/dnssec/settings", wrapper.UpdateDnssecSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dnssec/status", wrapper.GetDnssecStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dnssec/trust-anchors", wrapper.ListTrustAnchors)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/dnssec/trust-anchors", wrapper.CreateTrustAnchor)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/dnssec/trust-anchors/{id}", wrapper.DeleteTrustAnchor)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dnssec/negative-trust-anchors", wrapper.ListNegativeTrustAnchors)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/dnssec/negative-trust-anchors", wrapper.CreateNegativeTrustAnchor)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/dnssec/negative-trust-anchors/{id}", wrapper.DeleteNegativeTrustAnchor)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rpz-zones", wrapper.ListRpzZones)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/rpz-zones", wrapper.CreateRpzZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/rpz-zones/order", wrapper.ReorderRpzZones)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/rpz-zones/{id}", wrapper.DeleteRpzZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rpz-zones/{id}", wrapper.GetRpzZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/rpz-zones/{id}", wrapper.UpdateRpzZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/rpz-zones/{id}/file", wrapper.UploadRpzZoneFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/rpz-zones/{id}/refresh", wrapper.RefreshRpzZone)
+	})
 
 	return r
 }
@@ -3504,6 +4667,314 @@ func (response GetDashboard200JSONResponse) VisitGetDashboardResponse(w http.Res
 	return err
 }
 
+type ListNegativeTrustAnchorsRequestObject struct {
+}
+
+type ListNegativeTrustAnchorsResponseObject interface {
+	VisitListNegativeTrustAnchorsResponse(w http.ResponseWriter) error
+}
+
+type ListNegativeTrustAnchors200JSONResponse []NegativeTrustAnchor
+
+func (response ListNegativeTrustAnchors200JSONResponse) VisitListNegativeTrustAnchorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNegativeTrustAnchorRequestObject struct {
+	Body *CreateNegativeTrustAnchorJSONRequestBody
+}
+
+type CreateNegativeTrustAnchorResponseObject interface {
+	VisitCreateNegativeTrustAnchorResponse(w http.ResponseWriter) error
+}
+
+type CreateNegativeTrustAnchor201JSONResponse NegativeTrustAnchor
+
+func (response CreateNegativeTrustAnchor201JSONResponse) VisitCreateNegativeTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNegativeTrustAnchor400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateNegativeTrustAnchor400JSONResponse) VisitCreateNegativeTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateNegativeTrustAnchor409JSONResponse Error
+
+func (response CreateNegativeTrustAnchor409JSONResponse) VisitCreateNegativeTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteNegativeTrustAnchorRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type DeleteNegativeTrustAnchorResponseObject interface {
+	VisitDeleteNegativeTrustAnchorResponse(w http.ResponseWriter) error
+}
+
+type DeleteNegativeTrustAnchor204Response struct {
+}
+
+func (response DeleteNegativeTrustAnchor204Response) VisitDeleteNegativeTrustAnchorResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteNegativeTrustAnchor404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteNegativeTrustAnchor404JSONResponse) VisitDeleteNegativeTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDnssecSettingsRequestObject struct {
+}
+
+type GetDnssecSettingsResponseObject interface {
+	VisitGetDnssecSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetDnssecSettings200JSONResponse DnssecSettings
+
+func (response GetDnssecSettings200JSONResponse) VisitGetDnssecSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateDnssecSettingsRequestObject struct {
+	Body *UpdateDnssecSettingsJSONRequestBody
+}
+
+type UpdateDnssecSettingsResponseObject interface {
+	VisitUpdateDnssecSettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdateDnssecSettings200JSONResponse DnssecSettings
+
+func (response UpdateDnssecSettings200JSONResponse) VisitUpdateDnssecSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateDnssecSettings400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateDnssecSettings400JSONResponse) VisitUpdateDnssecSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateDnssecSettings409JSONResponse Error
+
+func (response UpdateDnssecSettings409JSONResponse) VisitUpdateDnssecSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDnssecStatusRequestObject struct {
+}
+
+type GetDnssecStatusResponseObject interface {
+	VisitGetDnssecStatusResponse(w http.ResponseWriter) error
+}
+
+type GetDnssecStatus200JSONResponse DnssecStatus
+
+func (response GetDnssecStatus200JSONResponse) VisitGetDnssecStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTrustAnchorsRequestObject struct {
+}
+
+type ListTrustAnchorsResponseObject interface {
+	VisitListTrustAnchorsResponse(w http.ResponseWriter) error
+}
+
+type ListTrustAnchors200JSONResponse []TrustAnchor
+
+func (response ListTrustAnchors200JSONResponse) VisitListTrustAnchorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTrustAnchorRequestObject struct {
+	Body *CreateTrustAnchorJSONRequestBody
+}
+
+type CreateTrustAnchorResponseObject interface {
+	VisitCreateTrustAnchorResponse(w http.ResponseWriter) error
+}
+
+type CreateTrustAnchor201JSONResponse TrustAnchor
+
+func (response CreateTrustAnchor201JSONResponse) VisitCreateTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTrustAnchor400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateTrustAnchor400JSONResponse) VisitCreateTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTrustAnchor409JSONResponse Error
+
+func (response CreateTrustAnchor409JSONResponse) VisitCreateTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrustAnchorRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type DeleteTrustAnchorResponseObject interface {
+	VisitDeleteTrustAnchorResponse(w http.ResponseWriter) error
+}
+
+type DeleteTrustAnchor204Response struct {
+}
+
+func (response DeleteTrustAnchor204Response) VisitDeleteTrustAnchorResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteTrustAnchor404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteTrustAnchor404JSONResponse) VisitDeleteTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrustAnchor409JSONResponse Error
+
+func (response DeleteTrustAnchor409JSONResponse) VisitDeleteTrustAnchorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListEnginesRequestObject struct {
 }
 
@@ -3840,6 +5311,187 @@ func (response RefreshFilterList404JSONResponse) VisitRefreshFilterListResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListForwardZonesRequestObject struct {
+}
+
+type ListForwardZonesResponseObject interface {
+	VisitListForwardZonesResponse(w http.ResponseWriter) error
+}
+
+type ListForwardZones200JSONResponse []ForwardZone
+
+func (response ListForwardZones200JSONResponse) VisitListForwardZonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateForwardZoneRequestObject struct {
+	Body *CreateForwardZoneJSONRequestBody
+}
+
+type CreateForwardZoneResponseObject interface {
+	VisitCreateForwardZoneResponse(w http.ResponseWriter) error
+}
+
+type CreateForwardZone201JSONResponse ForwardZone
+
+func (response CreateForwardZone201JSONResponse) VisitCreateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateForwardZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateForwardZone400JSONResponse) VisitCreateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateForwardZone409JSONResponse Error
+
+func (response CreateForwardZone409JSONResponse) VisitCreateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteForwardZoneRequestObject struct {
+	Id     Id `json:"id"`
+	Params DeleteForwardZoneParams
+}
+
+type DeleteForwardZoneResponseObject interface {
+	VisitDeleteForwardZoneResponse(w http.ResponseWriter) error
+}
+
+type DeleteForwardZone204Response struct {
+}
+
+func (response DeleteForwardZone204Response) VisitDeleteForwardZoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteForwardZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteForwardZone404JSONResponse) VisitDeleteForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteForwardZone409JSONResponse Error
+
+func (response DeleteForwardZone409JSONResponse) VisitDeleteForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateForwardZoneRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UpdateForwardZoneJSONRequestBody
+}
+
+type UpdateForwardZoneResponseObject interface {
+	VisitUpdateForwardZoneResponse(w http.ResponseWriter) error
+}
+
+type UpdateForwardZone200JSONResponse ForwardZone
+
+func (response UpdateForwardZone200JSONResponse) VisitUpdateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateForwardZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateForwardZone400JSONResponse) VisitUpdateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateForwardZone404JSONResponse Error
+
+func (response UpdateForwardZone404JSONResponse) VisitUpdateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateForwardZone409JSONResponse Error
+
+func (response UpdateForwardZone409JSONResponse) VisitUpdateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4219,6 +5871,77 @@ func (response SearchQueryLog503JSONResponse) VisitSearchQueryLogResponse(w http
 	return err
 }
 
+type GetResolutionSettingsRequestObject struct {
+}
+
+type GetResolutionSettingsResponseObject interface {
+	VisitGetResolutionSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetResolutionSettings200JSONResponse ResolutionSettings
+
+func (response GetResolutionSettings200JSONResponse) VisitGetResolutionSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateResolutionSettingsRequestObject struct {
+	Body *UpdateResolutionSettingsJSONRequestBody
+}
+
+type UpdateResolutionSettingsResponseObject interface {
+	VisitUpdateResolutionSettingsResponse(w http.ResponseWriter) error
+}
+
+type UpdateResolutionSettings200JSONResponse ResolutionSettings
+
+func (response UpdateResolutionSettings200JSONResponse) VisitUpdateResolutionSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateResolutionSettings400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateResolutionSettings400JSONResponse) VisitUpdateResolutionSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateResolutionSettings409JSONResponse Error
+
+func (response UpdateResolutionSettings409JSONResponse) VisitUpdateResolutionSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetResolverSettingsRequestObject struct {
 }
 
@@ -4482,6 +6205,390 @@ func (response UpdateRewrite422JSONResponse) VisitUpdateRewriteResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRpzZonesRequestObject struct {
+}
+
+type ListRpzZonesResponseObject interface {
+	VisitListRpzZonesResponse(w http.ResponseWriter) error
+}
+
+type ListRpzZones200JSONResponse []RpzZone
+
+func (response ListRpzZones200JSONResponse) VisitListRpzZonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRpzZoneRequestObject struct {
+	Body *CreateRpzZoneJSONRequestBody
+}
+
+type CreateRpzZoneResponseObject interface {
+	VisitCreateRpzZoneResponse(w http.ResponseWriter) error
+}
+
+type CreateRpzZone201JSONResponse RpzZone
+
+func (response CreateRpzZone201JSONResponse) VisitCreateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRpzZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateRpzZone400JSONResponse) VisitCreateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRpzZone409JSONResponse Error
+
+func (response CreateRpzZone409JSONResponse) VisitCreateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRpzZone503JSONResponse Error
+
+func (response CreateRpzZone503JSONResponse) VisitCreateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReorderRpzZonesRequestObject struct {
+	Body *ReorderRpzZonesJSONRequestBody
+}
+
+type ReorderRpzZonesResponseObject interface {
+	VisitReorderRpzZonesResponse(w http.ResponseWriter) error
+}
+
+type ReorderRpzZones204Response struct {
+}
+
+func (response ReorderRpzZones204Response) VisitReorderRpzZonesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ReorderRpzZones400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ReorderRpzZones400JSONResponse) VisitReorderRpzZonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRpzZoneRequestObject struct {
+	Id     Id `json:"id"`
+	Params DeleteRpzZoneParams
+}
+
+type DeleteRpzZoneResponseObject interface {
+	VisitDeleteRpzZoneResponse(w http.ResponseWriter) error
+}
+
+type DeleteRpzZone204Response struct {
+}
+
+func (response DeleteRpzZone204Response) VisitDeleteRpzZoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteRpzZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteRpzZone404JSONResponse) VisitDeleteRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRpzZone409JSONResponse Error
+
+func (response DeleteRpzZone409JSONResponse) VisitDeleteRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRpzZoneRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetRpzZoneResponseObject interface {
+	VisitGetRpzZoneResponse(w http.ResponseWriter) error
+}
+
+type GetRpzZone200JSONResponse RpzZone
+
+func (response GetRpzZone200JSONResponse) VisitGetRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRpzZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetRpzZone404JSONResponse) VisitGetRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRpzZoneRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UpdateRpzZoneJSONRequestBody
+}
+
+type UpdateRpzZoneResponseObject interface {
+	VisitUpdateRpzZoneResponse(w http.ResponseWriter) error
+}
+
+type UpdateRpzZone200JSONResponse RpzZone
+
+func (response UpdateRpzZone200JSONResponse) VisitUpdateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRpzZone400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateRpzZone400JSONResponse) VisitUpdateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRpzZone404JSONResponse Error
+
+func (response UpdateRpzZone404JSONResponse) VisitUpdateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRpzZone409JSONResponse Error
+
+func (response UpdateRpzZone409JSONResponse) VisitUpdateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateRpzZone503JSONResponse Error
+
+func (response UpdateRpzZone503JSONResponse) VisitUpdateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadRpzZoneFileRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UploadRpzZoneFileJSONRequestBody
+}
+
+type UploadRpzZoneFileResponseObject interface {
+	VisitUploadRpzZoneFileResponse(w http.ResponseWriter) error
+}
+
+type UploadRpzZoneFile200JSONResponse RpzZone
+
+func (response UploadRpzZoneFile200JSONResponse) VisitUploadRpzZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadRpzZoneFile400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UploadRpzZoneFile400JSONResponse) VisitUploadRpzZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadRpzZoneFile404JSONResponse Error
+
+func (response UploadRpzZoneFile404JSONResponse) VisitUploadRpzZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadRpzZoneFile409JSONResponse Error
+
+func (response UploadRpzZoneFile409JSONResponse) VisitUploadRpzZoneFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshRpzZoneRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type RefreshRpzZoneResponseObject interface {
+	VisitRefreshRpzZoneResponse(w http.ResponseWriter) error
+}
+
+type RefreshRpzZone202Response struct {
+}
+
+func (response RefreshRpzZone202Response) VisitRefreshRpzZoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RefreshRpzZone404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RefreshRpzZone404JSONResponse) VisitRefreshRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshRpzZone409JSONResponse Error
+
+func (response RefreshRpzZone409JSONResponse) VisitRefreshRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5048,6 +7155,33 @@ type StrictServerInterface interface {
 	// (GET /dashboard)
 	GetDashboard(ctx context.Context, request GetDashboardRequestObject) (GetDashboardResponseObject, error)
 
+	// (GET /dnssec/negative-trust-anchors)
+	ListNegativeTrustAnchors(ctx context.Context, request ListNegativeTrustAnchorsRequestObject) (ListNegativeTrustAnchorsResponseObject, error)
+
+	// (POST /dnssec/negative-trust-anchors)
+	CreateNegativeTrustAnchor(ctx context.Context, request CreateNegativeTrustAnchorRequestObject) (CreateNegativeTrustAnchorResponseObject, error)
+
+	// (DELETE /dnssec/negative-trust-anchors/{id})
+	DeleteNegativeTrustAnchor(ctx context.Context, request DeleteNegativeTrustAnchorRequestObject) (DeleteNegativeTrustAnchorResponseObject, error)
+
+	// (GET /dnssec/settings)
+	GetDnssecSettings(ctx context.Context, request GetDnssecSettingsRequestObject) (GetDnssecSettingsResponseObject, error)
+
+	// (PUT /dnssec/settings)
+	UpdateDnssecSettings(ctx context.Context, request UpdateDnssecSettingsRequestObject) (UpdateDnssecSettingsResponseObject, error)
+
+	// (GET /dnssec/status)
+	GetDnssecStatus(ctx context.Context, request GetDnssecStatusRequestObject) (GetDnssecStatusResponseObject, error)
+
+	// (GET /dnssec/trust-anchors)
+	ListTrustAnchors(ctx context.Context, request ListTrustAnchorsRequestObject) (ListTrustAnchorsResponseObject, error)
+
+	// (POST /dnssec/trust-anchors)
+	CreateTrustAnchor(ctx context.Context, request CreateTrustAnchorRequestObject) (CreateTrustAnchorResponseObject, error)
+
+	// (DELETE /dnssec/trust-anchors/{id})
+	DeleteTrustAnchor(ctx context.Context, request DeleteTrustAnchorRequestObject) (DeleteTrustAnchorResponseObject, error)
+
 	// (GET /engines)
 	ListEngines(ctx context.Context, request ListEnginesRequestObject) (ListEnginesResponseObject, error)
 
@@ -5074,6 +7208,18 @@ type StrictServerInterface interface {
 
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(ctx context.Context, request RefreshFilterListRequestObject) (RefreshFilterListResponseObject, error)
+
+	// (GET /forward-zones)
+	ListForwardZones(ctx context.Context, request ListForwardZonesRequestObject) (ListForwardZonesResponseObject, error)
+
+	// (POST /forward-zones)
+	CreateForwardZone(ctx context.Context, request CreateForwardZoneRequestObject) (CreateForwardZoneResponseObject, error)
+
+	// (DELETE /forward-zones/{id})
+	DeleteForwardZone(ctx context.Context, request DeleteForwardZoneRequestObject) (DeleteForwardZoneResponseObject, error)
+
+	// (PUT /forward-zones/{id})
+	UpdateForwardZone(ctx context.Context, request UpdateForwardZoneRequestObject) (UpdateForwardZoneResponseObject, error)
 
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -5105,6 +7251,12 @@ type StrictServerInterface interface {
 	// (GET /query-log)
 	SearchQueryLog(ctx context.Context, request SearchQueryLogRequestObject) (SearchQueryLogResponseObject, error)
 
+	// (GET /resolution)
+	GetResolutionSettings(ctx context.Context, request GetResolutionSettingsRequestObject) (GetResolutionSettingsResponseObject, error)
+
+	// (PUT /resolution)
+	UpdateResolutionSettings(ctx context.Context, request UpdateResolutionSettingsRequestObject) (UpdateResolutionSettingsResponseObject, error)
+
 	// (GET /resolver-settings)
 	GetResolverSettings(ctx context.Context, request GetResolverSettingsRequestObject) (GetResolverSettingsResponseObject, error)
 
@@ -5122,6 +7274,30 @@ type StrictServerInterface interface {
 
 	// (PUT /rewrites/{id})
 	UpdateRewrite(ctx context.Context, request UpdateRewriteRequestObject) (UpdateRewriteResponseObject, error)
+
+	// (GET /rpz-zones)
+	ListRpzZones(ctx context.Context, request ListRpzZonesRequestObject) (ListRpzZonesResponseObject, error)
+
+	// (POST /rpz-zones)
+	CreateRpzZone(ctx context.Context, request CreateRpzZoneRequestObject) (CreateRpzZoneResponseObject, error)
+
+	// (PUT /rpz-zones/order)
+	ReorderRpzZones(ctx context.Context, request ReorderRpzZonesRequestObject) (ReorderRpzZonesResponseObject, error)
+
+	// (DELETE /rpz-zones/{id})
+	DeleteRpzZone(ctx context.Context, request DeleteRpzZoneRequestObject) (DeleteRpzZoneResponseObject, error)
+
+	// (GET /rpz-zones/{id})
+	GetRpzZone(ctx context.Context, request GetRpzZoneRequestObject) (GetRpzZoneResponseObject, error)
+
+	// (PUT /rpz-zones/{id})
+	UpdateRpzZone(ctx context.Context, request UpdateRpzZoneRequestObject) (UpdateRpzZoneResponseObject, error)
+
+	// (PUT /rpz-zones/{id}/file)
+	UploadRpzZoneFile(ctx context.Context, request UploadRpzZoneFileRequestObject) (UploadRpzZoneFileResponseObject, error)
+
+	// (POST /rpz-zones/{id}/refresh)
+	RefreshRpzZone(ctx context.Context, request RefreshRpzZoneRequestObject) (RefreshRpzZoneResponseObject, error)
 
 	// (GET /safe-search)
 	GetGlobalSafeSearch(ctx context.Context, request GetGlobalSafeSearchRequestObject) (GetGlobalSafeSearchResponseObject, error)
@@ -5624,6 +7800,247 @@ func (sh *strictHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListNegativeTrustAnchors operation middleware
+func (sh *strictHandler) ListNegativeTrustAnchors(w http.ResponseWriter, r *http.Request) {
+	var request ListNegativeTrustAnchorsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListNegativeTrustAnchors(ctx, request.(ListNegativeTrustAnchorsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListNegativeTrustAnchors")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListNegativeTrustAnchorsResponseObject); ok {
+		if err := validResponse.VisitListNegativeTrustAnchorsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateNegativeTrustAnchor operation middleware
+func (sh *strictHandler) CreateNegativeTrustAnchor(w http.ResponseWriter, r *http.Request) {
+	var request CreateNegativeTrustAnchorRequestObject
+
+	var body CreateNegativeTrustAnchorJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateNegativeTrustAnchor(ctx, request.(CreateNegativeTrustAnchorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateNegativeTrustAnchor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateNegativeTrustAnchorResponseObject); ok {
+		if err := validResponse.VisitCreateNegativeTrustAnchorResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteNegativeTrustAnchor operation middleware
+func (sh *strictHandler) DeleteNegativeTrustAnchor(w http.ResponseWriter, r *http.Request, id Id) {
+	var request DeleteNegativeTrustAnchorRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteNegativeTrustAnchor(ctx, request.(DeleteNegativeTrustAnchorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteNegativeTrustAnchor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteNegativeTrustAnchorResponseObject); ok {
+		if err := validResponse.VisitDeleteNegativeTrustAnchorResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDnssecSettings operation middleware
+func (sh *strictHandler) GetDnssecSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetDnssecSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDnssecSettings(ctx, request.(GetDnssecSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDnssecSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDnssecSettingsResponseObject); ok {
+		if err := validResponse.VisitGetDnssecSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateDnssecSettings operation middleware
+func (sh *strictHandler) UpdateDnssecSettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdateDnssecSettingsRequestObject
+
+	var body UpdateDnssecSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateDnssecSettings(ctx, request.(UpdateDnssecSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateDnssecSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateDnssecSettingsResponseObject); ok {
+		if err := validResponse.VisitUpdateDnssecSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDnssecStatus operation middleware
+func (sh *strictHandler) GetDnssecStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetDnssecStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDnssecStatus(ctx, request.(GetDnssecStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDnssecStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDnssecStatusResponseObject); ok {
+		if err := validResponse.VisitGetDnssecStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListTrustAnchors operation middleware
+func (sh *strictHandler) ListTrustAnchors(w http.ResponseWriter, r *http.Request) {
+	var request ListTrustAnchorsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListTrustAnchors(ctx, request.(ListTrustAnchorsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListTrustAnchors")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListTrustAnchorsResponseObject); ok {
+		if err := validResponse.VisitListTrustAnchorsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateTrustAnchor operation middleware
+func (sh *strictHandler) CreateTrustAnchor(w http.ResponseWriter, r *http.Request) {
+	var request CreateTrustAnchorRequestObject
+
+	var body CreateTrustAnchorJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateTrustAnchor(ctx, request.(CreateTrustAnchorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateTrustAnchor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateTrustAnchorResponseObject); ok {
+		if err := validResponse.VisitCreateTrustAnchorResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteTrustAnchor operation middleware
+func (sh *strictHandler) DeleteTrustAnchor(w http.ResponseWriter, r *http.Request, id Id) {
+	var request DeleteTrustAnchorRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteTrustAnchor(ctx, request.(DeleteTrustAnchorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteTrustAnchor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteTrustAnchorResponseObject); ok {
+		if err := validResponse.VisitDeleteTrustAnchorResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListEngines operation middleware
 func (sh *strictHandler) ListEngines(w http.ResponseWriter, r *http.Request) {
 	var request ListEnginesRequestObject
@@ -5860,6 +8277,121 @@ func (sh *strictHandler) RefreshFilterList(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RefreshFilterListResponseObject); ok {
 		if err := validResponse.VisitRefreshFilterListResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListForwardZones operation middleware
+func (sh *strictHandler) ListForwardZones(w http.ResponseWriter, r *http.Request) {
+	var request ListForwardZonesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListForwardZones(ctx, request.(ListForwardZonesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListForwardZones")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListForwardZonesResponseObject); ok {
+		if err := validResponse.VisitListForwardZonesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateForwardZone operation middleware
+func (sh *strictHandler) CreateForwardZone(w http.ResponseWriter, r *http.Request) {
+	var request CreateForwardZoneRequestObject
+
+	var body CreateForwardZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateForwardZone(ctx, request.(CreateForwardZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateForwardZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateForwardZoneResponseObject); ok {
+		if err := validResponse.VisitCreateForwardZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteForwardZone operation middleware
+func (sh *strictHandler) DeleteForwardZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteForwardZoneParams) {
+	var request DeleteForwardZoneRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteForwardZone(ctx, request.(DeleteForwardZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteForwardZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteForwardZoneResponseObject); ok {
+		if err := validResponse.VisitDeleteForwardZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateForwardZone operation middleware
+func (sh *strictHandler) UpdateForwardZone(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UpdateForwardZoneRequestObject
+
+	request.Id = id
+
+	var body UpdateForwardZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateForwardZone(ctx, request.(UpdateForwardZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateForwardZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateForwardZoneResponseObject); ok {
+		if err := validResponse.VisitUpdateForwardZoneResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6139,6 +8671,61 @@ func (sh *strictHandler) SearchQueryLog(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// GetResolutionSettings operation middleware
+func (sh *strictHandler) GetResolutionSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetResolutionSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetResolutionSettings(ctx, request.(GetResolutionSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetResolutionSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetResolutionSettingsResponseObject); ok {
+		if err := validResponse.VisitGetResolutionSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateResolutionSettings operation middleware
+func (sh *strictHandler) UpdateResolutionSettings(w http.ResponseWriter, r *http.Request) {
+	var request UpdateResolutionSettingsRequestObject
+
+	var body UpdateResolutionSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateResolutionSettings(ctx, request.(UpdateResolutionSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateResolutionSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateResolutionSettingsResponseObject); ok {
+		if err := validResponse.VisitUpdateResolutionSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetResolverSettings operation middleware
 func (sh *strictHandler) GetResolverSettings(w http.ResponseWriter, r *http.Request) {
 	var request GetResolverSettingsRequestObject
@@ -6304,6 +8891,237 @@ func (sh *strictHandler) UpdateRewrite(w http.ResponseWriter, r *http.Request, i
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateRewriteResponseObject); ok {
 		if err := validResponse.VisitUpdateRewriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListRpzZones operation middleware
+func (sh *strictHandler) ListRpzZones(w http.ResponseWriter, r *http.Request) {
+	var request ListRpzZonesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRpzZones(ctx, request.(ListRpzZonesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRpzZones")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRpzZonesResponseObject); ok {
+		if err := validResponse.VisitListRpzZonesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateRpzZone operation middleware
+func (sh *strictHandler) CreateRpzZone(w http.ResponseWriter, r *http.Request) {
+	var request CreateRpzZoneRequestObject
+
+	var body CreateRpzZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateRpzZone(ctx, request.(CreateRpzZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateRpzZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateRpzZoneResponseObject); ok {
+		if err := validResponse.VisitCreateRpzZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReorderRpzZones operation middleware
+func (sh *strictHandler) ReorderRpzZones(w http.ResponseWriter, r *http.Request) {
+	var request ReorderRpzZonesRequestObject
+
+	var body ReorderRpzZonesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReorderRpzZones(ctx, request.(ReorderRpzZonesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReorderRpzZones")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReorderRpzZonesResponseObject); ok {
+		if err := validResponse.VisitReorderRpzZonesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteRpzZone operation middleware
+func (sh *strictHandler) DeleteRpzZone(w http.ResponseWriter, r *http.Request, id Id, params DeleteRpzZoneParams) {
+	var request DeleteRpzZoneRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteRpzZone(ctx, request.(DeleteRpzZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteRpzZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteRpzZoneResponseObject); ok {
+		if err := validResponse.VisitDeleteRpzZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRpzZone operation middleware
+func (sh *strictHandler) GetRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetRpzZoneRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRpzZone(ctx, request.(GetRpzZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRpzZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRpzZoneResponseObject); ok {
+		if err := validResponse.VisitGetRpzZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateRpzZone operation middleware
+func (sh *strictHandler) UpdateRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UpdateRpzZoneRequestObject
+
+	request.Id = id
+
+	var body UpdateRpzZoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateRpzZone(ctx, request.(UpdateRpzZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateRpzZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateRpzZoneResponseObject); ok {
+		if err := validResponse.VisitUpdateRpzZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadRpzZoneFile operation middleware
+func (sh *strictHandler) UploadRpzZoneFile(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UploadRpzZoneFileRequestObject
+
+	request.Id = id
+
+	var body UploadRpzZoneFileJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadRpzZoneFile(ctx, request.(UploadRpzZoneFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadRpzZoneFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadRpzZoneFileResponseObject); ok {
+		if err := validResponse.VisitUploadRpzZoneFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshRpzZone operation middleware
+func (sh *strictHandler) RefreshRpzZone(w http.ResponseWriter, r *http.Request, id Id) {
+	var request RefreshRpzZoneRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshRpzZone(ctx, request.(RefreshRpzZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshRpzZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshRpzZoneResponseObject); ok {
+		if err := validResponse.VisitRefreshRpzZoneResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6680,80 +9498,108 @@ func (sh *strictHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id I
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"BgA=",
+	"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",
+	"UaSVn1WS7cCPbo9Fh5r/GQA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

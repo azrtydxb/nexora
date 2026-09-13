@@ -134,6 +134,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
 	defer s.dnsTLS.Unregister(id)
 
+	// Keys before the snapshot, so a transfer zone's first refresh can already sign its request.
+	if keys, digest, ok := s.hub.loadKeys(ctx); ok {
+		sub.offerKeys(keys, digest)
+	}
 	// Registered before reading the latest version, so a version published in between is not missed.
 	version, snap, err := snapshot.Latest(ctx, s.st.Pool)
 	switch {
@@ -155,9 +159,22 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	go func() {
 		defer close(sendDone)
 		for {
+			// Pending keys go first: a snapshot may name a zone whose key is queued with it.
+			select {
+			case k := <-sub.keys:
+				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}); err != nil {
+					return
+				}
+				continue
+			default:
+			}
 			select {
 			case <-sendCtx.Done():
 				return
+			case k := <-sub.keys:
+				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}); err != nil {
+					return
+				}
 			case msg := <-sub.out:
 				if err := stream.Send(msg); err != nil {
 					return

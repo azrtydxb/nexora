@@ -27,6 +27,7 @@ func TestBlocklistSubscription(t *testing.T) {
 	ca := env.InitCA()
 	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{})
 	api := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
+	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	fx := env.StartDNSFixture()
 	web := env.StartHTTPFixture()
 	web.SetList(t, "hosts", "# hosts\n0.0.0.0 ads-hosts.test\n127.0.0.1 tracker-hosts.test\nthis line is invalid\n")

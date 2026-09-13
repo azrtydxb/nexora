@@ -25,6 +25,9 @@ type Hub struct {
 	st         *store.Store
 	instanceID string
 
+	// RPZTsig, when set, supplies the RPZ TSIG keys pushed with every broadcast (nil: none are sent).
+	RPZTsig *RPZTsig
+
 	mu   sync.Mutex
 	subs map[*subscriber]struct{}
 }
@@ -34,13 +37,31 @@ type Hub struct {
 type subscriber struct {
 	engineID string
 	out      chan *controlv1.ServerMessage
+	keys     chan *controlv1.RpzTsigKeys // at most one pending key set; a newer set replaces it
 
-	mu      sync.Mutex
-	version uint64 // highest version sent, applied or rejected
+	mu         sync.Mutex
+	version    uint64 // highest version sent, applied or rejected
+	keysDigest string // digest of the last key set queued ("" = none)
 }
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
-	return &subscriber{engineID: engineID, version: applied, out: make(chan *controlv1.ServerMessage, 1)}
+	return &subscriber{engineID: engineID, version: applied, out: make(chan *controlv1.ServerMessage, 1),
+		keys: make(chan *controlv1.RpzTsigKeys, 1)}
+}
+
+// offerKeys queues k unless this engine was already given the key set with digest.
+func (s *subscriber) offerKeys(k *controlv1.RpzTsigKeys, digest string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if digest == s.keysDigest {
+		return
+	}
+	s.keysDigest = digest
+	select {
+	case <-s.keys:
+	default:
+	}
+	s.keys <- k
 }
 
 // offer queues snap when it is newer than anything this engine has seen.
@@ -165,4 +186,24 @@ func (h *Hub) broadcast(ctx context.Context) {
 	for _, s := range subs {
 		s.offer(version, snap)
 	}
+	if keys, digest, ok := h.loadKeys(ctx); ok {
+		for _, s := range subs {
+			s.offerKeys(keys, digest)
+		}
+	}
+}
+
+// loadKeys loads the RPZ TSIG key set; ok is false without a loader or on error (logged, never the keys).
+func (h *Hub) loadKeys(ctx context.Context) (*controlv1.RpzTsigKeys, string, bool) {
+	if h.RPZTsig == nil {
+		return nil, "", false
+	}
+	keys, digest, err := h.RPZTsig.Load(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("load rpz tsig keys", "err", err)
+		}
+		return nil, "", false
+	}
+	return keys, digest, true
 }

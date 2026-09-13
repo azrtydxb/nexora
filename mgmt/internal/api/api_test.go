@@ -30,7 +30,10 @@ type apiEnv struct {
 	setup string
 }
 
-func newAPI(t *testing.T) *apiEnv {
+func newAPI(t *testing.T) *apiEnv { return newAPIWith(t, nil) }
+
+// newAPIWith is newAPI with a hook that adjusts the handler dependencies.
+func newAPIWith(t *testing.T, adjust func(*api.Deps)) *apiEnv {
 	env := harness.New(t)
 	pg := env.StartPostgres()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -54,7 +57,11 @@ func newAPI(t *testing.T) *apiEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := api.NewHandler(api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x"})
+	deps := api.Deps{Store: st, Auth: svc, OIDC: auth.NewOIDC(auth.DisabledOIDC(), "http://x", st), CA: ca, QueryLog: querylog.Noop{}, InstanceID: "test", PublicURL: "http://x"}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	h := api.NewHandler(deps)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &apiEnv{srv: srv, st: st, svc: svc, pg: pg, ctx: ctx, setup: tok}

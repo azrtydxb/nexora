@@ -18,6 +18,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/webui"
@@ -43,6 +44,7 @@ type Deps struct {
 	HTTPMetrics       *Metrics // optional per-operation request metrics
 	RefreshFilterList func(ctx context.Context, p auth.Principal, id string) error
 	DNSTLS            *control.DNSTLSFanout // optional: the DNS serving certificate this instance pushes
+	Secrets           *secrets.Box          // key storage for RPZ TSIG secrets; nil behaves as unconfigured
 }
 
 type handlers struct{ d Deps }
@@ -192,6 +194,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusServiceUnavailable, "querylog_unavailable", querylog.ErrBackendUnavailable.Error())
 	case errors.Is(err, querylog.ErrInvalidCursor):
 		writeError(w, http.StatusBadRequest, "invalid_request", querylog.ErrInvalidCursor.Error())
+	case errors.Is(err, secrets.ErrUnconfigured):
+		writeError(w, http.StatusServiceUnavailable, "key_storage_unconfigured", "Key storage is not configured on the management plane (NEXORA_KEK_FILE)")
+	case errors.Is(err, store.ErrLastRootAnchor):
+		writeError(w, http.StatusConflict, "last_root_anchor", store.ErrLastRootAnchor.Error())
 	case errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "22") || pgErr.Code == "23514" || pgErr.Code == "23502"):
 		// Data exceptions and check/not-null violations: the database rejected the input.
 		writeError(w, http.StatusBadRequest, "invalid_request", pgErr.Message)

@@ -35,6 +35,7 @@ func TestObservabilityMetricsTraces(t *testing.T) {
 	ca := env.InitCA()
 	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OTLPEndpoint: "http://" + col.OTLPGRPC})
 	api := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
+	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	fx := env.StartDNSFixture()
 	api.Must("POST", "/upstreams", map[string]any{"name": "fixture", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 0}, nil, 201)
 	eng := env.StartManagedEngine("engine-obs", []string{mgmt.GRPCURL}, api.CreateJoinToken())

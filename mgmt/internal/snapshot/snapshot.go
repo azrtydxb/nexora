@@ -207,6 +207,11 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 	if err := buildPolicy(ctx, tx, snap); err != nil {
 		return nil, err
 	}
+	rows, err := store.LoadResolution(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("resolution: %w", err)
+	}
+	ApplyResolution(snap, rows, time.Now())
 	return snap, nil
 }
 

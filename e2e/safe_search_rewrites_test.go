@@ -27,6 +27,7 @@ func TestSafeSearchRewrites(t *testing.T) {
 	)
 	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{})
 	op := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+	op.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	op.Must(http.MethodPost, "/upstreams", map[string]any{"name": "fixture", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 0}, nil, http.StatusCreated)
 	eng := env.StartManagedEngine("ss-1", []string{mg.GRPCURL}, op.CreateJoinToken())
 	a := func(ip, name string) string { return firstA(udpFrom(t, ip, eng.DNS, name, dns.TypeA)) }

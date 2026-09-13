@@ -14,6 +14,7 @@ func TestAuthRBACAuditOIDC(t *testing.T) {
 	oidc := env.StartOIDCFixture(harness.OIDCUser{Username: "ada", Email: "ada@example.test", Groups: []string{"nexora-admins"}})
 	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", OIDCOperatorGroup: "nexora-operators"})
 	admin := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
+	admin.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 
 	for _, u := range []map[string]any{
 		{"username": "vera", "email": "vera@example.test", "password": "viewer-password-e2e", "role": "viewer"},

@@ -117,7 +117,7 @@ func (h *handlers) UpdateUser(ctx context.Context, req UpdateUserRequestObject) 
 		if hash != nil && before.Source != "local" {
 			return auth.Change{}, invalid("passwords can only be set for local users")
 		}
-		if before.Role == auth.RoleAdmin && !before.Disabled && (in.Role != Admin || in.Disabled) {
+		if before.Role == auth.RoleAdmin && !before.Disabled && (in.Role != RoleAdmin || in.Disabled) {
 			if err := ensureOtherAdmin(ctx, tx, before.ID); err != nil {
 				return auth.Change{}, err
 			}

@@ -215,7 +215,8 @@ func (f *Fetcher) download(ctx context.Context, url string) ([]byte, ParseStats,
 	return Normalize(domains), stats, nil
 }
 
-// collectBlobs deletes blobs referenced neither by a filter list nor by the newest config versions.
+// collectBlobs deletes blobs referenced neither by a filter list, an RPZ file zone nor the newest
+// config versions.
 func (f *Fetcher) collectBlobs(ctx context.Context) error {
 	return f.st.InTx(ctx, func(tx pgx.Tx) error {
 		var ok bool
@@ -246,13 +247,19 @@ func (f *Fetcher) collectBlobs(ctx context.Context) error {
 					keep = append(keep, ref.GetSha256())
 				}
 			}
+			for _, z := range snap.GetRpzZones() {
+				if ref := z.GetFile().GetBlob(); ref != nil {
+					keep = append(keep, ref.GetSha256())
+				}
+			}
 			return nil
 		})
 		if err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `delete from blobs where sha256 <> all($1) and sha256 not in
-			(select current_blob_sha256 from filter_lists where current_blob_sha256 is not null)`, keep)
+			(select current_blob_sha256 from filter_lists where current_blob_sha256 is not null)
+			and sha256 not in (select blob_sha256 from rpz_zones where blob_sha256 is not null)`, keep)
 		return err
 	})
 }

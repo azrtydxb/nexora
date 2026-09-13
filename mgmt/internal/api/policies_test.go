@@ -3,12 +3,21 @@ package api_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/piwi3910/nexora/mgmt/internal/api"
 )
 
 // roleClients sets up an admin and returns logged-in operator and viewer clients (M1 api_test.go helpers).
 func roleClients(t *testing.T) (*client, *client) {
 	t.Helper()
-	e := newAPI(t)
+	op, viewer, _ := roleClientsWith(t, nil)
+	return op, viewer
+}
+
+// roleClientsWith is roleClients over newAPIWith(t, adjust), also returning the environment.
+func roleClientsWith(t *testing.T, adjust func(*api.Deps)) (*client, *client, *apiEnv) {
+	t.Helper()
+	e := newAPIWith(t, adjust)
 	admin := e.client(t)
 	if code := admin.do("POST", "/setup", map[string]string{"token": e.setup, "username": "admin", "email": "a@x", "password": "admin-password-1"}, nil); code != 201 {
 		t.Fatalf("setup -> %d", code)
@@ -23,7 +32,7 @@ func roleClients(t *testing.T) (*client, *client) {
 		}
 		return c
 	}
-	return login("opal", "operator"), login("vic", "viewer")
+	return login("opal", "operator"), login("vic", "viewer"), e
 }
 
 type group struct {

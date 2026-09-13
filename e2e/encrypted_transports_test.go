@@ -33,6 +33,7 @@ func TestEncryptedTransports(t *testing.T) {
 	fx.SetRecords(t, "example.test. 300 IN A 192.0.2.10", "example.test. 300 IN AAAA 2001:db8::10")
 	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{DNSTLS: true})
 	api := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
+	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	api.Must(http.MethodPost, "/upstreams", map[string]any{"name": "fixture", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 0}, nil, http.StatusCreated)
 	eng := env.StartManagedEngineWith("enc-1", []string{mg.GRPCURL}, api.CreateJoinToken(), harness.EngineOptions{DoT: true, DoH: true, DoQ: true})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

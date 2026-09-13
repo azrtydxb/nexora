@@ -35,6 +35,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
+	"github.com/piwi3910/nexora/mgmt/internal/secrets"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
@@ -239,8 +240,17 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if _, err := snapshot.EnsureInitial(ctx, st, build); err != nil {
 		return err
 	}
+	box, err := secrets.LoadKEKFile(cfg.KEKFile)
+	if err != nil {
+		return err
+	}
+	if !box.Configured() {
+		log.Printf("key storage: none configured; RPZ TSIG secrets are refused")
+	}
 	hub := control.NewHub(st, instanceID)
+	hub.RPZTsig = control.NewRPZTsig(st, box)
 	go func() { _ = hub.Run(ctx) }()
+	go snapshot.RunNTAExpiry(ctx, st, build)
 
 	fetcher := blocklist.NewFetcher(st, build, &http.Client{})
 	go fetcher.Run(ctx)
@@ -273,7 +283,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
-			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS,
+			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -292,6 +302,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	controlServer := control.NewServer(st, ca, hub, instanceID, dnsTLS)
 	controlServer.OnStats = func(ctx context.Context, engineID string, s *controlv1.Stats) {
 		_ = stats.Record(ctx, st, engineID, s)
+		_ = stats.RecordM3(ctx, st, engineID, s)
 	}
 	controlv1.RegisterEngineControlServer(srv, controlServer)
 	if builtinLog != nil {

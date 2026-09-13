@@ -29,6 +29,7 @@ func TestInvalidSnapshotRejected(t *testing.T) {
 	ca := env.InitCA()
 	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{})
 	api := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
+	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	fx := env.StartDNSFixture()
 	createUDPUpstream(t, api, "fixture", fx.UDP)
 	eng := env.StartManagedEngine("engine-invalid", []string{mgmt.GRPCURL}, api.CreateJoinToken())
@@ -88,6 +89,7 @@ func TestMgmtStatelessHA(t *testing.T) {
 	httpLB := env.StartTCPBalancer(a.HTTPAddr, b.HTTPAddr)
 	grpcLB := env.StartTCPBalancer(a.GRPCAddr, b.GRPCAddr)
 	api := harness.Bootstrap(t, env, token, "http://"+httpLB.Addr)
+	api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
 	fx := env.StartDNSFixture()
 	createUDPUpstream(t, api, "fixture", fx.UDP)
 	eng := env.StartManagedEngine("engine-ha", []string{"https://" + grpcLB.Addr}, api.CreateJoinToken())
