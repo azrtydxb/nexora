@@ -3,12 +3,14 @@ use nexora_engine::clock;
 use nexora_engine::server::{self, Shared};
 use nexora_engine::snapshot::{self, ApplyOutcome, DirBlobs};
 use nexora_engine::telemetry::{metrics, otlp};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 #[derive(clap::Parser)]
+#[command(version)]
 struct Args {
     #[arg(long, default_value = "/etc/nexora/engine.toml")]
     config: PathBuf,
@@ -65,14 +67,21 @@ fn main() -> ExitCode {
         }
     };
     otlp::spawn_telemetry_thread(shared.clone());
-    {
-        let (addr, shared) = (boot.metrics_listen, shared.clone());
-        control.spawn(async move {
-            if let Err(e) = metrics::serve_metrics(addr, shared).await {
-                eprintln!("nexora-engine: metrics listener {addr}: {e}");
-            }
-        });
-    }
+    let metrics_addr = match bind_metrics(&control, boot.metrics_listen) {
+        Ok(listener) => {
+            let addr = listener.local_addr().ok();
+            control.spawn(metrics::serve_metrics_on(listener, shared.clone()));
+            addr
+        }
+        Err(e) => {
+            eprintln!(
+                "nexora-engine: metrics listener {}: {e}",
+                boot.metrics_listen
+            );
+            None
+        }
+    };
+    println!("{}", ready_line(&workers, metrics_addr));
     if boot.is_standalone() {
         // Registered before workers serve long, so a SIGHUP never takes the default action.
         let hangup = {
@@ -97,10 +106,42 @@ fn main() -> ExitCode {
         control.spawn(nexora_engine::control::run(shared.clone(), boot.clone()));
     }
 
-    for w in workers {
+    for w in workers.handles {
         let _ = w.join();
     }
     ExitCode::SUCCESS
+}
+
+fn bind_metrics(
+    control: &tokio::runtime::Runtime,
+    addr: SocketAddr,
+) -> std::io::Result<tokio::net::TcpListener> {
+    let listener = std::net::TcpListener::bind(addr)?;
+    listener.set_nonblocking(true)?;
+    let _entered = control.enter();
+    tokio::net::TcpListener::from_std(listener)
+}
+
+/// The machine-readable line naming every bound address (ports chosen by the
+/// kernel for port 0 included), e.g.
+/// `READY udp=127.0.0.1:5353 tcp=127.0.0.1:5353 metrics=127.0.0.1:9153`.
+fn ready_line(workers: &server::Workers, metrics: Option<SocketAddr>) -> String {
+    let join = |addrs: &[SocketAddr]| {
+        addrs
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut line = format!(
+        "READY udp={} tcp={}",
+        join(&workers.udp),
+        join(&workers.tcp)
+    );
+    if let Some(m) = metrics {
+        line.push_str(&format!(" metrics={m}"));
+    }
+    line
 }
 
 fn apply_standalone(shared: &Arc<Shared>, boot: &Bootstrap) -> bool {

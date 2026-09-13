@@ -52,22 +52,18 @@ type Mgmt struct {
 }
 
 var (
-	httpListening    = regexp.MustCompile(`http listening on `)
-	grpcListening    = regexp.MustCompile(`grpc listening on `)
 	setupTokenRE     = regexp.MustCompile(`setup token: (\S+)`)
 	controlConnected = regexp.MustCompile(`nexora-engine: control connected to `)
 )
 
-// StartMgmt starts `nexora-mgmt serve` on random loopback ports (insecure cookies, since the test
-// browser talks plain HTTP) and waits until the HTTP API and the gRPC server listen.
+// StartMgmt starts `nexora-mgmt serve` on kernel-chosen loopback ports (insecure cookies, since
+// the test browser talks plain HTTP) and waits until the HTTP API and the gRPC server listen.
+// NEXORA_PUBLIC_URL must be known before the instance picks its port, so it names a loopback port
+// the harness holds and forwards to HTTPAddr; BaseURL is the instance's own listener.
 func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 	e.T.Helper()
-	m := &Mgmt{
-		HTTPAddr: fmt.Sprintf("127.0.0.1:%d", e.FreePort()),
-		GRPCAddr: fmt.Sprintf("127.0.0.1:%d", e.FreePort()),
-	}
-	m.BaseURL = "http://" + m.HTTPAddr
-	m.GRPCURL = "https://" + m.GRPCAddr
+	m := &Mgmt{}
+	public := e.listenLoopback()
 	backend := o.QueryLogBackend
 	if backend == "" {
 		backend = "builtin"
@@ -76,10 +72,10 @@ func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 		"NEXORA_DATABASE_URL=" + pg.URL,
 		"NEXORA_CA_CERT_FILE=" + ca.CertFile,
 		"NEXORA_CA_KEY_FILE=" + ca.KeyFile,
-		"NEXORA_HTTP_LISTEN=" + m.HTTPAddr,
-		"NEXORA_GRPC_LISTEN=" + m.GRPCAddr,
+		"NEXORA_HTTP_LISTEN=" + loopbackPort0,
+		"NEXORA_GRPC_LISTEN=" + loopbackPort0,
 		"NEXORA_GRPC_SERVER_NAMES=127.0.0.1,localhost",
-		"NEXORA_PUBLIC_URL=" + m.BaseURL,
+		"NEXORA_PUBLIC_URL=http://" + public.Addr().String(),
 		"NEXORA_SECURE_COOKIES=false",
 		"NEXORA_QUERYLOG_BACKEND=" + backend,
 	}
@@ -99,8 +95,10 @@ func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 		)
 	}
 	m.Proc = e.Start("nexora-mgmt", []string{"serve"}, append(env, o.ExtraEnv...))
-	m.Proc.WaitLog(httpListening, 30*time.Second)
-	m.Proc.WaitLog(grpcListening, 10*time.Second)
+	ready := m.Proc.WaitReady(30 * time.Second)
+	m.HTTPAddr, m.GRPCAddr = m.Proc.Addr(ready, "http"), m.Proc.Addr(ready, "grpc")
+	m.BaseURL, m.GRPCURL = "http://"+m.HTTPAddr, "https://"+m.GRPCAddr
+	e.forward(public, []string{m.HTTPAddr})
 	return m
 }
 
@@ -288,22 +286,20 @@ func (e *Env) StartManagedEngine(nodeName string, grpcURLs []string, joinToken s
 	if err != nil {
 		e.T.Fatal(err)
 	}
-	dnsPort, metricsPort := e.FreePort(), e.FreePort()
-	en.DNS = fmt.Sprintf("127.0.0.1:%d", dnsPort)
-	en.Metrics = fmt.Sprintf("127.0.0.1:%d", metricsPort)
 	toml := fmt.Sprintf(`node_name = %q
 state_dir = %q
 management_urls = %s
 join_token_file = %q
-listen_udp = ["127.0.0.1:%d"]
-listen_tcp = ["127.0.0.1:%d"]
-metrics_listen = "127.0.0.1:%d"
+listen_udp = [%q]
+listen_tcp = [%q]
+metrics_listen = %q
 workers = 2
-`, nodeName, en.StateDir, urls, tokenFile, dnsPort, dnsPort, metricsPort)
+`, nodeName, en.StateDir, urls, tokenFile, loopbackPort0, loopbackPort0, loopbackPort0)
 	if err := os.WriteFile(en.ConfigPath, []byte(toml), 0o600); err != nil {
 		e.T.Fatal(err)
 	}
 	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath}, nil)
+	en.readAddrs()
 	en.Proc.WaitLog(controlConnected, 30*time.Second)
 	return en
 }

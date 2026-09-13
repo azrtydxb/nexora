@@ -65,7 +65,38 @@ func Eventually(t *testing.T, timeout time.Duration, cond func() error) {
 	}
 }
 
-// FreePort returns a 127.0.0.1 port that is currently free for both TCP and UDP.
+var readyLine = regexp.MustCompile(`^READY (.*)$`)
+
+// WaitReady waits for the process's `READY key=addr ...` line (printed by nexora-fixture,
+// nexora-engine and nexora-mgmt once every listener is bound) and returns its key/address pairs.
+// Children listen on port 0 and report what they bound, so no port is picked ahead of time for
+// another process to take.
+func (p *Proc) WaitReady(timeout time.Duration) map[string]string {
+	p.t.Helper()
+	out := map[string]string{}
+	for _, field := range strings.Fields(p.WaitLog(readyLine, timeout)[1]) {
+		k, v, ok := strings.Cut(field, "=")
+		if !ok {
+			p.t.Fatalf("%s: malformed READY field %q", p.Name, field)
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// Addr returns ready[key], failing the test when the READY line lacks it.
+func (p *Proc) Addr(ready map[string]string, key string) string {
+	p.t.Helper()
+	a := ready[key]
+	if a == "" {
+		p.t.Fatalf("%s: READY line has no %s address: %v", p.Name, key, ready)
+	}
+	return a
+}
+
+// FreePort returns a 127.0.0.1 port that is currently free for both TCP and UDP. Another process
+// can take it before it is used: only use it for programs that cannot listen on port 0, and retry
+// on a bind failure.
 func (e *Env) FreePort() int {
 	e.T.Helper()
 	for attempt := 0; attempt < 50; attempt++ {

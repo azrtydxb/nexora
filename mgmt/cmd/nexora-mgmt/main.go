@@ -222,6 +222,8 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "grpc listening on %s\n", lis.Addr())
+	// One machine-readable line with both bound addresses, so callers can listen on port 0.
+	fmt.Fprintf(stdout, "READY http=%s grpc=%s\n", httpLis.Addr(), lis.Addr())
 	serveErr := make(chan error, 2)
 	go func() { serveErr <- srv.Serve(lis) }()
 	go func() { serveErr <- httpSrv.Serve(httpLis) }()

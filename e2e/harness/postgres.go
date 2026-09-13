@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -44,14 +45,28 @@ func (e *Env) StartPostgres() *Postgres {
 			t.Fatal(err)
 		}
 	}
-	port := freeTCPPort(t)
-	pg := &Postgres{Dir: dir, Port: port, URL: fmt.Sprintf("postgres://nexora@127.0.0.1:%d/nexora?sslmode=disable", port)}
 	runPG(t, cred, "initdb", "-D", dir, "-U", "nexora", "--auth=trust", "-E", "UTF8")
-	runPG(t, cred, "pg_ctl", "-D", dir, "-o",
-		fmt.Sprintf("-p %d -k %s -c listen_addresses=127.0.0.1 -c fsync=off", port, dir),
-		"-l", filepath.Join(dir, "log"), "start", "-w")
+	// PostgreSQL cannot listen on port 0, so a free port is picked and the start retried with
+	// another one when something else took it first.
+	pg := &Postgres{Dir: dir}
+	for attempt := 1; ; attempt++ {
+		pg.Port = freeTCPPort(t)
+		pg.URL = fmt.Sprintf("postgres://nexora@127.0.0.1:%d/nexora?sslmode=disable", pg.Port)
+		logPath := filepath.Join(dir, "log")
+		out, err := pgCmd(cred, "pg_ctl", "-D", dir, "-o",
+			fmt.Sprintf("-p %d -k %s -c listen_addresses=127.0.0.1 -c fsync=off", pg.Port, dir),
+			"-l", logPath, "start", "-w").CombinedOutput()
+		if err == nil {
+			break
+		}
+		serverLog, _ := os.ReadFile(logPath)
+		if attempt == portAttempts || !bytes.Contains(serverLog, []byte("could not bind")) {
+			t.Fatalf("pg_ctl start: %v\n%s\n%s", err, out, serverLog)
+		}
+		_ = os.Remove(logPath)
+	}
 	t.Cleanup(func() { stopPG(pg, cred) })
-	runPG(t, cred, "createdb", "-h", "127.0.0.1", "-p", strconv.Itoa(port), "-U", "nexora", "nexora")
+	runPG(t, cred, "createdb", "-h", "127.0.0.1", "-p", strconv.Itoa(pg.Port), "-U", "nexora", "nexora")
 	return pg
 }
 
@@ -87,12 +102,21 @@ func pgCredential(t *testing.T) *syscall.Credential {
 	return &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 }
 
-func runPG(t *testing.T, cred *syscall.Credential, name string, args ...string) {
-	t.Helper()
-	cmd := exec.Command(name, args...)
+// portAttempts bounds the restarts of a program that cannot listen on port 0 when its pre-picked
+// port was taken.
+const portAttempts = 10
+
+func pgCmd(cred *syscall.Credential, name string, args ...string) *exec.Cmd {
+	// name is a fixed PostgreSQL tool name (initdb, pg_ctl, createdb) from this file.
+	cmd := exec.Command(name, args...) // nosemgrep: dangerous-exec-command
 	cmd.Dir = os.TempDir()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
-	if out, err := cmd.CombinedOutput(); err != nil {
+	return cmd
+}
+
+func runPG(t *testing.T, cred *syscall.Credential, name string, args ...string) {
+	t.Helper()
+	if out, err := pgCmd(cred, name, args...).CombinedOutput(); err != nil {
 		t.Fatalf("%s: %v\n%s", name, err, out)
 	}
 }
