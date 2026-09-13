@@ -1179,6 +1179,7 @@ dependencies = [
  "crossbeam-utils",
  "hex",
  "hickory-proto",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "ipnet",

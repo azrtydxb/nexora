@@ -1,5 +1,7 @@
 //! Forwarding transports, per-upstream health and the forward loop.
 
+pub mod doh;
+pub mod dot;
 pub mod tcp;
 pub mod udp;
 
@@ -283,6 +285,11 @@ impl Waiters {
     pub(crate) fn is_empty(&self) -> bool {
         self.map.borrow().is_empty()
     }
+
+    /// Drops every waiter; their receivers see the channel closed.
+    pub(crate) fn clear(&self) {
+        self.map.borrow_mut().clear();
+    }
 }
 
 const INLINE_QUERY: usize = 1232;
@@ -320,6 +327,44 @@ impl QueryBuf {
     }
 }
 
+/// TLS client settings for DoT/DoH: the Mozilla roots when `ca_pem` is empty,
+/// otherwise only the certificates in `ca_pem`.
+pub fn client_tls_config(ca_pem: &str) -> Result<Arc<rustls::ClientConfig>, UpstreamError> {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+    let mut roots = rustls::RootCertStore::empty();
+    if ca_pem.is_empty() {
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    } else {
+        for cert in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
+            let cert = cert.map_err(|e| UpstreamError::Tls(format!("ca_pem: {e}")))?;
+            roots
+                .add(cert)
+                .map_err(|e| UpstreamError::Tls(format!("ca_pem: {e}")))?;
+        }
+        if roots.is_empty() {
+            return Err(UpstreamError::Tls("ca_pem holds no certificate".into()));
+        }
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| UpstreamError::Tls(e.to_string()))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Maps a TLS connect error to `Tls` when rustls rejected the handshake.
+fn tls_io_error(e: std::io::Error) -> UpstreamError {
+    match e
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+    {
+        Some(tls) => UpstreamError::Tls(tls.to_string()),
+        None => UpstreamError::Io(e),
+    }
+}
+
 pub struct Forwarded {
     pub response: Bytes,
     pub upstream_index: usize,
@@ -330,6 +375,8 @@ pub struct Forwarded {
 enum Transport {
     Udp(udp::UdpPool),
     Tcp(SocketAddr),
+    Dot(dot::DotClient),
+    Doh(doh::DohClient),
 }
 
 /// Worker-local transports, created on first use per upstream id.
@@ -361,9 +408,13 @@ impl WorkerUpstreams {
         let t = Rc::new(match spec.protocol {
             Protocol::Udp => Transport::Udp(udp::UdpPool::new(addr()?, self.mismatched.clone())?),
             Protocol::Tcp => Transport::Tcp(addr()?),
-            Protocol::Dot | Protocol::Doh => {
-                return Err(UpstreamError::Tls("transport not supported".into()));
-            }
+            Protocol::Dot => Transport::Dot(dot::DotClient::new(
+                addr()?,
+                &spec.tls_server_name,
+                &spec.ca_pem,
+                self.mismatched.clone(),
+            )?),
+            Protocol::Doh => Transport::Doh(doh::DohClient::new(&spec.doh_url, &spec.ca_pem)?),
         });
         map.insert(spec.id.clone(), (spec.clone(), t.clone()));
         Ok(t)
@@ -452,23 +503,23 @@ async fn attempt(
     question: &Question,
     start: Instant,
 ) -> Result<Bytes, UpstreamError> {
-    let timeout = || remaining(start).map(|r| spec.timeout.min(r));
+    let timeout = || {
+        remaining(start)
+            .map(|r| spec.timeout.min(r))
+            .ok_or(UpstreamError::Deadline)
+    };
     let transport = worker.transport(spec)?;
     match &*transport {
         Transport::Udp(pool) => {
-            let reply = pool
-                .exchange(query, question, timeout().ok_or(UpstreamError::Deadline)?)
-                .await?;
+            let reply = pool.exchange(query, question, timeout()?).await?;
             if reply[2] & FLAG_TC == 0 {
                 return Ok(reply);
             }
             let addr = spec.addr.ok_or(UpstreamError::Malformed)?;
-            let timeout = timeout().ok_or(UpstreamError::Deadline)?;
-            tcp::exchange_tcp(addr, query, question, timeout).await
+            tcp::exchange_tcp(addr, query, question, timeout()?).await
         }
-        Transport::Tcp(addr) => {
-            let timeout = timeout().ok_or(UpstreamError::Deadline)?;
-            tcp::exchange_tcp(*addr, query, question, timeout).await
-        }
+        Transport::Tcp(addr) => tcp::exchange_tcp(*addr, query, question, timeout()?).await,
+        Transport::Dot(client) => client.exchange(query, question, timeout()?).await,
+        Transport::Doh(client) => client.exchange(query, question, timeout()?).await,
     }
 }

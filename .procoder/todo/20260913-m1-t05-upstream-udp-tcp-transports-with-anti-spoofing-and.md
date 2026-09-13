@@ -25,3 +25,4 @@ is committed.
 - Mutation check: replacing the question/ID/QR check in `Waiters::deliver` with `true` made `spoofed_wrong_id_and_wrong_question_are_dropped_and_counted` FAIL; reverted.
 - `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets'` -> lib 21 passed (1 ignored), cache_alloc 1, proto_roundtrip 1, upstream_udp_tcp 6 passed.
 - `cargo fmt --all` clean; `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` -> Finished, no warnings.
+- procoder gate clean at commit, after adding a root `rustfmt.toml` (`edition = "2024"`): the gate formats through `rustfmt --stdin`, which defaulted to edition 2015 and rejected `async fn`. Committed 375b6c6.
