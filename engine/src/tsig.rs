@@ -10,6 +10,7 @@ use hickory_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable};
 use ring::hmac;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -642,6 +643,8 @@ impl TsigVerifier {
 pub struct KeyRing {
     /// Keyed by lowercase wire name.
     keys: ArcSwap<FxHashMap<Box<[u8]>, Arc<TsigKey>>>,
+    /// Counts `apply` calls, waking tasks in [`KeyRing::wait_for`].
+    applied: tokio::sync::watch::Sender<u64>,
 }
 
 impl KeyRing {
@@ -665,6 +668,25 @@ impl KeyRing {
             map.insert(wire.into_boxed_slice(), Arc::new(key));
         }
         self.keys.store(Arc::new(map));
+        self.applied.send_modify(|n| *n += 1);
+    }
+
+    /// The key named `lower_wire_name`, waiting up to `wait` for a `KeyMaterial` that holds it
+    /// (after an engine restart the persisted snapshot applies before the control stream delivers
+    /// the keys).
+    pub async fn wait_for(&self, lower_wire_name: &[u8], wait: Duration) -> Option<Arc<TsigKey>> {
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut applied = self.applied.subscribe();
+        loop {
+            if let Some(k) = self.get(lower_wire_name) {
+                return Some(k);
+            }
+            match tokio::time::timeout_at(deadline, applied.changed()).await {
+                Ok(Ok(())) => {}
+                // Deadline passed (the sender lives as long as `self`).
+                _ => return self.get(lower_wire_name),
+            }
+        }
     }
 
     pub fn get(&self, lower_wire_name: &[u8]) -> Option<Arc<TsigKey>> {

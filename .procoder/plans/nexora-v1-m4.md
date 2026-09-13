@@ -5469,6 +5469,11 @@ Files:
 - `engine/src/authoritative/dnssec.rs` — proof selection: RRSIGs, NSEC and NSEC3 denial, DS/no-DS at referrals
 - `engine/src/authoritative/answer.rs` — call the proofs when DO=1 and the zone is signed (modify)
 - `engine/src/authoritative/dnssec_tests.rs`
+- `engine/src/authoritative/zone.rs` — NSEC3 owner labels decode with `nsec3::decode_b32hex` (modify)
+- `testdata/nzf/gen-signed/main.go` — test-only generator (miekg/dns, Ed25519 KSK+ZSK from fixture seeds, deterministic) of `testdata/nzf/signed-nsec-full.nzf`, `signed-nsec3-full.nzf` and the trust anchor `signed-anchor.key`; the Task 12 signer does not exist when Task 13 is built. Run `go run ./testdata/nzf/gen-signed` from the repository root.
+- `engine/tests/authoritative_pipeline.rs` — `signed_answers_validate_with_delv`: a real engine serving both signed images, every answer kind checked with `delv +root=example.test -a <anchor>` (modify)
+- `engine/tests/hot_path_alloc.rs` — the authoritative allocation test also runs DO=1 queries against both signed images (modify)
+- `engine/src/tsig.rs`, `engine/src/authoritative/state.rs`, `engine/src/authoritative/notify_out_tests.rs` — plan-review follow-up: NOTIFY waiting for `KeyMaterial` after a restart (modify)
 
 `engine/Cargo.toml` needs no change: `ring =0.17.14` provides SHA-1 and `hickory-proto =0.26.3` with `dnssec-ring` is already a dev dependency, so the tests decode RRSIG/NSEC/NSEC3.
 
@@ -5479,11 +5484,15 @@ Interfaces:
 pub fn hash(lower_wire_name: &[u8], iterations: u16, salt: &[u8]) -> [u8; 20];
 pub fn b32hex(hash: &[u8; 20]) -> [u8; 32];            // lowercase
 pub fn decode_b32hex(label: &[u8]) -> Option<[u8; 20]>;
-pub struct Params { pub iterations: u16, pub salt: Box<[u8]> } // from NSEC3PARAM rdata
+pub struct Params<'a> { pub iterations: u16, pub salt: &'a [u8] } // borrowed: no allocation on the query path
+impl<'a> Params<'a> { pub fn parse(nsec3param_rdata: &'a [u8]) -> Option<Params<'a>>; } // None unless hash algorithm SHA-1
 // dnssec.rs
-pub enum Denial<'a> { NxDomain { qname: &'a [u8], closest_encloser: &'a Node }, NoData { node: &'a Node, qname: &'a [u8] }, WildcardAnswer { qname: &'a [u8], closest_encloser: &'a Node }, WildcardNoData { qname: &'a [u8], closest_encloser: &'a Node, wildcard: &'a Node }, InsecureReferral { cut: &'a Node } }
-pub fn add_denial(zone: &Zone, d: Denial<'_>, w: &mut Writer<'_>) -> Result<(), Overflow>; // writes NSEC/NSEC3 RRsets + their RRSIGs to authority, deduplicated
+pub enum Denial<'q, 'z> { NxDomain { qname: &'q [u8], closest_encloser: &'z Node }, NoData { node: &'z Node, qname: &'q [u8] }, WildcardAnswer { qname: &'q [u8], closest_encloser: &'z Node }, WildcardNoData { qname: &'q [u8], closest_encloser: &'z Node, wildcard: &'z Node }, InsecureReferral { cut: &'z Node } }
+pub struct Proofs<'z>; // Default; fixed array of proof nodes, deduplicated by identity
+impl<'z> Proofs<'z> { pub fn write(&mut self, w: &mut Writer<'_>) -> Result<(), Overflow>; } // NSEC/NSEC3 RRsets + RRSIGs to authority, then empty
+pub fn add_denial<'z>(zone: &'z Zone, d: Denial<'_, 'z>, proofs: &mut Proofs<'z>); // collects; written once the answer section is complete (a wildcard CNAME's proof must follow the whole chain)
 pub fn write_rrset_signed(w: &mut Writer<'_>, section: Section, owner: &[u8], set: &RRset, dnssec: bool) -> Result<(), Overflow>;
+pub fn write_rrset_signed_ttl(w: &mut Writer<'_>, section: Section, owner: &[u8], set: &RRset, ttl: u32, dnssec: bool) -> Result<(), Overflow>; // negative SOA TTL
 ```
 
 - [ ] Write the failing `engine/src/authoritative/dnssec_tests.rs` (declare `pub mod nsec3; pub mod dnssec; #[cfg(test)] mod dnssec_tests;`):
@@ -5527,7 +5536,7 @@ fn count(rrs: &[Record], t: RecordType) -> usize {
 }
 
 fn covered(rrs: &[Record]) -> Vec<RecordType> {
-    rrs.iter().filter_map(|r| match r.data() { RData::DNSSEC(DNSSECRData::RRSIG(s)) => Some(s.input().type_covered), _ => None }).collect()
+    rrs.iter().filter_map(|r| match r.data() { RData::DNSSEC(DNSSECRData::RRSIG(s)) => Some(s.input().type_covered), _ => None }).collect() // hickory 0.26: `match &r.data`
 }
 
 #[test]
@@ -5616,7 +5625,9 @@ fn referrals_include_ds_or_proof_of_no_ds() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::dnssec_tests` — expect FAIL with "unresolved import `super::nsec3`".
+The committed test file matches on the `data` field (`match &r.data`; hickory 0.26 has no `Record::data()`) and adds `ds_query_at_an_unsigned_delegation_is_a_signed_nodata`, `cds_and_cdnskey_are_served_as_signed_data` and `truncates_when_proofs_do_not_fit`.
+
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::dnssec_tests` — expect FAIL with "file not found for module `dnssec`" / "`nsec3`".
 - [ ] Implement `nsec3.rs`:
 
 ```rust
@@ -5690,7 +5701,9 @@ The `hash` input name is the lowercase wire form (callers lowercase first). Hash
   - NSEC3 zones (params from NSEC3PARAM): hash names with `nsec3::hash`; closest-encloser proof = NSEC3 matching the closest encloser + NSEC3 covering the next-closer name (the ancestor of qname one label below the encloser); `NxDomain` → proof + NSEC3 covering `*.<closest encloser>`; `NoData` → NSEC3 matching qname; `WildcardAnswer` → NSEC3 covering the next-closer name; `WildcardNoData` → proof + NSEC3 matching the wildcard; `InsecureReferral` → NSEC3 matching the cut. Deduplicate by owner.
   - negative answers keep the SOA and add its RRSIG before the proofs; secure referrals add the DS RRset and its RRSIG to authority.
   - overflow of any DNSSEC record in answer/authority → truncation (TC) as in Task 3.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative` — expect PASS.
+  - proofs are collected in `Proofs` during the chain and written before `Writer::finish` (a referral writes its no-DS proof before the glue).
+- [ ] Plan-review follow-up (NOTIFY after restart): `KeyRing` gains a `tokio::sync::watch` counter bumped by `apply` and `async fn wait_for(&self, lower_wire_name, wait) -> Option<Arc<TsigKey>>`; `after_apply` spawns every NOTIFY and a target whose key is missing waits up to `NOTIFY_KEY_WAIT` (60 s) for `KeyMaterial` before counting `nokey`. Tests `key_ring_wait_sees_later_key_material_and_is_bounded` and `notify_needing_a_key_is_sent_once_key_material_arrives` (fails with the old immediate `nokey`).
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative`, `--test authoritative_pipeline`, `--test hot_path_alloc` — expect PASS.
 - [ ] Commit: `git add engine && git commit -m "feat(engine): serve RRSIGs and NSEC/NSEC3 proofs from pre-signed zones"`.
 
 ## Task 14: Key rollovers, CDS/CDNSKEY, DNSSEC API, and the signing/key-storage acceptance tests

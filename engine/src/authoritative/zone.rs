@@ -249,18 +249,10 @@ fn soa_serial(rdata: &[u8]) -> Option<u32> {
 
 /// Decodes a 32-character RFC 4648 base32hex first label (case-insensitive) into a SHA-1 hash.
 fn decode_b32hex_label(owner: &[u8]) -> Option<[u8; 20]> {
-    if owner.first() != Some(&32) || owner.len() < 33 {
+    if owner.first() != Some(&32) {
         return None;
     }
-    let mut upper = [0u8; 32];
-    for (d, s) in upper.iter_mut().zip(&owner[1..33]) {
-        *d = s.to_ascii_uppercase();
-    }
-    let mut out = [0u8; 20];
-    let n = data_encoding::BASE32HEX_NOPAD
-        .decode_mut(&upper, &mut out)
-        .ok()?;
-    (n == 20).then_some(out)
+    super::nsec3::decode_b32hex(owner.get(1..33)?)
 }
 
 impl Zone {

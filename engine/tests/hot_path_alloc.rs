@@ -192,8 +192,43 @@ fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
 
 #[test]
 fn authoritative_answer_path_does_not_allocate() {
+    use hickory_proto::rr::RecordType;
+    // An answer through a CNAME, a referral with glue, a wildcard and an NXDOMAIN.
+    measure_auth(
+        include_bytes!("../../testdata/nzf/basic-full.nzf"),
+        &[
+            ("Alias.Example.Test.", RecordType::A),
+            ("host.sub.example.test.", RecordType::A),
+            ("x.wild.example.test.", RecordType::TXT),
+            ("nope.example.test.", RecordType::AAAA),
+        ],
+        false,
+    );
+    // DO=1 on pre-signed zones: RRSIGs, NSEC and NSEC3 (hashing) proofs, DS at referrals.
+    let signed = [
+        ("WWW.example.test.", RecordType::A),
+        ("alias.example.test.", RecordType::A),
+        ("x.nope.example.test.", RecordType::A),
+        ("anything.wild.example.test.", RecordType::TXT),
+        ("b.c.example.test.", RecordType::A),
+        ("host.sub.example.test.", RecordType::A),
+        ("host.insecure.example.test.", RecordType::A),
+    ];
+    measure_auth(
+        include_bytes!("../../testdata/nzf/signed-nsec-full.nzf"),
+        &signed,
+        true,
+    );
+    measure_auth(
+        include_bytes!("../../testdata/nzf/signed-nsec3-full.nzf"),
+        &signed,
+        true,
+    );
+}
+
+fn measure_auth(image: &[u8], names: &[(&str, hickory_proto::rr::RecordType)], dnssec_ok: bool) {
     use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
-    use hickory_proto::rr::{Name, RecordType};
+    use hickory_proto::rr::Name;
     use hickory_proto::serialize::binary::BinEncodable;
     use nexora_engine::edns::Transport;
     use nexora_engine::proto::*;
@@ -202,7 +237,7 @@ fn authoritative_answer_path_does_not_allocate() {
     use sha2::Digest;
 
     let tmp = tempfile::tempdir().unwrap();
-    let z = zstd::encode_all(&include_bytes!("../../testdata/nzf/basic-full.nzf")[..], 3).unwrap();
+    let z = zstd::encode_all(image, 3).unwrap();
     let sha = hex::encode(sha2::Sha256::digest(&z));
     std::fs::write(tmp.path().join(&sha), &z).unwrap();
     let shared = Shared::new(1);
@@ -245,30 +280,33 @@ fn authoritative_answer_path_does_not_allocate() {
     ));
     let client: std::net::SocketAddr = "192.0.2.9:5353".parse().unwrap();
     let ctx = WorkerCtx::new(0, shared.clone());
-    // An answer through a CNAME, a referral with glue, a wildcard and an NXDOMAIN.
-    let queries: Vec<Vec<u8>> = [
-        ("Alias.Example.Test.", RecordType::A),
-        ("host.sub.example.test.", RecordType::A),
-        ("x.wild.example.test.", RecordType::TXT),
-        ("nope.example.test.", RecordType::AAAA),
-    ]
-    .iter()
-    .map(|(name, t)| {
-        let mut m = Message::new(7, MessageType::Query, OpCode::Query);
-        m.add_query(Query::query(Name::from_ascii(name).unwrap(), *t));
-        let mut e = Edns::new();
-        e.set_max_payload(1232);
-        m.set_edns(e);
-        m.to_bytes().unwrap()
-    })
-    .collect();
+    let queries: Vec<Vec<u8>> = names
+        .iter()
+        .map(|(name, t)| {
+            let mut m = Message::new(7, MessageType::Query, OpCode::Query);
+            m.add_query(Query::query(Name::from_ascii(name).unwrap(), *t));
+            let mut e = Edns::new();
+            e.set_max_payload(1232);
+            e.set_dnssec_ok(dnssec_ok);
+            m.set_edns(e);
+            m.to_bytes().unwrap()
+        })
+        .collect();
     let mut out = [0u8; 1232];
     for q in &queries {
         let rt = shared.runtime.load();
-        assert!(matches!(
-            handle_packet(&ctx, &rt, q, client, Transport::Udp, &mut out),
-            FastOutcome::Reply(_)
-        ));
+        match handle_packet(&ctx, &rt, q, client, Transport::Udp, &mut out) {
+            // Signed answers carry RRSIGs, and no reply was truncated.
+            FastOutcome::Reply(n) => {
+                assert!(n > 40);
+                assert_eq!(out[2] & 0x02, 0, "TC");
+                if dnssec_ok {
+                    let rrsig = [0u8, 46, 0, 1];
+                    assert!(out[..n].windows(4).any(|w| w == rrsig), "RRSIG present");
+                }
+            }
+            _ => panic!("expected an authoritative reply"),
+        }
     }
     ARMED.with(|a| a.set(true));
     ALLOCS.with(|c| c.set(0));
@@ -285,6 +323,6 @@ fn authoritative_answer_path_does_not_allocate() {
     assert_eq!(
         ALLOCS.with(Cell::get),
         0,
-        "authoritative answer path allocated"
+        "authoritative answer path allocated (DO={dnssec_ok})"
     );
 }

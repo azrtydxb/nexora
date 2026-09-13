@@ -12,8 +12,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const FULL: &[u8] = include_bytes!("../../testdata/nzf/basic-full.nzf");
+const SIGNED_NSEC: &[u8] = include_bytes!("../../testdata/nzf/signed-nsec-full.nzf");
+const SIGNED_NSEC3: &[u8] = include_bytes!("../../testdata/nzf/signed-nsec3-full.nzf");
+/// The KSK DNSKEY of the signed images, in presentation form (`testdata/nzf/gen-signed`).
+const SIGNED_ANCHOR: &str = include_str!("../../testdata/nzf/signed-anchor.key");
 
 fn start(acl: &str) -> SocketAddr {
+    start_zone(acl, FULL)
+}
+
+/// An engine on a free loopback port serving `image` (an NZF1 full image of example.test. at
+/// serial 2026091301).
+fn start_zone(acl: &str, image: &[u8]) -> SocketAddr {
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -25,7 +35,7 @@ fn start(acl: &str) -> SocketAddr {
         dir.display()
     ))
     .unwrap();
-    let z = zstd::encode_all(FULL, 3).unwrap();
+    let z = zstd::encode_all(image, 3).unwrap();
     let sha = hex::encode(sha2::Sha256::digest(&z));
     std::fs::write(dir.join(&sha), &z).unwrap();
     let shared = Shared::new(2);
@@ -116,4 +126,60 @@ fn hosted_names_answer_authoritatively_before_the_acl() {
         ResponseCode::Refused,
         "names outside hosted zones still pass the ACL"
     );
+}
+
+/// BIND's validator accepts the engine's positive answers, NSEC/NSEC3 denials, wildcard proofs,
+/// DS answers and CDS data for the pre-signed test zones, trusting only the zone's KSK.
+#[test]
+fn signed_answers_validate_with_delv() {
+    let f: Vec<&str> = SIGNED_ANCHOR.split_whitespace().collect();
+    assert_eq!(&f[..4], &["example.test.", "3600", "IN", "DNSKEY"]);
+    let dir = tempfile::tempdir().unwrap();
+    let anchors = dir.path().join("anchors.conf");
+    std::fs::write(
+        &anchors,
+        format!(
+            "trust-anchors {{ example.test. static-key {} {} {} \"{}\"; }};\n",
+            f[4], f[5], f[6], f[7]
+        ),
+    )
+    .unwrap();
+    let positive = "; fully validated";
+    let negative = "; negative response, fully validated";
+    let cases = [
+        ("www.example.test.", "A", positive),
+        ("alias.example.test.", "A", positive),
+        ("anything.wild.example.test.", "TXT", positive),
+        ("sub.example.test.", "DS", positive),
+        ("example.test.", "CDS", positive),
+        ("example.test.", "CDNSKEY", positive),
+        ("nope.example.test.", "A", negative),
+        ("x.nope.example.test.", "A", negative),
+        ("www.example.test.", "MX", negative),
+        ("b.c.example.test.", "A", negative),
+        ("anything.wild.example.test.", "A", negative),
+        ("insecure.example.test.", "DS", negative),
+    ];
+    for (label, image) in [("nsec", SIGNED_NSEC), ("nsec3", SIGNED_NSEC3)] {
+        let srv = start_zone("127.0.0.0/8", image);
+        for (name, qtype, want) in cases {
+            let out = std::process::Command::new("delv")
+                .arg(format!("@{}", srv.ip()))
+                .args(["-p", &srv.port().to_string()])
+                .arg("-a")
+                .arg(&anchors)
+                .args(["+root=example.test", name, qtype])
+                .output()
+                .expect("delv (bind9-dnsutils) must be installed");
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                text.lines().any(|l| l == want),
+                "{label} {name} {qtype}: want {want:?}, delv said:\n{text}"
+            );
+        }
+    }
 }

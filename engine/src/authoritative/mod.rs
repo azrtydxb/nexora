@@ -3,11 +3,13 @@
 
 pub mod answer;
 pub mod dispatch;
+pub mod dnssec;
 pub mod loader;
 pub mod lookup;
 pub mod msg;
 pub mod name;
 pub mod notify_out;
+pub mod nsec3;
 pub mod nzf;
 pub mod set;
 pub mod state;
@@ -19,6 +21,8 @@ pub use state::after_apply;
 
 #[cfg(test)]
 mod answer_tests;
+#[cfg(test)]
+mod dnssec_tests;
 #[cfg(test)]
 mod loader_tests;
 #[cfg(test)]

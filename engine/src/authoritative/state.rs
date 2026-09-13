@@ -13,6 +13,9 @@ use std::time::Duration;
 /// NOTIFY retry schedule: 2 s, doubling, 5 attempts.
 const NOTIFY_FIRST_TIMEOUT: Duration = Duration::from_secs(2);
 const NOTIFY_ATTEMPTS: u32 = 5;
+/// How long a NOTIFY whose TSIG key the engine does not hold yet waits for `KeyMaterial` before it
+/// counts as `nokey`.
+const NOTIFY_KEY_WAIT: Duration = Duration::from_secs(60);
 /// `AuthCounters::notify_sent` slots.
 const NOTIFY_ACKED: usize = 0;
 const NOTIFY_REJECTED: usize = 1;
@@ -51,7 +54,9 @@ impl AuthState {
 }
 
 /// Once per runtime version: adds `rt.auth_loads` to `shared.metrics.auth`, and (once the
-/// control runtime is set) sends NOTIFY for every zone in `rt.auth_changed` to its targets.
+/// control runtime is set) sends NOTIFY for every zone in `rt.auth_changed` to its targets. A
+/// target whose TSIG key is not in the key ring yet is queued until `KeyMaterial` delivers it, for
+/// at most `NOTIFY_KEY_WAIT`, then counted `nokey`.
 pub fn after_apply(shared: &Shared, rt: &Runtime) {
     if shared
         .auth
@@ -96,24 +101,26 @@ pub fn after_apply(shared: &Shared, rt: &Runtime) {
         soa_rr.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
         soa_rr.extend_from_slice(rdata);
         for (target, key_name) in &zone.notify {
-            let key = match key_name {
-                None => None,
-                Some(name) => match shared.auth.keyring.get(name) {
-                    Some(k) => Some(k),
-                    None => {
-                        counters[NOTIFY_NOKEY].fetch_add(1, Ordering::Relaxed);
-                        continue;
-                    }
-                },
-            };
-            let job = NotifyJob {
-                zone: origin.clone(),
-                soa_rr: soa_rr.clone(),
-                target: *target,
-                key,
-            };
+            let (zone, soa_rr, target) = (origin.clone(), soa_rr.clone(), *target);
+            let (key_name, keyring) = (key_name.clone(), shared.auth.keyring.clone());
             let counters = counters.clone();
             handle.spawn(async move {
+                let key = match key_name {
+                    None => None,
+                    Some(name) => match keyring.wait_for(&name, NOTIFY_KEY_WAIT).await {
+                        Some(k) => Some(k),
+                        None => {
+                            counters[NOTIFY_NOKEY].fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                    },
+                };
+                let job = NotifyJob {
+                    zone,
+                    soa_rr,
+                    target,
+                    key,
+                };
                 let slot = match send_notify(job, NOTIFY_FIRST_TIMEOUT, NOTIFY_ATTEMPTS).await {
                     NotifyResult::Acked { .. } => NOTIFY_ACKED,
                     NotifyResult::Rejected(_) => NOTIFY_REJECTED,
