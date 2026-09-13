@@ -471,6 +471,8 @@ async fn session(
         node_name: boot.node_name.clone(),
         applied_version: shared.runtime.load().version,
         engine_version: ENGINE_VERSION.to_owned(),
+        // M2 Task 3 reports the installed DNS serving certificate here.
+        tls_fingerprint_sha256: String::new(),
     });
     if tx.send(EngineMessage { msg: Some(hello) }).await.is_err() {
         return stream_closed();
@@ -525,7 +527,8 @@ async fn session(
                 v.server_version,
                 shared.runtime.load().version
             ),
-            None => {}
+            // M2 Task 3 installs the certificate and replies with TlsMaterialResult.
+            Some(ServerMsg::TlsMaterial(_)) | None => {}
         }
     };
     ticker.abort();

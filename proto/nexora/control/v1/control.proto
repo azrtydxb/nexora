@@ -32,6 +32,7 @@ message EngineMessage {
     Applied applied = 2;
     Rejected rejected = 3;
     Stats stats = 4;
+    TlsMaterialResult tls_material_result = 300; // M2
   }
 }
 
@@ -40,6 +41,7 @@ message Hello {
   string node_name = 2;
   uint64 applied_version = 3; // 0 when nothing applied
   string engine_version = 4;
+  string tls_fingerprint_sha256 = 300; // M2: empty when the engine holds no DNS serving certificate
 }
 
 message Applied {
@@ -56,6 +58,7 @@ message ServerMessage {
   oneof msg {
     ConfigSnapshot snapshot = 1;
     VersionAhead version_ahead = 2;
+    TlsMaterial tls_material = 300;    // M2: never persisted, never part of ConfigSnapshot
   }
 }
 
@@ -73,6 +76,10 @@ message ConfigSnapshot {
   repeated string acl_allow_cidrs = 6;
   FilterConfig filter = 7;
   TelemetryConfig telemetry = 8;
+  // M2: per-client policy. FilterConfig stays the global filter selection.
+  repeated PolicyGroup policy_groups = 300;
+  repeated RewriteSet rewrite_sets = 301;
+  repeated string global_rewrite_set_ids = 302; // rewrite sets for clients in no group, in precedence order
 }
 
 enum UpstreamStrategy {
@@ -171,4 +178,56 @@ message Stats {
   map<string, uint64> export_dropped_total = 12; // keyed by signal: logs, traces, metrics
   uint64 cache_entries = 13;
   uint64 cache_bytes = 14;
+}
+
+// ---------------------------------------------------------------------------
+// M2: client transports + policy. Fields added to M1 messages use numbers 300-399.
+// ---------------------------------------------------------------------------
+
+// A client group selected by source CIDR. Most specific CIDR across all groups wins;
+// a client in a group gets only the group's blocklists, allowlist and rewrite sets
+// (the global FilterConfig and global rewrite sets do not apply to it).
+message PolicyGroup {
+  string id = 1;                        // policy_groups.id (UUID)
+  string name = 2;
+  repeated string cidrs = 3;            // canonical prefixes, host bits zero, e.g. "10.1.0.0/16"
+  repeated BlobRef blocklists = 4;      // normalised list blobs (same format as FilterConfig.blocklists), fetched via GetBlob
+  repeated string allowlist = 5;        // lowercase punycode domains, no trailing dot; matches subdomains
+  repeated string rewrite_set_ids = 6;  // RewriteSet.id values, in precedence order
+}
+
+enum RewriteType {
+  REWRITE_TYPE_UNSPECIFIED = 0;
+  REWRITE_TYPE_A = 1;
+  REWRITE_TYPE_AAAA = 2;
+  REWRITE_TYPE_CNAME = 3;
+}
+
+message RewriteRule {
+  string name = 1;       // lowercase punycode, no trailing dot; "*." prefix = strict subdomains of the rest
+  RewriteType type = 2;
+  string value = 3;      // IPv4 text, IPv6 text, or CNAME target domain (no trailing dot)
+  uint32 ttl = 4;        // 0..=86400
+}
+
+// Ids: "custom:global", "custom:group:<uuid>", "safesearch:google", "safesearch:bing",
+// "safesearch:duckduckgo", "safesearch:youtube-strict", "safesearch:youtube-moderate".
+message RewriteSet {
+  string id = 1;
+  string label = 2;
+  repeated RewriteRule rules = 3;
+}
+
+// DNS serving certificate for DoT/DoH/DoQ. Sent only on the Connect stream; held in
+// engine memory only; never part of ConfigSnapshot.
+message TlsMaterial {
+  bytes certificate_chain_pem = 1;  // leaf first
+  bytes private_key_pem = 2;        // PKCS#8, SEC1 or PKCS#1 PEM
+  string fingerprint_sha256 = 3;    // lowercase hex SHA-256 of the leaf DER
+}
+
+message TlsMaterialResult {
+  string fingerprint_sha256 = 1;    // echoes TlsMaterial.fingerprint_sha256
+  bool applied = 2;
+  string error = 3;                 // empty when applied
 }

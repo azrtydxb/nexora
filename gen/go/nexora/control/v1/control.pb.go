@@ -177,6 +177,58 @@ func (BlockMode) EnumDescriptor() ([]byte, []int) {
 	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{2}
 }
 
+type RewriteType int32
+
+const (
+	RewriteType_REWRITE_TYPE_UNSPECIFIED RewriteType = 0
+	RewriteType_REWRITE_TYPE_A           RewriteType = 1
+	RewriteType_REWRITE_TYPE_AAAA        RewriteType = 2
+	RewriteType_REWRITE_TYPE_CNAME       RewriteType = 3
+)
+
+// Enum value maps for RewriteType.
+var (
+	RewriteType_name = map[int32]string{
+		0: "REWRITE_TYPE_UNSPECIFIED",
+		1: "REWRITE_TYPE_A",
+		2: "REWRITE_TYPE_AAAA",
+		3: "REWRITE_TYPE_CNAME",
+	}
+	RewriteType_value = map[string]int32{
+		"REWRITE_TYPE_UNSPECIFIED": 0,
+		"REWRITE_TYPE_A":           1,
+		"REWRITE_TYPE_AAAA":        2,
+		"REWRITE_TYPE_CNAME":       3,
+	}
+)
+
+func (x RewriteType) Enum() *RewriteType {
+	p := new(RewriteType)
+	*p = x
+	return p
+}
+
+func (x RewriteType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RewriteType) Descriptor() protoreflect.EnumDescriptor {
+	return file_nexora_control_v1_control_proto_enumTypes[3].Descriptor()
+}
+
+func (RewriteType) Type() protoreflect.EnumType {
+	return &file_nexora_control_v1_control_proto_enumTypes[3]
+}
+
+func (x RewriteType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RewriteType.Descriptor instead.
+func (RewriteType) EnumDescriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{3}
+}
+
 type EnrollRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	JoinSecret    string                 `protobuf:"bytes,1,opt,name=join_secret,json=joinSecret,proto3" json:"join_secret,omitempty"` // base32 secret part of nxj1.<secret>.<ca sha256>
@@ -313,6 +365,7 @@ type EngineMessage struct {
 	//	*EngineMessage_Applied
 	//	*EngineMessage_Rejected
 	//	*EngineMessage_Stats
+	//	*EngineMessage_TlsMaterialResult
 	Msg           isEngineMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -391,6 +444,15 @@ func (x *EngineMessage) GetStats() *Stats {
 	return nil
 }
 
+func (x *EngineMessage) GetTlsMaterialResult() *TlsMaterialResult {
+	if x != nil {
+		if x, ok := x.Msg.(*EngineMessage_TlsMaterialResult); ok {
+			return x.TlsMaterialResult
+		}
+	}
+	return nil
+}
+
 type isEngineMessage_Msg interface {
 	isEngineMessage_Msg()
 }
@@ -411,6 +473,10 @@ type EngineMessage_Stats struct {
 	Stats *Stats `protobuf:"bytes,4,opt,name=stats,proto3,oneof"`
 }
 
+type EngineMessage_TlsMaterialResult struct {
+	TlsMaterialResult *TlsMaterialResult `protobuf:"bytes,300,opt,name=tls_material_result,json=tlsMaterialResult,proto3,oneof"` // M2
+}
+
 func (*EngineMessage_Hello) isEngineMessage_Msg() {}
 
 func (*EngineMessage_Applied) isEngineMessage_Msg() {}
@@ -419,14 +485,17 @@ func (*EngineMessage_Rejected) isEngineMessage_Msg() {}
 
 func (*EngineMessage_Stats) isEngineMessage_Msg() {}
 
+func (*EngineMessage_TlsMaterialResult) isEngineMessage_Msg() {}
+
 type Hello struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	EngineId       string                 `protobuf:"bytes,1,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
-	NodeName       string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
-	AppliedVersion uint64                 `protobuf:"varint,3,opt,name=applied_version,json=appliedVersion,proto3" json:"applied_version,omitempty"` // 0 when nothing applied
-	EngineVersion  string                 `protobuf:"bytes,4,opt,name=engine_version,json=engineVersion,proto3" json:"engine_version,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	EngineId             string                 `protobuf:"bytes,1,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
+	NodeName             string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	AppliedVersion       uint64                 `protobuf:"varint,3,opt,name=applied_version,json=appliedVersion,proto3" json:"applied_version,omitempty"` // 0 when nothing applied
+	EngineVersion        string                 `protobuf:"bytes,4,opt,name=engine_version,json=engineVersion,proto3" json:"engine_version,omitempty"`
+	TlsFingerprintSha256 string                 `protobuf:"bytes,300,opt,name=tls_fingerprint_sha256,json=tlsFingerprintSha256,proto3" json:"tls_fingerprint_sha256,omitempty"` // M2: empty when the engine holds no DNS serving certificate
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -483,6 +552,13 @@ func (x *Hello) GetAppliedVersion() uint64 {
 func (x *Hello) GetEngineVersion() string {
 	if x != nil {
 		return x.EngineVersion
+	}
+	return ""
+}
+
+func (x *Hello) GetTlsFingerprintSha256() string {
+	if x != nil {
+		return x.TlsFingerprintSha256
 	}
 	return ""
 }
@@ -597,6 +673,7 @@ type ServerMessage struct {
 	//
 	//	*ServerMessage_Snapshot
 	//	*ServerMessage_VersionAhead
+	//	*ServerMessage_TlsMaterial
 	Msg           isServerMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -657,6 +734,15 @@ func (x *ServerMessage) GetVersionAhead() *VersionAhead {
 	return nil
 }
 
+func (x *ServerMessage) GetTlsMaterial() *TlsMaterial {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_TlsMaterial); ok {
+			return x.TlsMaterial
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Msg interface {
 	isServerMessage_Msg()
 }
@@ -669,9 +755,15 @@ type ServerMessage_VersionAhead struct {
 	VersionAhead *VersionAhead `protobuf:"bytes,2,opt,name=version_ahead,json=versionAhead,proto3,oneof"`
 }
 
+type ServerMessage_TlsMaterial struct {
+	TlsMaterial *TlsMaterial `protobuf:"bytes,300,opt,name=tls_material,json=tlsMaterial,proto3,oneof"` // M2: never persisted, never part of ConfigSnapshot
+}
+
 func (*ServerMessage_Snapshot) isServerMessage_Msg() {}
 
 func (*ServerMessage_VersionAhead) isServerMessage_Msg() {}
+
+func (*ServerMessage_TlsMaterial) isServerMessage_Msg() {}
 
 // Sent when the engine reports a version newer than the database (restored backup).
 type VersionAhead struct {
@@ -728,8 +820,12 @@ type ConfigSnapshot struct {
 	AclAllowCidrs []string               `protobuf:"bytes,6,rep,name=acl_allow_cidrs,json=aclAllowCidrs,proto3" json:"acl_allow_cidrs,omitempty"`
 	Filter        *FilterConfig          `protobuf:"bytes,7,opt,name=filter,proto3" json:"filter,omitempty"`
 	Telemetry     *TelemetryConfig       `protobuf:"bytes,8,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// M2: per-client policy. FilterConfig stays the global filter selection.
+	PolicyGroups        []*PolicyGroup `protobuf:"bytes,300,rep,name=policy_groups,json=policyGroups,proto3" json:"policy_groups,omitempty"`
+	RewriteSets         []*RewriteSet  `protobuf:"bytes,301,rep,name=rewrite_sets,json=rewriteSets,proto3" json:"rewrite_sets,omitempty"`
+	GlobalRewriteSetIds []string       `protobuf:"bytes,302,rep,name=global_rewrite_set_ids,json=globalRewriteSetIds,proto3" json:"global_rewrite_set_ids,omitempty"` // rewrite sets for clients in no group, in precedence order
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ConfigSnapshot) Reset() {
@@ -814,6 +910,27 @@ func (x *ConfigSnapshot) GetFilter() *FilterConfig {
 func (x *ConfigSnapshot) GetTelemetry() *TelemetryConfig {
 	if x != nil {
 		return x.Telemetry
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetPolicyGroups() []*PolicyGroup {
+	if x != nil {
+		return x.PolicyGroups
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetRewriteSets() []*RewriteSet {
+	if x != nil {
+		return x.RewriteSets
+	}
+	return nil
+}
+
+func (x *ConfigSnapshot) GetGlobalRewriteSetIds() []string {
+	if x != nil {
+		return x.GlobalRewriteSetIds
 	}
 	return nil
 }
@@ -1554,6 +1671,345 @@ func (x *Stats) GetCacheBytes() uint64 {
 	return 0
 }
 
+// A client group selected by source CIDR. Most specific CIDR across all groups wins;
+// a client in a group gets only the group's blocklists, allowlist and rewrite sets
+// (the global FilterConfig and global rewrite sets do not apply to it).
+type PolicyGroup struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // policy_groups.id (UUID)
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Cidrs         []string               `protobuf:"bytes,3,rep,name=cidrs,proto3" json:"cidrs,omitempty"`                                        // canonical prefixes, host bits zero, e.g. "10.1.0.0/16"
+	Blocklists    []*BlobRef             `protobuf:"bytes,4,rep,name=blocklists,proto3" json:"blocklists,omitempty"`                              // normalised list blobs (same format as FilterConfig.blocklists), fetched via GetBlob
+	Allowlist     []string               `protobuf:"bytes,5,rep,name=allowlist,proto3" json:"allowlist,omitempty"`                                // lowercase punycode domains, no trailing dot; matches subdomains
+	RewriteSetIds []string               `protobuf:"bytes,6,rep,name=rewrite_set_ids,json=rewriteSetIds,proto3" json:"rewrite_set_ids,omitempty"` // RewriteSet.id values, in precedence order
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyGroup) Reset() {
+	*x = PolicyGroup{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyGroup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyGroup) ProtoMessage() {}
+
+func (x *PolicyGroup) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyGroup.ProtoReflect.Descriptor instead.
+func (*PolicyGroup) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PolicyGroup) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *PolicyGroup) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *PolicyGroup) GetCidrs() []string {
+	if x != nil {
+		return x.Cidrs
+	}
+	return nil
+}
+
+func (x *PolicyGroup) GetBlocklists() []*BlobRef {
+	if x != nil {
+		return x.Blocklists
+	}
+	return nil
+}
+
+func (x *PolicyGroup) GetAllowlist() []string {
+	if x != nil {
+		return x.Allowlist
+	}
+	return nil
+}
+
+func (x *PolicyGroup) GetRewriteSetIds() []string {
+	if x != nil {
+		return x.RewriteSetIds
+	}
+	return nil
+}
+
+type RewriteRule struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // lowercase punycode, no trailing dot; "*." prefix = strict subdomains of the rest
+	Type          RewriteType            `protobuf:"varint,2,opt,name=type,proto3,enum=nexora.control.v1.RewriteType" json:"type,omitempty"`
+	Value         string                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"` // IPv4 text, IPv6 text, or CNAME target domain (no trailing dot)
+	Ttl           uint32                 `protobuf:"varint,4,opt,name=ttl,proto3" json:"ttl,omitempty"`    // 0..=86400
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RewriteRule) Reset() {
+	*x = RewriteRule{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewriteRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewriteRule) ProtoMessage() {}
+
+func (x *RewriteRule) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewriteRule.ProtoReflect.Descriptor instead.
+func (*RewriteRule) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RewriteRule) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RewriteRule) GetType() RewriteType {
+	if x != nil {
+		return x.Type
+	}
+	return RewriteType_REWRITE_TYPE_UNSPECIFIED
+}
+
+func (x *RewriteRule) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *RewriteRule) GetTtl() uint32 {
+	if x != nil {
+		return x.Ttl
+	}
+	return 0
+}
+
+// Ids: "custom:global", "custom:group:<uuid>", "safesearch:google", "safesearch:bing",
+// "safesearch:duckduckgo", "safesearch:youtube-strict", "safesearch:youtube-moderate".
+type RewriteSet struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"`
+	Rules         []*RewriteRule         `protobuf:"bytes,3,rep,name=rules,proto3" json:"rules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RewriteSet) Reset() {
+	*x = RewriteSet{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewriteSet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewriteSet) ProtoMessage() {}
+
+func (x *RewriteSet) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewriteSet.ProtoReflect.Descriptor instead.
+func (*RewriteSet) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RewriteSet) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RewriteSet) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *RewriteSet) GetRules() []*RewriteRule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
+// DNS serving certificate for DoT/DoH/DoQ. Sent only on the Connect stream; held in
+// engine memory only; never part of ConfigSnapshot.
+type TlsMaterial struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	CertificateChainPem []byte                 `protobuf:"bytes,1,opt,name=certificate_chain_pem,json=certificateChainPem,proto3" json:"certificate_chain_pem,omitempty"` // leaf first
+	PrivateKeyPem       []byte                 `protobuf:"bytes,2,opt,name=private_key_pem,json=privateKeyPem,proto3" json:"private_key_pem,omitempty"`                   // PKCS#8, SEC1 or PKCS#1 PEM
+	FingerprintSha256   string                 `protobuf:"bytes,3,opt,name=fingerprint_sha256,json=fingerprintSha256,proto3" json:"fingerprint_sha256,omitempty"`         // lowercase hex SHA-256 of the leaf DER
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *TlsMaterial) Reset() {
+	*x = TlsMaterial{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TlsMaterial) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TlsMaterial) ProtoMessage() {}
+
+func (x *TlsMaterial) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TlsMaterial.ProtoReflect.Descriptor instead.
+func (*TlsMaterial) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *TlsMaterial) GetCertificateChainPem() []byte {
+	if x != nil {
+		return x.CertificateChainPem
+	}
+	return nil
+}
+
+func (x *TlsMaterial) GetPrivateKeyPem() []byte {
+	if x != nil {
+		return x.PrivateKeyPem
+	}
+	return nil
+}
+
+func (x *TlsMaterial) GetFingerprintSha256() string {
+	if x != nil {
+		return x.FingerprintSha256
+	}
+	return ""
+}
+
+type TlsMaterialResult struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	FingerprintSha256 string                 `protobuf:"bytes,1,opt,name=fingerprint_sha256,json=fingerprintSha256,proto3" json:"fingerprint_sha256,omitempty"` // echoes TlsMaterial.fingerprint_sha256
+	Applied           bool                   `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
+	Error             string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"` // empty when applied
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *TlsMaterialResult) Reset() {
+	*x = TlsMaterialResult{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TlsMaterialResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TlsMaterialResult) ProtoMessage() {}
+
+func (x *TlsMaterialResult) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TlsMaterialResult.ProtoReflect.Descriptor instead.
+func (*TlsMaterialResult) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *TlsMaterialResult) GetFingerprintSha256() string {
+	if x != nil {
+		return x.FingerprintSha256
+	}
+	return ""
+}
+
+func (x *TlsMaterialResult) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
+func (x *TlsMaterialResult) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_nexora_control_v1_control_proto protoreflect.FileDescriptor
 
 const file_nexora_control_v1_control_proto_rawDesc = "" +
@@ -1568,30 +2024,33 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x0eEnrollResponse\x12\x1b\n" +
 	"\tengine_id\x18\x01 \x01(\tR\bengineId\x12'\n" +
 	"\x0fcertificate_der\x18\x02 \x01(\fR\x0ecertificateDer\x12,\n" +
-	"\x12ca_certificate_der\x18\x03 \x01(\fR\x10caCertificateDer\"\xed\x01\n" +
+	"\x12ca_certificate_der\x18\x03 \x01(\fR\x10caCertificateDer\"\xc6\x02\n" +
 	"\rEngineMessage\x120\n" +
 	"\x05hello\x18\x01 \x01(\v2\x18.nexora.control.v1.HelloH\x00R\x05hello\x126\n" +
 	"\aapplied\x18\x02 \x01(\v2\x1a.nexora.control.v1.AppliedH\x00R\aapplied\x129\n" +
 	"\brejected\x18\x03 \x01(\v2\x1b.nexora.control.v1.RejectedH\x00R\brejected\x120\n" +
-	"\x05stats\x18\x04 \x01(\v2\x18.nexora.control.v1.StatsH\x00R\x05statsB\x05\n" +
-	"\x03msg\"\x91\x01\n" +
+	"\x05stats\x18\x04 \x01(\v2\x18.nexora.control.v1.StatsH\x00R\x05stats\x12W\n" +
+	"\x13tls_material_result\x18\xac\x02 \x01(\v2$.nexora.control.v1.TlsMaterialResultH\x00R\x11tlsMaterialResultB\x05\n" +
+	"\x03msg\"\xc8\x01\n" +
 	"\x05Hello\x12\x1b\n" +
 	"\tengine_id\x18\x01 \x01(\tR\bengineId\x12\x1b\n" +
 	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12'\n" +
 	"\x0fapplied_version\x18\x03 \x01(\x04R\x0eappliedVersion\x12%\n" +
-	"\x0eengine_version\x18\x04 \x01(\tR\rengineVersion\"H\n" +
+	"\x0eengine_version\x18\x04 \x01(\tR\rengineVersion\x125\n" +
+	"\x16tls_fingerprint_sha256\x18\xac\x02 \x01(\tR\x14tlsFingerprintSha256\"H\n" +
 	"\aApplied\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12#\n" +
 	"\rpersist_error\x18\x02 \x01(\tR\fpersistError\"<\n" +
 	"\bRejected\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x9f\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xe5\x01\n" +
 	"\rServerMessage\x12?\n" +
 	"\bsnapshot\x18\x01 \x01(\v2!.nexora.control.v1.ConfigSnapshotH\x00R\bsnapshot\x12F\n" +
-	"\rversion_ahead\x18\x02 \x01(\v2\x1f.nexora.control.v1.VersionAheadH\x00R\fversionAheadB\x05\n" +
+	"\rversion_ahead\x18\x02 \x01(\v2\x1f.nexora.control.v1.VersionAheadH\x00R\fversionAhead\x12D\n" +
+	"\ftls_material\x18\xac\x02 \x01(\v2\x1e.nexora.control.v1.TlsMaterialH\x00R\vtlsMaterialB\x05\n" +
 	"\x03msg\"5\n" +
 	"\fVersionAhead\x12%\n" +
-	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\xa5\x03\n" +
+	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\xe4\x04\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12&\n" +
 	"\x0fcreated_unix_ms\x18\x02 \x01(\x03R\rcreatedUnixMs\x12=\n" +
@@ -1600,7 +2059,10 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\tupstreams\x18\x05 \x03(\v2\x1b.nexora.control.v1.UpstreamR\tupstreams\x12&\n" +
 	"\x0facl_allow_cidrs\x18\x06 \x03(\tR\raclAllowCidrs\x127\n" +
 	"\x06filter\x18\a \x01(\v2\x1f.nexora.control.v1.FilterConfigR\x06filter\x12@\n" +
-	"\ttelemetry\x18\b \x01(\v2\".nexora.control.v1.TelemetryConfigR\ttelemetry\"Q\n" +
+	"\ttelemetry\x18\b \x01(\v2\".nexora.control.v1.TelemetryConfigR\ttelemetry\x12D\n" +
+	"\rpolicy_groups\x18\xac\x02 \x03(\v2\x1e.nexora.control.v1.PolicyGroupR\fpolicyGroups\x12A\n" +
+	"\frewrite_sets\x18\xad\x02 \x03(\v2\x1d.nexora.control.v1.RewriteSetR\vrewriteSets\x124\n" +
+	"\x16global_rewrite_set_ids\x18\xae\x02 \x03(\tR\x13globalRewriteSetIds\"Q\n" +
 	"\x0eResolverConfig\x12?\n" +
 	"\bstrategy\x18\x01 \x01(\x0e2#.nexora.control.v1.UpstreamStrategyR\bstrategy\"\xa9\x01\n" +
 	"\vCacheConfig\x12\x1b\n" +
@@ -1668,7 +2130,34 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"cacheBytes\x1aE\n" +
 	"\x17ExportDroppedTotalEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01*s\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\xc9\x01\n" +
+	"\vPolicyGroup\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
+	"\x05cidrs\x18\x03 \x03(\tR\x05cidrs\x12:\n" +
+	"\n" +
+	"blocklists\x18\x04 \x03(\v2\x1a.nexora.control.v1.BlobRefR\n" +
+	"blocklists\x12\x1c\n" +
+	"\tallowlist\x18\x05 \x03(\tR\tallowlist\x12&\n" +
+	"\x0frewrite_set_ids\x18\x06 \x03(\tR\rrewriteSetIds\"}\n" +
+	"\vRewriteRule\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x122\n" +
+	"\x04type\x18\x02 \x01(\x0e2\x1e.nexora.control.v1.RewriteTypeR\x04type\x12\x14\n" +
+	"\x05value\x18\x03 \x01(\tR\x05value\x12\x10\n" +
+	"\x03ttl\x18\x04 \x01(\rR\x03ttl\"h\n" +
+	"\n" +
+	"RewriteSet\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05label\x18\x02 \x01(\tR\x05label\x124\n" +
+	"\x05rules\x18\x03 \x03(\v2\x1e.nexora.control.v1.RewriteRuleR\x05rules\"\x98\x01\n" +
+	"\vTlsMaterial\x122\n" +
+	"\x15certificate_chain_pem\x18\x01 \x01(\fR\x13certificateChainPem\x12&\n" +
+	"\x0fprivate_key_pem\x18\x02 \x01(\fR\rprivateKeyPem\x12-\n" +
+	"\x12fingerprint_sha256\x18\x03 \x01(\tR\x11fingerprintSha256\"r\n" +
+	"\x11TlsMaterialResult\x12-\n" +
+	"\x12fingerprint_sha256\x18\x01 \x01(\tR\x11fingerprintSha256\x12\x18\n" +
+	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error*s\n" +
 	"\x10UpstreamStrategy\x12!\n" +
 	"\x1dUPSTREAM_STRATEGY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19UPSTREAM_STRATEGY_ORDERED\x10\x01\x12\x1d\n" +
@@ -1683,7 +2172,12 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x16BLOCK_MODE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12BLOCK_MODE_NULL_IP\x10\x01\x12\x17\n" +
 	"\x13BLOCK_MODE_NXDOMAIN\x10\x02\x12\x16\n" +
-	"\x12BLOCK_MODE_REFUSED\x10\x032\xff\x01\n" +
+	"\x12BLOCK_MODE_REFUSED\x10\x03*n\n" +
+	"\vRewriteType\x12\x1c\n" +
+	"\x18REWRITE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eREWRITE_TYPE_A\x10\x01\x12\x15\n" +
+	"\x11REWRITE_TYPE_AAAA\x10\x02\x12\x16\n" +
+	"\x12REWRITE_TYPE_CNAME\x10\x032\xff\x01\n" +
 	"\rEngineControl\x12M\n" +
 	"\x06Enroll\x12 .nexora.control.v1.EnrollRequest\x1a!.nexora.control.v1.EnrollResponse\x12Q\n" +
 	"\aConnect\x12 .nexora.control.v1.EngineMessage\x1a .nexora.control.v1.ServerMessage(\x010\x01\x12L\n" +
@@ -1701,63 +2195,76 @@ func file_nexora_control_v1_control_proto_rawDescGZIP() []byte {
 	return file_nexora_control_v1_control_proto_rawDescData
 }
 
-var file_nexora_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_nexora_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_nexora_control_v1_control_proto_goTypes = []any{
-	(UpstreamStrategy)(0),   // 0: nexora.control.v1.UpstreamStrategy
-	(UpstreamProtocol)(0),   // 1: nexora.control.v1.UpstreamProtocol
-	(BlockMode)(0),          // 2: nexora.control.v1.BlockMode
-	(*EnrollRequest)(nil),   // 3: nexora.control.v1.EnrollRequest
-	(*EnrollResponse)(nil),  // 4: nexora.control.v1.EnrollResponse
-	(*EngineMessage)(nil),   // 5: nexora.control.v1.EngineMessage
-	(*Hello)(nil),           // 6: nexora.control.v1.Hello
-	(*Applied)(nil),         // 7: nexora.control.v1.Applied
-	(*Rejected)(nil),        // 8: nexora.control.v1.Rejected
-	(*ServerMessage)(nil),   // 9: nexora.control.v1.ServerMessage
-	(*VersionAhead)(nil),    // 10: nexora.control.v1.VersionAhead
-	(*ConfigSnapshot)(nil),  // 11: nexora.control.v1.ConfigSnapshot
-	(*ResolverConfig)(nil),  // 12: nexora.control.v1.ResolverConfig
-	(*CacheConfig)(nil),     // 13: nexora.control.v1.CacheConfig
-	(*Upstream)(nil),        // 14: nexora.control.v1.Upstream
-	(*BlobRef)(nil),         // 15: nexora.control.v1.BlobRef
-	(*FilterConfig)(nil),    // 16: nexora.control.v1.FilterConfig
-	(*TelemetryConfig)(nil), // 17: nexora.control.v1.TelemetryConfig
-	(*GetBlobRequest)(nil),  // 18: nexora.control.v1.GetBlobRequest
-	(*BlobChunk)(nil),       // 19: nexora.control.v1.BlobChunk
-	(*UpstreamStatus)(nil),  // 20: nexora.control.v1.UpstreamStatus
-	(*Stats)(nil),           // 21: nexora.control.v1.Stats
-	nil,                     // 22: nexora.control.v1.Stats.ExportDroppedTotalEntry
+	(UpstreamStrategy)(0),     // 0: nexora.control.v1.UpstreamStrategy
+	(UpstreamProtocol)(0),     // 1: nexora.control.v1.UpstreamProtocol
+	(BlockMode)(0),            // 2: nexora.control.v1.BlockMode
+	(RewriteType)(0),          // 3: nexora.control.v1.RewriteType
+	(*EnrollRequest)(nil),     // 4: nexora.control.v1.EnrollRequest
+	(*EnrollResponse)(nil),    // 5: nexora.control.v1.EnrollResponse
+	(*EngineMessage)(nil),     // 6: nexora.control.v1.EngineMessage
+	(*Hello)(nil),             // 7: nexora.control.v1.Hello
+	(*Applied)(nil),           // 8: nexora.control.v1.Applied
+	(*Rejected)(nil),          // 9: nexora.control.v1.Rejected
+	(*ServerMessage)(nil),     // 10: nexora.control.v1.ServerMessage
+	(*VersionAhead)(nil),      // 11: nexora.control.v1.VersionAhead
+	(*ConfigSnapshot)(nil),    // 12: nexora.control.v1.ConfigSnapshot
+	(*ResolverConfig)(nil),    // 13: nexora.control.v1.ResolverConfig
+	(*CacheConfig)(nil),       // 14: nexora.control.v1.CacheConfig
+	(*Upstream)(nil),          // 15: nexora.control.v1.Upstream
+	(*BlobRef)(nil),           // 16: nexora.control.v1.BlobRef
+	(*FilterConfig)(nil),      // 17: nexora.control.v1.FilterConfig
+	(*TelemetryConfig)(nil),   // 18: nexora.control.v1.TelemetryConfig
+	(*GetBlobRequest)(nil),    // 19: nexora.control.v1.GetBlobRequest
+	(*BlobChunk)(nil),         // 20: nexora.control.v1.BlobChunk
+	(*UpstreamStatus)(nil),    // 21: nexora.control.v1.UpstreamStatus
+	(*Stats)(nil),             // 22: nexora.control.v1.Stats
+	(*PolicyGroup)(nil),       // 23: nexora.control.v1.PolicyGroup
+	(*RewriteRule)(nil),       // 24: nexora.control.v1.RewriteRule
+	(*RewriteSet)(nil),        // 25: nexora.control.v1.RewriteSet
+	(*TlsMaterial)(nil),       // 26: nexora.control.v1.TlsMaterial
+	(*TlsMaterialResult)(nil), // 27: nexora.control.v1.TlsMaterialResult
+	nil,                       // 28: nexora.control.v1.Stats.ExportDroppedTotalEntry
 }
 var file_nexora_control_v1_control_proto_depIdxs = []int32{
-	6,  // 0: nexora.control.v1.EngineMessage.hello:type_name -> nexora.control.v1.Hello
-	7,  // 1: nexora.control.v1.EngineMessage.applied:type_name -> nexora.control.v1.Applied
-	8,  // 2: nexora.control.v1.EngineMessage.rejected:type_name -> nexora.control.v1.Rejected
-	21, // 3: nexora.control.v1.EngineMessage.stats:type_name -> nexora.control.v1.Stats
-	11, // 4: nexora.control.v1.ServerMessage.snapshot:type_name -> nexora.control.v1.ConfigSnapshot
-	10, // 5: nexora.control.v1.ServerMessage.version_ahead:type_name -> nexora.control.v1.VersionAhead
-	12, // 6: nexora.control.v1.ConfigSnapshot.resolver:type_name -> nexora.control.v1.ResolverConfig
-	13, // 7: nexora.control.v1.ConfigSnapshot.cache:type_name -> nexora.control.v1.CacheConfig
-	14, // 8: nexora.control.v1.ConfigSnapshot.upstreams:type_name -> nexora.control.v1.Upstream
-	16, // 9: nexora.control.v1.ConfigSnapshot.filter:type_name -> nexora.control.v1.FilterConfig
-	17, // 10: nexora.control.v1.ConfigSnapshot.telemetry:type_name -> nexora.control.v1.TelemetryConfig
-	0,  // 11: nexora.control.v1.ResolverConfig.strategy:type_name -> nexora.control.v1.UpstreamStrategy
-	1,  // 12: nexora.control.v1.Upstream.protocol:type_name -> nexora.control.v1.UpstreamProtocol
-	15, // 13: nexora.control.v1.FilterConfig.blocklists:type_name -> nexora.control.v1.BlobRef
-	15, // 14: nexora.control.v1.FilterConfig.allowlists:type_name -> nexora.control.v1.BlobRef
-	2,  // 15: nexora.control.v1.FilterConfig.block_mode:type_name -> nexora.control.v1.BlockMode
-	20, // 16: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
-	22, // 17: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
-	3,  // 18: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
-	5,  // 19: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
-	18, // 20: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
-	4,  // 21: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
-	9,  // 22: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
-	19, // 23: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
-	21, // [21:24] is the sub-list for method output_type
-	18, // [18:21] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	7,  // 0: nexora.control.v1.EngineMessage.hello:type_name -> nexora.control.v1.Hello
+	8,  // 1: nexora.control.v1.EngineMessage.applied:type_name -> nexora.control.v1.Applied
+	9,  // 2: nexora.control.v1.EngineMessage.rejected:type_name -> nexora.control.v1.Rejected
+	22, // 3: nexora.control.v1.EngineMessage.stats:type_name -> nexora.control.v1.Stats
+	27, // 4: nexora.control.v1.EngineMessage.tls_material_result:type_name -> nexora.control.v1.TlsMaterialResult
+	12, // 5: nexora.control.v1.ServerMessage.snapshot:type_name -> nexora.control.v1.ConfigSnapshot
+	11, // 6: nexora.control.v1.ServerMessage.version_ahead:type_name -> nexora.control.v1.VersionAhead
+	26, // 7: nexora.control.v1.ServerMessage.tls_material:type_name -> nexora.control.v1.TlsMaterial
+	13, // 8: nexora.control.v1.ConfigSnapshot.resolver:type_name -> nexora.control.v1.ResolverConfig
+	14, // 9: nexora.control.v1.ConfigSnapshot.cache:type_name -> nexora.control.v1.CacheConfig
+	15, // 10: nexora.control.v1.ConfigSnapshot.upstreams:type_name -> nexora.control.v1.Upstream
+	17, // 11: nexora.control.v1.ConfigSnapshot.filter:type_name -> nexora.control.v1.FilterConfig
+	18, // 12: nexora.control.v1.ConfigSnapshot.telemetry:type_name -> nexora.control.v1.TelemetryConfig
+	23, // 13: nexora.control.v1.ConfigSnapshot.policy_groups:type_name -> nexora.control.v1.PolicyGroup
+	25, // 14: nexora.control.v1.ConfigSnapshot.rewrite_sets:type_name -> nexora.control.v1.RewriteSet
+	0,  // 15: nexora.control.v1.ResolverConfig.strategy:type_name -> nexora.control.v1.UpstreamStrategy
+	1,  // 16: nexora.control.v1.Upstream.protocol:type_name -> nexora.control.v1.UpstreamProtocol
+	16, // 17: nexora.control.v1.FilterConfig.blocklists:type_name -> nexora.control.v1.BlobRef
+	16, // 18: nexora.control.v1.FilterConfig.allowlists:type_name -> nexora.control.v1.BlobRef
+	2,  // 19: nexora.control.v1.FilterConfig.block_mode:type_name -> nexora.control.v1.BlockMode
+	21, // 20: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
+	28, // 21: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
+	16, // 22: nexora.control.v1.PolicyGroup.blocklists:type_name -> nexora.control.v1.BlobRef
+	3,  // 23: nexora.control.v1.RewriteRule.type:type_name -> nexora.control.v1.RewriteType
+	24, // 24: nexora.control.v1.RewriteSet.rules:type_name -> nexora.control.v1.RewriteRule
+	4,  // 25: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
+	6,  // 26: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
+	19, // 27: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
+	5,  // 28: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
+	10, // 29: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
+	20, // 30: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
+	28, // [28:31] is the sub-list for method output_type
+	25, // [25:28] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_nexora_control_v1_control_proto_init() }
@@ -1770,18 +2277,20 @@ func file_nexora_control_v1_control_proto_init() {
 		(*EngineMessage_Applied)(nil),
 		(*EngineMessage_Rejected)(nil),
 		(*EngineMessage_Stats)(nil),
+		(*EngineMessage_TlsMaterialResult)(nil),
 	}
 	file_nexora_control_v1_control_proto_msgTypes[6].OneofWrappers = []any{
 		(*ServerMessage_Snapshot)(nil),
 		(*ServerMessage_VersionAhead)(nil),
+		(*ServerMessage_TlsMaterial)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nexora_control_v1_control_proto_rawDesc), len(file_nexora_control_v1_control_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   20,
+			NumEnums:      4,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

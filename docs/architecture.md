@@ -1,7 +1,7 @@
 # Nexora architecture
 
 The spec is `.procoder/specs/nexora-v1.md` (what and why). This document is the
-settled *how*: every plan and every implementation task inherits it. Change it
+settled _how_: every plan and every implementation task inherits it. Change it
 first, then the code.
 
 ## Repository layout
@@ -20,7 +20,11 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/upstream/{mod,udp,tcp,dot,doh}.rs forwarding transports + health
   src/inflight.rs                       cross-worker request coalescing
   src/runtime.rs                        applied-config state (ArcSwap<Runtime>)
-  src/server/{mod,udp,tcp}.rs           per-core listeners (M2 adds dot, doh, doq)
+  src/server/{mod,udp,tcp}.rs           per-core listeners, query pipeline
+  src/server/{dot,doh,doq}.rs           (M2) encrypted client listeners
+  src/server/{stream,proxy,tls,rewrite}.rs (M2) shared length-prefixed stream server,
+                                        PROXY v2 parser, in-memory certificate store,
+                                        rewrite answer synthesis
   src/control.rs                        management-plane client (enroll, stream, blobs)
   src/snapshot.rs                       snapshot validation + persistence
   src/telemetry/{metrics,querylog,otlp}.rs
@@ -109,6 +113,16 @@ metrics_listen = "0.0.0.0:9153"
 workers = 0                                  # 0 = number of CPUs
 standalone_snapshot = ""                     # path to a binary ConfigSnapshot; disables mgmt
 standalone_blob_dir = ""                     # blobs for standalone mode
+# M2: encrypted client transports
+listen_dot = []                              # e.g. ["0.0.0.0:853"]
+listen_doh = []                              # e.g. ["0.0.0.0:443"]
+listen_doq = []                              # e.g. ["0.0.0.0:853"] (UDP)
+doh_path = "/dns-query"                      # must start with '/'
+proxy_protocol_dot = false                   # expect a PROXY v2 header on DoT connections
+proxy_protocol_doh = false                   # expect a PROXY v2 header on DoH connections
+proxy_protocol_trusted_cidrs = []            # required (non-empty) when either flag is true
+tls_cert_file = ""                           # standalone mode only; set together with tls_key_file
+tls_key_file = ""                            # standalone mode only; reloaded on SIGHUP
 ```
 
 In standalone mode `SIGHUP` reloads the snapshot file. Listen addresses are
@@ -217,7 +231,16 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `nexora_upstream_failures_total{upstream}`,
   `nexora_upstream_mismatched_replies_total`,
   `nexora_export_dropped_total{signal}`, `nexora_config_version`,
-  `nexora_control_connected`.
+  `nexora_control_connected`. M2 adds `transport` values `dot|doh|doq` to
+  `nexora_queries_total` and:
+  `nexora_tls_handshakes_total{transport,result="ok|failed|no_certificate"}`,
+  `nexora_encrypted_connections{transport}`,
+  `nexora_doh_requests_total{method="GET|POST|other",status}`,
+  `nexora_doq_protocol_errors_total`,
+  `nexora_proxy_protocol_rejected_total{transport="dot|doh",reason="untrusted_peer|invalid_header|timeout"}`,
+  `nexora_tls_certificate_not_after_seconds`,
+  `nexora_tls_material_updates_total{result="applied|rejected"}`,
+  `nexora_filter_rewritten_total`.
 - Query log: each worker pushes a fixed-size `QueryRecord` into a lock-free
   `crossbeam_queue::ArrayQueue` (capacity 65536); on full, the record is
   dropped and `nexora_export_dropped_total{signal="logs"}` increments.
@@ -247,6 +270,15 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
 - `EngineControl.GetBlob` — mTLS server stream of 1 MiB chunks.
 - Engine identity: ECDSA P-256 key generated locally; CSR in `Enroll`; the
   certificate CN is the engine UUID. Stored under `state_dir/identity/`.
+- Field numbering: fields a milestone adds to an existing message use its
+  own range — M2 300-399, M3 100-199, M4 200-299, M5 500 and up; new messages
+  number from 1. M2 fields added to M1 messages use numbers 300-399;
+  `TlsMaterial` travels only on `Connect` and is held in engine memory.
+- M2: `ConfigSnapshot.policy_groups` / `rewrite_sets` /
+  `global_rewrite_set_ids` carry per-client policy (safe search is expanded by
+  the management plane into rewrite sets); `Hello.tls_fingerprint_sha256`
+  reports the installed DNS serving certificate; the server sends
+  `TlsMaterial` when it differs and the engine answers `TlsMaterialResult`.
 
 ## Management plane
 
@@ -262,13 +294,20 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `NEXORA_OPENSEARCH_URL`, `NEXORA_OPENSEARCH_INDEX`
   (`nexora-querylog-*`), `NEXORA_OPENSEARCH_USERNAME`,
   `NEXORA_OPENSEARCH_PASSWORD_FILE`, `NEXORA_OTLP_ENDPOINT`,
+  `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`,
+  `NEXORA_DNS_TLS_RELOAD_INTERVAL` (`30s`) (M2; the DNS serving certificate
+  for DoT/DoH/DoQ, pushed to engines, never stored in PostgreSQL),
   `NEXORA_KEK_FILE` (M4), `NEXORA_PKCS11_MODULE` / `_TOKEN_LABEL` /
   `_PIN_FILE` (M4).
 - Secrets come from files, never from the database in plaintext.
-- `nexora-mgmt serve | migrate | ca init --out <dir> | user create --admin`.
+- `nexora-mgmt serve | migrate | ca init --out <dir> | user create --admin`;
+  M2 adds
+  `ca issue-dns --ca-cert <file> --ca-key <file> --names <list> [--days 90] --out <dir>`.
+- M2 management metrics: `nexora_mgmt_dns_tls_reload_errors_total`,
+  `nexora_mgmt_dns_tls_not_after_seconds`.
 - Every config mutation runs in one transaction: change rows -> write audit
   row -> build snapshot -> insert `config_versions` -> `pg_notify(
-  'nexora_config', version)`. Every instance LISTENs and pushes to the engines
+'nexora_config', version)`. Every instance LISTENs and pushes to the engines
   connected to it.
 - Blocklist fetches take `pg_try_advisory_lock(hashtext('filter_list:'||id))`
   so only one instance fetches each list.
@@ -296,11 +335,12 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
 
 Vite 8, React 19, react-router 7, TanStack Query 5, Tailwind 4, Radix-based
 components ported from the first Nexora (`components/ui`), openapi-typescript
-+ openapi-fetch client generated from `mgmt/api/openapi.yaml`, Recharts.
-Routes: `/login`, `/setup`, `/` (dashboard), `/query-log`, `/upstreams`,
-`/access-control`, `/filtering`, `/policies` (M2), `/rewrites` (M2), `/zones`
-(M4), `/rpz` (M3), `/dnssec` (M3/M4), `/engines`, `/users`, `/api-tokens`,
-`/audit`, `/settings`. The build is embedded into `nexora-mgmt`.
+
+- openapi-fetch client generated from `mgmt/api/openapi.yaml`, Recharts.
+  Routes: `/login`, `/setup`, `/` (dashboard), `/query-log`, `/upstreams`,
+  `/access-control`, `/filtering`, `/policies` (M2), `/rewrites` (M2), `/zones`
+  (M4), `/rpz` (M3), `/dnssec` (M3/M4), `/engines`, `/users`, `/api-tokens`,
+  `/audit`, `/settings`. The build is embedded into `nexora-mgmt`.
 
 ## End-to-end harness
 
