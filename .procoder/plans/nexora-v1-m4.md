@@ -617,6 +617,7 @@ func SortRecords(rs []Record) {
 
 - [ ] Implement `rr.go`: `FromRR` packs with `dns.PackRR(rr, buf, 0, nil, false)` into a 65535+255-octet buffer, measures the owner with `dns.PackDomainName(rr.Header().Name, tmp, 0, nil, false)`, and slices owner / type / class / ttl / rdlen / rdata from the packed bytes; `ToRR` re-assembles the wire RR and calls `dns.UnpackRR(b, 0)`.
 - [ ] Implement `format.go`. Encoder: validate origin (non-root, ≤ 255 octets); for each record validate owner is `origin` or ends with `origin` at a label boundary (case-insensitive), class 1, rdata ≤ 65535; sort full images with `SortRecords`; for deltas require `Deleted[0]` and `Added[0]` to be SOA at the origin, keep them first and sort the rest. Decoder: check magic `NZF1`, kind ∈ {1,2}, reserved 0; reject `count_a + count_b > remaining/11`; validate every owner (no octet ≥ 0x40 as a label length, labels ≤ 63, total ≤ 255, within origin); reject `rdlen` beyond the buffer and any trailing bytes; for kind 1 require exactly one SOA whose owner equals origin and whose serial field equals the header serial.
+      Built (as implemented): the encoder applies the same checks as the decoder (one apex SOA carrying the header serial in full images; delta `Deleted[0]`/`Added[0]` SOA serials equal `FromSerial`/`ToSerial`) so it never emits a blob the decoder refuses; the decoder also rejects full images with non-zero `from_serial`/`count_b` and deltas whose leading SOAs are missing or disagree with the header; all decode errors wrap `nzf.ErrMalformed`. Adding the envelope `oneof` variants makes `control.rs`'s `ServerMsg` match non-exhaustive, so Task 1 adds one no-op arm `Some(ServerMsg::KeyMaterial(_) | ServerMsg::UpdateResult(_)) => {}` (replaced in Task 4).
 - [ ] Implement `blob.go` with `zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderCRC(true))`, `EncodeAll`, `sha256.Sum256` over the compressed bytes, `hex.EncodeToString`; `Decompress` uses `zstd.NewReader(nil, zstd.WithDecoderMaxMemory(uint64(maxSize)))` and `DecodeAll`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/nzf/ -count=1 -update` once to write the four goldens, then `scripts/dev-exec.sh go test ./mgmt/internal/nzf/ -count=1` — expect PASS.
 - [ ] Commit: `git add proto gen mgmt/internal/control/contract_m4_test.go mgmt/internal/nzf mgmt/internal/zone/serial*.go testdata/nzf && git commit -m "feat(m4): control contract for authoritative zones and NZF1 zone format"`.
@@ -656,7 +657,7 @@ pub fn from_ascii(s: &str) -> Option<Vec<u8>>;             // no escapes; tests 
 pub struct RecordRef<'a> { pub owner: &'a [u8], pub rtype: u16, pub class: u16, pub ttl: u32, pub rdata: &'a [u8] }
 pub enum Kind { Full, Delta }
 pub struct Parsed<'a> { pub kind: Kind, pub origin: &'a [u8], pub serial: u32, pub from_serial: u32, pub a: Vec<RecordRef<'a>>, pub b: Vec<RecordRef<'a>> }
-pub enum NzfError { Truncated, BadMagic, BadKind, BadName, OutOfZone, Trailing, TooLarge, Zstd(String) }
+pub enum NzfError { Truncated, BadMagic, BadKind, BadName, OutOfZone, BadRecord, Trailing, TooLarge, Zstd(String) } // BadRecord: class != 1, or a full image with delta header fields
 pub fn parse(buf: &[u8]) -> Result<Parsed<'_>, NzfError>;
 pub fn decompress(blob: &[u8], max_size: usize) -> Result<Vec<u8>, NzfError>;
 
@@ -666,13 +667,14 @@ pub struct Node { pub owner: Box<[u8]>, pub rrsets: Vec<RRset>, pub flags: u8 }
 pub const NODE_CUT: u8 = 1; pub const NODE_WILDCARD_CHILD: u8 = 2; pub const NODE_BELOW_CUT: u8 = 4;
 pub struct OwnedRecord { pub owner: Box<[u8]>, pub rtype: u16, pub ttl: u32, pub rdata: Box<[u8]> }
 pub struct DeltaRecords { pub from_serial: u32, pub to_serial: u32, pub deleted: Vec<OwnedRecord>, pub added: Vec<OwnedRecord> }
-pub enum ZoneError { NotFull, NotDelta, NoSoa, OriginMismatch, SerialMismatch { have: u32, delta_from: u32 }, DeleteAbsent, BadRrsig }
+pub enum ZoneError { NotFull, NotDelta, NoSoa, BadSoa, OriginMismatch, SerialMismatch { have: u32, delta_from: u32 }, DeleteAbsent, BadRrsig } // BadSoa: SOA RDATA malformed or serial != header serial
 impl Zone {
     pub fn from_image(p: &nzf::Parsed<'_>) -> Result<Zone, ZoneError>;
     pub fn apply(&self, d: &nzf::Parsed<'_>) -> Result<Zone, ZoneError>;
     pub fn origin(&self) -> &[u8]; pub fn origin_labels(&self) -> usize; pub fn serial(&self) -> u32;
     pub fn apex(&self) -> &Node; pub fn soa_rdata(&self) -> &[u8];
     pub fn node(&self, wire: &[u8]) -> Option<&Node>;
+    pub fn node_by_key(&self, key: &[u8]) -> Option<&Node>; // canonical key lookup (Task 3 lookup)
     pub fn records_sorted(&self) -> Vec<OwnedRecord>; // canonical order, RRSIGs as records
     pub fn is_signed(&self) -> bool;                    // apex has DNSKEY
     pub fn nsec_covering(&self, key: &[u8]) -> Option<&Node>;
@@ -803,7 +805,7 @@ pub fn is_subdomain(child: &[u8], parent: &[u8]) -> bool {
 }
 ```
 
-- [ ] Implement `nzf.rs` to the Task 1 layout: fixed-size header reads with `Truncated` on short input; origin and every owner validated by a walk that rejects length octets ≥ 0x40 (`BadName`), labels > 63, names > 255 octets or running past their declared length; owners checked with `is_subdomain(owner, origin)` (`OutOfZone`); `count_a + count_b` bounded by `remaining / 11` (`TooLarge`); leftover bytes → `Trailing`. `decompress` uses `zstd::bulk::decompress(blob, max_size)` (zstd is already an M1 dependency) mapping errors to `Zstd`.
+- [ ] Implement `nzf.rs` to the Task 1 layout: fixed-size header reads with `Truncated` on short input; origin and every owner validated by a walk that rejects length octets ≥ 0x40 (`BadName`), labels > 63, names > 255 octets or running past their declared length; owners checked with `is_subdomain(owner, origin)` (`OutOfZone`); `count_a + count_b` bounded by `remaining / 11` (`TooLarge`); leftover bytes → `Trailing`. `decompress` streams through `zstd::stream::read::Decoder` limited to `max_size + 1` octets (`bulk::decompress` would allocate `max_size` up front), mapping errors to `Zstd` and oversize output to `TooLarge`. Built (as implemented): class != 1 → `BadRecord`; the cargo-fuzz target `engine/fuzz/fuzz_targets/nzf_parse.rs` (seed corpus `engine/fuzz/corpus/nzf_parse/`) runs `parse`, `Zone::from_image` and `apply` on arbitrary bytes.
 - [ ] Implement `zone.rs`. Storage: `nodes: BTreeMap<Box<[u8]>, Arc<Node>>` keyed by `canon_key(owner)`, `nsec: BTreeSet<Box<[u8]>>` (keys of nodes that carry NSEC), `nsec3: BTreeMap<[u8; 20], Box<[u8]>>` (hash decoded from the base32hex first label → node key), `nsec3param: Option<Box<[u8]>>`. `Node::get` ignores RRsets whose `rdata` is empty (signature-only placeholders). Insert and finalize:
 
 ```rust
@@ -887,6 +889,8 @@ fn finalize(&mut self) -> Result<(), ZoneError> {
 ```
 
 The `cuts.iter().any` scans are O(nodes × cuts); replace them with a single ordered pass (keep a stack of the most recent cut key and test `starts_with`) — the BTreeMap iterates in canonical order so every occluded name directly follows its cut. `decode_b32hex_label` decodes a 32-character RFC 4648 base32hex first label (case-insensitive) into 20 bytes, `None` otherwise. `from_image` requires `Kind::Full`, inserts all records, sets `serial`, `origin_labels`, and calls `finalize`. `apply` requires `Kind::Delta`, `origin` equality (case-insensitive) and `from_serial == self.serial`, clones the `BTreeMap` (Arc clones only), removes each deleted record (RRSIG from `sigs` of its covered type, others from `rdata`; missing → `DeleteAbsent`), inserts added records, sets `serial = p.serial` and calls `finalize`. `nsec_covering(key)` returns the greatest NSEC key ≤ `key`, wrapping to the last entry; `nsec3_covering(h)` likewise over hashes with strict `<` (a match is returned by `nsec3_node`).
+
+Built (as implemented): `finalize` also rejects an apex SOA whose serial differs from the zone serial (`BadSoa`) and an SOA at any other node (`NoSoa`); RRSIG RDATA shorter than 19 octets (18 fixed + root signer) is `BadRrsig`; `apply` returns a zone with empty `deltas` and `expired = false` (the loader sets both); `nodes_below(key)` yields strict descendants; `records_sorted` gives RRSIG records their RRset's TTL. `zone_tests.rs` adds Go/Rust canonical-order parity over all goldens, parser bounds (every truncated prefix, counts, out-of-zone, class, root origin, decompress limit), SOA/delete/RRSIG errors and the NSEC/NSEC3 indexes.
 
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib authoritative::zone_tests` — expect PASS.
 - [ ] Commit: `git add engine/src/lib.rs engine/src/authoritative && git commit -m "feat(engine): NZF1 parser and in-memory authoritative zone model"`.

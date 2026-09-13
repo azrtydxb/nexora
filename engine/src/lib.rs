@@ -1,4 +1,5 @@
 pub mod acl;
+pub mod authoritative;
 pub mod bootstrap;
 pub mod cache;
 pub mod clock;

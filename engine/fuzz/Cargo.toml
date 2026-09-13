@@ -18,5 +18,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "nzf_parse"
+path = "fuzz_targets/nzf_parse.rs"
+test = false
+doc = false
+bench = false
+
 # Own workspace: `exclude` in the root manifest does not apply under the `engine` member.
 [workspace]

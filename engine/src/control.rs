@@ -554,6 +554,8 @@ async fn session(
             }
             // The secrets are never logged and never persisted.
             Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),
+            // M4 contract (Task 1); handled once the authoritative state is wired (M4 Task 4).
+            Some(ServerMsg::KeyMaterial(_) | ServerMsg::UpdateResult(_)) => {}
             None => {}
         }
     };
