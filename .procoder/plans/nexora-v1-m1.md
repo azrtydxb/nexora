@@ -656,38 +656,53 @@ Files:
 - `engine/src/wire.rs` (create) — `parse_query`, `NameKey`, response writers, RR walker
 - `engine/src/edns.rs` (create) — OPT parsing/writing, DNS cookies (RFC 7873/9018), size limits
 - `engine/src/lib.rs` (modify) — add `pub mod wire; pub mod edns;`
-- `engine/fuzz/Cargo.toml` (create) — cargo-fuzz crate `nexora-engine-fuzz`
+- `engine/fuzz/Cargo.toml` (create) — cargo-fuzz crate `nexora-engine-fuzz` with its own empty `[workspace]` table (the root `exclude` does not apply to a path under the `engine` member)
+- `engine/fuzz/Cargo.lock` (create) — seeded from the root `Cargo.lock`, adds `libfuzzer-sys`
+- `engine/fuzz/.gitignore` (create) — `target/`, `artifacts/`, `coverage/`
 - `engine/fuzz/fuzz_targets/parse_query.rs` (create) — fuzz target
 - `engine/fuzz/corpus/parse_query/` (create) — seed queries (`a.bin`, `edns_cookie.bin`, `compressed_name.bin`, `long_name.bin`) written by the test in this task
 - `.github/workflows/fuzz.yml` (create) — 1 hour `cargo fuzz run parse_query`
 
 Interfaces (produced; consumed by Tasks 4, 5, 7, 8):
 
-- `pub struct NameKey { len: u8, buf: [u8; 255] }` — lowercase uncompressed wire name; `impl NameKey { pub fn as_wire(&self) -> &[u8]; pub fn from_wire_lowercase(wire: &[u8]) -> Option<NameKey> }`; derives `Clone, Copy, PartialEq, Eq, Hash`.
-- `pub struct QueryView<'a> { pub id: u16, pub flags: u16, pub qname: &'a [u8], pub key: NameKey, pub qtype: u16, pub qclass: u16, pub question_end: usize, pub opt: Option<edns::OptView<'a>> }` with `pub fn rd(&self) -> bool; pub fn cd(&self) -> bool; pub fn do_bit(&self) -> bool`.
+- `pub struct NameKey { len: u8, buf: [u8; 255] }` — lowercase uncompressed wire name; `impl NameKey { pub fn as_wire(&self) -> &[u8]; pub fn from_wire_lowercase(wire: &[u8]) -> Option<NameKey> }`; derives `Clone, Copy`; `PartialEq, Eq, Hash, Debug` are implemented over `as_wire()` (only the used prefix is compared and hashed).
+- `pub struct QueryView<'a> { pub id: u16, pub flags: u16, pub qname: &'a [u8], pub key: NameKey, pub qtype: u16, pub qclass: u16, pub question_end: usize, pub opt: Option<edns::OptView<'a>> }` (derives `Debug`) with `pub fn rd(&self) -> bool; pub fn cd(&self) -> bool; pub fn do_bit(&self) -> bool`.
 - `#[derive(Debug, PartialEq, Eq, thiserror::Error)] pub enum ParseError { #[error("short")] TooShort, #[error("formerr")] FormErr, #[error("notimp")] NotImp, #[error("response")] IsResponse }`.
 - `pub fn parse_query(buf: &[u8]) -> Result<QueryView<'_>, ParseError>`.
-- `pub fn write_error_reply(query: &[u8], rcode: u8, out: &mut [u8]) -> Option<usize>` — header-only reply echoing ID/opcode/RD (question echoed when it parses); `None` for `< 12` bytes.
-- `pub fn write_rcode_reply(q: &QueryView<'_>, rcode: u8, out: &mut [u8], opt: Option<&edns::ReplyOpt>) -> usize`.
+- `pub fn write_error_reply(query: &[u8], rcode: u8, out: &mut [u8]) -> Option<usize>` — header-only reply echoing ID/opcode/RD (question echoed when it parses); `None` for `< 12` bytes or an `out` shorter than 12 bytes.
+- `pub fn write_rcode_reply(q: &QueryView<'_>, rcode: u8, out: &mut [u8], opt: Option<&edns::ReplyOpt>) -> usize` (returns 0 when `out` is too small; same for `write_synth_reply`).
 - `pub fn write_synth_reply(q: &QueryView<'_>, rcode: u8, answer: Option<SynthAnswer>, ttl: u32, out: &mut [u8], opt: Option<&edns::ReplyOpt>) -> usize` with `pub enum SynthAnswer { A([u8; 4]), Aaaa([u8; 16]) }`.
-- `pub struct ResponseInfo { pub rcode: u8, pub tc: bool, pub min_ttl: Option<u32>, pub negative_ttl: Option<u32>, pub ttl_offsets: Vec<u16>, pub opt_range: Option<std::ops::Range<usize>>, pub cname_targets: Vec<NameKey>, pub ancount: u16 }` and `pub fn walk_response(msg: &[u8], expect: &QueryView<'_>) -> Result<ResponseInfo, ParseError>` (miss path; allocation allowed).
+- `pub struct ResponseInfo { pub rcode: u8, pub tc: bool, pub min_ttl: Option<u32>, pub negative_ttl: Option<u32>, pub ttl_offsets: Vec<u16>, pub opt_range: Option<std::ops::Range<usize>>, pub cname_targets: Vec<NameKey>, pub ancount: u16 }` (derives `Debug, Clone, PartialEq, Eq`) and `pub fn walk_response(msg: &[u8], expect: &QueryView<'_>) -> Result<ResponseInfo, ParseError>` (miss path; allocation allowed).
 - `pub fn question_matches(msg: &[u8], qname_key: &NameKey, qtype: u16, qclass: u16) -> bool`.
-- `edns.rs`: `pub struct OptView<'a> { pub udp_size: u16, pub version: u8, pub do_bit: bool, pub client_cookie: Option<[u8; 8]>, pub server_cookie: Option<&'a [u8]>, pub bad_cookie_len: bool }`; `pub struct ReplyOpt { pub udp_size: u16, pub do_bit: bool, pub ext_rcode: u8, pub cookie: Option<([u8; 8], [u8; 16])> }`; `pub struct CookieSecret(pub [u8; 16])`; `pub fn server_cookie(secret: &CookieSecret, client_cookie: &[u8; 8], client: std::net::IpAddr, now_secs: u32) -> [u8; 16]`; `pub fn write_opt(out: &mut [u8], opt: &ReplyOpt) -> usize` (returns 0 when `out` is too small); `pub const OPT_BASE_LEN: usize = 11; pub const OPT_COOKIE_LEN: usize = 4 + 24;`; `pub enum Transport { Udp, Tcp }`; `pub fn reply_limit(opt: Option<&OptView<'_>>, transport: Transport) -> usize`.
+- `edns.rs`: `pub struct OptView<'a> { pub udp_size: u16, pub version: u8, pub do_bit: bool, pub client_cookie: Option<[u8; 8]>, pub server_cookie: Option<&'a [u8]>, pub bad_cookie_len: bool }`; `pub struct ReplyOpt { pub udp_size: u16, pub do_bit: bool, pub ext_rcode: u8, pub cookie: Option<([u8; 8], [u8; 16])> }` with `pub fn wire_len(&self) -> usize` (both derive `Clone, Copy, Debug, PartialEq, Eq`); `pub fn parse_opt(rr: &[u8]) -> Result<(OptView<'_>, usize), wire::ParseError>`; `pub struct CookieSecret(pub [u8; 16])`; `pub fn server_cookie(secret: &CookieSecret, client_cookie: &[u8; 8], client: std::net::IpAddr, now_secs: u32) -> [u8; 16]`; `pub fn write_opt(out: &mut [u8], opt: &ReplyOpt) -> usize` (returns 0 when `out` is too small); `pub const OPT_BASE_LEN: usize = 11; pub const OPT_COOKIE_LEN: usize = 4 + 24;`; `pub enum Transport { Udp, Tcp }`; `pub fn reply_limit(opt: Option<&OptView<'_>>, transport: Transport) -> usize`.
 
-- [ ] Create `engine/src/wire.rs` containing only this test module (add `pub mod wire; pub mod edns;` to `lib.rs` now so the tests compile against the missing items):
+- [ ] Create `engine/src/wire.rs` containing only this test module (add `pub mod wire; pub mod edns;` to `lib.rs` now so the tests compile against the missing items). The tests use hickory-proto 0.26's API: `Message::new(id, MessageType, OpCode)` and the public `metadata`, `queries`, `answers` fields, `add_authority`, and `BinDecodable` for `from_bytes`; `write_fuzz_seeds` is the seed-corpus writer described below:
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
+    use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query, ResponseCode};
     use hickory_proto::rr::{Name, RecordType};
-    use hickory_proto::serialize::binary::BinEncodable;
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
     fn query(name: &str, rtype: RecordType) -> Vec<u8> {
-        let mut m = Message::new();
-        m.set_id(0xbeef).set_message_type(MessageType::Query).set_op_code(OpCode::Query).set_recursion_desired(true);
+        let mut m = Message::new(0xbeef, MessageType::Query, OpCode::Query);
+        m.metadata.recursion_desired = true;
         m.add_query(Query::query(Name::from_ascii(name).unwrap(), rtype));
+        m.to_bytes().unwrap()
+    }
+
+    fn edns_cookie_query() -> Vec<u8> {
+        let mut m = Message::from_bytes(&query("example.com.", RecordType::A)).unwrap();
+        let mut e = Edns::new();
+        e.set_max_payload(4096).set_dnssec_ok(true);
+        e.options_mut()
+            .insert(hickory_proto::rr::rdata::opt::EdnsOption::Unknown(
+                10,
+                vec![1, 2, 3, 4, 5, 6, 7, 8],
+            ));
+        m.set_edns(e);
         m.to_bytes().unwrap()
     }
 
@@ -737,7 +752,10 @@ mod tests {
         q.extend_from_slice(&[0, 0, 1, 0, 1]);
         assert_eq!(parse_query(&q).unwrap_err(), ParseError::FormErr);
         let mut q = vec![0xbe, 0xef, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
-        for _ in 0..5 { q.push(63); q.extend_from_slice(&[b'b'; 63]); }
+        for _ in 0..5 {
+            q.push(63);
+            q.extend_from_slice(&[b'b'; 63]);
+        }
         q.extend_from_slice(&[0, 0, 1, 0, 1]);
         assert_eq!(parse_query(&q).unwrap_err(), ParseError::FormErr);
     }
@@ -757,17 +775,15 @@ mod tests {
         let mut q = vec![0xbe, 0xef, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
         q.extend_from_slice(&[3, b'a', b'.', 0xff, 3, b'c', b'o', b'm', 0, 0, 1, 0, 1]);
         let v = parse_query(&q).unwrap();
-        assert_eq!(v.key.as_wire(), &[3, b'a', b'.', 0xff, 3, b'c', b'o', b'm', 0]);
+        assert_eq!(
+            v.key.as_wire(),
+            &[3, b'a', b'.', 0xff, 3, b'c', b'o', b'm', 0]
+        );
     }
 
     #[test]
     fn edns_opt_with_cookie_is_parsed() {
-        let mut m = Message::from_bytes(&query("example.com.", RecordType::A)).unwrap();
-        let mut e = Edns::new();
-        e.set_max_payload(4096).set_dnssec_ok(true);
-        e.options_mut().insert(hickory_proto::rr::rdata::opt::EdnsOption::Unknown(10, vec![1, 2, 3, 4, 5, 6, 7, 8]));
-        m.set_edns(e);
-        let bytes = m.to_bytes().unwrap();
+        let bytes = edns_cookie_query();
         let v = parse_query(&bytes).unwrap();
         let opt = v.opt.unwrap();
         assert_eq!(opt.udp_size, 4096);
@@ -790,20 +806,37 @@ mod tests {
 
     #[test]
     fn walk_response_collects_ttl_offsets_and_negative_ttl() {
-        use hickory_proto::rr::{rdata::SOA, RData, Record};
+        use hickory_proto::rr::rdata::SOA;
+        use hickory_proto::rr::{RData, Record};
         let qb = query("nx.example.com.", RecordType::A);
         let qv = parse_query(&qb).unwrap();
         let mut r = Message::from_bytes(&qb).unwrap();
-        r.set_message_type(MessageType::Response).set_response_code(hickory_proto::op::ResponseCode::NXDomain);
-        let soa = SOA::new(Name::from_ascii("ns.example.com.").unwrap(), Name::from_ascii("h.example.com.").unwrap(), 1, 2, 3, 4, 300);
-        r.add_name_server(Record::from_rdata(Name::from_ascii("example.com.").unwrap(), 900, RData::SOA(soa)));
+        r.metadata.message_type = MessageType::Response;
+        r.metadata.response_code = ResponseCode::NXDomain;
+        let soa = SOA::new(
+            Name::from_ascii("ns.example.com.").unwrap(),
+            Name::from_ascii("h.example.com.").unwrap(),
+            1,
+            2,
+            3,
+            4,
+            300,
+        );
+        r.add_authority(Record::from_rdata(
+            Name::from_ascii("example.com.").unwrap(),
+            900,
+            RData::SOA(soa),
+        ));
         let bytes = r.to_bytes().unwrap();
         let info = walk_response(&bytes, &qv).unwrap();
         assert_eq!(info.rcode, 3);
         assert_eq!(info.negative_ttl, Some(300));
         assert_eq!(info.ttl_offsets.len(), 1);
         let off = info.ttl_offsets[0] as usize;
-        assert_eq!(u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap()), 900);
+        assert_eq!(
+            u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap()),
+            900
+        );
     }
 
     #[test]
@@ -814,8 +847,51 @@ mod tests {
         r[2] |= 0x80;
         r[7] = 1; // ANCOUNT=1
         let loop_at = r.len();
-        r.extend_from_slice(&[0xc0, loop_at as u8, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 1, 2, 3, 4]);
+        r.extend_from_slice(&[
+            0xc0,
+            loop_at as u8,
+            0,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            60,
+            0,
+            4,
+            1,
+            2,
+            3,
+            4,
+        ]);
         assert_eq!(walk_response(&r, &qv).unwrap_err(), ParseError::FormErr);
+    }
+
+    #[test]
+    #[ignore]
+    fn write_fuzz_seeds() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/parse_query/");
+        std::fs::create_dir_all(dir).unwrap();
+        let mut compressed = vec![0xbe, 0xef, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+        compressed.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]);
+        let mut long = vec![0xbe, 0xef, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+        for _ in 0..3 {
+            long.push(63);
+            long.extend_from_slice(&[b'l'; 63]);
+        }
+        long.push(61);
+        long.extend_from_slice(&[b'l'; 61]);
+        long.extend_from_slice(&[0, 0, 1, 0, 1]);
+        assert_eq!(parse_query(&long).unwrap().key.as_wire().len(), 255);
+        for (file, bytes) in [
+            ("a.bin", query("example.com.", RecordType::A)),
+            ("edns_cookie.bin", edns_cookie_query()),
+            ("compressed_name.bin", compressed),
+            ("long_name.bin", long),
+        ] {
+            std::fs::write(format!("{dir}{file}"), bytes).unwrap();
+        }
     }
 }
 ```
@@ -831,11 +907,24 @@ mod tests {
     #[test]
     fn reply_limit_rules() {
         assert_eq!(reply_limit(None, Transport::Udp), 512);
-        let big = OptView { udp_size: 4096, version: 0, do_bit: false, client_cookie: None, server_cookie: None, bad_cookie_len: false };
+        let big = OptView {
+            udp_size: 4096,
+            version: 0,
+            do_bit: false,
+            client_cookie: None,
+            server_cookie: None,
+            bad_cookie_len: false,
+        };
         assert_eq!(reply_limit(Some(&big), Transport::Udp), 1232);
-        let small = OptView { udp_size: 100, ..big };
+        let small = OptView {
+            udp_size: 100,
+            ..big
+        };
         assert_eq!(reply_limit(Some(&small), Transport::Udp), 512);
-        let mid = OptView { udp_size: 1000, ..big };
+        let mid = OptView {
+            udp_size: 1000,
+            ..big
+        };
         assert_eq!(reply_limit(Some(&mid), Transport::Udp), 1000);
         assert_eq!(reply_limit(None, Transport::Tcp), 65535);
     }
@@ -844,9 +933,24 @@ mod tests {
     fn server_cookie_is_deterministic_per_client_and_changes_with_ip() {
         let s = CookieSecret([7; 16]);
         let c = [1u8; 8];
-        let a = server_cookie(&s, &c, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 1_700_000_000);
-        let b = server_cookie(&s, &c, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 1_700_000_000);
-        let d = server_cookie(&s, &c, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 1_700_000_000);
+        let a = server_cookie(
+            &s,
+            &c,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            1_700_000_000,
+        );
+        let b = server_cookie(
+            &s,
+            &c,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            1_700_000_000,
+        );
+        let d = server_cookie(
+            &s,
+            &c,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            1_700_000_000,
+        );
         assert_eq!(a, b);
         assert_ne!(a, d);
         assert_eq!(a[0], 1, "RFC 9018 version byte");
@@ -856,21 +960,40 @@ mod tests {
     #[test]
     fn write_opt_with_cookie_has_expected_length() {
         let mut out = [0u8; 64];
-        let n = write_opt(&mut out, &ReplyOpt { udp_size: 1232, do_bit: true, ext_rcode: 0, cookie: Some(([1; 8], [2; 16])) });
+        let n = write_opt(
+            &mut out,
+            &ReplyOpt {
+                udp_size: 1232,
+                do_bit: true,
+                ext_rcode: 0,
+                cookie: Some(([1; 8], [2; 16])),
+            },
+        );
         assert_eq!(n, OPT_BASE_LEN + OPT_COOKIE_LEN);
         assert_eq!(out[0], 0);
         assert_eq!(&out[1..3], &41u16.to_be_bytes());
         assert_eq!(&out[3..5], &1232u16.to_be_bytes());
         assert_eq!(out[7] & 0x80, 0x80, "DO bit");
-        assert_eq!(write_opt(&mut out[..5], &ReplyOpt { udp_size: 1232, do_bit: false, ext_rcode: 0, cookie: None }), 0);
+        assert_eq!(
+            write_opt(
+                &mut out[..5],
+                &ReplyOpt {
+                    udp_size: 1232,
+                    do_bit: false,
+                    ext_rcode: 0,
+                    cookie: None
+                }
+            ),
+            0
+        );
     }
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib wire:: edns::` — expect FAIL with `cannot find function `parse_query` in this scope`.
+- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib -- wire:: edns::'` — expect FAIL with ``cannot find function `parse_query` in this scope``.
 - [ ] Implement `engine/src/edns.rs`: `Transport` enum; `parse_opt(rr: &[u8]) -> Result<(OptView<'_>, usize), ParseError>` requiring owner name `0`, type 41, rdlength within the buffer; iterates options, option code 10 (COOKIE) with length 8 sets `client_cookie`, length 16..=40 also sets `server_cookie` to the trailing bytes, any other cookie length sets `bad_cookie_len = true`; `reply_limit`: TCP returns 65535; UDP without OPT 512; with OPT `udp_size.clamp(512, 1232)`; `server_cookie` per RFC 9018: bytes `[1, 0, 0, 0]`, then `now_secs` big-endian, then the 8-byte SipHash-2-4 (`siphasher::sip::SipHasher24::new_with_key(&secret.0)`) over `client_cookie || version/reserved || timestamp || client IP octets`; `write_opt` writes root name, TYPE 41, CLASS=`udp_size`, TTL=`ext_rcode<<24 | version 0 | DO<<15`, RDLENGTH, and the COOKIE option (code 10, length 24) when `cookie` is `Some`.
-- [ ] Implement `engine/src/wire.rs`: constants `pub const RCODE_NOERROR: u8 = 0; RCODE_FORMERR: u8 = 1; RCODE_SERVFAIL: u8 = 2; RCODE_NXDOMAIN: u8 = 3; RCODE_NOTIMP: u8 = 4; RCODE_REFUSED: u8 = 5;`. `parse_query` order: `len < 12` -> `TooShort`; QR=1 -> `IsResponse`; opcode != 0 -> `NotImp`; QDCOUNT != 1 or ANCOUNT != 0 or NSCOUNT != 0 or ARCOUNT > 1 -> `FormErr`; walk question labels without allocation: a length byte `& 0xC0 != 0` -> `FormErr`, label length > 63 -> `FormErr`, running total including length bytes and root > 255 -> `FormErr`, running past the buffer -> `FormErr`; copy each byte into `NameKey.buf` with `u8::to_ascii_lowercase` (only `A-Z` change, so binary octets and escaped dots are preserved); read QTYPE/QCLASS (missing -> `FormErr`); when ARCOUNT=1 call `edns::parse_opt` on the remainder (non-OPT additional record or trailing garbage after it -> `FormErr`); trailing bytes when ARCOUNT=0 -> `FormErr`. `write_error_reply` copies ID, sets QR, keeps opcode and RD, sets RA, rcode, and when the question walk of the query succeeds copies the question with QDCOUNT=1, otherwise QDCOUNT=0. `walk_response` follows compression pointers only backwards (target offset < pointer offset), with at most 128 pointer hops per name and names capped at 255 octets; for every RR in answer/authority/additional it records the TTL field offset (skipping the OPT RR, whose range goes into `opt_range`), tracks the minimum TTL of answer RRs, sets `negative_ttl = min(SOA TTL, SOA MINIMUM)` from an authority SOA when ANCOUNT=0 or rcode=NXDOMAIN, and collects CNAME targets (lowercased `NameKey`) from the answer section; RDLENGTH past the end -> `FormErr`. `question_matches` compares the response question to `qname_key` case-insensitively plus type and class. `write_synth_reply` writes the header (QR, RD copied, RA, AA=0, rcode), the question copied from the query bytes (client casing), an answer RR using a compression pointer `0xC00C` when `answer` is `Some`, then the OPT from `opt`.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib wire:: edns::` — expect PASS: `test result: ok. 15 passed`.
+- [ ] Implement `engine/src/wire.rs`: constants `pub const RCODE_NOERROR: u8 = 0; RCODE_FORMERR: u8 = 1; RCODE_SERVFAIL: u8 = 2; RCODE_NXDOMAIN: u8 = 3; RCODE_NOTIMP: u8 = 4; RCODE_REFUSED: u8 = 5;`. `parse_query` order: `len < 12` -> `TooShort`; QR=1 -> `IsResponse`; opcode != 0 -> `NotImp`; QDCOUNT != 1 or ANCOUNT != 0 or NSCOUNT != 0 or ARCOUNT > 1 -> `FormErr`; walk question labels without allocation: a length byte `& 0xC0 != 0` -> `FormErr`, label length > 63 -> `FormErr`, running total including length bytes and root > 255 -> `FormErr`, running past the buffer -> `FormErr`; copy each byte into `NameKey.buf` with `u8::to_ascii_lowercase` (only `A-Z` change, so binary octets and escaped dots are preserved); read QTYPE/QCLASS (missing -> `FormErr`); when ARCOUNT=1 call `edns::parse_opt` on the remainder (non-OPT additional record or trailing garbage after it -> `FormErr`); trailing bytes when ARCOUNT=0 -> `FormErr`. `write_error_reply` copies ID, sets QR, keeps opcode and RD, sets RA, rcode, and when the question walk of the query succeeds copies the question with QDCOUNT=1, otherwise QDCOUNT=0. `walk_response` follows compression pointers only backwards (target offset < pointer offset), with at most 128 pointer hops per name and names capped at 255 octets; for every RR in answer/authority/additional it records the TTL field offset (skipping the OPT RR, whose range goes into `opt_range`), tracks the minimum TTL of answer RRs, sets `negative_ttl = min(SOA TTL, SOA MINIMUM)` from an authority SOA when ANCOUNT=0 or rcode=NXDOMAIN, and collects CNAME targets (lowercased `NameKey`) from the answer section; RDLENGTH past the end -> `FormErr`. `question_matches` compares the response question to `qname_key` case-insensitively plus type and class. `walk_response` also requires the response's single question to equal `expect` (key, type, class), an OPT only in the additional section and at most once (its extended rcode merged into `rcode`), no trailing bytes after the last RR, and treats TTLs with the top bit set as 0 (RFC 2181 section 8). `write_synth_reply` writes the header (QR, opcode and RD copied, RA, AA=0, rcode), the question copied from the query bytes (client casing), an answer RR (class IN) using a compression pointer `0xC00C` when `answer` is `Some`, then the OPT from `opt`.
+- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib -- wire:: edns::'` — expect PASS: `test result: ok. 15 passed; 0 failed; 1 ignored`.
 - [ ] Write `engine/fuzz/Cargo.toml`:
 
 ```toml
@@ -893,6 +1016,9 @@ path = "fuzz_targets/parse_query.rs"
 test = false
 doc = false
 bench = false
+
+# Own workspace: `exclude` in the root manifest does not apply under the `engine` member.
+[workspace]
 ```
 
 - [ ] Write `engine/fuzz/fuzz_targets/parse_query.rs`:
@@ -906,9 +1032,21 @@ fuzz_target!(|data: &[u8]| {
     let mut out = [0u8; 1232];
     match wire::parse_query(data) {
         Ok(q) => {
-            let opt = q.opt.as_ref().map(|o| edns::ReplyOpt { udp_size: 1232, do_bit: o.do_bit, ext_rcode: 0, cookie: None });
+            let opt = q.opt.as_ref().map(|o| edns::ReplyOpt {
+                udp_size: 1232,
+                do_bit: o.do_bit,
+                ext_rcode: 0,
+                cookie: None,
+            });
             let _ = wire::write_rcode_reply(&q, wire::RCODE_SERVFAIL, &mut out, opt.as_ref());
-            let _ = wire::write_synth_reply(&q, wire::RCODE_NOERROR, Some(wire::SynthAnswer::A([0; 4])), 60, &mut out, opt.as_ref());
+            let _ = wire::write_synth_reply(
+                &q,
+                wire::RCODE_NOERROR,
+                Some(wire::SynthAnswer::A([0; 4])),
+                60,
+                &mut out,
+                opt.as_ref(),
+            );
             // Treat the same bytes as an upstream response for this question.
             let _ = wire::walk_response(data, &q);
         }
@@ -919,7 +1057,7 @@ fuzz_target!(|data: &[u8]| {
 });
 ```
 
-- [ ] Add a seed-corpus writer test in `engine/src/wire.rs` tests: `#[test] #[ignore] fn write_fuzz_seeds()` writing `query("example.com.", A)`, the EDNS-cookie query, the compressed-name packet and a 255-octet name into `concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/parse_query/")` as `a.bin`, `edns_cookie.bin`, `compressed_name.bin`, `long_name.bin`; run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib write_fuzz_seeds -- --ignored` and copy the four files back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - engine/fuzz/corpus | tar -xf -`.
+- [ ] The seed-corpus writer test in `engine/src/wire.rs` tests: `#[test] #[ignore] fn write_fuzz_seeds()` writing `query("example.com.", A)`, the EDNS-cookie query, the compressed-name packet and a 255-octet name into `concat!(env!("CARGO_MANIFEST_DIR"), "/fuzz/corpus/parse_query/")` as `a.bin`, `edns_cookie.bin`, `compressed_name.bin`, `long_name.bin`; run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib write_fuzz_seeds -- --ignored` and copy the four files back with `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - engine/fuzz/corpus | tar -xf -`.
 - [ ] Run the fuzz smoke locally in the pod: `scripts/dev-exec.sh make fuzz-smoke` — expect PASS: libFuzzer prints `Done` with no `crash-` artifact.
 - [ ] Write `.github/workflows/fuzz.yml`:
 
@@ -959,7 +1097,7 @@ jobs:
           path: engine/fuzz/artifacts/
 ```
 
-- [ ] Commit: `git add engine/src/wire.rs engine/src/edns.rs engine/src/lib.rs engine/fuzz .github/workflows/fuzz.yml && git commit -m "engine: zero-copy query parser, EDNS cookies, fuzz target and workflow"`.
+- [ ] Commit: `git add engine/src/wire.rs engine/src/edns.rs engine/src/lib.rs engine/fuzz .github/workflows/fuzz.yml && git commit -m "M1 Task 3: zero-copy query parser, EDNS cookies, fuzz target and workflow"`.
 
 ## Task 4: Coarse clock and wire-format response cache with the allocation guard
 
@@ -973,17 +1111,17 @@ Files:
 Interfaces:
 
 - Consumes `wire::{QueryView, NameKey, walk_response, ResponseInfo}`, `edns::{ReplyOpt, write_opt, OPT_BASE_LEN, OPT_COOKIE_LEN}` from Task 3.
-- `clock.rs`: `pub fn now_secs() -> u32` (seconds since process start + 1, read from a static `AtomicU32`); `pub fn start_ticker() -> std::thread::JoinHandle<()>` (thread `nexora-clock`, updates every 100 ms, idempotent); `pub fn now_micros() -> u64` (monotonic, `Instant`-based, used only for stage timestamps). Cache functions take `now: u32` explicitly, so tests never need to drive the clock.
+- `clock.rs`: `pub fn now_secs() -> u32` (seconds since process start + 1, read from a static `AtomicU32`); `pub fn start_ticker()` (thread `nexora-clock`, updates every 100 ms, idempotent; returns nothing because a repeated call has no handle to return and the thread never exits); `pub fn now_micros() -> u64` (monotonic, `Instant`-based, used only for stage timestamps). Cache functions take `now: u32` explicitly, so tests never need to drive the clock.
 - `cache.rs`:
-  - `#[derive(Clone, Copy, PartialEq, Eq, Hash)] pub struct CacheKey { pub name: NameKey, pub qtype: u16, pub qclass: u16, pub do_bit: bool, pub cd_bit: bool }` and `impl CacheKey { pub fn from_query(q: &QueryView<'_>) -> CacheKey }`.
+  - `#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)] pub struct CacheKey { pub name: NameKey, pub qtype: u16, pub qclass: u16, pub do_bit: bool, pub cd_bit: bool }` and `impl CacheKey { pub fn from_query(q: &QueryView<'_>) -> CacheKey }`.
   - `#[derive(Clone, Copy, Debug, PartialEq)] pub struct CacheSettings { pub max_bytes: u64, pub min_ttl: u32, pub max_ttl: u32, pub negative_max_ttl: u32, pub stale_window: u32 }`.
   - `pub struct CachedResponse { pub wire: Box<[u8]>, pub question_name_len: usize, pub ttl_offsets: Box<[u16]>, pub inserted_at: u32, pub ttl: u32, pub stale_deadline: u32, pub rcode: u8 }`.
   - `pub enum Lookup { Fresh(Arc<CachedResponse>), Stale(Arc<CachedResponse>), Miss }`.
   - `#[derive(Debug, PartialEq)] pub enum InsertOutcome { Inserted { ttl: u32 }, NotCacheable(&'static str) }`.
   - `pub struct Cache`; `impl Cache { pub fn new(settings: CacheSettings) -> Cache; pub fn settings(&self) -> CacheSettings; pub fn lookup(&self, key: &CacheKey, now: u32) -> Lookup; pub fn insert(&self, key: CacheKey, upstream: &[u8], query: &QueryView<'_>, now: u32) -> InsertOutcome; pub fn entries(&self) -> u64; pub fn bytes(&self) -> u64 }`.
-  - `pub enum ServeMode { Fresh, Stale }` and `pub fn write_cached(entry: &CachedResponse, q: &QueryView<'_>, now: u32, mode: ServeMode, out: &mut [u8], limit: usize, opt: Option<&ReplyOpt>) -> usize`.
+  - `pub enum ServeMode { Fresh, Stale }` and `pub fn write_cached(entry: &CachedResponse, q: &QueryView<'_>, now: u32, mode: ServeMode, out: &mut [u8], limit: usize, opt: Option<&ReplyOpt>) -> usize` (returns 0 when even the truncated reply does not fit `out`).
 
-- [ ] Create `engine/src/cache.rs` with only this test module (and `pub mod clock; pub mod cache;` in `lib.rs`):
+- [ ] Create `engine/src/cache.rs` with only this test module (and `pub mod clock; pub mod cache;` in `lib.rs`, with an empty `clock.rs`); the tests use hickory-proto 0.26's API as in Task 3:
 
 ```rust
 #[cfg(test)]
@@ -991,24 +1129,37 @@ mod tests {
     use super::*;
     use crate::wire::parse_query;
     use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
-    use hickory_proto::rr::{rdata::{A, CNAME, SOA}, Name, RData, Record, RecordType};
+    use hickory_proto::rr::rdata::{A, CNAME, SOA};
+    use hickory_proto::rr::{Name, RData, Record, RecordType};
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 
     fn settings() -> CacheSettings {
-        CacheSettings { max_bytes: 1 << 20, min_ttl: 0, max_ttl: 86400, negative_max_ttl: 3600, stale_window: 60 }
+        CacheSettings {
+            max_bytes: 1 << 20,
+            min_ttl: 0,
+            max_ttl: 86400,
+            negative_max_ttl: 3600,
+            stale_window: 60,
+        }
     }
     fn q(name: &str, id: u16) -> Vec<u8> {
-        let mut m = Message::new();
-        m.set_id(id).set_message_type(MessageType::Query).set_op_code(OpCode::Query).set_recursion_desired(true);
+        let mut m = Message::new(id, MessageType::Query, OpCode::Query);
+        m.metadata.recursion_desired = true;
         m.add_query(Query::query(Name::from_ascii(name).unwrap(), RecordType::A));
         m.to_bytes().unwrap()
     }
     fn answer(query: &[u8], ttls: &[u32], rcode: ResponseCode) -> Vec<u8> {
         let mut m = Message::from_bytes(query).unwrap();
-        m.set_message_type(MessageType::Response).set_response_code(rcode).set_recursion_available(true);
-        let name = m.queries()[0].name().clone();
+        m.metadata.message_type = MessageType::Response;
+        m.metadata.response_code = rcode;
+        m.metadata.recursion_available = true;
+        let name = m.queries[0].name().clone();
         for (i, t) in ttls.iter().enumerate() {
-            m.add_answer(Record::from_rdata(name.clone(), *t, RData::A(A::new(192, 0, 2, i as u8 + 1))));
+            m.add_answer(Record::from_rdata(
+                name.clone(),
+                *t,
+                RData::A(A::new(192, 0, 2, i as u8 + 1)),
+            ));
         }
         m.to_bytes().unwrap()
     }
@@ -1019,16 +1170,21 @@ mod tests {
         let q1 = q("example.com.", 1);
         let v1 = parse_query(&q1).unwrap();
         let resp = answer(&q1, &[300, 120], ResponseCode::NoError);
-        assert_eq!(c.insert(CacheKey::from_query(&v1), &resp, &v1, 1000), InsertOutcome::Inserted { ttl: 120 });
+        assert_eq!(
+            c.insert(CacheKey::from_query(&v1), &resp, &v1, 1000),
+            InsertOutcome::Inserted { ttl: 120 }
+        );
         let q2 = q("ExAmPlE.CoM.", 0x4242);
         let v2 = parse_query(&q2).unwrap();
-        let Lookup::Fresh(e) = c.lookup(&CacheKey::from_query(&v2), 1030) else { panic!("expected fresh") };
+        let Lookup::Fresh(e) = c.lookup(&CacheKey::from_query(&v2), 1030) else {
+            panic!("expected fresh")
+        };
         let mut out = [0u8; 1232];
         let n = write_cached(&e, &v2, 1030, ServeMode::Fresh, &mut out, 512, None);
         let m = Message::from_bytes(&out[..n]).unwrap();
-        assert_eq!(m.id(), 0x4242);
-        assert_eq!(m.queries()[0].name().to_ascii(), "ExAmPlE.CoM.");
-        let ttls: Vec<u32> = m.answers().iter().map(|r| r.ttl()).collect();
+        assert_eq!(m.metadata.id, 0x4242);
+        assert_eq!(m.queries[0].name().to_ascii(), "ExAmPlE.CoM.");
+        let ttls: Vec<u32> = m.answers.iter().map(|r| r.ttl).collect();
         assert_eq!(ttls, vec![270, 90]);
     }
 
@@ -1038,11 +1194,20 @@ mod tests {
         let q1 = q("zero.example.", 1);
         let v = parse_query(&q1).unwrap();
         let k = CacheKey::from_query(&v);
-        assert!(matches!(c.insert(k, &answer(&q1, &[0], ResponseCode::NoError), &v, 10), InsertOutcome::NotCacheable(_)));
-        assert!(matches!(c.insert(k, &answer(&q1, &[], ResponseCode::ServFail), &v, 10), InsertOutcome::NotCacheable(_)));
+        assert!(matches!(
+            c.insert(k, &answer(&q1, &[0], ResponseCode::NoError), &v, 10),
+            InsertOutcome::NotCacheable(_)
+        ));
+        assert!(matches!(
+            c.insert(k, &answer(&q1, &[], ResponseCode::ServFail), &v, 10),
+            InsertOutcome::NotCacheable(_)
+        ));
         let mut tc = answer(&q1, &[60], ResponseCode::NoError);
         tc[2] |= 0x02;
-        assert!(matches!(c.insert(k, &tc, &v, 10), InsertOutcome::NotCacheable(_)));
+        assert!(matches!(
+            c.insert(k, &tc, &v, 10),
+            InsertOutcome::NotCacheable(_)
+        ));
         assert!(matches!(c.lookup(&k, 10), Lookup::Miss));
     }
 
@@ -1052,11 +1217,29 @@ mod tests {
         let q1 = q("nx.example.", 1);
         let v = parse_query(&q1).unwrap();
         let k = CacheKey::from_query(&v);
-        assert!(matches!(c.insert(k, &answer(&q1, &[], ResponseCode::NXDomain), &v, 10), InsertOutcome::NotCacheable(_)));
+        assert!(matches!(
+            c.insert(k, &answer(&q1, &[], ResponseCode::NXDomain), &v, 10),
+            InsertOutcome::NotCacheable(_)
+        ));
         let mut m = Message::from_bytes(&answer(&q1, &[], ResponseCode::NXDomain)).unwrap();
-        let soa = SOA::new(Name::from_ascii("ns.example.").unwrap(), Name::from_ascii("h.example.").unwrap(), 1, 2, 3, 4, 120);
-        m.add_name_server(Record::from_rdata(Name::from_ascii("example.").unwrap(), 900, RData::SOA(soa)));
-        assert_eq!(c.insert(k, &m.to_bytes().unwrap(), &v, 10), InsertOutcome::Inserted { ttl: 120 });
+        let soa = SOA::new(
+            Name::from_ascii("ns.example.").unwrap(),
+            Name::from_ascii("h.example.").unwrap(),
+            1,
+            2,
+            3,
+            4,
+            120,
+        );
+        m.add_authority(Record::from_rdata(
+            Name::from_ascii("example.").unwrap(),
+            900,
+            RData::SOA(soa),
+        ));
+        assert_eq!(
+            c.insert(k, &m.to_bytes().unwrap(), &v, 10),
+            InsertOutcome::Inserted { ttl: 120 }
+        );
     }
 
     #[test]
@@ -1067,11 +1250,13 @@ mod tests {
         let k = CacheKey::from_query(&v);
         c.insert(k, &answer(&q1, &[10], ResponseCode::NoError), &v, 100);
         assert!(matches!(c.lookup(&k, 105), Lookup::Fresh(_)));
-        let Lookup::Stale(e) = c.lookup(&k, 111) else { panic!("expected stale") };
+        let Lookup::Stale(e) = c.lookup(&k, 111) else {
+            panic!("expected stale")
+        };
         let mut out = [0u8; 512];
         let n = write_cached(&e, &v, 111, ServeMode::Stale, &mut out, 512, None);
         let m = Message::from_bytes(&out[..n]).unwrap();
-        assert_eq!(m.answers()[0].ttl(), 30);
+        assert_eq!(m.answers[0].ttl, 30);
         assert!(matches!(c.lookup(&k, 171), Lookup::Miss));
     }
 
@@ -1084,14 +1269,16 @@ mod tests {
         let resp = answer(&q1, &ttls, ResponseCode::NoError);
         assert!(resp.len() > 512);
         c.insert(CacheKey::from_query(&v), &resp, &v, 1);
-        let Lookup::Fresh(e) = c.lookup(&CacheKey::from_query(&v), 1) else { panic!() };
+        let Lookup::Fresh(e) = c.lookup(&CacheKey::from_query(&v), 1) else {
+            panic!()
+        };
         let mut out = [0u8; 1232];
         let n = write_cached(&e, &v, 1, ServeMode::Fresh, &mut out, 512, None);
         let m = Message::from_bytes(&out[..n]).unwrap();
-        assert!(m.truncated());
-        assert_eq!(m.answer_count(), 0);
+        assert!(m.metadata.truncation);
+        assert_eq!(m.answers.len(), 0);
         let n = write_cached(&e, &v, 1, ServeMode::Fresh, &mut out, 1232, None);
-        assert!(!Message::from_bytes(&out[..n]).unwrap().truncated());
+        assert!(!Message::from_bytes(&out[..n]).unwrap().metadata.truncation);
     }
 
     #[test]
@@ -1117,9 +1304,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 struct Counting;
 static ALLOCS: AtomicU64 = AtomicU64::new(0);
 unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, l: Layout) -> *mut u8 { ALLOCS.fetch_add(1, Ordering::Relaxed); unsafe { System.alloc(l) } }
-    unsafe fn dealloc(&self, p: *mut u8, l: Layout) { unsafe { System.dealloc(p, l) } }
-    unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 { ALLOCS.fetch_add(1, Ordering::Relaxed); unsafe { System.realloc(p, l, n) } }
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        unsafe { System.alloc(l) }
+    }
+    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        unsafe { System.dealloc(p, l) }
+    }
+    unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        unsafe { System.realloc(p, l, n) }
+    }
 }
 #[global_allocator]
 static GLOBAL: Counting = Counting;
@@ -1127,43 +1322,66 @@ static GLOBAL: Counting = Counting;
 #[test]
 fn cache_lookup_and_serve_do_not_allocate() {
     use hickory_proto::op::{Message, MessageType, OpCode, Query};
-    use hickory_proto::rr::{rdata::A, Name, RData, Record, RecordType};
+    use hickory_proto::rr::rdata::A;
+    use hickory_proto::rr::{Name, RData, Record, RecordType};
     use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
     use nexora_engine::cache::*;
     use nexora_engine::wire::parse_query;
 
-    let mut m = Message::new();
-    m.set_id(9).set_message_type(MessageType::Query).set_op_code(OpCode::Query).set_recursion_desired(true);
-    m.add_query(Query::query(Name::from_ascii("hot.example.").unwrap(), RecordType::A));
+    let mut m = Message::new(9, MessageType::Query, OpCode::Query);
+    m.metadata.recursion_desired = true;
+    m.add_query(Query::query(
+        Name::from_ascii("hot.example.").unwrap(),
+        RecordType::A,
+    ));
     let query = m.to_bytes().unwrap();
     let mut r = Message::from_bytes(&query).unwrap();
-    r.set_message_type(MessageType::Response);
-    r.add_answer(Record::from_rdata(Name::from_ascii("hot.example.").unwrap(), 300, RData::A(A::new(192, 0, 2, 1))));
+    r.metadata.message_type = MessageType::Response;
+    r.add_answer(Record::from_rdata(
+        Name::from_ascii("hot.example.").unwrap(),
+        300,
+        RData::A(A::new(192, 0, 2, 1)),
+    ));
     let resp = r.to_bytes().unwrap();
 
-    let cache = Cache::new(CacheSettings { max_bytes: 1 << 20, min_ttl: 0, max_ttl: 86400, negative_max_ttl: 3600, stale_window: 0 });
+    let cache = Cache::new(CacheSettings {
+        max_bytes: 1 << 20,
+        min_ttl: 0,
+        max_ttl: 86400,
+        negative_max_ttl: 3600,
+        stale_window: 0,
+    });
     let v = parse_query(&query).unwrap();
     cache.insert(CacheKey::from_query(&v), &resp, &v, 1);
     let mut out = [0u8; 1232];
-    for _ in 0..16 { // warm up quick_cache internals
-        if let Lookup::Fresh(e) = cache.lookup(&CacheKey::from_query(&v), 2) { write_cached(&e, &v, 2, ServeMode::Fresh, &mut out, 512, None); }
+    for _ in 0..16 {
+        // warm up quick_cache internals
+        if let Lookup::Fresh(e) = cache.lookup(&CacheKey::from_query(&v), 2) {
+            write_cached(&e, &v, 2, ServeMode::Fresh, &mut out, 512, None);
+        }
     }
     let before = ALLOCS.load(Ordering::Relaxed);
     for _ in 0..10_000 {
         let v = parse_query(&query).unwrap();
-        let Lookup::Fresh(e) = cache.lookup(&CacheKey::from_query(&v), 2) else { panic!("miss") };
+        let Lookup::Fresh(e) = cache.lookup(&CacheKey::from_query(&v), 2) else {
+            panic!("miss")
+        };
         let n = write_cached(&e, &v, 2, ServeMode::Fresh, &mut out, 512, None);
         assert!(n > 12);
     }
-    assert_eq!(ALLOCS.load(Ordering::Relaxed) - before, 0, "cache hit path allocated");
+    assert_eq!(
+        ALLOCS.load(Ordering::Relaxed) - before,
+        0,
+        "cache hit path allocated"
+    );
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect FAIL with ``unresolved import `crate::cache` `` / ``could not find `cache` in `nexora_engine` ``.
-- [ ] Implement `engine/src/clock.rs`: `static START: OnceLock<Instant>`, `static NOW: AtomicU32`; `start_ticker` spawns one thread (guarded by `OnceLock<JoinHandle>` semantics via `std::sync::Once`) that stores `START.elapsed().as_secs() as u32 + 1` every 100 ms; `now_secs` loads `NOW` with `Ordering::Relaxed` (calls the elapsed computation directly when the ticker has not started, which happens only in tests).
-- [ ] Implement `engine/src/cache.rs`: `struct EntryWeighter; impl quick_cache::Weighter<CacheKey, Arc<CachedResponse>> for EntryWeighter { fn weight(&self, _: &CacheKey, v: &Arc<CachedResponse>) -> u64 { (v.wire.len() + v.ttl_offsets.len() * 2 + 96) as u64 } }`; `Cache::new` builds `quick_cache::sync::Cache::with_weighter(estimated_items = max_bytes / 256, weight_capacity = max_bytes, EntryWeighter)`. `insert` calls `wire::walk_response(upstream, query)` and refuses (`NotCacheable`) for: parse error, TC=1, rcode SERVFAIL/REFUSED/other than NOERROR/NXDOMAIN, NOERROR with answers whose min TTL is 0, NXDOMAIN/NODATA without SOA; positive TTL = `min_ttl_of_answers.clamp(min_ttl, max_ttl)`; negative TTL = `negative_ttl.min(negative_max_ttl)`; builds `wire` as the upstream bytes with the OPT RR removed (ARCOUNT decremented) and the question name lowercased, recomputes `ttl_offsets` on the stripped copy, `stale_deadline = now + ttl + stale_window`. `lookup`: `get(key)`; `now < inserted_at + ttl` -> `Fresh`; `now < stale_deadline` -> `Stale`; else `Miss`. `write_cached` computes `full = entry.wire.len() + opt_len` first; when `full > limit` writes header + question only with TC=1, ANCOUNT/NSCOUNT/ARCOUNT=0 plus the OPT; otherwise copies `entry.wire` into `out`, writes `q.id`, copies RD from the query, copies `q.qname` bytes over offset 12 (client casing), writes each TTL as `ttl - elapsed` (`ServeMode::Fresh`, saturating) or `30` (`ServeMode::Stale`), then appends `edns::write_opt` and increments ARCOUNT when `opt` is `Some`. No `Vec`, `Box` or `String` is created in `lookup` or `write_cached`.
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect FAIL with ``cannot find type `Cache` in this scope`` (both targets).
+- [ ] Implement `engine/src/clock.rs`: `static START: OnceLock<Instant>`, `static NOW: AtomicU32`; `start_ticker` spawns one detached thread (guarded by `std::sync::Once`) that stores `START.elapsed().as_secs() as u32 + 1` every 100 ms; `now_secs` loads `NOW` with `Ordering::Relaxed` (calls the elapsed computation directly when the ticker has not started, which happens only in tests).
+- [ ] Implement `engine/src/cache.rs`: `struct EntryWeighter; impl quick_cache::Weighter<CacheKey, Arc<CachedResponse>> for EntryWeighter { fn weight(&self, _: &CacheKey, v: &Arc<CachedResponse>) -> u64 { (v.wire.len() + v.ttl_offsets.len() * 2 + 96) as u64 } }`; `Cache::new` builds `quick_cache::sync::Cache::with_weighter(estimated_items = max_bytes / 256, weight_capacity = max_bytes, EntryWeighter)`. `insert` calls `wire::walk_response(upstream, query)` and refuses (`NotCacheable`) for: parse error, TC=1, rcode SERVFAIL/REFUSED/other than NOERROR/NXDOMAIN, NOERROR with answers whose min TTL is 0, NXDOMAIN/NODATA without SOA; positive TTL = `min_ttl_of_answers.clamp(min_ttl, max_ttl)`; negative TTL = `negative_ttl.min(negative_max_ttl)`; builds `wire` as the upstream bytes with the OPT RR removed (ARCOUNT decremented; an OPT that is not the last RR -> `NotCacheable("opt not last")`, so no compression pointer or TTL offset moves and `ttl_offsets` from the walk stay valid) and the question name lowercased, `stale_deadline = now + ttl + stale_window`. `lookup`: `get(key)`; `now < inserted_at + ttl` -> `Fresh`; `now < stale_deadline` -> `Stale`; else `Miss`. `write_cached` computes `full = entry.wire.len() + opt_len` first; when `full > limit` writes header + question only with TC=1, ANCOUNT/NSCOUNT/ARCOUNT=0 plus the OPT; otherwise copies `entry.wire` into `out`, writes `q.id`, copies RD from the query, copies `q.qname` bytes over offset 12 (client casing), writes each TTL as `ttl - elapsed` (`ServeMode::Fresh`, saturating) or `30` (`ServeMode::Stale`), then appends `edns::write_opt` and increments ARCOUNT when `opt` is `Some`. No `Vec`, `Box` or `String` is created in `lookup` or `write_cached`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib cache:: && scripts/dev-exec.sh cargo test --locked -p nexora-engine --test cache_alloc` — expect PASS: `6 passed` and `test cache_lookup_and_serve_do_not_allocate ... ok`.
-- [ ] Commit: `git add engine/src/clock.rs engine/src/cache.rs engine/src/lib.rs engine/tests/cache_alloc.rs && git commit -m "engine: coarse clock and wire-format response cache with allocation guard"`.
+- [ ] Commit: `git add engine/src/clock.rs engine/src/cache.rs engine/src/lib.rs engine/tests/cache_alloc.rs && git commit -m "M1 Task 4: coarse clock and wire-format response cache with allocation guard"`.
 
 ## Task 5: Upstream UDP/TCP transports with anti-spoofing and health scoring
 
