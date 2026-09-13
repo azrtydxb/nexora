@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -34,15 +35,27 @@ func TLSConfig(ca *pki.CA, serverNames []string) (*tls.Config, error) {
 	}, nil
 }
 
-// EngineID returns the CN of the caller's verified client certificate.
-func EngineID(ctx context.Context) (string, error) {
+// PeerCertificate returns the caller's client certificate as verified against the CA.
+func PeerCertificate(ctx context.Context) (*x509.Certificate, error) {
 	p, ok := peer.FromContext(ctx)
 	if ok {
 		if info, ok := p.AuthInfo.(credentials.TLSInfo); ok {
-			if chains := info.State.VerifiedChains; len(chains) > 0 && len(chains[0]) > 0 && chains[0][0].Subject.CommonName != "" {
-				return chains[0][0].Subject.CommonName, nil
+			if chains := info.State.VerifiedChains; len(chains) > 0 && len(chains[0]) > 0 {
+				return chains[0][0], nil
 			}
 		}
 	}
-	return "", status.Error(codes.Unauthenticated, "client certificate required")
+	return nil, status.Error(codes.Unauthenticated, "client certificate required")
+}
+
+// EngineID returns the CN of the caller's verified client certificate.
+func EngineID(ctx context.Context) (string, error) {
+	cert, err := PeerCertificate(ctx)
+	if err != nil {
+		return "", err
+	}
+	if cert.Subject.CommonName == "" {
+		return "", status.Error(codes.Unauthenticated, "client certificate required")
+	}
+	return cert.Subject.CommonName, nil
 }

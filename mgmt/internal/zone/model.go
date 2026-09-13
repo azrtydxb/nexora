@@ -40,6 +40,7 @@ type Endpoint struct {
 // Zone is one hosted zone row.
 type Zone struct {
 	ID                 uuid.UUID
+	EngineGroupID      *uuid.UUID // nil: served by every engine group
 	Name, Kind         string
 	Revision           int64
 	Serial             uint32
@@ -85,6 +86,8 @@ type CreateZoneInput struct {
 	Transfer         TransferInput
 	Notify           []Endpoint
 	UpdateTSIGKeyIDs []uuid.UUID
+	// EngineGroupID scopes the zone to one engine group (nil: served by every group).
+	EngineGroupID *uuid.UUID
 }
 
 // TransferInput is the outgoing transfer policy.

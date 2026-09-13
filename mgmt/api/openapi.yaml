@@ -132,8 +132,15 @@ components:
           position,
           enabled,
           revision,
+          engine_group_id,
         ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         name: { type: string }
         protocol: { type: string, enum: [udp, tcp, dot, doh] }
@@ -149,6 +156,12 @@ components:
       type: object
       required: [name, protocol, timeout_ms, enabled, position]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         name: { type: string, minLength: 1, maxLength: 64 }
         protocol: { type: string, enum: [udp, tcp, dot, doh] }
         address: { type: string }
@@ -213,8 +226,15 @@ components:
           last_error,
           stale,
           revision,
+          engine_group_id,
         ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         name: { type: string }
         kind: { type: string, enum: [block, allow] }
@@ -237,6 +257,12 @@ components:
       type: object
       required: [name, kind, url, refresh_interval_seconds, enabled]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         name: { type: string, minLength: 1, maxLength: 64 }
         kind: { type: string, enum: [block, allow] }
         url: { type: string, pattern: "^https?://" }
@@ -265,6 +291,12 @@ components:
           persist_error,
           version_ahead,
           status,
+          engine_group_id,
+          engine_group_name,
+          labels,
+          revision,
+          target_version,
+          certificate_serial,
         ]
       properties:
         id: { type: string, format: uuid }
@@ -281,11 +313,32 @@ components:
         status:
           {
             type: string,
-            enum: [current, behind, rejected, ahead, disconnected],
+            enum: [current, behind, rejected, ahead, disconnected, revoked],
           }
+        engine_group_id: { type: string, format: uuid }
+        engine_group_name: { type: string }
+        labels: { type: object, additionalProperties: { type: string } }
+        revision: { type: integer, format: int64 }
+        target_version: { type: integer, format: int64 }
+        certificate_serial: { type: string }
+        revoked_at: { type: [string, "null"], format: date-time }
+        cert_rotate_requested_at: { type: [string, "null"], format: date-time }
+        certificate_not_after: { type: [string, "null"], format: date-time }
     JoinToken:
       type: object
-      required: [id, name, created_by, created_at, expires_at, uses]
+      required:
+        [
+          id,
+          name,
+          created_by,
+          created_at,
+          expires_at,
+          uses,
+          engine_group_id,
+          engine_group_name,
+          labels,
+          state,
+        ]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -294,14 +347,25 @@ components:
         expires_at: { type: string, format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
         uses: { type: integer }
+        engine_group_id: { type: string, format: uuid }
+        engine_group_name: { type: string }
+        labels: { type: object, additionalProperties: { type: string } }
+        state: { type: string, enum: [active, expired, exhausted, revoked] }
+        max_uses: { type: [integer, "null"] }
     JoinTokenCreate:
       type: object
       required: [name, ttl_seconds]
       properties:
-        {
-          name: { type: string },
-          ttl_seconds: { type: integer, minimum: 60, maximum: 31536000 },
-        }
+        name: { type: string }
+        ttl_seconds: { type: integer, minimum: 60, maximum: 31536000 }
+        engine_group_id: { type: string, format: uuid }
+        max_uses: { type: integer, minimum: 1, maximum: 100000 }
+        labels:
+          {
+            type: object,
+            additionalProperties: { type: string, maxLength: 63 },
+            maxProperties: 32,
+          }
     JoinTokenCreated:
       type: object
       required: [join_token, token]
@@ -481,6 +545,12 @@ components:
       type: object
       required: [name, cidrs]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         name: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9 _.-]{0,62}$" }
         description: { type: string, maxLength: 500, default: "" }
         cidrs:
@@ -516,8 +586,15 @@ components:
           revision,
           created_at,
           updated_at,
+          engine_group_id,
         ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         name: { type: string }
         description: { type: string }
@@ -532,6 +609,12 @@ components:
       type: object
       required: [name, type, value]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         group_id:
           {
             type: [string, "null"],
@@ -553,8 +636,25 @@ components:
     Rewrite:
       type: object
       required:
-        [id, group_id, name, type, value, ttl, revision, created_at, updated_at]
+        [
+          id,
+          group_id,
+          name,
+          type,
+          value,
+          ttl,
+          revision,
+          created_at,
+          updated_at,
+          engine_group_id,
+        ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         group_id: { type: [string, "null"], format: uuid }
         name: { type: string }
@@ -640,6 +740,12 @@ components:
       type: object
       required: [domain, addresses, validate]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         domain: { type: string, maxLength: 255 }
         addresses:
           {
@@ -658,8 +764,14 @@ components:
             revision: { type: integer, format: int64 }
     ForwardZone:
       type: object
-      required: [id, domain, addresses, validate, revision]
+      required: [id, domain, addresses, validate, revision, engine_group_id]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         domain: { type: string }
         addresses: { type: array, items: { type: string } }
@@ -775,6 +887,12 @@ components:
       type: object
       required: [name, source_type, min_refresh_seconds, policy_override]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         name: { type: string, maxLength: 255 }
         source_type: { type: string, enum: [file, transfer] }
         primary:
@@ -827,8 +945,15 @@ components:
           file_records,
           revision,
           status,
+          engine_group_id,
         ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         name: { type: string }
         position: { type: integer }
@@ -923,10 +1048,13 @@ components:
       properties:
         mname: { type: string }
         rname: { type: string }
-        refresh: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        refresh:
+          { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
         retry: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
-        expire: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
-        minimum: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        expire:
+          { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        minimum:
+          { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
         ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
     ZoneSecondaryStatus:
       type: object
@@ -966,8 +1094,15 @@ components:
           dnssec_enabled,
           created_at,
           updated_at,
+          engine_group_id,
         ]
       properties:
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
         id: { type: string, format: uuid }
         name: { type: string }
         kind: { type: string, enum: [primary, secondary] }
@@ -976,7 +1111,8 @@ components:
         default_ttl: { type: integer, format: int64 }
         soa: { $ref: "#/components/schemas/ZoneSOA" }
         transfer: { $ref: "#/components/schemas/ZoneTransfer" }
-        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        notify:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
         primaries:
           { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
@@ -992,7 +1128,14 @@ components:
       type: object
       required: [name, kind]
       properties:
-        name: { type: string, maxLength: 255, description: "Absolute zone name." }
+        engine_group_id:
+          {
+            type: [string, "null"],
+            format: uuid,
+            description: "engine group; null applies to every group",
+          }
+        name:
+          { type: string, maxLength: 255, description: "Absolute zone name." }
         kind: { type: string, enum: [primary, secondary] }
         default_ttl:
           {
@@ -1018,34 +1161,93 @@ components:
             description: "Secondary zones: at least one primary.",
           }
         transfer: { $ref: "#/components/schemas/ZoneTransfer" }
-        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        notify:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
     ZoneUpdate:
       type: object
       required: [revision]
       properties:
         revision: { type: integer, format: int64 }
-        default_ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
+        default_ttl:
+          { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
         soa: { $ref: "#/components/schemas/ZoneSOAInput" }
         primaries:
           { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         transfer: { $ref: "#/components/schemas/ZoneTransfer" }
-        notify: { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        notify:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
     RecordInput:
       type: object
       required: [name, type, ttl, data]
       properties:
-        name: { type: string, maxLength: 255, description: "Absolute owner name inside the zone." }
-        type: { type: string, enum: [A, AAAA, CAA, CNAME, DNAME, DS, HTTPS, LOC, MX, NAPTR, NS, PTR, SRV, SSHFP, SVCB, TLSA, TXT] }
+        name:
+          {
+            type: string,
+            maxLength: 255,
+            description: "Absolute owner name inside the zone.",
+          }
+        type:
+          {
+            type: string,
+            enum:
+              [
+                A,
+                AAAA,
+                CAA,
+                CNAME,
+                DNAME,
+                DS,
+                HTTPS,
+                LOC,
+                MX,
+                NAPTR,
+                NS,
+                PTR,
+                SRV,
+                SSHFP,
+                SVCB,
+                TLSA,
+                TXT,
+              ],
+          }
         ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
-        data: { type: string, maxLength: 65535, description: "RDATA in presentation format." }
+        data:
+          {
+            type: string,
+            maxLength: 65535,
+            description: "RDATA in presentation format.",
+          }
     RecordUpdate:
       type: object
       required: [name, type, ttl, data, revision]
       properties:
         name: { type: string, maxLength: 255 }
-        type: { type: string, enum: [A, AAAA, CAA, CNAME, DNAME, DS, HTTPS, LOC, MX, NAPTR, NS, PTR, SRV, SSHFP, SVCB, TLSA, TXT] }
+        type:
+          {
+            type: string,
+            enum:
+              [
+                A,
+                AAAA,
+                CAA,
+                CNAME,
+                DNAME,
+                DS,
+                HTTPS,
+                LOC,
+                MX,
+                NAPTR,
+                NS,
+                PTR,
+                SRV,
+                SSHFP,
+                SVCB,
+                TLSA,
+                TXT,
+              ],
+          }
         ttl: { type: integer, format: int64, minimum: 0, maximum: 2147483647 }
         data: { type: string, maxLength: 65535 }
         revision: { type: integer, format: int64 }
@@ -1083,7 +1285,22 @@ components:
         next_cursor: { type: [string, "null"] }
     ZoneDnssecKey:
       type: object
-      required: [id, role, algorithm, key_tag, flags, state, ds_state, backend, public_key, published_at, activated_at, retired_at, removed_at]
+      required:
+        [
+          id,
+          role,
+          algorithm,
+          key_tag,
+          flags,
+          state,
+          ds_state,
+          backend,
+          public_key,
+          published_at,
+          activated_at,
+          retired_at,
+          removed_at,
+        ]
       properties:
         id: { type: string, format: uuid }
         role: { type: string, enum: [ksk, zsk] }
@@ -1091,37 +1308,84 @@ components:
         key_tag: { type: integer }
         flags: { type: integer }
         state: { type: string, enum: [published, active, retired, removed] }
-        ds_state: { type: string, enum: [none, pending, seen], description: "KSKs: whether the parent's DS for this key is pending or was confirmed." }
+        ds_state:
+          {
+            type: string,
+            enum: [none, pending, seen],
+            description: "KSKs: whether the parent's DS for this key is pending or was confirmed.",
+          }
         backend: { type: string, enum: [kek, pkcs11] }
-        public_key: { type: string, description: "DNSKEY public key field (base64)." }
+        public_key:
+          { type: string, description: "DNSKEY public key field (base64)." }
         published_at: { type: string, format: date-time }
         activated_at: { type: [string, "null"], format: date-time }
         retired_at: { type: [string, "null"], format: date-time }
         removed_at: { type: [string, "null"], format: date-time }
     ZoneDnssec:
       type: object
-      required: [enabled, algorithm, nsec_mode, key_backend, propagation_delay_seconds, parent_ds_ttl_seconds, zsk_lifetime_days, keys, ds, dnskeys]
+      required:
+        [
+          enabled,
+          algorithm,
+          nsec_mode,
+          key_backend,
+          propagation_delay_seconds,
+          parent_ds_ttl_seconds,
+          zsk_lifetime_days,
+          keys,
+          ds,
+          dnskeys,
+        ]
       properties:
         enabled: { type: boolean }
         algorithm: { type: integer, enum: [8, 13] }
         nsec_mode: { type: string, enum: [nsec, nsec3] }
-        key_backend: { type: string, description: "kek or pkcs11; empty when no key storage is configured." }
+        key_backend:
+          {
+            type: string,
+            description: "kek or pkcs11; empty when no key storage is configured.",
+          }
         propagation_delay_seconds: { type: integer }
         parent_ds_ttl_seconds: { type: integer }
-        zsk_lifetime_days: { type: integer, description: "0 means manual ZSK rollovers only." }
-        keys: { type: array, items: { $ref: "#/components/schemas/ZoneDnssecKey" } }
-        ds: { type: array, items: { type: string }, description: "DS records (SHA-256) of the newest active KSK, to publish at the parent." }
-        dnskeys: { type: array, items: { type: string }, description: "The served DNSKEY RRset in presentation form." }
+        zsk_lifetime_days:
+          { type: integer, description: "0 means manual ZSK rollovers only." }
+        keys:
+          { type: array, items: { $ref: "#/components/schemas/ZoneDnssecKey" } }
+        ds:
+          {
+            type: array,
+            items: { type: string },
+            description: "DS records (SHA-256) of the newest active KSK, to publish at the parent.",
+          }
+        dnskeys:
+          {
+            type: array,
+            items: { type: string },
+            description: "The served DNSKEY RRset in presentation form.",
+          }
     ZoneDnssecUpdate:
       type: object
       required: [revision, enabled]
       properties:
-        revision: { type: integer, format: int64, description: "Zone revision." }
+        revision:
+          { type: integer, format: int64, description: "Zone revision." }
         enabled: { type: boolean }
-        algorithm: { type: integer, enum: [8, 13], description: "Default 13 (ECDSA P-256); cannot change while signing is enabled." }
-        nsec_mode: { type: string, enum: [nsec, nsec3], description: "Default nsec3." }
-        key_backend: { type: string, enum: [kek, pkcs11], description: "Default pkcs11 when a token is configured, else kek." }
-        propagation_delay_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        algorithm:
+          {
+            type: integer,
+            enum: [8, 13],
+            description: "Default 13 (ECDSA P-256); cannot change while signing is enabled.",
+          }
+        nsec_mode:
+          { type: string, enum: [nsec, nsec3], description: "Default nsec3." }
+        key_backend:
+          {
+            type: string,
+            enum: [kek, pkcs11],
+            description: "Default pkcs11 when a token is configured, else kek.",
+          }
+        propagation_delay_seconds:
+          { type: integer, minimum: 1, maximum: 604800 }
         parent_ds_ttl_seconds: { type: integer, minimum: 1, maximum: 604800 }
         zsk_lifetime_days: { type: integer, minimum: 0, maximum: 3650 }
     ZoneKeyRollover:
@@ -1143,7 +1407,11 @@ components:
       required: [id, name, algorithm, revision, created_at]
       properties:
         id: { type: string, format: uuid }
-        name: { type: string, description: "Absolute key name, lowercase (e.g. xfr-key.)." }
+        name:
+          {
+            type: string,
+            description: "Absolute key name, lowercase (e.g. xfr-key.).",
+          }
         algorithm: { $ref: "#/components/schemas/TsigKeyAlgorithm" }
         revision: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
@@ -1162,7 +1430,232 @@ components:
         - type: object
           required: [secret]
           properties:
-            secret: { type: string, description: "Base64 secret; shown only in this response." }
+            secret:
+              {
+                type: string,
+                description: "Base64 secret; shown only in this response.",
+              }
+    RolloutState:
+      {
+        type: string,
+        enum:
+          [
+            pending,
+            canary,
+            verifying,
+            rolling,
+            completed,
+            halted,
+            rolled_back,
+            superseded,
+          ],
+      }
+    EngineGroupInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }
+        description: { type: string, maxLength: 1024 }
+        upstream_mode: { type: string, enum: [inherit, override] }
+        extra_acl_cidrs: { type: array, items: { type: string }, maxItems: 256 }
+        otlp_endpoint: { type: string, maxLength: 512 }
+        rollout_strategy: { type: string, enum: [all_at_once, canary] }
+        canary_count: { type: integer, minimum: 0 }
+        canary_percent: { type: integer, minimum: 0, maximum: 100 }
+        ack_timeout_seconds: { type: integer, minimum: 5, maximum: 3600 }
+        health_window_seconds: { type: integer, minimum: 20, maximum: 3600 }
+        max_servfail_ratio: { type: number, minimum: 0, maximum: 1 }
+        min_health_queries: { type: integer, minimum: 0 }
+    EngineGroupUpdate:
+      allOf:
+        - { $ref: "#/components/schemas/EngineGroupInput" }
+        - {
+            type: object,
+            required: [revision],
+            properties: { revision: { type: integer, format: int64 } },
+          }
+    EngineGroup:
+      type: object
+      required:
+        [
+          id,
+          name,
+          description,
+          upstream_mode,
+          extra_acl_cidrs,
+          otlp_endpoint,
+          rollout_strategy,
+          canary_count,
+          canary_percent,
+          ack_timeout_seconds,
+          health_window_seconds,
+          max_servfail_ratio,
+          min_health_queries,
+          rollouts_paused,
+          engine_count,
+          revision,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        upstream_mode: { type: string, enum: [inherit, override] }
+        extra_acl_cidrs: { type: array, items: { type: string } }
+        otlp_endpoint: { type: string }
+        rollout_strategy: { type: string, enum: [all_at_once, canary] }
+        canary_count: { type: integer }
+        canary_percent: { type: integer }
+        ack_timeout_seconds: { type: integer }
+        health_window_seconds: { type: integer }
+        max_servfail_ratio: { type: number }
+        min_health_queries: { type: integer }
+        rollouts_paused: { type: boolean }
+        stable_version: { type: [integer, "null"], format: int64 }
+        engine_count: { type: integer }
+        active_rollout:
+          {
+            oneOf: [{ $ref: "#/components/schemas/Rollout" }, { type: "null" }],
+          }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Rollout:
+      type: object
+      required:
+        [
+          id,
+          engine_group_id,
+          engine_group_name,
+          version,
+          kind,
+          strategy,
+          state,
+          canary_engine_ids,
+          halt_reason,
+          created_by,
+          created_at,
+          progress,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        engine_group_id: { type: string, format: uuid }
+        engine_group_name: { type: string }
+        version: { type: integer, format: int64 }
+        from_version: { type: [integer, "null"], format: int64 }
+        kind: { type: string, enum: [change, rollback, republish] }
+        strategy: { type: string, enum: [all_at_once, canary] }
+        state: { $ref: "#/components/schemas/RolloutState" }
+        canary_engine_ids:
+          { type: array, items: { type: string, format: uuid } }
+        phase_started_at: { type: [string, "null"], format: date-time }
+        halt_reason: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        progress:
+          type: object
+          required: [total, applied, rejected]
+          properties:
+            {
+              total: { type: integer },
+              applied: { type: integer },
+              rejected: { type: integer },
+            }
+    RolloutDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Rollout" }
+        - type: object
+          required: [engines]
+          properties:
+            engines:
+              type: array
+              items:
+                type: object
+                required:
+                  [
+                    engine_id,
+                    node_name,
+                    canary,
+                    connected,
+                    applied_version,
+                    progress,
+                    rejected_reason,
+                  ]
+                properties:
+                  engine_id: { type: string, format: uuid }
+                  node_name: { type: string }
+                  canary: { type: boolean }
+                  connected: { type: boolean }
+                  applied_version: { type: integer, format: int64 }
+                  progress:
+                    {
+                      type: string,
+                      enum: [waiting, applied, rejected, disconnected],
+                    }
+                  rejected_reason: { type: string }
+    EngineUpdate:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64 }
+        engine_group_id: { type: string, format: uuid }
+        labels:
+          {
+            type: object,
+            additionalProperties: { type: string, maxLength: 63 },
+            maxProperties: 32,
+          }
+    EngineStats:
+      type: object
+      required: [window, samples]
+      properties:
+        window: { type: string, enum: [5m, 1h, 24h] }
+        samples:
+          type: array
+          items:
+            type: object
+            required: [at, qps, cache_hit_ratio, servfail_ratio, p99_ms]
+            properties:
+              at: { type: string, format: date-time }
+              qps: { type: number }
+              cache_hit_ratio: { type: number }
+              servfail_ratio: { type: number }
+              p99_ms: { type: number }
+    FleetSummary:
+      type: object
+      required:
+        [engines_total, engines_by_status, halted_rollouts, engine_groups]
+      properties:
+        engines_total: { type: integer }
+        engines_by_status:
+          { type: object, additionalProperties: { type: integer } }
+        halted_rollouts: { type: integer }
+        engine_groups:
+          type: array
+          items:
+            type: object
+            required:
+              [id, name, engines, connected, rollout_strategy, rollouts_paused]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              engines: { type: integer }
+              connected: { type: integer }
+              rollout_strategy: { type: string, enum: [all_at_once, canary] }
+              rollouts_paused: { type: boolean }
+              stable_version: { type: [integer, "null"], format: int64 }
+              active_rollout:
+                {
+                  oneOf:
+                    [
+                      { $ref: "#/components/schemas/Rollout" },
+                      { type: "null" },
+                    ],
+                }
 paths:
   /health:
     get:
@@ -1390,6 +1883,7 @@ paths:
                 },
             },
           "400": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
           "409": { $ref: "#/components/responses/Error" },
         }
   /upstreams/{id}:
@@ -1417,6 +1911,7 @@ paths:
                 },
             },
           "400": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
           "404": { $ref: "#/components/responses/Error" },
           "409": { $ref: "#/components/responses/Error" },
         }
@@ -1570,6 +2065,7 @@ paths:
                 },
             },
           "400": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
           "409": { $ref: "#/components/responses/Error" },
         }
   /filter-lists/{id}:
@@ -1613,6 +2109,7 @@ paths:
                 },
             },
           "400": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
           "404": { $ref: "#/components/responses/Error" },
           "409": { $ref: "#/components/responses/Error" },
         }
@@ -1712,6 +2209,30 @@ paths:
           },
       }
   /engines/{id}:
+    patch:
+      operationId: updateEngine
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/EngineUpdate" } },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Engine" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
     get:
       operationId: getEngine
       parameters: [{ $ref: "#/components/parameters/Id" }]
@@ -1784,6 +2305,7 @@ paths:
                 },
             },
           "400": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
         }
   /join-tokens/{id}:
     delete:
@@ -2307,6 +2829,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ForwardZone" }
         "400": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
   /forward-zones/{id}:
     parameters:
@@ -2326,6 +2849,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ForwardZone" }
         "400": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
     delete:
@@ -2478,6 +3002,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RpzZone" }
         "400": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
   /rpz-zones/order:
@@ -2571,7 +3096,8 @@ paths:
           description: Hosted zones ordered by name.
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/Zone" } }
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/Zone" } }
     post:
       operationId: createZone
       tags: [zones]
@@ -2591,7 +3117,12 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       operationId: getZone
       tags: [zones]
@@ -2631,7 +3162,12 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/refresh:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       operationId: refreshZone
       tags: [zones]
@@ -2642,7 +3178,12 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/records:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       operationId: listZoneRecords
       tags: [zones]
@@ -2684,8 +3225,18 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/records/{recordId}:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
-      - { name: recordId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+      - {
+          name: recordId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     put:
       operationId: updateZoneRecord
       tags: [zones]
@@ -2716,7 +3267,12 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/import:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       operationId: importZoneFile
       tags: [zones]
@@ -2737,7 +3293,12 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/export:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       operationId: exportZoneFile
       tags: [zones]
@@ -2752,7 +3313,12 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/dnssec:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       operationId: getZoneDnssec
       tags: [zones]
@@ -2785,7 +3351,12 @@ paths:
         "503": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/dnssec/rollovers:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       operationId: startZoneKeyRollover
       tags: [zones]
@@ -2808,7 +3379,12 @@ paths:
         "503": { $ref: "#/components/responses/Error" }
   /zones/{zoneId}/dnssec/rollovers/ds-published:
     parameters:
-      - { name: zoneId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: zoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     post:
       operationId: confirmZoneKskDs
       tags: [zones]
@@ -2836,7 +3412,8 @@ paths:
           description: TSIG keys ordered by name, without secrets.
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/TsigKey" } }
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/TsigKey" } }
     post:
       operationId: createTsigKey
       tags: [zones]
@@ -2856,7 +3433,12 @@ paths:
         "503": { $ref: "#/components/responses/Error" }
   /tsig-keys/{keyId}:
     parameters:
-      - { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: keyId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     delete:
       operationId: deleteTsigKey
       tags: [zones]
@@ -2864,5 +3446,239 @@ paths:
         - $ref: "#/components/parameters/Revision"
       responses:
         "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engine-groups:
+    get:
+      operationId: listEngineGroups
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/EngineGroup" },
+                }
+    post:
+      operationId: createEngineGroup
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/EngineGroupInput" } },
+          }
+      responses:
+        "201":
+          {
+            description: created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}:
+    get:
+      operationId: getEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updateEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/EngineGroupUpdate" } },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineGroup" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteEngineGroup
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}/rollback:
+    post:
+      operationId: rollbackEngineGroup
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to_version]
+              properties:
+                { to_version: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        "202":
+          {
+            description: rollback rollout created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rollout" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /engine-groups/{id}/resume-rollouts:
+    post:
+      operationId: resumeEngineGroupRollouts
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "202":
+          {
+            description: fresh version published,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Rollout" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /rollouts:
+    get:
+      operationId: listRollouts
+      parameters:
+        - {
+            name: engine_group_id,
+            in: query,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: state,
+            in: query,
+            schema: { $ref: "#/components/schemas/RolloutState" },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 200 },
+          }
+      responses:
+        "200":
+          description: newest version first
+          content:
+            application/json:
+              schema:
+                { type: array, items: { $ref: "#/components/schemas/Rollout" } }
+        "400": { $ref: "#/components/responses/Error" }
+  /rollouts/{id}:
+    get:
+      operationId: getRollout
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/RolloutDetail" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+  /fleet/summary:
+    get:
+      operationId: getFleetSummary
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/FleetSummary" } },
+              },
+          }
+  /engines/{id}/stats:
+    get:
+      operationId: getEngineStats
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - {
+            name: window,
+            in: query,
+            schema: { type: string, enum: [5m, 1h, 24h] },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineStats" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /engines/{id}/revoke:
+    post:
+      operationId: revokeEngine
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: revoked; its streams are closed,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Engine" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /engines/{id}/rotate-certificate:
+    post:
+      operationId: rotateEngineCertificate
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "202":
+          {
+            description: rotation requested,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Engine" } },
+              },
+          }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }

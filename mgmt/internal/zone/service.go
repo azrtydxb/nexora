@@ -46,7 +46,7 @@ type querier interface {
 const zoneColumns = `z.id, z.name, z.kind, z.revision, z.serial, z.default_ttl, z.soa_mname, z.soa_rname, z.soa_refresh,
 	z.soa_retry, z.soa_expire, z.soa_minimum, z.soa_ttl, z.transfer_allow_cidrs, z.transfer_tsig_key_id, z.notify_targets,
 	z.update_tsig_key_ids, z.primaries, z.current_seq, z.image_seq, z.loaded, z.expired, z.last_refresh_at, z.last_success_at,
-	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at`
+	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at, z.engine_group_id`
 
 const zoneFrom = " FROM zones z LEFT JOIN zone_dnssec d ON d.zone_id = z.id"
 
@@ -57,7 +57,7 @@ func scanZone(row pgx.Row) (*Zone, error) {
 	err := row.Scan(&z.ID, &z.Name, &z.Kind, &z.Revision, &serial, &ttl, &z.SOA.MName, &z.SOA.RName, &refresh, &retry,
 		&expire, &minimum, &soaTTL, &z.TransferAllowCIDRs, &z.TransferTSIGKeyID, &z.Notify, &z.UpdateTSIGKeyIDs,
 		&z.Primaries, &z.CurrentSeq, &z.ImageSeq, &z.Loaded, &z.Expired, &z.LastRefreshAt, &z.LastSuccessAt, &z.NextRefreshAt,
-		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt)
+		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt, &z.EngineGroupID)
 	if err != nil {
 		return nil, store.MapError(err)
 	}
@@ -282,13 +282,23 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 		if err := checkKeys(ctx, tx, keys); err != nil {
 			return auth.Change{}, err
 		}
+		if in.EngineGroupID != nil {
+			var one int
+			err := tx.QueryRow(ctx, "SELECT 1 FROM engine_groups WHERE id = $1 FOR KEY SHARE", *in.EngineGroupID).Scan(&one)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return auth.Change{}, ErrUnknownEngineGroup
+			}
+			if err != nil {
+				return auth.Change{}, err
+			}
+		}
 		var id uuid.UUID
 		err := tx.QueryRow(ctx, `INSERT INTO zones (name, kind, default_ttl, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire,
-			soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+			soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries, engine_group_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
 			name, in.Kind, int64(in.DefaultTTL), dns.CanonicalName(in.SOA.MName), dns.CanonicalName(in.SOA.RName),
 			int64(in.SOA.Refresh), int64(in.SOA.Retry), int64(in.SOA.Expire), int64(in.SOA.Minimum), int64(in.SOA.TTL),
-			cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries)).Scan(&id)
+			cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries), in.EngineGroupID).Scan(&id)
 		if err != nil {
 			return auth.Change{}, err
 		}

@@ -47,25 +47,25 @@ func (e AuditEventActorType) Valid() bool {
 
 // Defines values for DnssecStatusEnginesTrustAnchorsState.
 const (
-	AddPend    DnssecStatusEnginesTrustAnchorsState = "add_pend"
-	Configured DnssecStatusEnginesTrustAnchorsState = "configured"
-	Missing    DnssecStatusEnginesTrustAnchorsState = "missing"
-	Revoked    DnssecStatusEnginesTrustAnchorsState = "revoked"
-	Valid      DnssecStatusEnginesTrustAnchorsState = "valid"
+	DnssecStatusEnginesTrustAnchorsStateAddPend    DnssecStatusEnginesTrustAnchorsState = "add_pend"
+	DnssecStatusEnginesTrustAnchorsStateConfigured DnssecStatusEnginesTrustAnchorsState = "configured"
+	DnssecStatusEnginesTrustAnchorsStateMissing    DnssecStatusEnginesTrustAnchorsState = "missing"
+	DnssecStatusEnginesTrustAnchorsStateRevoked    DnssecStatusEnginesTrustAnchorsState = "revoked"
+	DnssecStatusEnginesTrustAnchorsStateValid      DnssecStatusEnginesTrustAnchorsState = "valid"
 )
 
 // Valid indicates whether the value is a known member of the DnssecStatusEnginesTrustAnchorsState enum.
 func (e DnssecStatusEnginesTrustAnchorsState) Valid() bool {
 	switch e {
-	case AddPend:
+	case DnssecStatusEnginesTrustAnchorsStateAddPend:
 		return true
-	case Configured:
+	case DnssecStatusEnginesTrustAnchorsStateConfigured:
 		return true
-	case Missing:
+	case DnssecStatusEnginesTrustAnchorsStateMissing:
 		return true
-	case Revoked:
+	case DnssecStatusEnginesTrustAnchorsStateRevoked:
 		return true
-	case Valid:
+	case DnssecStatusEnginesTrustAnchorsStateValid:
 		return true
 	default:
 		return false
@@ -74,25 +74,157 @@ func (e DnssecStatusEnginesTrustAnchorsState) Valid() bool {
 
 // Defines values for EngineStatus.
 const (
-	Ahead        EngineStatus = "ahead"
-	Behind       EngineStatus = "behind"
-	Current      EngineStatus = "current"
-	Disconnected EngineStatus = "disconnected"
-	Rejected     EngineStatus = "rejected"
+	EngineStatusAhead        EngineStatus = "ahead"
+	EngineStatusBehind       EngineStatus = "behind"
+	EngineStatusCurrent      EngineStatus = "current"
+	EngineStatusDisconnected EngineStatus = "disconnected"
+	EngineStatusRejected     EngineStatus = "rejected"
+	EngineStatusRevoked      EngineStatus = "revoked"
 )
 
 // Valid indicates whether the value is a known member of the EngineStatus enum.
 func (e EngineStatus) Valid() bool {
 	switch e {
-	case Ahead:
+	case EngineStatusAhead:
 		return true
-	case Behind:
+	case EngineStatusBehind:
 		return true
-	case Current:
+	case EngineStatusCurrent:
 		return true
-	case Disconnected:
+	case EngineStatusDisconnected:
 		return true
-	case Rejected:
+	case EngineStatusRejected:
+		return true
+	case EngineStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupRolloutStrategy.
+const (
+	EngineGroupRolloutStrategyAllAtOnce EngineGroupRolloutStrategy = "all_at_once"
+	EngineGroupRolloutStrategyCanary    EngineGroupRolloutStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupRolloutStrategy enum.
+func (e EngineGroupRolloutStrategy) Valid() bool {
+	switch e {
+	case EngineGroupRolloutStrategyAllAtOnce:
+		return true
+	case EngineGroupRolloutStrategyCanary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupUpstreamMode.
+const (
+	EngineGroupUpstreamModeInherit  EngineGroupUpstreamMode = "inherit"
+	EngineGroupUpstreamModeOverride EngineGroupUpstreamMode = "override"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupUpstreamMode enum.
+func (e EngineGroupUpstreamMode) Valid() bool {
+	switch e {
+	case EngineGroupUpstreamModeInherit:
+		return true
+	case EngineGroupUpstreamModeOverride:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupInputRolloutStrategy.
+const (
+	EngineGroupInputRolloutStrategyAllAtOnce EngineGroupInputRolloutStrategy = "all_at_once"
+	EngineGroupInputRolloutStrategyCanary    EngineGroupInputRolloutStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupInputRolloutStrategy enum.
+func (e EngineGroupInputRolloutStrategy) Valid() bool {
+	switch e {
+	case EngineGroupInputRolloutStrategyAllAtOnce:
+		return true
+	case EngineGroupInputRolloutStrategyCanary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupInputUpstreamMode.
+const (
+	EngineGroupInputUpstreamModeInherit  EngineGroupInputUpstreamMode = "inherit"
+	EngineGroupInputUpstreamModeOverride EngineGroupInputUpstreamMode = "override"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupInputUpstreamMode enum.
+func (e EngineGroupInputUpstreamMode) Valid() bool {
+	switch e {
+	case EngineGroupInputUpstreamModeInherit:
+		return true
+	case EngineGroupInputUpstreamModeOverride:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupUpdateRolloutStrategy.
+const (
+	EngineGroupUpdateRolloutStrategyAllAtOnce EngineGroupUpdateRolloutStrategy = "all_at_once"
+	EngineGroupUpdateRolloutStrategyCanary    EngineGroupUpdateRolloutStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupUpdateRolloutStrategy enum.
+func (e EngineGroupUpdateRolloutStrategy) Valid() bool {
+	switch e {
+	case EngineGroupUpdateRolloutStrategyAllAtOnce:
+		return true
+	case EngineGroupUpdateRolloutStrategyCanary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineGroupUpdateUpstreamMode.
+const (
+	EngineGroupUpdateUpstreamModeInherit  EngineGroupUpdateUpstreamMode = "inherit"
+	EngineGroupUpdateUpstreamModeOverride EngineGroupUpdateUpstreamMode = "override"
+)
+
+// Valid indicates whether the value is a known member of the EngineGroupUpdateUpstreamMode enum.
+func (e EngineGroupUpdateUpstreamMode) Valid() bool {
+	switch e {
+	case EngineGroupUpdateUpstreamModeInherit:
+		return true
+	case EngineGroupUpdateUpstreamModeOverride:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineStatsWindow.
+const (
+	EngineStatsWindowN1h  EngineStatsWindow = "1h"
+	EngineStatsWindowN24h EngineStatsWindow = "24h"
+	EngineStatsWindowN5m  EngineStatsWindow = "5m"
+)
+
+// Valid indicates whether the value is a known member of the EngineStatsWindow enum.
+func (e EngineStatsWindow) Valid() bool {
+	switch e {
+	case EngineStatsWindowN1h:
+		return true
+	case EngineStatsWindowN24h:
+		return true
+	case EngineStatsWindowN5m:
 		return true
 	default:
 		return false
@@ -129,6 +261,24 @@ func (e FilterListInputKind) Valid() bool {
 	case FilterListInputKindAllow:
 		return true
 	case FilterListInputKindBlock:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FleetSummaryEngineGroupsRolloutStrategy.
+const (
+	FleetSummaryEngineGroupsRolloutStrategyAllAtOnce FleetSummaryEngineGroupsRolloutStrategy = "all_at_once"
+	FleetSummaryEngineGroupsRolloutStrategyCanary    FleetSummaryEngineGroupsRolloutStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the FleetSummaryEngineGroupsRolloutStrategy enum.
+func (e FleetSummaryEngineGroupsRolloutStrategy) Valid() bool {
+	switch e {
+	case FleetSummaryEngineGroupsRolloutStrategyAllAtOnce:
+		return true
+	case FleetSummaryEngineGroupsRolloutStrategyCanary:
 		return true
 	default:
 		return false
@@ -186,6 +336,30 @@ func (e HealthStatus) Valid() bool {
 	case HealthStatusDegraded:
 		return true
 	case HealthStatusOk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for JoinTokenState.
+const (
+	JoinTokenStateActive    JoinTokenState = "active"
+	JoinTokenStateExhausted JoinTokenState = "exhausted"
+	JoinTokenStateExpired   JoinTokenState = "expired"
+	JoinTokenStateRevoked   JoinTokenState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the JoinTokenState enum.
+func (e JoinTokenState) Valid() bool {
+	switch e {
+	case JoinTokenStateActive:
+		return true
+	case JoinTokenStateExhausted:
+		return true
+	case JoinTokenStateExpired:
+		return true
+	case JoinTokenStateRevoked:
 		return true
 	default:
 		return false
@@ -501,6 +675,144 @@ func (e Role) Valid() bool {
 	case RoleOperator:
 		return true
 	case RoleViewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutKind.
+const (
+	RolloutKindChange    RolloutKind = "change"
+	RolloutKindRepublish RolloutKind = "republish"
+	RolloutKindRollback  RolloutKind = "rollback"
+)
+
+// Valid indicates whether the value is a known member of the RolloutKind enum.
+func (e RolloutKind) Valid() bool {
+	switch e {
+	case RolloutKindChange:
+		return true
+	case RolloutKindRepublish:
+		return true
+	case RolloutKindRollback:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutStrategy.
+const (
+	RolloutStrategyAllAtOnce RolloutStrategy = "all_at_once"
+	RolloutStrategyCanary    RolloutStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the RolloutStrategy enum.
+func (e RolloutStrategy) Valid() bool {
+	switch e {
+	case RolloutStrategyAllAtOnce:
+		return true
+	case RolloutStrategyCanary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutDetailEnginesProgress.
+const (
+	RolloutDetailEnginesProgressApplied      RolloutDetailEnginesProgress = "applied"
+	RolloutDetailEnginesProgressDisconnected RolloutDetailEnginesProgress = "disconnected"
+	RolloutDetailEnginesProgressRejected     RolloutDetailEnginesProgress = "rejected"
+	RolloutDetailEnginesProgressWaiting      RolloutDetailEnginesProgress = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the RolloutDetailEnginesProgress enum.
+func (e RolloutDetailEnginesProgress) Valid() bool {
+	switch e {
+	case RolloutDetailEnginesProgressApplied:
+		return true
+	case RolloutDetailEnginesProgressDisconnected:
+		return true
+	case RolloutDetailEnginesProgressRejected:
+		return true
+	case RolloutDetailEnginesProgressWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutDetailKind.
+const (
+	RolloutDetailKindChange    RolloutDetailKind = "change"
+	RolloutDetailKindRepublish RolloutDetailKind = "republish"
+	RolloutDetailKindRollback  RolloutDetailKind = "rollback"
+)
+
+// Valid indicates whether the value is a known member of the RolloutDetailKind enum.
+func (e RolloutDetailKind) Valid() bool {
+	switch e {
+	case RolloutDetailKindChange:
+		return true
+	case RolloutDetailKindRepublish:
+		return true
+	case RolloutDetailKindRollback:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutDetailStrategy.
+const (
+	RolloutDetailStrategyAllAtOnce RolloutDetailStrategy = "all_at_once"
+	RolloutDetailStrategyCanary    RolloutDetailStrategy = "canary"
+)
+
+// Valid indicates whether the value is a known member of the RolloutDetailStrategy enum.
+func (e RolloutDetailStrategy) Valid() bool {
+	switch e {
+	case RolloutDetailStrategyAllAtOnce:
+		return true
+	case RolloutDetailStrategyCanary:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RolloutState.
+const (
+	RolloutStateCanary     RolloutState = "canary"
+	RolloutStateCompleted  RolloutState = "completed"
+	RolloutStateHalted     RolloutState = "halted"
+	RolloutStatePending    RolloutState = "pending"
+	RolloutStateRolledBack RolloutState = "rolled_back"
+	RolloutStateRolling    RolloutState = "rolling"
+	RolloutStateSuperseded RolloutState = "superseded"
+	RolloutStateVerifying  RolloutState = "verifying"
+)
+
+// Valid indicates whether the value is a known member of the RolloutState enum.
+func (e RolloutState) Valid() bool {
+	switch e {
+	case RolloutStateCanary:
+		return true
+	case RolloutStateCompleted:
+		return true
+	case RolloutStateHalted:
+		return true
+	case RolloutStatePending:
+		return true
+	case RolloutStateRolledBack:
+		return true
+	case RolloutStateRolling:
+		return true
+	case RolloutStateSuperseded:
+		return true
+	case RolloutStateVerifying:
 		return true
 	default:
 		return false
@@ -908,22 +1220,22 @@ func (e ZoneDnssecKeyRole) Valid() bool {
 
 // Defines values for ZoneDnssecKeyState.
 const (
-	Active    ZoneDnssecKeyState = "active"
-	Published ZoneDnssecKeyState = "published"
-	Removed   ZoneDnssecKeyState = "removed"
-	Retired   ZoneDnssecKeyState = "retired"
+	ZoneDnssecKeyStateActive    ZoneDnssecKeyState = "active"
+	ZoneDnssecKeyStatePublished ZoneDnssecKeyState = "published"
+	ZoneDnssecKeyStateRemoved   ZoneDnssecKeyState = "removed"
+	ZoneDnssecKeyStateRetired   ZoneDnssecKeyState = "retired"
 )
 
 // Valid indicates whether the value is a known member of the ZoneDnssecKeyState enum.
 func (e ZoneDnssecKeyState) Valid() bool {
 	switch e {
-	case Active:
+	case ZoneDnssecKeyStateActive:
 		return true
-	case Published:
+	case ZoneDnssecKeyStatePublished:
 		return true
-	case Removed:
+	case ZoneDnssecKeyStateRemoved:
 		return true
-	case Retired:
+	case ZoneDnssecKeyStateRetired:
 		return true
 	default:
 		return false
@@ -996,6 +1308,27 @@ func (e ZoneKeyRolloverRole) Valid() bool {
 	case ZoneKeyRolloverRoleKsk:
 		return true
 	case ZoneKeyRolloverRoleZsk:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetEngineStatsParamsWindow.
+const (
+	GetEngineStatsParamsWindowN1h  GetEngineStatsParamsWindow = "1h"
+	GetEngineStatsParamsWindowN24h GetEngineStatsParamsWindow = "24h"
+	GetEngineStatsParamsWindowN5m  GetEngineStatsParamsWindow = "5m"
+)
+
+// Valid indicates whether the value is a known member of the GetEngineStatsParamsWindow enum.
+func (e GetEngineStatsParamsWindow) Valid() bool {
+	switch e {
+	case GetEngineStatsParamsWindowN1h:
+		return true
+	case GetEngineStatsParamsWindowN24h:
+		return true
+	case GetEngineStatsParamsWindowN5m:
 		return true
 	default:
 		return false
@@ -1150,22 +1483,128 @@ type DnssecStatusEnginesTrustAnchorsState string
 
 // Engine defines model for Engine.
 type Engine struct {
-	AppliedVersion  int64              `json:"applied_version"`
-	Connected       bool               `json:"connected"`
-	EngineVersion   string             `json:"engine_version"`
-	EnrolledAt      time.Time          `json:"enrolled_at"`
-	Id              openapi_types.UUID `json:"id"`
-	LastSeenAt      *time.Time         `json:"last_seen_at,omitempty"`
-	NodeName        string             `json:"node_name"`
-	PersistError    string             `json:"persist_error"`
-	RejectedReason  string             `json:"rejected_reason"`
-	RejectedVersion *int64             `json:"rejected_version,omitempty"`
-	Status          EngineStatus       `json:"status"`
-	VersionAhead    bool               `json:"version_ahead"`
+	AppliedVersion        int64              `json:"applied_version"`
+	CertRotateRequestedAt *time.Time         `json:"cert_rotate_requested_at,omitempty"`
+	CertificateNotAfter   *time.Time         `json:"certificate_not_after,omitempty"`
+	CertificateSerial     string             `json:"certificate_serial"`
+	Connected             bool               `json:"connected"`
+	EngineGroupId         openapi_types.UUID `json:"engine_group_id"`
+	EngineGroupName       string             `json:"engine_group_name"`
+	EngineVersion         string             `json:"engine_version"`
+	EnrolledAt            time.Time          `json:"enrolled_at"`
+	Id                    openapi_types.UUID `json:"id"`
+	Labels                map[string]string  `json:"labels"`
+	LastSeenAt            *time.Time         `json:"last_seen_at,omitempty"`
+	NodeName              string             `json:"node_name"`
+	PersistError          string             `json:"persist_error"`
+	RejectedReason        string             `json:"rejected_reason"`
+	RejectedVersion       *int64             `json:"rejected_version,omitempty"`
+	Revision              int64              `json:"revision"`
+	RevokedAt             *time.Time         `json:"revoked_at,omitempty"`
+	Status                EngineStatus       `json:"status"`
+	TargetVersion         int64              `json:"target_version"`
+	VersionAhead          bool               `json:"version_ahead"`
 }
 
 // EngineStatus defines model for Engine.Status.
 type EngineStatus string
+
+// EngineGroup defines model for EngineGroup.
+type EngineGroup struct {
+	AckTimeoutSeconds   int                        `json:"ack_timeout_seconds"`
+	ActiveRollout       *Rollout                   `json:"active_rollout,omitempty"`
+	CanaryCount         int                        `json:"canary_count"`
+	CanaryPercent       int                        `json:"canary_percent"`
+	CreatedAt           time.Time                  `json:"created_at"`
+	Description         string                     `json:"description"`
+	EngineCount         int                        `json:"engine_count"`
+	ExtraAclCidrs       []string                   `json:"extra_acl_cidrs"`
+	HealthWindowSeconds int                        `json:"health_window_seconds"`
+	Id                  openapi_types.UUID         `json:"id"`
+	MaxServfailRatio    float32                    `json:"max_servfail_ratio"`
+	MinHealthQueries    int                        `json:"min_health_queries"`
+	Name                string                     `json:"name"`
+	OtlpEndpoint        string                     `json:"otlp_endpoint"`
+	Revision            int64                      `json:"revision"`
+	RolloutStrategy     EngineGroupRolloutStrategy `json:"rollout_strategy"`
+	RolloutsPaused      bool                       `json:"rollouts_paused"`
+	StableVersion       *int64                     `json:"stable_version,omitempty"`
+	UpdatedAt           time.Time                  `json:"updated_at"`
+	UpstreamMode        EngineGroupUpstreamMode    `json:"upstream_mode"`
+}
+
+// EngineGroupRolloutStrategy defines model for EngineGroup.RolloutStrategy.
+type EngineGroupRolloutStrategy string
+
+// EngineGroupUpstreamMode defines model for EngineGroup.UpstreamMode.
+type EngineGroupUpstreamMode string
+
+// EngineGroupInput defines model for EngineGroupInput.
+type EngineGroupInput struct {
+	AckTimeoutSeconds   *int                             `json:"ack_timeout_seconds,omitempty"`
+	CanaryCount         *int                             `json:"canary_count,omitempty"`
+	CanaryPercent       *int                             `json:"canary_percent,omitempty"`
+	Description         *string                          `json:"description,omitempty"`
+	ExtraAclCidrs       *[]string                        `json:"extra_acl_cidrs,omitempty"`
+	HealthWindowSeconds *int                             `json:"health_window_seconds,omitempty"`
+	MaxServfailRatio    *float32                         `json:"max_servfail_ratio,omitempty"`
+	MinHealthQueries    *int                             `json:"min_health_queries,omitempty"`
+	Name                string                           `json:"name"`
+	OtlpEndpoint        *string                          `json:"otlp_endpoint,omitempty"`
+	RolloutStrategy     *EngineGroupInputRolloutStrategy `json:"rollout_strategy,omitempty"`
+	UpstreamMode        *EngineGroupInputUpstreamMode    `json:"upstream_mode,omitempty"`
+}
+
+// EngineGroupInputRolloutStrategy defines model for EngineGroupInput.RolloutStrategy.
+type EngineGroupInputRolloutStrategy string
+
+// EngineGroupInputUpstreamMode defines model for EngineGroupInput.UpstreamMode.
+type EngineGroupInputUpstreamMode string
+
+// EngineGroupUpdate defines model for EngineGroupUpdate.
+type EngineGroupUpdate struct {
+	AckTimeoutSeconds   *int                              `json:"ack_timeout_seconds,omitempty"`
+	CanaryCount         *int                              `json:"canary_count,omitempty"`
+	CanaryPercent       *int                              `json:"canary_percent,omitempty"`
+	Description         *string                           `json:"description,omitempty"`
+	ExtraAclCidrs       *[]string                         `json:"extra_acl_cidrs,omitempty"`
+	HealthWindowSeconds *int                              `json:"health_window_seconds,omitempty"`
+	MaxServfailRatio    *float32                          `json:"max_servfail_ratio,omitempty"`
+	MinHealthQueries    *int                              `json:"min_health_queries,omitempty"`
+	Name                string                            `json:"name"`
+	OtlpEndpoint        *string                           `json:"otlp_endpoint,omitempty"`
+	Revision            int64                             `json:"revision"`
+	RolloutStrategy     *EngineGroupUpdateRolloutStrategy `json:"rollout_strategy,omitempty"`
+	UpstreamMode        *EngineGroupUpdateUpstreamMode    `json:"upstream_mode,omitempty"`
+}
+
+// EngineGroupUpdateRolloutStrategy defines model for EngineGroupUpdate.RolloutStrategy.
+type EngineGroupUpdateRolloutStrategy string
+
+// EngineGroupUpdateUpstreamMode defines model for EngineGroupUpdate.UpstreamMode.
+type EngineGroupUpdateUpstreamMode string
+
+// EngineStats defines model for EngineStats.
+type EngineStats struct {
+	Samples []struct {
+		At            time.Time `json:"at"`
+		CacheHitRatio float32   `json:"cache_hit_ratio"`
+		P99Ms         float32   `json:"p99_ms"`
+		Qps           float32   `json:"qps"`
+		ServfailRatio float32   `json:"servfail_ratio"`
+	} `json:"samples"`
+	Window EngineStatsWindow `json:"window"`
+}
+
+// EngineStatsWindow defines model for EngineStats.Window.
+type EngineStatsWindow string
+
+// EngineUpdate defines model for EngineUpdate.
+type EngineUpdate struct {
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+	Labels        *map[string]string  `json:"labels,omitempty"`
+	Revision      int64               `json:"revision"`
+}
 
 // Error defines model for Error.
 type Error struct {
@@ -1181,18 +1620,21 @@ type Error struct {
 
 // FilterList defines model for FilterList.
 type FilterList struct {
-	CurrentBlobSha256      *string            `json:"current_blob_sha256,omitempty"`
-	Enabled                bool               `json:"enabled"`
-	EntryCount             int                `json:"entry_count"`
-	Id                     openapi_types.UUID `json:"id"`
-	InvalidLineCount       int                `json:"invalid_line_count"`
-	Kind                   FilterListKind     `json:"kind"`
-	LastAttemptAt          *time.Time         `json:"last_attempt_at,omitempty"`
-	LastError              string             `json:"last_error"`
-	LastSuccessAt          *time.Time         `json:"last_success_at,omitempty"`
-	Name                   string             `json:"name"`
-	RefreshIntervalSeconds int                `json:"refresh_interval_seconds"`
-	Revision               int64              `json:"revision"`
+	CurrentBlobSha256 *string `json:"current_blob_sha256,omitempty"`
+	Enabled           bool    `json:"enabled"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId          *openapi_types.UUID `json:"engine_group_id"`
+	EntryCount             int                 `json:"entry_count"`
+	Id                     openapi_types.UUID  `json:"id"`
+	InvalidLineCount       int                 `json:"invalid_line_count"`
+	Kind                   FilterListKind      `json:"kind"`
+	LastAttemptAt          *time.Time          `json:"last_attempt_at,omitempty"`
+	LastError              string              `json:"last_error"`
+	LastSuccessAt          *time.Time          `json:"last_success_at,omitempty"`
+	Name                   string              `json:"name"`
+	RefreshIntervalSeconds int                 `json:"refresh_interval_seconds"`
+	Revision               int64               `json:"revision"`
 
 	// Stale last attempt failed or last success older than 2 x refresh interval
 	Stale bool   `json:"stale"`
@@ -1204,7 +1646,10 @@ type FilterListKind string
 
 // FilterListInput defines model for FilterListInput.
 type FilterListInput struct {
-	Enabled                bool                `json:"enabled"`
+	Enabled bool `json:"enabled"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId          *openapi_types.UUID `json:"engine_group_id,omitempty"`
 	Kind                   FilterListInputKind `json:"kind"`
 	Name                   string              `json:"name"`
 	RefreshIntervalSeconds int                 `json:"refresh_interval_seconds"`
@@ -1215,28 +1660,57 @@ type FilterListInput struct {
 // FilterListInputKind defines model for FilterListInput.Kind.
 type FilterListInputKind string
 
+// FleetSummary defines model for FleetSummary.
+type FleetSummary struct {
+	EngineGroups []struct {
+		ActiveRollout   *Rollout                                `json:"active_rollout,omitempty"`
+		Connected       int                                     `json:"connected"`
+		Engines         int                                     `json:"engines"`
+		Id              openapi_types.UUID                      `json:"id"`
+		Name            string                                  `json:"name"`
+		RolloutStrategy FleetSummaryEngineGroupsRolloutStrategy `json:"rollout_strategy"`
+		RolloutsPaused  bool                                    `json:"rollouts_paused"`
+		StableVersion   *int64                                  `json:"stable_version,omitempty"`
+	} `json:"engine_groups"`
+	EnginesByStatus map[string]int `json:"engines_by_status"`
+	EnginesTotal    int            `json:"engines_total"`
+	HaltedRollouts  int            `json:"halted_rollouts"`
+}
+
+// FleetSummaryEngineGroupsRolloutStrategy defines model for FleetSummary.EngineGroups.RolloutStrategy.
+type FleetSummaryEngineGroupsRolloutStrategy string
+
 // ForwardZone defines model for ForwardZone.
 type ForwardZone struct {
-	Addresses []string           `json:"addresses"`
-	Domain    string             `json:"domain"`
-	Id        openapi_types.UUID `json:"id"`
-	Revision  int64              `json:"revision"`
-	Validate  bool               `json:"validate"`
+	Addresses []string `json:"addresses"`
+	Domain    string   `json:"domain"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id"`
+	Id            openapi_types.UUID  `json:"id"`
+	Revision      int64               `json:"revision"`
+	Validate      bool                `json:"validate"`
 }
 
 // ForwardZoneInput defines model for ForwardZoneInput.
 type ForwardZoneInput struct {
 	Addresses []string `json:"addresses"`
 	Domain    string   `json:"domain"`
-	Validate  bool     `json:"validate"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+	Validate      bool                `json:"validate"`
 }
 
 // ForwardZoneUpdate defines model for ForwardZoneUpdate.
 type ForwardZoneUpdate struct {
 	Addresses []string `json:"addresses"`
 	Domain    string   `json:"domain"`
-	Revision  int64    `json:"revision"`
-	Validate  bool     `json:"validate"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+	Revision      int64               `json:"revision"`
+	Validate      bool                `json:"validate"`
 }
 
 // GlobalSafeSearch defines model for GlobalSafeSearch.
@@ -1266,19 +1740,30 @@ type HealthStatus string
 
 // JoinToken defines model for JoinToken.
 type JoinToken struct {
-	CreatedAt time.Time          `json:"created_at"`
-	CreatedBy string             `json:"created_by"`
-	ExpiresAt time.Time          `json:"expires_at"`
-	Id        openapi_types.UUID `json:"id"`
-	Name      string             `json:"name"`
-	RevokedAt *time.Time         `json:"revoked_at,omitempty"`
-	Uses      int                `json:"uses"`
+	CreatedAt       time.Time          `json:"created_at"`
+	CreatedBy       string             `json:"created_by"`
+	EngineGroupId   openapi_types.UUID `json:"engine_group_id"`
+	EngineGroupName string             `json:"engine_group_name"`
+	ExpiresAt       time.Time          `json:"expires_at"`
+	Id              openapi_types.UUID `json:"id"`
+	Labels          map[string]string  `json:"labels"`
+	MaxUses         *int               `json:"max_uses,omitempty"`
+	Name            string             `json:"name"`
+	RevokedAt       *time.Time         `json:"revoked_at,omitempty"`
+	State           JoinTokenState     `json:"state"`
+	Uses            int                `json:"uses"`
 }
+
+// JoinTokenState defines model for JoinToken.State.
+type JoinTokenState string
 
 // JoinTokenCreate defines model for JoinTokenCreate.
 type JoinTokenCreate struct {
-	Name       string `json:"name"`
-	TtlSeconds int    `json:"ttl_seconds"`
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+	Labels        *map[string]string  `json:"labels,omitempty"`
+	MaxUses       *int                `json:"max_uses,omitempty"`
+	Name          string              `json:"name"`
+	TtlSeconds    int                 `json:"ttl_seconds"`
 }
 
 // JoinTokenCreated defines model for JoinTokenCreated.
@@ -1314,10 +1799,13 @@ type NegativeTrustAnchorInput struct {
 
 // PolicyGroup defines model for PolicyGroup.
 type PolicyGroup struct {
-	Allowlist     []string             `json:"allowlist"`
-	Cidrs         []string             `json:"cidrs"`
-	CreatedAt     time.Time            `json:"created_at"`
-	Description   string               `json:"description"`
+	Allowlist   []string  `json:"allowlist"`
+	Cidrs       []string  `json:"cidrs"`
+	CreatedAt   time.Time `json:"created_at"`
+	Description string    `json:"description"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID  `json:"engine_group_id"`
 	FilterListIds []openapi_types.UUID `json:"filter_list_ids"`
 	Id            openapi_types.UUID   `json:"id"`
 	Name          string               `json:"name"`
@@ -1328,9 +1816,12 @@ type PolicyGroup struct {
 
 // PolicyGroupInput defines model for PolicyGroupInput.
 type PolicyGroupInput struct {
-	Allowlist     *[]string             `json:"allowlist,omitempty"`
-	Cidrs         []string              `json:"cidrs"`
-	Description   *string               `json:"description,omitempty"`
+	Allowlist   *[]string `json:"allowlist,omitempty"`
+	Cidrs       []string  `json:"cidrs"`
+	Description *string   `json:"description,omitempty"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID   `json:"engine_group_id,omitempty"`
 	FilterListIds *[]openapi_types.UUID `json:"filter_list_ids,omitempty"`
 	Name          string                `json:"name"`
 	SafeSearch    *SafeSearch           `json:"safe_search,omitempty"`
@@ -1338,9 +1829,12 @@ type PolicyGroupInput struct {
 
 // PolicyGroupUpdate defines model for PolicyGroupUpdate.
 type PolicyGroupUpdate struct {
-	Allowlist     *[]string             `json:"allowlist,omitempty"`
-	Cidrs         []string              `json:"cidrs"`
-	Description   *string               `json:"description,omitempty"`
+	Allowlist   *[]string `json:"allowlist,omitempty"`
+	Cidrs       []string  `json:"cidrs"`
+	Description *string   `json:"description,omitempty"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID   `json:"engine_group_id,omitempty"`
 	FilterListIds *[]openapi_types.UUID `json:"filter_list_ids,omitempty"`
 	Name          string                `json:"name"`
 	Revision      int64                 `json:"revision"`
@@ -1456,15 +1950,18 @@ type ResolverSettingsStrategy string
 
 // Rewrite defines model for Rewrite.
 type Rewrite struct {
-	CreatedAt time.Time           `json:"created_at"`
-	GroupId   *openapi_types.UUID `json:"group_id"`
-	Id        openapi_types.UUID  `json:"id"`
-	Name      string              `json:"name"`
-	Revision  int64               `json:"revision"`
-	Ttl       int                 `json:"ttl"`
-	Type      RewriteType         `json:"type"`
-	UpdatedAt time.Time           `json:"updated_at"`
-	Value     string              `json:"value"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id"`
+	GroupId       *openapi_types.UUID `json:"group_id"`
+	Id            openapi_types.UUID  `json:"id"`
+	Name          string              `json:"name"`
+	Revision      int64               `json:"revision"`
+	Ttl           int                 `json:"ttl"`
+	Type          RewriteType         `json:"type"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+	Value         string              `json:"value"`
 }
 
 // RewriteType defines model for Rewrite.Type.
@@ -1472,6 +1969,9 @@ type RewriteType string
 
 // RewriteInput defines model for RewriteInput.
 type RewriteInput struct {
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+
 	// GroupId null means global
 	GroupId *openapi_types.UUID `json:"group_id,omitempty"`
 
@@ -1487,6 +1987,9 @@ type RewriteInputType string
 
 // RewriteUpdate defines model for RewriteUpdate.
 type RewriteUpdate struct {
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+
 	// GroupId null means global
 	GroupId *openapi_types.UUID `json:"group_id,omitempty"`
 
@@ -1504,6 +2007,79 @@ type RewriteUpdateType string
 // Role defines model for Role.
 type Role string
 
+// Rollout defines model for Rollout.
+type Rollout struct {
+	CanaryEngineIds []openapi_types.UUID `json:"canary_engine_ids"`
+	CreatedAt       time.Time            `json:"created_at"`
+	CreatedBy       string               `json:"created_by"`
+	EngineGroupId   openapi_types.UUID   `json:"engine_group_id"`
+	EngineGroupName string               `json:"engine_group_name"`
+	FinishedAt      *time.Time           `json:"finished_at,omitempty"`
+	FromVersion     *int64               `json:"from_version,omitempty"`
+	HaltReason      string               `json:"halt_reason"`
+	Id              openapi_types.UUID   `json:"id"`
+	Kind            RolloutKind          `json:"kind"`
+	PhaseStartedAt  *time.Time           `json:"phase_started_at,omitempty"`
+	Progress        struct {
+		Applied  int `json:"applied"`
+		Rejected int `json:"rejected"`
+		Total    int `json:"total"`
+	} `json:"progress"`
+	State    RolloutState    `json:"state"`
+	Strategy RolloutStrategy `json:"strategy"`
+	Version  int64           `json:"version"`
+}
+
+// RolloutKind defines model for Rollout.Kind.
+type RolloutKind string
+
+// RolloutStrategy defines model for Rollout.Strategy.
+type RolloutStrategy string
+
+// RolloutDetail defines model for RolloutDetail.
+type RolloutDetail struct {
+	CanaryEngineIds []openapi_types.UUID `json:"canary_engine_ids"`
+	CreatedAt       time.Time            `json:"created_at"`
+	CreatedBy       string               `json:"created_by"`
+	EngineGroupId   openapi_types.UUID   `json:"engine_group_id"`
+	EngineGroupName string               `json:"engine_group_name"`
+	Engines         []struct {
+		AppliedVersion int64                        `json:"applied_version"`
+		Canary         bool                         `json:"canary"`
+		Connected      bool                         `json:"connected"`
+		EngineId       openapi_types.UUID           `json:"engine_id"`
+		NodeName       string                       `json:"node_name"`
+		Progress       RolloutDetailEnginesProgress `json:"progress"`
+		RejectedReason string                       `json:"rejected_reason"`
+	} `json:"engines"`
+	FinishedAt     *time.Time         `json:"finished_at,omitempty"`
+	FromVersion    *int64             `json:"from_version,omitempty"`
+	HaltReason     string             `json:"halt_reason"`
+	Id             openapi_types.UUID `json:"id"`
+	Kind           RolloutDetailKind  `json:"kind"`
+	PhaseStartedAt *time.Time         `json:"phase_started_at,omitempty"`
+	Progress       struct {
+		Applied  int `json:"applied"`
+		Rejected int `json:"rejected"`
+		Total    int `json:"total"`
+	} `json:"progress"`
+	State    RolloutState          `json:"state"`
+	Strategy RolloutDetailStrategy `json:"strategy"`
+	Version  int64                 `json:"version"`
+}
+
+// RolloutDetailEnginesProgress defines model for RolloutDetail.Engines.Progress.
+type RolloutDetailEnginesProgress string
+
+// RolloutDetailKind defines model for RolloutDetail.Kind.
+type RolloutDetailKind string
+
+// RolloutDetailStrategy defines model for RolloutDetail.Strategy.
+type RolloutDetailStrategy string
+
+// RolloutState defines model for RolloutState.
+type RolloutState string
+
 // RootHint defines model for RootHint.
 type RootHint struct {
 	Addresses []string `json:"addresses"`
@@ -1512,15 +2088,17 @@ type RootHint struct {
 
 // RpzZone defines model for RpzZone.
 type RpzZone struct {
-	FileRecords       *int               `json:"file_records"`
-	Id                openapi_types.UUID `json:"id"`
-	MinRefreshSeconds int                `json:"min_refresh_seconds"`
-	Name              string             `json:"name"`
-	PolicyOverride    string             `json:"policy_override"`
-	Position          int                `json:"position"`
-	Primary           *string            `json:"primary"`
-	Revision          int64              `json:"revision"`
-	SourceType        RpzZoneSourceType  `json:"source_type"`
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId     *openapi_types.UUID `json:"engine_group_id"`
+	FileRecords       *int                `json:"file_records"`
+	Id                openapi_types.UUID  `json:"id"`
+	MinRefreshSeconds int                 `json:"min_refresh_seconds"`
+	Name              string              `json:"name"`
+	PolicyOverride    string              `json:"policy_override"`
+	Position          int                 `json:"position"`
+	Primary           *string             `json:"primary"`
+	Revision          int64               `json:"revision"`
+	SourceType        RpzZoneSourceType   `json:"source_type"`
 	Status            []struct {
 		EngineId    openapi_types.UUID `json:"engine_id"`
 		EngineName  string             `json:"engine_name"`
@@ -1548,6 +2126,8 @@ type RpzZoneFile struct {
 
 // RpzZoneInput defines model for RpzZoneInput.
 type RpzZoneInput struct {
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId     *openapi_types.UUID        `json:"engine_group_id,omitempty"`
 	MinRefreshSeconds int                        `json:"min_refresh_seconds"`
 	Name              string                     `json:"name"`
 	PolicyOverride    RpzZoneInputPolicyOverride `json:"policy_override"`
@@ -1674,17 +2254,20 @@ type TsigKeyCreated struct {
 
 // Upstream defines model for Upstream.
 type Upstream struct {
-	Address          string             `json:"address"`
-	CaCertificatePem string             `json:"ca_certificate_pem"`
-	DohUrl           string             `json:"doh_url"`
-	Enabled          bool               `json:"enabled"`
-	Id               openapi_types.UUID `json:"id"`
-	Name             string             `json:"name"`
-	Position         int                `json:"position"`
-	Protocol         UpstreamProtocol   `json:"protocol"`
-	Revision         int64              `json:"revision"`
-	TimeoutMs        int                `json:"timeout_ms"`
-	TlsServerName    string             `json:"tls_server_name"`
+	Address          string `json:"address"`
+	CaCertificatePem string `json:"ca_certificate_pem"`
+	DohUrl           string `json:"doh_url"`
+	Enabled          bool   `json:"enabled"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id"`
+	Id            openapi_types.UUID  `json:"id"`
+	Name          string              `json:"name"`
+	Position      int                 `json:"position"`
+	Protocol      UpstreamProtocol    `json:"protocol"`
+	Revision      int64               `json:"revision"`
+	TimeoutMs     int                 `json:"timeout_ms"`
+	TlsServerName string              `json:"tls_server_name"`
 }
 
 // UpstreamProtocol defines model for Upstream.Protocol.
@@ -1692,13 +2275,16 @@ type UpstreamProtocol string
 
 // UpstreamInput defines model for UpstreamInput.
 type UpstreamInput struct {
-	Address          *string               `json:"address,omitempty"`
-	CaCertificatePem *string               `json:"ca_certificate_pem,omitempty"`
-	DohUrl           *string               `json:"doh_url,omitempty"`
-	Enabled          bool                  `json:"enabled"`
-	Name             string                `json:"name"`
-	Position         int                   `json:"position"`
-	Protocol         UpstreamInputProtocol `json:"protocol"`
+	Address          *string `json:"address,omitempty"`
+	CaCertificatePem *string `json:"ca_certificate_pem,omitempty"`
+	DohUrl           *string `json:"doh_url,omitempty"`
+	Enabled          bool    `json:"enabled"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID   `json:"engine_group_id,omitempty"`
+	Name          string                `json:"name"`
+	Position      int                   `json:"position"`
+	Protocol      UpstreamInputProtocol `json:"protocol"`
 
 	// Revision required on update
 	Revision      *int64  `json:"revision,omitempty"`
@@ -1743,15 +2329,18 @@ type UserUpdate struct {
 
 // Zone defines model for Zone.
 type Zone struct {
-	CreatedAt     time.Time          `json:"created_at"`
-	DefaultTtl    int64              `json:"default_ttl"`
-	DnssecEnabled bool               `json:"dnssec_enabled"`
-	Id            openapi_types.UUID `json:"id"`
-	Kind          ZoneKind           `json:"kind"`
-	Name          string             `json:"name"`
-	Notify        []ZoneEndpoint     `json:"notify"`
-	Primaries     []ZoneEndpoint     `json:"primaries"`
-	Revision      int64              `json:"revision"`
+	CreatedAt     time.Time `json:"created_at"`
+	DefaultTtl    int64     `json:"default_ttl"`
+	DnssecEnabled bool      `json:"dnssec_enabled"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id"`
+	Id            openapi_types.UUID  `json:"id"`
+	Kind          ZoneKind            `json:"kind"`
+	Name          string              `json:"name"`
+	Notify        []ZoneEndpoint      `json:"notify"`
+	Primaries     []ZoneEndpoint      `json:"primaries"`
+	Revision      int64               `json:"revision"`
 
 	// SecondaryStatus Present for secondary zones only.
 	SecondaryStatus *ZoneSecondaryStatus `json:"secondary_status,omitempty"`
@@ -1768,8 +2357,11 @@ type ZoneKind string
 // ZoneCreate defines model for ZoneCreate.
 type ZoneCreate struct {
 	// DefaultTtl Default 3600 when omitted.
-	DefaultTtl *int64         `json:"default_ttl,omitempty"`
-	Kind       ZoneCreateKind `json:"kind"`
+	DefaultTtl *int64 `json:"default_ttl,omitempty"`
+
+	// EngineGroupId engine group; null applies to every group
+	EngineGroupId *openapi_types.UUID `json:"engine_group_id,omitempty"`
+	Kind          ZoneCreateKind      `json:"kind"`
 
 	// Name Absolute zone name.
 	Name string `json:"name"`
@@ -1999,6 +2591,24 @@ type ListConfigVersionsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// DeleteEngineGroupParams defines parameters for DeleteEngineGroup.
+type DeleteEngineGroupParams struct {
+	Revision Revision `form:"revision" json:"revision"`
+}
+
+// RollbackEngineGroupJSONBody defines parameters for RollbackEngineGroup.
+type RollbackEngineGroupJSONBody struct {
+	ToVersion int64 `json:"to_version"`
+}
+
+// GetEngineStatsParams defines parameters for GetEngineStats.
+type GetEngineStatsParams struct {
+	Window *GetEngineStatsParamsWindow `form:"window,omitempty" json:"window,omitempty"`
+}
+
+// GetEngineStatsParamsWindow defines parameters for GetEngineStats.
+type GetEngineStatsParamsWindow string
+
 // DeleteFilterListParams defines parameters for DeleteFilterList.
 type DeleteFilterListParams struct {
 	Revision Revision `form:"revision" json:"revision"`
@@ -2037,6 +2647,13 @@ type ListRewritesParams struct {
 // DeleteRewriteParams defines parameters for DeleteRewrite.
 type DeleteRewriteParams struct {
 	Revision int64 `form:"revision" json:"revision"`
+}
+
+// ListRolloutsParams defines parameters for ListRollouts.
+type ListRolloutsParams struct {
+	EngineGroupId *openapi_types.UUID `form:"engine_group_id,omitempty" json:"engine_group_id,omitempty"`
+	State         *RolloutState       `form:"state,omitempty" json:"state,omitempty"`
+	Limit         *int                `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // DeleteRpzZoneParams defines parameters for DeleteRpzZone.
@@ -2097,6 +2714,18 @@ type UpdateDnssecSettingsJSONRequestBody = DnssecSettings
 
 // CreateTrustAnchorJSONRequestBody defines body for CreateTrustAnchor for application/json ContentType.
 type CreateTrustAnchorJSONRequestBody = TrustAnchorInput
+
+// CreateEngineGroupJSONRequestBody defines body for CreateEngineGroup for application/json ContentType.
+type CreateEngineGroupJSONRequestBody = EngineGroupInput
+
+// UpdateEngineGroupJSONRequestBody defines body for UpdateEngineGroup for application/json ContentType.
+type UpdateEngineGroupJSONRequestBody = EngineGroupUpdate
+
+// RollbackEngineGroupJSONRequestBody defines body for RollbackEngineGroup for application/json ContentType.
+type RollbackEngineGroupJSONRequestBody RollbackEngineGroupJSONBody
+
+// UpdateEngineJSONRequestBody defines body for UpdateEngine for application/json ContentType.
+type UpdateEngineJSONRequestBody = EngineUpdate
 
 // CreateFilterListJSONRequestBody defines body for CreateFilterList for application/json ContentType.
 type CreateFilterListJSONRequestBody = FilterListInput
@@ -2266,6 +2895,27 @@ type ServerInterface interface {
 	// (DELETE /dnssec/trust-anchors/{id})
 	DeleteTrustAnchor(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (GET /engine-groups)
+	ListEngineGroups(w http.ResponseWriter, r *http.Request)
+
+	// (POST /engine-groups)
+	CreateEngineGroup(w http.ResponseWriter, r *http.Request)
+
+	// (DELETE /engine-groups/{id})
+	DeleteEngineGroup(w http.ResponseWriter, r *http.Request, id Id, params DeleteEngineGroupParams)
+
+	// (GET /engine-groups/{id})
+	GetEngineGroup(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PUT /engine-groups/{id})
+	UpdateEngineGroup(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /engine-groups/{id}/resume-rollouts)
+	ResumeEngineGroupRollouts(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /engine-groups/{id}/rollback)
+	RollbackEngineGroup(w http.ResponseWriter, r *http.Request, id Id)
+
 	// (GET /engines)
 	ListEngines(w http.ResponseWriter, r *http.Request)
 
@@ -2274,6 +2924,18 @@ type ServerInterface interface {
 
 	// (GET /engines/{id})
 	GetEngine(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (PATCH /engines/{id})
+	UpdateEngine(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /engines/{id}/revoke)
+	RevokeEngine(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /engines/{id}/rotate-certificate)
+	RotateEngineCertificate(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /engines/{id}/stats)
+	GetEngineStats(w http.ResponseWriter, r *http.Request, id Id, params GetEngineStatsParams)
 
 	// (GET /filter-lists)
 	ListFilterLists(w http.ResponseWriter, r *http.Request)
@@ -2292,6 +2954,9 @@ type ServerInterface interface {
 
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /fleet/summary)
+	GetFleetSummary(w http.ResponseWriter, r *http.Request)
 
 	// (GET /forward-zones)
 	ListForwardZones(w http.ResponseWriter, r *http.Request)
@@ -2358,6 +3023,12 @@ type ServerInterface interface {
 
 	// (PUT /rewrites/{id})
 	UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+
+	// (GET /rollouts)
+	ListRollouts(w http.ResponseWriter, r *http.Request, params ListRolloutsParams)
+
+	// (GET /rollouts/{id})
+	GetRollout(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /rpz-zones)
 	ListRpzZones(w http.ResponseWriter, r *http.Request)
@@ -2609,6 +3280,41 @@ func (_ Unimplemented) DeleteTrustAnchor(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /engine-groups)
+func (_ Unimplemented) ListEngineGroups(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /engine-groups)
+func (_ Unimplemented) CreateEngineGroup(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /engine-groups/{id})
+func (_ Unimplemented) DeleteEngineGroup(w http.ResponseWriter, r *http.Request, id Id, params DeleteEngineGroupParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /engine-groups/{id})
+func (_ Unimplemented) GetEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /engine-groups/{id})
+func (_ Unimplemented) UpdateEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /engine-groups/{id}/resume-rollouts)
+func (_ Unimplemented) ResumeEngineGroupRollouts(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /engine-groups/{id}/rollback)
+func (_ Unimplemented) RollbackEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /engines)
 func (_ Unimplemented) ListEngines(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -2621,6 +3327,26 @@ func (_ Unimplemented) DeleteEngine(w http.ResponseWriter, r *http.Request, id I
 
 // (GET /engines/{id})
 func (_ Unimplemented) GetEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /engines/{id})
+func (_ Unimplemented) UpdateEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /engines/{id}/revoke)
+func (_ Unimplemented) RevokeEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /engines/{id}/rotate-certificate)
+func (_ Unimplemented) RotateEngineCertificate(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /engines/{id}/stats)
+func (_ Unimplemented) GetEngineStats(w http.ResponseWriter, r *http.Request, id Id, params GetEngineStatsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2651,6 +3377,11 @@ func (_ Unimplemented) UpdateFilterList(w http.ResponseWriter, r *http.Request, 
 
 // (POST /filter-lists/{id}/refresh)
 func (_ Unimplemented) RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /fleet/summary)
+func (_ Unimplemented) GetFleetSummary(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2761,6 +3492,16 @@ func (_ Unimplemented) DeleteRewrite(w http.ResponseWriter, r *http.Request, id 
 
 // (PUT /rewrites/{id})
 func (_ Unimplemented) UpdateRewrite(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rollouts)
+func (_ Unimplemented) ListRollouts(w http.ResponseWriter, r *http.Request, params ListRolloutsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rollouts/{id})
+func (_ Unimplemented) GetRollout(w http.ResponseWriter, r *http.Request, id Id) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3461,6 +4202,180 @@ func (siw *ServerInterfaceWrapper) DeleteTrustAnchor(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// ListEngineGroups operation middleware
+func (siw *ServerInterfaceWrapper) ListEngineGroups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEngineGroups(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateEngineGroup operation middleware
+func (siw *ServerInterfaceWrapper) CreateEngineGroup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEngineGroup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteEngineGroup operation middleware
+func (siw *ServerInterfaceWrapper) DeleteEngineGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteEngineGroupParams
+
+	// ------------- Required query parameter "revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "revision", r.URL.Query(), &params.Revision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteEngineGroup(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEngineGroup operation middleware
+func (siw *ServerInterfaceWrapper) GetEngineGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEngineGroup(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateEngineGroup operation middleware
+func (siw *ServerInterfaceWrapper) UpdateEngineGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateEngineGroup(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeEngineGroupRollouts operation middleware
+func (siw *ServerInterfaceWrapper) ResumeEngineGroupRollouts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeEngineGroupRollouts(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RollbackEngineGroup operation middleware
+func (siw *ServerInterfaceWrapper) RollbackEngineGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RollbackEngineGroup(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListEngines operation middleware
 func (siw *ServerInterfaceWrapper) ListEngines(w http.ResponseWriter, r *http.Request) {
 
@@ -3518,6 +4433,126 @@ func (siw *ServerInterfaceWrapper) GetEngine(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetEngine(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateEngine operation middleware
+func (siw *ServerInterfaceWrapper) UpdateEngine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateEngine(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeEngine operation middleware
+func (siw *ServerInterfaceWrapper) RevokeEngine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeEngine(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateEngineCertificate operation middleware
+func (siw *ServerInterfaceWrapper) RotateEngineCertificate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateEngineCertificate(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEngineStats operation middleware
+func (siw *ServerInterfaceWrapper) GetEngineStats(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEngineStatsParams
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "window", r.URL.Query(), &params.Window, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "window"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEngineStats(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3666,6 +4701,20 @@ func (siw *ServerInterfaceWrapper) RefreshFilterList(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RefreshFilterList(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetFleetSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetFleetSummary(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetFleetSummary(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4273,6 +5322,91 @@ func (siw *ServerInterfaceWrapper) UpdateRewrite(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateRewrite(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRollouts operation middleware
+func (siw *ServerInterfaceWrapper) ListRollouts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRolloutsParams
+
+	// ------------- Optional query parameter "engine_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "engine_group_id", r.URL.Query(), &params.EngineGroupId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "engine_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "engine_group_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRollouts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRollout operation middleware
+func (siw *ServerInterfaceWrapper) GetRollout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRollout(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5500,6 +6634,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/engines/{id}", wrapper.GetEngine)
 	})
 	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/engines/{id}", wrapper.UpdateEngine)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/join-tokens", wrapper.ListJoinTokens)
 	})
 	r.Group(func(r chi.Router) {
@@ -5699,6 +6836,45 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/tsig-keys/{keyId}", wrapper.DeleteTsigKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/engine-groups", wrapper.ListEngineGroups)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/engine-groups", wrapper.CreateEngineGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/engine-groups/{id}", wrapper.DeleteEngineGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/engine-groups/{id}", wrapper.GetEngineGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/engine-groups/{id}", wrapper.UpdateEngineGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/engine-groups/{id}/rollback", wrapper.RollbackEngineGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/engine-groups/{id}/resume-rollouts", wrapper.ResumeEngineGroupRollouts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rollouts", wrapper.ListRollouts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rollouts/{id}", wrapper.GetRollout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/fleet/summary", wrapper.GetFleetSummary)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/engines/{id}/stats", wrapper.GetEngineStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/engines/{id}/revoke", wrapper.RevokeEngine)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/engines/{id}/rotate-certificate", wrapper.RotateEngineCertificate)
 	})
 
 	return r
@@ -6489,6 +7665,324 @@ func (response DeleteTrustAnchor409JSONResponse) VisitDeleteTrustAnchorResponse(
 	return err
 }
 
+type ListEngineGroupsRequestObject struct {
+}
+
+type ListEngineGroupsResponseObject interface {
+	VisitListEngineGroupsResponse(w http.ResponseWriter) error
+}
+
+type ListEngineGroups200JSONResponse []EngineGroup
+
+func (response ListEngineGroups200JSONResponse) VisitListEngineGroupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEngineGroupRequestObject struct {
+	Body *CreateEngineGroupJSONRequestBody
+}
+
+type CreateEngineGroupResponseObject interface {
+	VisitCreateEngineGroupResponse(w http.ResponseWriter) error
+}
+
+type CreateEngineGroup201JSONResponse EngineGroup
+
+func (response CreateEngineGroup201JSONResponse) VisitCreateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEngineGroup400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateEngineGroup400JSONResponse) VisitCreateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEngineGroup409JSONResponse Error
+
+func (response CreateEngineGroup409JSONResponse) VisitCreateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteEngineGroupRequestObject struct {
+	Id     Id `json:"id"`
+	Params DeleteEngineGroupParams
+}
+
+type DeleteEngineGroupResponseObject interface {
+	VisitDeleteEngineGroupResponse(w http.ResponseWriter) error
+}
+
+type DeleteEngineGroup204Response struct {
+}
+
+func (response DeleteEngineGroup204Response) VisitDeleteEngineGroupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteEngineGroup404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteEngineGroup404JSONResponse) VisitDeleteEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteEngineGroup409JSONResponse Error
+
+func (response DeleteEngineGroup409JSONResponse) VisitDeleteEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineGroupRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetEngineGroupResponseObject interface {
+	VisitGetEngineGroupResponse(w http.ResponseWriter) error
+}
+
+type GetEngineGroup200JSONResponse EngineGroup
+
+func (response GetEngineGroup200JSONResponse) VisitGetEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineGroup404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetEngineGroup404JSONResponse) VisitGetEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngineGroupRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UpdateEngineGroupJSONRequestBody
+}
+
+type UpdateEngineGroupResponseObject interface {
+	VisitUpdateEngineGroupResponse(w http.ResponseWriter) error
+}
+
+type UpdateEngineGroup200JSONResponse EngineGroup
+
+func (response UpdateEngineGroup200JSONResponse) VisitUpdateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngineGroup400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateEngineGroup400JSONResponse) VisitUpdateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngineGroup404JSONResponse Error
+
+func (response UpdateEngineGroup404JSONResponse) VisitUpdateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngineGroup409JSONResponse Error
+
+func (response UpdateEngineGroup409JSONResponse) VisitUpdateEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeEngineGroupRolloutsRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type ResumeEngineGroupRolloutsResponseObject interface {
+	VisitResumeEngineGroupRolloutsResponse(w http.ResponseWriter) error
+}
+
+type ResumeEngineGroupRollouts202JSONResponse Rollout
+
+func (response ResumeEngineGroupRollouts202JSONResponse) VisitResumeEngineGroupRolloutsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeEngineGroupRollouts404JSONResponse struct{ ErrorJSONResponse }
+
+func (response ResumeEngineGroupRollouts404JSONResponse) VisitResumeEngineGroupRolloutsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeEngineGroupRollouts409JSONResponse Error
+
+func (response ResumeEngineGroupRollouts409JSONResponse) VisitResumeEngineGroupRolloutsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RollbackEngineGroupRequestObject struct {
+	Id   Id `json:"id"`
+	Body *RollbackEngineGroupJSONRequestBody
+}
+
+type RollbackEngineGroupResponseObject interface {
+	VisitRollbackEngineGroupResponse(w http.ResponseWriter) error
+}
+
+type RollbackEngineGroup202JSONResponse Rollout
+
+func (response RollbackEngineGroup202JSONResponse) VisitRollbackEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RollbackEngineGroup400JSONResponse struct{ ErrorJSONResponse }
+
+func (response RollbackEngineGroup400JSONResponse) VisitRollbackEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RollbackEngineGroup404JSONResponse Error
+
+func (response RollbackEngineGroup404JSONResponse) VisitRollbackEngineGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListEnginesRequestObject struct {
 }
 
@@ -6576,6 +8070,236 @@ func (response GetEngine404JSONResponse) VisitGetEngineResponse(w http.ResponseW
 	return err
 }
 
+type UpdateEngineRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UpdateEngineJSONRequestBody
+}
+
+type UpdateEngineResponseObject interface {
+	VisitUpdateEngineResponse(w http.ResponseWriter) error
+}
+
+type UpdateEngine200JSONResponse Engine
+
+func (response UpdateEngine200JSONResponse) VisitUpdateEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngine400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateEngine400JSONResponse) VisitUpdateEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngine404JSONResponse Error
+
+func (response UpdateEngine404JSONResponse) VisitUpdateEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngine409JSONResponse Error
+
+func (response UpdateEngine409JSONResponse) VisitUpdateEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateEngine422JSONResponse Error
+
+func (response UpdateEngine422JSONResponse) VisitUpdateEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeEngineRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type RevokeEngineResponseObject interface {
+	VisitRevokeEngineResponse(w http.ResponseWriter) error
+}
+
+type RevokeEngine200JSONResponse Engine
+
+func (response RevokeEngine200JSONResponse) VisitRevokeEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeEngine404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RevokeEngine404JSONResponse) VisitRevokeEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RevokeEngine409JSONResponse Error
+
+func (response RevokeEngine409JSONResponse) VisitRevokeEngineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateEngineCertificateRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type RotateEngineCertificateResponseObject interface {
+	VisitRotateEngineCertificateResponse(w http.ResponseWriter) error
+}
+
+type RotateEngineCertificate202JSONResponse Engine
+
+func (response RotateEngineCertificate202JSONResponse) VisitRotateEngineCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateEngineCertificate404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RotateEngineCertificate404JSONResponse) VisitRotateEngineCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateEngineCertificate409JSONResponse Error
+
+func (response RotateEngineCertificate409JSONResponse) VisitRotateEngineCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineStatsRequestObject struct {
+	Id     Id `json:"id"`
+	Params GetEngineStatsParams
+}
+
+type GetEngineStatsResponseObject interface {
+	VisitGetEngineStatsResponse(w http.ResponseWriter) error
+}
+
+type GetEngineStats200JSONResponse EngineStats
+
+func (response GetEngineStats200JSONResponse) VisitGetEngineStatsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineStats400JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetEngineStats400JSONResponse) VisitGetEngineStatsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineStats404JSONResponse Error
+
+func (response GetEngineStats404JSONResponse) VisitGetEngineStatsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListFilterListsRequestObject struct {
 }
 
@@ -6643,6 +8367,20 @@ func (response CreateFilterList409JSONResponse) VisitCreateFilterListResponse(w 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateFilterList422JSONResponse Error
+
+func (response CreateFilterList422JSONResponse) VisitCreateFilterListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6793,6 +8531,20 @@ func (response UpdateFilterList409JSONResponse) VisitUpdateFilterListResponse(w 
 	return err
 }
 
+type UpdateFilterList422JSONResponse Error
+
+func (response UpdateFilterList422JSONResponse) VisitUpdateFilterListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RefreshFilterListRequestObject struct {
 	Id Id `json:"id"`
 }
@@ -6825,6 +8577,27 @@ func (response RefreshFilterList404JSONResponse) VisitRefreshFilterListResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetFleetSummaryRequestObject struct {
+}
+
+type GetFleetSummaryResponseObject interface {
+	VisitGetFleetSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetFleetSummary200JSONResponse FleetSummary
+
+func (response GetFleetSummary200JSONResponse) VisitGetFleetSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6896,6 +8669,20 @@ func (response CreateForwardZone409JSONResponse) VisitCreateForwardZoneResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateForwardZone422JSONResponse Error
+
+func (response CreateForwardZone422JSONResponse) VisitCreateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -7010,6 +8797,20 @@ func (response UpdateForwardZone409JSONResponse) VisitUpdateForwardZoneResponse(
 	return err
 }
 
+type UpdateForwardZone422JSONResponse Error
+
+func (response UpdateForwardZone422JSONResponse) VisitUpdateForwardZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetHealthRequestObject struct {
 }
 
@@ -7098,6 +8899,20 @@ func (response CreateJoinToken400JSONResponse) VisitCreateJoinTokenResponse(w ht
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateJoinToken422JSONResponse Error
+
+func (response CreateJoinToken422JSONResponse) VisitCreateJoinTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -7723,6 +9538,78 @@ func (response UpdateRewrite422JSONResponse) VisitUpdateRewriteResponse(w http.R
 	return err
 }
 
+type ListRolloutsRequestObject struct {
+	Params ListRolloutsParams
+}
+
+type ListRolloutsResponseObject interface {
+	VisitListRolloutsResponse(w http.ResponseWriter) error
+}
+
+type ListRollouts200JSONResponse []Rollout
+
+func (response ListRollouts200JSONResponse) VisitListRolloutsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRollouts400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListRollouts400JSONResponse) VisitListRolloutsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRolloutRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetRolloutResponseObject interface {
+	VisitGetRolloutResponse(w http.ResponseWriter) error
+}
+
+type GetRollout200JSONResponse RolloutDetail
+
+func (response GetRollout200JSONResponse) VisitGetRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRollout404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetRollout404JSONResponse) VisitGetRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListRpzZonesRequestObject struct {
 }
 
@@ -7790,6 +9677,20 @@ func (response CreateRpzZone409JSONResponse) VisitCreateRpzZoneResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRpzZone422JSONResponse Error
+
+func (response CreateRpzZone422JSONResponse) VisitCreateRpzZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -8457,6 +10358,20 @@ func (response CreateUpstream409JSONResponse) VisitCreateUpstreamResponse(w http
 	return err
 }
 
+type CreateUpstream422JSONResponse Error
+
+func (response CreateUpstream422JSONResponse) VisitCreateUpstreamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteUpstreamRequestObject struct {
 	Id     Id `json:"id"`
 	Params DeleteUpstreamParams
@@ -8563,6 +10478,20 @@ func (response UpdateUpstream409JSONResponse) VisitUpdateUpstreamResponse(w http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateUpstream422JSONResponse Error
+
+func (response UpdateUpstream422JSONResponse) VisitUpdateUpstreamResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -9813,6 +11742,27 @@ type StrictServerInterface interface {
 	// (DELETE /dnssec/trust-anchors/{id})
 	DeleteTrustAnchor(ctx context.Context, request DeleteTrustAnchorRequestObject) (DeleteTrustAnchorResponseObject, error)
 
+	// (GET /engine-groups)
+	ListEngineGroups(ctx context.Context, request ListEngineGroupsRequestObject) (ListEngineGroupsResponseObject, error)
+
+	// (POST /engine-groups)
+	CreateEngineGroup(ctx context.Context, request CreateEngineGroupRequestObject) (CreateEngineGroupResponseObject, error)
+
+	// (DELETE /engine-groups/{id})
+	DeleteEngineGroup(ctx context.Context, request DeleteEngineGroupRequestObject) (DeleteEngineGroupResponseObject, error)
+
+	// (GET /engine-groups/{id})
+	GetEngineGroup(ctx context.Context, request GetEngineGroupRequestObject) (GetEngineGroupResponseObject, error)
+
+	// (PUT /engine-groups/{id})
+	UpdateEngineGroup(ctx context.Context, request UpdateEngineGroupRequestObject) (UpdateEngineGroupResponseObject, error)
+
+	// (POST /engine-groups/{id}/resume-rollouts)
+	ResumeEngineGroupRollouts(ctx context.Context, request ResumeEngineGroupRolloutsRequestObject) (ResumeEngineGroupRolloutsResponseObject, error)
+
+	// (POST /engine-groups/{id}/rollback)
+	RollbackEngineGroup(ctx context.Context, request RollbackEngineGroupRequestObject) (RollbackEngineGroupResponseObject, error)
+
 	// (GET /engines)
 	ListEngines(ctx context.Context, request ListEnginesRequestObject) (ListEnginesResponseObject, error)
 
@@ -9821,6 +11771,18 @@ type StrictServerInterface interface {
 
 	// (GET /engines/{id})
 	GetEngine(ctx context.Context, request GetEngineRequestObject) (GetEngineResponseObject, error)
+
+	// (PATCH /engines/{id})
+	UpdateEngine(ctx context.Context, request UpdateEngineRequestObject) (UpdateEngineResponseObject, error)
+
+	// (POST /engines/{id}/revoke)
+	RevokeEngine(ctx context.Context, request RevokeEngineRequestObject) (RevokeEngineResponseObject, error)
+
+	// (POST /engines/{id}/rotate-certificate)
+	RotateEngineCertificate(ctx context.Context, request RotateEngineCertificateRequestObject) (RotateEngineCertificateResponseObject, error)
+
+	// (GET /engines/{id}/stats)
+	GetEngineStats(ctx context.Context, request GetEngineStatsRequestObject) (GetEngineStatsResponseObject, error)
 
 	// (GET /filter-lists)
 	ListFilterLists(ctx context.Context, request ListFilterListsRequestObject) (ListFilterListsResponseObject, error)
@@ -9839,6 +11801,9 @@ type StrictServerInterface interface {
 
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(ctx context.Context, request RefreshFilterListRequestObject) (RefreshFilterListResponseObject, error)
+
+	// (GET /fleet/summary)
+	GetFleetSummary(ctx context.Context, request GetFleetSummaryRequestObject) (GetFleetSummaryResponseObject, error)
 
 	// (GET /forward-zones)
 	ListForwardZones(ctx context.Context, request ListForwardZonesRequestObject) (ListForwardZonesResponseObject, error)
@@ -9905,6 +11870,12 @@ type StrictServerInterface interface {
 
 	// (PUT /rewrites/{id})
 	UpdateRewrite(ctx context.Context, request UpdateRewriteRequestObject) (UpdateRewriteResponseObject, error)
+
+	// (GET /rollouts)
+	ListRollouts(ctx context.Context, request ListRolloutsRequestObject) (ListRolloutsResponseObject, error)
+
+	// (GET /rollouts/{id})
+	GetRollout(ctx context.Context, request GetRolloutRequestObject) (GetRolloutResponseObject, error)
 
 	// (GET /rpz-zones)
 	ListRpzZones(ctx context.Context, request ListRpzZonesRequestObject) (ListRpzZonesResponseObject, error)
@@ -10729,6 +12700,206 @@ func (sh *strictHandler) DeleteTrustAnchor(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// ListEngineGroups operation middleware
+func (sh *strictHandler) ListEngineGroups(w http.ResponseWriter, r *http.Request) {
+	var request ListEngineGroupsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEngineGroups(ctx, request.(ListEngineGroupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEngineGroups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListEngineGroupsResponseObject); ok {
+		if err := validResponse.VisitListEngineGroupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateEngineGroup operation middleware
+func (sh *strictHandler) CreateEngineGroup(w http.ResponseWriter, r *http.Request) {
+	var request CreateEngineGroupRequestObject
+
+	var body CreateEngineGroupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateEngineGroup(ctx, request.(CreateEngineGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateEngineGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateEngineGroupResponseObject); ok {
+		if err := validResponse.VisitCreateEngineGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteEngineGroup operation middleware
+func (sh *strictHandler) DeleteEngineGroup(w http.ResponseWriter, r *http.Request, id Id, params DeleteEngineGroupParams) {
+	var request DeleteEngineGroupRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteEngineGroup(ctx, request.(DeleteEngineGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteEngineGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteEngineGroupResponseObject); ok {
+		if err := validResponse.VisitDeleteEngineGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEngineGroup operation middleware
+func (sh *strictHandler) GetEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetEngineGroupRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEngineGroup(ctx, request.(GetEngineGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEngineGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEngineGroupResponseObject); ok {
+		if err := validResponse.VisitGetEngineGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateEngineGroup operation middleware
+func (sh *strictHandler) UpdateEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UpdateEngineGroupRequestObject
+
+	request.Id = id
+
+	var body UpdateEngineGroupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateEngineGroup(ctx, request.(UpdateEngineGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateEngineGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateEngineGroupResponseObject); ok {
+		if err := validResponse.VisitUpdateEngineGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResumeEngineGroupRollouts operation middleware
+func (sh *strictHandler) ResumeEngineGroupRollouts(w http.ResponseWriter, r *http.Request, id Id) {
+	var request ResumeEngineGroupRolloutsRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResumeEngineGroupRollouts(ctx, request.(ResumeEngineGroupRolloutsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResumeEngineGroupRollouts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResumeEngineGroupRolloutsResponseObject); ok {
+		if err := validResponse.VisitResumeEngineGroupRolloutsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RollbackEngineGroup operation middleware
+func (sh *strictHandler) RollbackEngineGroup(w http.ResponseWriter, r *http.Request, id Id) {
+	var request RollbackEngineGroupRequestObject
+
+	request.Id = id
+
+	var body RollbackEngineGroupJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RollbackEngineGroup(ctx, request.(RollbackEngineGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RollbackEngineGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RollbackEngineGroupResponseObject); ok {
+		if err := validResponse.VisitRollbackEngineGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListEngines operation middleware
 func (sh *strictHandler) ListEngines(w http.ResponseWriter, r *http.Request) {
 	var request ListEnginesRequestObject
@@ -10798,6 +12969,118 @@ func (sh *strictHandler) GetEngine(w http.ResponseWriter, r *http.Request, id Id
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetEngineResponseObject); ok {
 		if err := validResponse.VisitGetEngineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateEngine operation middleware
+func (sh *strictHandler) UpdateEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UpdateEngineRequestObject
+
+	request.Id = id
+
+	var body UpdateEngineJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateEngine(ctx, request.(UpdateEngineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateEngine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateEngineResponseObject); ok {
+		if err := validResponse.VisitUpdateEngineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokeEngine operation middleware
+func (sh *strictHandler) RevokeEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	var request RevokeEngineRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokeEngine(ctx, request.(RevokeEngineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokeEngine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokeEngineResponseObject); ok {
+		if err := validResponse.VisitRevokeEngineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotateEngineCertificate operation middleware
+func (sh *strictHandler) RotateEngineCertificate(w http.ResponseWriter, r *http.Request, id Id) {
+	var request RotateEngineCertificateRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotateEngineCertificate(ctx, request.(RotateEngineCertificateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotateEngineCertificate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotateEngineCertificateResponseObject); ok {
+		if err := validResponse.VisitRotateEngineCertificateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEngineStats operation middleware
+func (sh *strictHandler) GetEngineStats(w http.ResponseWriter, r *http.Request, id Id, params GetEngineStatsParams) {
+	var request GetEngineStatsRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEngineStats(ctx, request.(GetEngineStatsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEngineStats")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEngineStatsResponseObject); ok {
+		if err := validResponse.VisitGetEngineStatsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -10965,6 +13248,30 @@ func (sh *strictHandler) RefreshFilterList(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RefreshFilterListResponseObject); ok {
 		if err := validResponse.VisitRefreshFilterListResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetFleetSummary operation middleware
+func (sh *strictHandler) GetFleetSummary(w http.ResponseWriter, r *http.Request) {
+	var request GetFleetSummaryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetFleetSummary(ctx, request.(GetFleetSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetFleetSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetFleetSummaryResponseObject); ok {
+		if err := validResponse.VisitGetFleetSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -11579,6 +13886,58 @@ func (sh *strictHandler) UpdateRewrite(w http.ResponseWriter, r *http.Request, i
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateRewriteResponseObject); ok {
 		if err := validResponse.VisitUpdateRewriteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListRollouts operation middleware
+func (sh *strictHandler) ListRollouts(w http.ResponseWriter, r *http.Request, params ListRolloutsParams) {
+	var request ListRolloutsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListRollouts(ctx, request.(ListRolloutsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListRollouts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListRolloutsResponseObject); ok {
+		if err := validResponse.VisitListRolloutsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRollout operation middleware
+func (sh *strictHandler) GetRollout(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetRolloutRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRollout(ctx, request.(GetRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRolloutResponseObject); ok {
+		if err := validResponse.VisitGetRolloutResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -12741,156 +15100,179 @@ func (sh *strictHandler) RefreshZone(w http.ResponseWriter, r *http.Request, zon
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

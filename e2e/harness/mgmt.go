@@ -269,6 +269,14 @@ type EngineView struct {
 	AppliedVersion  uint64  `json:"applied_version"`
 	RejectedVersion *uint64 `json:"rejected_version"`
 	Connected       bool    `json:"connected"`
+
+	EngineGroupID     string            `json:"engine_group_id"`
+	EngineGroupName   string            `json:"engine_group_name"`
+	Labels            map[string]string `json:"labels"`
+	Revision          int64             `json:"revision"`
+	TargetVersion     uint64            `json:"target_version"`
+	CertificateSerial string            `json:"certificate_serial"`
+	RevokedAt         *time.Time        `json:"revoked_at"`
 }
 
 // WaitEngine polls GET /engines every 200 ms until the engine named nodeName satisfies cond.
@@ -299,6 +307,8 @@ func (a *API) WaitEngine(nodeName string, timeout time.Duration, cond func(Engin
 type EngineOptions struct {
 	DoT, DoH, DoQ, ProxyProtocolDoT bool
 	ProxyTrustedCIDRs               []string
+	// ExtraEnv is added to the engine process environment (also on RestartEngine).
+	ExtraEnv []string
 }
 
 // StartManagedEngine runs nexora-engine enrolled through joinToken against grpcURLs on loopback
@@ -357,7 +367,8 @@ workers = 2
 	if err := os.WriteFile(en.ConfigPath, []byte(toml), 0o600); err != nil {
 		e.T.Fatal(err)
 	}
-	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath}, nil)
+	en.env = o.ExtraEnv
+	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath}, en.env)
 	en.readAddrs()
 	en.Proc.WaitLog(controlConnected, 30*time.Second)
 	return en

@@ -305,7 +305,7 @@ export interface paths {
         delete: operations["deleteEngine"];
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["updateEngine"];
         trace?: never;
     };
     "/join-tokens": {
@@ -1005,6 +1005,166 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/engine-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listEngineGroups"];
+        put?: never;
+        post: operations["createEngineGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engine-groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEngineGroup"];
+        put: operations["updateEngineGroup"];
+        post?: never;
+        delete: operations["deleteEngineGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engine-groups/{id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["rollbackEngineGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engine-groups/{id}/resume-rollouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeEngineGroupRollouts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rollouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRollouts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rollouts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRollout"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/fleet/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getFleetSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engines/{id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEngineStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engines/{id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revokeEngine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engines/{id}/rotate-certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["rotateEngineCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1073,6 +1233,11 @@ export interface components {
             password?: string;
         };
         Upstream: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1089,6 +1254,11 @@ export interface components {
             revision: number;
         };
         UpstreamInput: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             name: string;
             /** @enum {string} */
             protocol: "udp" | "tcp" | "dot" | "doh";
@@ -1129,6 +1299,11 @@ export interface components {
             revision: number;
         };
         FilterList: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1151,6 +1326,11 @@ export interface components {
             revision: number;
         };
         FilterListInput: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             name: string;
             /** @enum {string} */
             kind: "block" | "allow";
@@ -1183,7 +1363,24 @@ export interface components {
             persist_error: string;
             version_ahead: boolean;
             /** @enum {string} */
-            status: "current" | "behind" | "rejected" | "ahead" | "disconnected";
+            status: "current" | "behind" | "rejected" | "ahead" | "disconnected" | "revoked";
+            /** Format: uuid */
+            engine_group_id: string;
+            engine_group_name: string;
+            labels: {
+                [key: string]: string;
+            };
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            target_version: number;
+            certificate_serial: string;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            /** Format: date-time */
+            cert_rotate_requested_at?: string | null;
+            /** Format: date-time */
+            certificate_not_after?: string | null;
         };
         JoinToken: {
             /** Format: uuid */
@@ -1197,10 +1394,25 @@ export interface components {
             /** Format: date-time */
             revoked_at?: string | null;
             uses: number;
+            /** Format: uuid */
+            engine_group_id: string;
+            engine_group_name: string;
+            labels: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            state: "active" | "expired" | "exhausted" | "revoked";
+            max_uses?: number | null;
         };
         JoinTokenCreate: {
             name: string;
             ttl_seconds: number;
+            /** Format: uuid */
+            engine_group_id?: string;
+            max_uses?: number;
+            labels?: {
+                [key: string]: string;
+            };
         };
         JoinTokenCreated: {
             join_token: components["schemas"]["JoinToken"];
@@ -1314,6 +1526,11 @@ export interface components {
             revision: number;
         };
         PolicyGroupInput: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             name: string;
             /** @default  */
             description: string;
@@ -1329,6 +1546,11 @@ export interface components {
             revision: number;
         };
         PolicyGroup: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1347,6 +1569,11 @@ export interface components {
         RewriteInput: {
             /**
              * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
+            /**
+             * Format: uuid
              * @description null means global
              */
             group_id?: string | null;
@@ -1363,6 +1590,11 @@ export interface components {
             revision: number;
         };
         Rewrite: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -1419,6 +1651,11 @@ export interface components {
             addresses: string[];
         };
         ForwardZoneInput: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             domain: string;
             addresses: string[];
             validate: boolean;
@@ -1428,6 +1665,11 @@ export interface components {
             revision: number;
         };
         ForwardZone: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             domain: string;
@@ -1510,6 +1752,11 @@ export interface components {
             }[];
         };
         RpzZoneInput: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             name: string;
             /** @enum {string} */
             source_type: "file" | "transfer";
@@ -1537,6 +1784,11 @@ export interface components {
             revision: number;
         };
         RpzZone: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1637,6 +1889,11 @@ export interface components {
             last_trigger: string;
         };
         Zone: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id: string | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1662,6 +1919,11 @@ export interface components {
             updated_at: string;
         };
         ZoneCreate: {
+            /**
+             * Format: uuid
+             * @description engine group; null applies to every group
+             */
+            engine_group_id?: string | null;
             /** @description Absolute zone name. */
             name: string;
             /** @enum {string} */
@@ -1840,6 +2102,142 @@ export interface components {
         TsigKeyCreated: components["schemas"]["TsigKey"] & {
             /** @description Base64 secret; shown only in this response. */
             secret: string;
+        };
+        /** @enum {string} */
+        RolloutState: "pending" | "canary" | "verifying" | "rolling" | "completed" | "halted" | "rolled_back" | "superseded";
+        EngineGroupInput: {
+            name: string;
+            description?: string;
+            /** @enum {string} */
+            upstream_mode?: "inherit" | "override";
+            extra_acl_cidrs?: string[];
+            otlp_endpoint?: string;
+            /** @enum {string} */
+            rollout_strategy?: "all_at_once" | "canary";
+            canary_count?: number;
+            canary_percent?: number;
+            ack_timeout_seconds?: number;
+            health_window_seconds?: number;
+            max_servfail_ratio?: number;
+            min_health_queries?: number;
+        };
+        EngineGroupUpdate: components["schemas"]["EngineGroupInput"] & {
+            /** Format: int64 */
+            revision: number;
+        };
+        EngineGroup: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            upstream_mode: "inherit" | "override";
+            extra_acl_cidrs: string[];
+            otlp_endpoint: string;
+            /** @enum {string} */
+            rollout_strategy: "all_at_once" | "canary";
+            canary_count: number;
+            canary_percent: number;
+            ack_timeout_seconds: number;
+            health_window_seconds: number;
+            max_servfail_ratio: number;
+            min_health_queries: number;
+            rollouts_paused: boolean;
+            /** Format: int64 */
+            stable_version?: number | null;
+            engine_count: number;
+            active_rollout?: components["schemas"]["Rollout"] | null;
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        Rollout: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            engine_group_id: string;
+            engine_group_name: string;
+            /** Format: int64 */
+            version: number;
+            /** Format: int64 */
+            from_version?: number | null;
+            /** @enum {string} */
+            kind: "change" | "rollback" | "republish";
+            /** @enum {string} */
+            strategy: "all_at_once" | "canary";
+            state: components["schemas"]["RolloutState"];
+            canary_engine_ids: string[];
+            /** Format: date-time */
+            phase_started_at?: string | null;
+            halt_reason: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            progress: {
+                total: number;
+                applied: number;
+                rejected: number;
+            };
+        };
+        RolloutDetail: components["schemas"]["Rollout"] & {
+            engines: {
+                /** Format: uuid */
+                engine_id: string;
+                node_name: string;
+                canary: boolean;
+                connected: boolean;
+                /** Format: int64 */
+                applied_version: number;
+                /** @enum {string} */
+                progress: "waiting" | "applied" | "rejected" | "disconnected";
+                rejected_reason: string;
+            }[];
+        };
+        EngineUpdate: {
+            /** Format: int64 */
+            revision: number;
+            /** Format: uuid */
+            engine_group_id?: string;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        EngineStats: {
+            /** @enum {string} */
+            window: "5m" | "1h" | "24h";
+            samples: {
+                /** Format: date-time */
+                at: string;
+                qps: number;
+                cache_hit_ratio: number;
+                servfail_ratio: number;
+                p99_ms: number;
+            }[];
+        };
+        FleetSummary: {
+            engines_total: number;
+            engines_by_status: {
+                [key: string]: number;
+            };
+            halted_rollouts: number;
+            engine_groups: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                engines: number;
+                connected: number;
+                /** @enum {string} */
+                rollout_strategy: "all_at_once" | "canary";
+                rollouts_paused: boolean;
+                /** Format: int64 */
+                stable_version?: number | null;
+                active_rollout?: components["schemas"]["Rollout"] | null;
+            }[];
         };
     };
     responses: {
@@ -2129,6 +2527,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     updateUpstream: {
@@ -2158,6 +2557,7 @@ export interface operations {
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     deleteUpstream: {
@@ -2320,6 +2720,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     getFilterList: {
@@ -2372,6 +2773,7 @@ export interface operations {
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     deleteFilterList: {
@@ -2531,6 +2933,36 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    updateEngine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineUpdate"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Engine"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
     listJoinTokens: {
         parameters: {
             query?: never;
@@ -2574,6 +3006,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     revokeJoinToken: {
@@ -3220,6 +3653,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     updateForwardZone: {
@@ -3249,6 +3683,7 @@ export interface operations {
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     deleteForwardZone: {
@@ -3520,6 +3955,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
@@ -4171,6 +4607,325 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    listEngineGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineGroup"][];
+                };
+            };
+        };
+    };
+    createEngineGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineGroupInput"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineGroup"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getEngineGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineGroup"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    updateEngineGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineGroupUpdate"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineGroup"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteEngineGroup: {
+        parameters: {
+            query: {
+                revision: components["parameters"]["Revision"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    rollbackEngineGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: int64 */
+                    to_version: number;
+                };
+            };
+        };
+        responses: {
+            /** @description rollback rollout created */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rollout"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    resumeEngineGroupRollouts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description fresh version published */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rollout"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    listRollouts: {
+        parameters: {
+            query?: {
+                engine_group_id?: string;
+                state?: components["schemas"]["RolloutState"];
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description newest version first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rollout"][];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    getRollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolloutDetail"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    getFleetSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetSummary"];
+                };
+            };
+        };
+    };
+    getEngineStats: {
+        parameters: {
+            query?: {
+                window?: "5m" | "1h" | "24h";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineStats"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    revokeEngine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description revoked; its streams are closed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Engine"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    rotateEngineCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description rotation requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Engine"];
+                };
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];

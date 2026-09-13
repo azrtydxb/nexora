@@ -14,7 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.HTTPListen != ":8080" || c.GRPCListen != ":9443" || !c.SecureCookies || c.QueryLogBackend != "builtin" || c.QueryLogBuiltinCapacity != 200000 || c.OpenSearch.Index != "nexora-querylog-*" || c.DNSTLSReloadInterval != 30*time.Second || c.RolloutTick != time.Second {
+	if c.HTTPListen != ":8080" || c.GRPCListen != ":9443" || !c.SecureCookies || c.QueryLogBackend != "builtin" || c.QueryLogBuiltinCapacity != 200000 || c.OpenSearch.Index != "nexora-querylog-*" || c.DNSTLSReloadInterval != 30*time.Second || c.RolloutTick != time.Second || c.EngineCertTTL != 2160*time.Hour {
 		t.Fatalf("defaults wrong: %+v", c)
 	}
 	if c.OIDC.Enabled() {
@@ -25,16 +25,18 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadValidation(t *testing.T) {
 	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k"}
 	for name, mutate := range map[string]func(m map[string]string){
-		"missing db":         func(m map[string]string) { delete(m, "NEXORA_DATABASE_URL") },
-		"bad backend":        func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "loki" },
-		"opensearch no url":  func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "opensearch" },
-		"bad cookies":        func(m map[string]string) { m["NEXORA_SECURE_COOKIES"] = "maybe" },
-		"oidc no client":     func(m map[string]string) { m["NEXORA_OIDC_ISSUER"] = "https://idp" },
-		"dns tls cert only":  func(m map[string]string) { m["NEXORA_DNS_TLS_CERT_FILE"] = "/tls.crt" },
-		"dns tls key only":   func(m map[string]string) { m["NEXORA_DNS_TLS_KEY_FILE"] = "/tls.key" },
-		"dns tls interval":   func(m map[string]string) { m["NEXORA_DNS_TLS_RELOAD_INTERVAL"] = "500ms" },
-		"rollout tick":       func(m map[string]string) { m["NEXORA_ROLLOUT_TICK"] = "50ms" },
-		"pkcs11 module only": func(m map[string]string) { m["NEXORA_PKCS11_MODULE"] = "/usr/lib/softhsm/libsofthsm2.so" },
+		"missing db":          func(m map[string]string) { delete(m, "NEXORA_DATABASE_URL") },
+		"bad backend":         func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "loki" },
+		"opensearch no url":   func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "opensearch" },
+		"bad cookies":         func(m map[string]string) { m["NEXORA_SECURE_COOKIES"] = "maybe" },
+		"oidc no client":      func(m map[string]string) { m["NEXORA_OIDC_ISSUER"] = "https://idp" },
+		"dns tls cert only":   func(m map[string]string) { m["NEXORA_DNS_TLS_CERT_FILE"] = "/tls.crt" },
+		"dns tls key only":    func(m map[string]string) { m["NEXORA_DNS_TLS_KEY_FILE"] = "/tls.key" },
+		"dns tls interval":    func(m map[string]string) { m["NEXORA_DNS_TLS_RELOAD_INTERVAL"] = "500ms" },
+		"rollout tick":        func(m map[string]string) { m["NEXORA_ROLLOUT_TICK"] = "50ms" },
+		"engine cert ttl":     func(m map[string]string) { m["NEXORA_ENGINE_CERT_TTL"] = "10s" },
+		"engine cert ttl nan": func(m map[string]string) { m["NEXORA_ENGINE_CERT_TTL"] = "ninety days" },
+		"pkcs11 module only":  func(m map[string]string) { m["NEXORA_PKCS11_MODULE"] = "/usr/lib/softhsm/libsofthsm2.so" },
 		"pkcs11 no pin file": func(m map[string]string) {
 			m["NEXORA_PKCS11_MODULE"], m["NEXORA_PKCS11_TOKEN_LABEL"] = "/usr/lib/softhsm/libsofthsm2.so", "nexora"
 		},

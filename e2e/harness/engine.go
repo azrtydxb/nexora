@@ -26,6 +26,7 @@ type Engine struct {
 
 	snapPath, blobDir string
 	dot, doh, doq     string
+	env               []string // extra process environment of a managed engine
 }
 
 // StartStandaloneEngine runs nexora-engine in standalone mode on loopback with snap and blobs
@@ -169,7 +170,13 @@ var metricsClient = &http.Client{Timeout: 5 * time.Second}
 // every pair in labels (histograms and summaries contribute their sample count).
 func (en *Engine) Metric(t *testing.T, name string, labels map[string]string) float64 {
 	t.Helper()
-	resp, err := metricsClient.Get("http://" + en.Metrics + "/metrics")
+	return scrapeMetric(t, "http://"+en.Metrics+"/metrics", name, labels)
+}
+
+// scrapeMetric is Metric for any Prometheus endpoint url.
+func scrapeMetric(t *testing.T, url, name string, labels map[string]string) float64 {
+	t.Helper()
+	resp, err := metricsClient.Get(url)
 	if err != nil {
 		t.Fatalf("scrape metrics: %v", err)
 	}

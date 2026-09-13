@@ -194,11 +194,14 @@ func writeZoneValidation(w http.ResponseWriter, zve *zone.ValidationError) {
 
 // mapError turns handler errors into JSON error responses.
 func mapError(w http.ResponseWriter, r *http.Request, err error) {
+	var aerr apiError
 	var verr validationError
 	var pgErr *pgconn.PgError
 	var maxBytes *http.MaxBytesError
 	var zve *zone.ValidationError
 	switch {
+	case errors.As(err, &aerr):
+		writeError(w, aerr.status, aerr.code, aerr.msg)
 	case errors.As(err, &verr):
 		writeError(w, http.StatusBadRequest, "invalid_request", verr.msg)
 	case errors.Is(err, auth.ErrWeakPassword):

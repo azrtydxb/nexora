@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -13,7 +14,7 @@ import (
 
 func policyGroupOut(g store.PolicyGroup) PolicyGroup {
 	out := PolicyGroup{
-		Id: g.ID, Name: g.Name, Description: g.Description, Revision: g.Revision, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt,
+		Id: g.ID, EngineGroupId: g.EngineGroupID, Name: g.Name, Description: g.Description, Revision: g.Revision, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt,
 		Cidrs: make([]string, 0, len(g.CIDRs)), FilterListIds: append([]uuid.UUID{}, g.FilterListIDs...), Allowlist: append([]string{}, g.Allowlist...),
 		SafeSearch: SafeSearch{Google: g.SafeSearch.Google, Bing: g.SafeSearch.Bing, Duckduckgo: g.SafeSearch.DuckDuckGo, Youtube: SafeSearchYoutube(g.SafeSearch.YouTube)},
 	}
@@ -52,6 +53,9 @@ func (h *handlers) CreatePolicyGroup(ctx context.Context, req CreatePolicyGroupR
 	var after PolicyGroup
 	if err == nil {
 		err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+			if err := checkPolicyGroupScope(ctx, tx, g); err != nil {
+				return auth.Change{}, err
+			}
 			created, err := store.CreatePolicyGroup(ctx, tx, g)
 			after = policyGroupOut(created)
 			return auth.Change{Action: "createPolicyGroup", TargetType: "policy_group", TargetID: created.ID.String(), After: after}, err
@@ -72,13 +76,16 @@ func (h *handlers) CreatePolicyGroup(ctx context.Context, req CreatePolicyGroupR
 func (h *handlers) UpdatePolicyGroup(ctx context.Context, req UpdatePolicyGroupRequestObject) (UpdatePolicyGroupResponseObject, error) {
 	b := req.Body
 	g, err := validatePolicyGroup(PolicyGroupInput{Name: b.Name, Description: b.Description, Cidrs: b.Cidrs,
-		FilterListIds: b.FilterListIds, Allowlist: b.Allowlist, SafeSearch: b.SafeSearch})
+		FilterListIds: b.FilterListIds, Allowlist: b.Allowlist, SafeSearch: b.SafeSearch, EngineGroupId: b.EngineGroupId})
 	var after PolicyGroup
 	if err == nil {
 		g.ID, g.Revision = req.Id, b.Revision
 		err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 			before, err := store.GetPolicyGroup(ctx, tx, req.Id)
 			if err != nil {
+				return auth.Change{}, err
+			}
+			if err := checkPolicyGroupScope(ctx, tx, g); err != nil {
 				return auth.Change{}, err
 			}
 			updated, err := store.UpdatePolicyGroup(ctx, tx, g)
@@ -144,4 +151,26 @@ func (h *handlers) UpdateGlobalSafeSearch(ctx context.Context, req UpdateGlobalS
 		return nil, err
 	}
 	return UpdateGlobalSafeSearch200JSONResponse(after), nil
+}
+
+// checkPolicyGroupScope requires the policy group's engine group to exist and each selected filter
+// list to be global or in that engine group.
+func checkPolicyGroupScope(ctx context.Context, tx pgx.Tx, g store.PolicyGroup) error {
+	if err := requireEngineGroup(ctx, tx, g.EngineGroupID); err != nil {
+		return err
+	}
+	if len(g.FilterListIDs) == 0 {
+		return nil
+	}
+	var name string
+	err := tx.QueryRow(ctx, `select name from filter_lists where id = any($1) and engine_group_id is not null
+		and engine_group_id is distinct from $2 order by name limit 1`, g.FilterListIDs, g.EngineGroupID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return coded(http.StatusUnprocessableEntity, "engine_group_scope",
+		"filter list %q belongs to another engine group; a policy group may select only global lists or lists of its own engine group", name)
 }

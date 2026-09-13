@@ -159,16 +159,16 @@ func GetForwardZone(ctx context.Context, q PolicyQuerier, id uuid.UUID) (Forward
 
 // CreateForwardZone inserts z (a duplicate domain is ErrConflict).
 func CreateForwardZone(ctx context.Context, tx pgx.Tx, z ForwardZone) (ForwardZone, error) {
-	created, err := scanForwardZone(tx.QueryRow(ctx, `insert into forward_zones(domain, addresses, validate) values ($1, $2, $3)
-		returning `+forwardZoneColumns, z.Domain, z.Addresses, z.Validate))
+	created, err := scanForwardZone(tx.QueryRow(ctx, `insert into forward_zones(domain, addresses, validate, engine_group_id)
+		values ($1, $2, $3, $4) returning `+forwardZoneColumns, z.Domain, z.Addresses, z.Validate, z.EngineGroupID))
 	return created, MapError(err)
 }
 
 // UpdateForwardZone replaces z using z.Revision as the expected revision.
 func UpdateForwardZone(ctx context.Context, tx pgx.Tx, z ForwardZone) (ForwardZone, error) {
 	updated, err := scanForwardZone(tx.QueryRow(ctx, `update forward_zones set domain = $2, addresses = $3, validate = $4,
-		revision = revision + 1, updated_at = now() where id = $1 and revision = $5
-		returning `+forwardZoneColumns, z.ID, z.Domain, z.Addresses, z.Validate, z.Revision))
+		engine_group_id = $6, revision = revision + 1, updated_at = now() where id = $1 and revision = $5
+		returning `+forwardZoneColumns, z.ID, z.Domain, z.Addresses, z.Validate, z.Revision, z.EngineGroupID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ForwardZone{}, missingOrStale(ctx, tx, "forward_zones", z.ID)
 	}
@@ -302,10 +302,10 @@ func CreateRPZZone(ctx context.Context, tx pgx.Tx, z RPZZone) (RPZZone, error) {
 		z.ID = uuid.New()
 	}
 	_, err := tx.Exec(ctx, `insert into rpz_zones(id, name, position, source_type, primary_address, tsig_key_name,
-		tsig_algorithm, tsig_secret_envelope, min_refresh_seconds, policy_override)
-		values ($1, $2, (select coalesce(max(position), 0) + 1 from rpz_zones), $3, $4, $5, $6, $7, $8, $9)`,
+		tsig_algorithm, tsig_secret_envelope, min_refresh_seconds, policy_override, engine_group_id)
+		values ($1, $2, (select coalesce(max(position), 0) + 1 from rpz_zones), $3, $4, $5, $6, $7, $8, $9, $10)`,
 		z.ID, z.Name, z.SourceType, z.PrimaryAddress, z.TSIGKeyName, z.TSIGAlgorithm, z.TSIGSecretEnvelope,
-		z.MinRefreshSeconds, z.PolicyOverride)
+		z.MinRefreshSeconds, z.PolicyOverride, z.EngineGroupID)
 	if err != nil {
 		return RPZZone{}, MapError(err)
 	}

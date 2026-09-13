@@ -69,8 +69,8 @@ func CreateRewrite(ctx context.Context, tx pgx.Tx, r Rewrite) (Rewrite, error) {
 	if err := checkCNAME(ctx, tx, r); err != nil {
 		return Rewrite{}, err
 	}
-	created, err := scanRewrite(tx.QueryRow(ctx, `insert into rewrites(group_id, name, type, value, ttl) values ($1, $2, $3, $4, $5)
-		returning `+rewriteColumns, r.GroupID, r.Name, r.Type, r.Value, r.TTL))
+	created, err := scanRewrite(tx.QueryRow(ctx, `insert into rewrites(group_id, engine_group_id, name, type, value, ttl)
+		values ($1, $2, $3, $4, $5, $6) returning `+rewriteColumns, r.GroupID, r.EngineGroupID, r.Name, r.Type, r.Value, r.TTL))
 	if err != nil {
 		return Rewrite{}, policyError(err)
 	}
@@ -83,9 +83,9 @@ func UpdateRewrite(ctx context.Context, tx pgx.Tx, r Rewrite) (Rewrite, error) {
 		return Rewrite{}, err
 	}
 	updated, err := scanRewrite(tx.QueryRow(ctx, `update rewrites set group_id = $2, name = $3, type = $4, value = $5, ttl = $6,
-		revision = revision + 1, updated_at = now() where id = $1 and revision = $7
+		engine_group_id = $8, revision = revision + 1, updated_at = now() where id = $1 and revision = $7
 		returning `+rewriteColumns,
-		r.ID, r.GroupID, r.Name, r.Type, r.Value, r.TTL, r.Revision))
+		r.ID, r.GroupID, r.Name, r.Type, r.Value, r.TTL, r.Revision, r.EngineGroupID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Rewrite{}, missingOrStale(ctx, tx, "rewrites", r.ID)
 	}
@@ -108,7 +108,8 @@ func DeleteRewrite(ctx context.Context, tx pgx.Tx, id uuid.UUID, revision int64)
 }
 
 // checkCNAME refuses a CNAME beside any other rewrite of the same scope and name, and any rewrite
-// beside an existing CNAME. The advisory lock serialises concurrent writers of one scope and name,
+// beside an existing CNAME. Global rewrites of different engine groups never meet in one snapshot;
+// a global rewrite for every engine group meets all of them. The advisory lock serialises concurrent writers of one scope and name,
 // which row locks alone cannot (the conflicting row may not exist yet).
 func checkCNAME(ctx context.Context, tx pgx.Tx, r Rewrite) error {
 	scope := ""
@@ -118,8 +119,9 @@ func checkCNAME(ctx context.Context, tx pgx.Tx, r Rewrite) error {
 	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtext('nexora:rewrite:' || $1 || ':' || $2))", scope, r.Name); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, "select type from rewrites where group_id is not distinct from $1 and name = $2 and id <> $3 for update",
-		r.GroupID, r.Name, r.ID)
+	rows, err := tx.Query(ctx, `select type from rewrites where group_id is not distinct from $1 and name = $2 and id <> $3
+		and (engine_group_id is null or $4::uuid is null or engine_group_id = $4) for update`,
+		r.GroupID, r.Name, r.ID, r.EngineGroupID)
 	if err != nil {
 		return err
 	}

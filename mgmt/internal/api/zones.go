@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"net/http"
 
 	"github.com/google/uuid"
 
@@ -30,7 +32,7 @@ func zoneOut(z *zone.Zone) Zone {
 		cidrs = append(cidrs, p.String())
 	}
 	out := Zone{
-		Id: z.ID, Name: z.Name, Kind: ZoneKind(z.Kind), Revision: z.Revision, Serial: int64(z.Serial),
+		Id: z.ID, EngineGroupId: z.EngineGroupID, Name: z.Name, Kind: ZoneKind(z.Kind), Revision: z.Revision, Serial: int64(z.Serial),
 		DefaultTtl: int64(z.DefaultTTL), DnssecEnabled: z.DNSSECEnabled, CreatedAt: z.CreatedAt, UpdatedAt: z.UpdatedAt,
 		Soa: ZoneSOA{Mname: z.SOA.MName, Rname: z.SOA.RName, Refresh: int64(z.SOA.Refresh), Retry: int64(z.SOA.Retry),
 			Expire: int64(z.SOA.Expire), Minimum: int64(z.SOA.Minimum), Ttl: int64(z.SOA.TTL)},
@@ -118,7 +120,7 @@ func (h *handlers) GetZone(ctx context.Context, req GetZoneRequestObject) (GetZo
 
 func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) (CreateZoneResponseObject, error) {
 	b := req.Body
-	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: 3600, Transfer: transferIn(b.Transfer)}
+	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: 3600, Transfer: transferIn(b.Transfer), EngineGroupID: b.EngineGroupId}
 	if b.DefaultTtl != nil {
 		ttl, err := u32("default_ttl", *b.DefaultTtl)
 		if err != nil {
@@ -149,6 +151,9 @@ func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) 
 		in.UpdateTSIGKeyIDs = b.Update.TsigKeyIds
 	}
 	z, err := h.d.Zones.CreateZone(ctx, PrincipalFrom(ctx).Actor(), in)
+	if errors.Is(err, zone.ErrUnknownEngineGroup) {
+		return nil, coded(http.StatusUnprocessableEntity, "engine_group_not_found", "engine group %s does not exist", *b.EngineGroupId)
+	}
 	if err != nil {
 		return nil, err
 	}

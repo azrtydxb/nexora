@@ -17,7 +17,7 @@ import (
 
 func rpzZoneOut(z store.RPZZone, status []store.RPZEngineStatus) RpzZone {
 	out := RpzZone{
-		Id: z.ID, Name: z.Name, Position: int(z.Position), SourceType: RpzZoneSourceType(z.SourceType),
+		Id: z.ID, EngineGroupId: z.EngineGroupID, Name: z.Name, Position: int(z.Position), SourceType: RpzZoneSourceType(z.SourceType),
 		Primary: z.PrimaryAddress, TsigKeyName: z.TSIGKeyName, TsigAlgorithm: z.TSIGAlgorithm, TsigSecretSet: z.TSIGSecretEnvelope != nil,
 		MinRefreshSeconds: int(z.MinRefreshSeconds), PolicyOverride: z.PolicyOverride, Revision: z.Revision,
 	}
@@ -147,8 +147,11 @@ func (h *handlers) CreateRpzZone(ctx context.Context, req CreateRpzZoneRequestOb
 	}
 	var after RpzZone
 	err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+		if err := requireEngineGroup(ctx, tx, b.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
 		created, err := store.CreateRPZZone(ctx, tx, store.RPZZone{
-			ID: id, Name: name, SourceType: string(b.SourceType), PrimaryAddress: f.primary, TSIGKeyName: f.keyName,
+			ID: id, EngineGroupID: b.EngineGroupId, Name: name, SourceType: string(b.SourceType), PrimaryAddress: f.primary, TSIGKeyName: f.keyName,
 			TSIGAlgorithm: f.algorithm, TSIGSecretEnvelope: envelope, MinRefreshSeconds: int32(b.MinRefreshSeconds),
 			PolicyOverride: string(b.PolicyOverride),
 		})

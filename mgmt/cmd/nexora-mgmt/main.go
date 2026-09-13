@@ -52,7 +52,7 @@ import (
 // health report.
 var version = "dev"
 
-const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F"
+const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> [--if-missing] | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F | engine-group create --name N [--description D] [--if-missing] | join-token create --engine-group G [--ttl 24h] [--max-uses N] [--label k=v]"
 
 func main() {
 	api.Version = version
@@ -77,6 +77,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		err = caIssueDNS(args[2:], stdout)
 	case len(args) >= 2 && args[0] == "user" && args[1] == "create":
 		err = userCreate(ctx, args[2:], stdout)
+	case len(args) >= 2 && args[0] == "engine-group" && args[1] == "create":
+		err = engineGroupCreate(ctx, args[2:], stdout)
+	case len(args) >= 2 && args[0] == "join-token" && args[1] == "create":
+		err = joinTokenCreate(ctx, args[2:], stdout)
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
@@ -157,14 +161,24 @@ func userCreate(ctx context.Context, args []string, stdout io.Writer) error {
 func caInit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("ca init", flag.ContinueOnError)
 	out := fs.String("out", "", "directory for ca.crt and ca.key")
+	ifMissing := fs.Bool("if-missing", false, "keep an existing CA (both files present) and print its fingerprint")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *out == "" || fs.NArg() != 0 {
-		return errors.New("usage: nexora-mgmt ca init --out <dir>")
+		return errors.New("usage: nexora-mgmt ca init --out <dir> [--if-missing]")
 	}
-	if err := pki.InitCA(*out); err != nil {
-		return err
+	exists := false
+	if *ifMissing {
+		var err error
+		if exists, err = caFilesPresent(*out); err != nil {
+			return err
+		}
+	}
+	if !exists {
+		if err := pki.InitCA(*out); err != nil {
+			return err
+		}
 	}
 	ca, err := pki.LoadCA(*out+"/ca.crt", *out+"/ca.key")
 	if err != nil {
@@ -345,6 +359,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
 	)
 	controlServer := control.NewServer(st, ca, hub, instanceID, dnsTLS)
+	controlServer.EngineCertTTL = cfg.EngineCertTTL
 	controlServer.OnStats = func(ctx context.Context, engineID string, s *controlv1.Stats) {
 		_ = stats.Record(ctx, st, engineID, s)
 		_ = stats.RecordM3(ctx, st, engineID, s)
@@ -355,6 +370,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	controlServer.OnUpdate = (&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).Apply
 	controlv1.RegisterEngineControlServer(srv, controlServer)
 	if builtinLog != nil {
+		builtinLog.Authenticate = controlServer.Authenticate
 		collogspb.RegisterLogsServiceServer(srv, builtinLog)
 	}
 	lis, err := net.Listen("tcp", cfg.GRPCListen)

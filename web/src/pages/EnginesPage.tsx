@@ -56,6 +56,7 @@ const statusTone: Record<
   ahead: "warning",
   rejected: "destructive",
   disconnected: "muted",
+  revoked: "destructive",
 };
 
 const statusHelp: Record<Engine["status"], string> = {
@@ -65,6 +66,7 @@ const statusHelp: Record<Engine["status"], string> = {
     "Reports a configuration version newer than the database holds (restored backup?)",
   rejected: "Refused the latest configuration version",
   disconnected: "No live control stream",
+  revoked: "Certificate revoked; the engine is refused by the management plane",
 };
 
 export function EnginesPage() {

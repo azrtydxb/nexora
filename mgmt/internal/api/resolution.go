@@ -23,7 +23,7 @@ func resolutionOut(s store.ResolutionSettings) ResolutionSettings {
 }
 
 func forwardZoneOut(z store.ForwardZone) ForwardZone {
-	return ForwardZone{Id: z.ID, Domain: z.Domain, Addresses: append([]string{}, z.Addresses...), Validate: z.Validate, Revision: z.Revision}
+	return ForwardZone{Id: z.ID, EngineGroupId: z.EngineGroupID, Domain: z.Domain, Addresses: append([]string{}, z.Addresses...), Validate: z.Validate, Revision: z.Revision}
 }
 
 func (h *handlers) GetResolutionSettings(ctx context.Context, _ GetResolutionSettingsRequestObject) (GetResolutionSettingsResponseObject, error) {
@@ -123,7 +123,11 @@ func (h *handlers) CreateForwardZone(ctx context.Context, req CreateForwardZoneR
 	}
 	var after ForwardZone
 	err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
-		created, err := store.CreateForwardZone(ctx, tx, store.ForwardZone{Domain: domain, Addresses: b.Addresses, Validate: b.Validate})
+		if err := requireEngineGroup(ctx, tx, b.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
+		created, err := store.CreateForwardZone(ctx, tx, store.ForwardZone{Domain: domain, Addresses: b.Addresses, Validate: b.Validate,
+			EngineGroupID: b.EngineGroupId})
 		after = forwardZoneOut(created)
 		return auth.Change{Action: "createForwardZone", TargetType: "forward_zone", TargetID: created.ID.String(), After: after}, err
 	})
@@ -145,7 +149,11 @@ func (h *handlers) UpdateForwardZone(ctx context.Context, req UpdateForwardZoneR
 		if err != nil {
 			return auth.Change{}, err
 		}
-		updated, err := store.UpdateForwardZone(ctx, tx, store.ForwardZone{ID: req.Id, Domain: domain, Addresses: b.Addresses, Validate: b.Validate, Revision: b.Revision})
+		if err := requireEngineGroup(ctx, tx, b.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
+		updated, err := store.UpdateForwardZone(ctx, tx, store.ForwardZone{ID: req.Id, Domain: domain, Addresses: b.Addresses, Validate: b.Validate,
+			Revision: b.Revision, EngineGroupID: b.EngineGroupId})
 		after = forwardZoneOut(updated)
 		return auth.Change{Action: "updateForwardZone", TargetType: "forward_zone", TargetID: req.Id.String(),
 			Before: forwardZoneOut(before), After: after}, err

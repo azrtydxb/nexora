@@ -80,6 +80,7 @@ type subscriber struct {
 	keyMaterialDigest string    // digest of the last KeyMaterial queued ("" = none)
 	updateTokens      float64
 	updateRefilled    time.Time
+	lastIssued        time.Time // last certificate issued on this stream
 }
 
 const (
@@ -354,7 +355,13 @@ func (h *Hub) push(ctx context.Context, f fleet.EngineFilter, match func(*subscr
 	ks := h.loadKeySets(ctx)
 	defer clearKeyMaterial(ks.km)
 	for _, s := range subs {
-		if t, ok := targets[s.id]; ok {
+		t, ok := targets[s.id]
+		switch {
+		case ok && t.Revoked, !ok && f.EngineGroupID == nil:
+			// A revoked or deleted engine whose notification this instance missed (listener
+			// reconnect): end its stream now rather than never.
+			s.revoke()
+		case ok:
 			offerTarget(s, t, ks)
 		}
 	}

@@ -24,6 +24,10 @@ const (
 type Builtin struct {
 	collogspb.UnimplementedLogsServiceServer
 
+	// Authenticate, when set, authenticates the calling engine (certificate revocation included);
+	// without it only the client certificate's CN is used.
+	Authenticate func(context.Context) (string, error)
+
 	mu   sync.RWMutex
 	ring []entry
 	next uint64 // sequence number of the next record; ring[(next-1) % cap] is the newest
@@ -44,7 +48,11 @@ func (*Builtin) Name() string { return "builtin" }
 
 // Export implements the OTLP LogsService for engines authenticated by their client certificate.
 func (b *Builtin) Export(ctx context.Context, req *collogspb.ExportLogsServiceRequest) (*collogspb.ExportLogsServiceResponse, error) {
-	engineID, err := control.EngineID(ctx)
+	authenticate := b.Authenticate
+	if authenticate == nil {
+		authenticate = control.EngineID
+	}
+	engineID, err := authenticate(ctx)
 	if err != nil {
 		return nil, err
 	}

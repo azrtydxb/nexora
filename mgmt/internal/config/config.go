@@ -28,6 +28,8 @@ type Config struct {
 	PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string
 	// RolloutTick is how often the rollout controller steps open rollouts without a notification.
 	RolloutTick time.Duration
+	// EngineCertTTL is the lifetime of the engine certificates this plane issues.
+	EngineCertTTL time.Duration
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -129,6 +131,11 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("NEXORA_ROLLOUT_TICK must be between 100ms and 1m")
 	}
 	c.RolloutTick = tick
+	certTTL, err := time.ParseDuration(get("NEXORA_ENGINE_CERT_TTL", "2160h"))
+	if err != nil || certTTL < 30*time.Second {
+		return Config{}, fmt.Errorf("NEXORA_ENGINE_CERT_TTL must be a duration of at least 30s")
+	}
+	c.EngineCertTTL = certTTL
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {
 			return Config{}, fmt.Errorf("NEXORA_OIDC_CLIENT_ID is required when NEXORA_OIDC_ISSUER is set")

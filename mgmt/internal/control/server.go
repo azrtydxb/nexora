@@ -3,6 +3,7 @@ package control
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -43,6 +44,8 @@ type Server struct {
 	// OnUpdate, when set, applies a dynamic update an engine forwarded. It runs outside the receive
 	// loop with a 4 s context; without it every update is answered NOTIMP.
 	OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult
+	// EngineCertTTL is the lifetime of issued engine certificates (0: pki.EngineCertValidity).
+	EngineCertTTL time.Duration
 
 	st         *store.Store
 	ca         *pki.CA
@@ -63,26 +66,25 @@ func (s *Server) Enroll(ctx context.Context, req *controlv1.EnrollRequest) (*con
 	}
 	resp := &controlv1.EnrollResponse{CaCertificateDer: s.ca.Cert.Raw}
 	err := s.st.InTx(ctx, func(tx pgx.Tx) error {
-		tokenID, err := lookupJoinToken(ctx, tx, req.JoinSecret)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return status.Error(codes.PermissionDenied, "invalid, expired or revoked join token")
+		grant, err := fleet.ConsumeJoinToken(ctx, tx, req.JoinSecret)
+		if errors.Is(err, fleet.ErrJoinTokenUnknown) || errors.Is(err, fleet.ErrJoinTokenExpired) ||
+			errors.Is(err, fleet.ErrJoinTokenExhausted) || errors.Is(err, fleet.ErrJoinTokenRevoked) {
+			return status.Error(codes.PermissionDenied, err.Error())
 		} else if err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, "select gen_random_uuid()::text").Scan(&resp.EngineId); err != nil {
-			return err
-		}
-		der, serial, err := s.ca.SignEngineCSR(req.CsrDer, resp.EngineId, pki.EngineCertValidity)
+		engineID := uuid.New()
+		resp.EngineId = engineID.String()
+		der, serial, err := s.ca.SignEngineCSR(req.CsrDer, resp.EngineId, s.certTTL())
 		if err != nil {
 			return status.Error(codes.InvalidArgument, err.Error())
 		}
 		resp.CertificateDer = der
-		if _, err := tx.Exec(ctx, `insert into engines(id, node_name, join_token_id, certificate_serial, engine_version)
-			values ($1, $2, $3, $4, $5)`, resp.EngineId, req.NodeName, tokenID, serial, req.EngineVersion); err != nil {
+		if _, err := tx.Exec(ctx, `insert into engines(id, node_name, join_token_id, certificate_serial, engine_version, engine_group_id, labels)
+			values ($1, $2, $3, $4, $5, $6, $7)`, engineID, req.NodeName, grant.ID, serial, req.EngineVersion, grant.EngineGroupID, grant.Labels); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, "update join_tokens set uses = uses + 1 where id = $1", tokenID)
-		return err
+		return fleet.RecordCertificate(ctx, tx, engineID, der)
 	})
 	if err != nil {
 		return nil, grpcError(err)
@@ -93,7 +95,7 @@ func (s *Server) Enroll(ctx context.Context, req *controlv1.EnrollRequest) (*con
 // Connect is the engine's long-lived config stream.
 func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	ctx := stream.Context()
-	id, err := s.engine(ctx)
+	id, serial, err := s.authenticate(ctx)
 	if err != nil {
 		return err
 	}
@@ -107,6 +109,11 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	}
 	if hello.EngineId != "" && hello.EngineId != id {
 		return status.Error(codes.PermissionDenied, "Hello engine_id does not match the client certificate")
+	}
+	// The engine connected with this certificate: an earlier one is no longer needed (a renewed
+	// certificate replaces the old one only once it has proven to work).
+	if err := fleet.SupersedeOlderCertificates(ctx, s.st.Pool, uuid.MustParse(id), serial); err != nil {
+		return grpcError(err)
 	}
 	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "insert into instances(id) values ($1) on conflict do nothing", s.instanceID); err != nil {
@@ -140,6 +147,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	}()
 	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
 	defer s.dnsTLS.Unregister(id)
+	// A revocation notified between authenticate and register reached no subscriber: check again.
+	if err := s.checkCertificate(ctx, id, serial); err != nil {
+		return err
+	}
 
 	// Registered before loading the target, so a rollout change in between is not missed. Keys go
 	// before the snapshot, so a transfer zone's first refresh can already sign its request.
@@ -272,6 +283,8 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			}
 		case *controlv1.EngineMessage_UpdateRequest:
 			s.update(ctx, sub, m.UpdateRequest)
+		case *controlv1.EngineMessage_CertRequest:
+			err = s.renew(ctx, sub, m.CertRequest)
 		case *controlv1.EngineMessage_TlsMaterialResult:
 			res := m.TlsMaterialResult
 			s.dnsTLS.Result(sub.engineID, res)
@@ -345,7 +358,7 @@ func (s *Server) update(ctx context.Context, sub *subscriber, req *controlv1.Upd
 // GetBlob streams a blob in BlobChunkSize chunks.
 func (s *Server) GetBlob(req *controlv1.GetBlobRequest, stream controlv1.EngineControl_GetBlobServer) error {
 	ctx := stream.Context()
-	if _, err := s.engine(ctx); err != nil {
+	if _, _, err := s.authenticate(ctx); err != nil {
 		return err
 	}
 	if !sha256RE.MatchString(req.Sha256) {
@@ -368,24 +381,105 @@ func (s *Server) GetBlob(req *controlv1.GetBlobRequest, stream controlv1.EngineC
 	return nil
 }
 
-// engine authenticates the caller's certificate and requires a live engine row.
-func (s *Server) engine(ctx context.Context) (string, error) {
-	id, err := EngineID(ctx)
+// Authenticate returns the id of the engine whose client certificate the caller presents, after
+// checking in the database (on every call, no cache) that the engine exists, is neither deleted
+// nor revoked, and that the certificate is its own and not revoked or superseded.
+func (s *Server) Authenticate(ctx context.Context) (string, error) {
+	id, _, err := s.authenticate(ctx)
+	return id, err
+}
+
+func (s *Server) authenticate(ctx context.Context) (id, serial string, err error) {
+	cert, err := PeerCertificate(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
+	id = cert.Subject.CommonName
 	if !uuidRE.MatchString(id) {
-		return "", status.Error(codes.PermissionDenied, "unknown engine")
+		return "", "", status.Error(codes.PermissionDenied, "unknown engine")
 	}
-	var deleted bool
-	err = s.st.Pool.QueryRow(ctx, "select deleted_at is not null from engines where id = $1", id).Scan(&deleted)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && deleted) {
-		return "", status.Error(codes.PermissionDenied, "unknown or deleted engine")
+	serial = cert.SerialNumber.Text(16)
+	if err := s.checkCertificate(ctx, id, serial); err != nil {
+		return "", "", err
+	}
+	return id, serial, nil
+}
+
+func (s *Server) checkCertificate(ctx context.Context, id, serial string) error {
+	err := fleet.CheckCertificate(ctx, s.st.Pool, uuid.MustParse(id), serial)
+	switch {
+	case errors.Is(err, fleet.ErrUnknownEngine), errors.Is(err, fleet.ErrCertificateRevoked):
+		return status.Error(codes.PermissionDenied, err.Error())
+	case err != nil:
+		return grpcError(err)
+	}
+	return nil
+}
+
+func (s *Server) certTTL() time.Duration {
+	if s.EngineCertTTL > 0 {
+		return s.EngineCertTTL
+	}
+	return pki.EngineCertValidity
+}
+
+// renewInterval bounds certificate issuance to one per engine stream per interval.
+const renewInterval = 10 * time.Second
+
+// renew answers a CertificateRequest: a CSR for this engine's id gets a certificate of certTTL,
+// recorded (it becomes valid alongside the current one, which is superseded once the engine
+// connects with the new one) and sent back as CertificateIssued. Refused requests get no answer.
+func (s *Server) renew(ctx context.Context, sub *subscriber, req *controlv1.CertificateRequest) error {
+	now := time.Now()
+	sub.mu.Lock()
+	limited := !sub.lastIssued.IsZero() && now.Sub(sub.lastIssued) < renewInterval
+	sub.mu.Unlock()
+	if limited {
+		slog.Warn("certificate request ignored: rate limited", "engine", sub.engineID)
+		return nil
+	}
+	csr, err := x509.ParseCertificateRequest(req.CsrDer)
+	if err == nil && csr.Subject.CommonName != sub.engineID {
+		err = errors.New("CSR common name is not the engine id")
 	}
 	if err != nil {
-		return "", grpcError(err)
+		slog.Warn("certificate request refused: "+err.Error(), "engine", sub.engineID)
+		return nil
 	}
-	return id, nil
+	der, _, err := s.ca.SignEngineCSR(req.CsrDer, sub.engineID, s.certTTL())
+	if err != nil {
+		slog.Warn("certificate request refused: "+err.Error(), "engine", sub.engineID)
+		return nil
+	}
+	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
+		var live bool
+		if err := tx.QueryRow(ctx, "select revoked_at is null and deleted_at is null from engines where id = $1 for update",
+			sub.id).Scan(&live); err != nil {
+			return err
+		}
+		if !live {
+			return status.Error(codes.PermissionDenied, fleet.ErrCertificateRevoked.Error())
+		}
+		if err := fleet.RecordCertificate(ctx, tx, sub.id, der); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "update engines set cert_rotate_requested_at = null where id = $1", sub.id)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	sub.mu.Lock()
+	sub.lastIssued = now
+	sub.mu.Unlock()
+	slog.Info("engine certificate issued", "engine", sub.engineID, "reason", req.Reason.String())
+	select {
+	case sub.control <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_CertIssued{CertIssued: &controlv1.CertificateIssued{
+		CertDer: der, CaDer: s.ca.Cert.Raw}}}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
 }
 
 func grpcError(err error) error {

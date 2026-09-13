@@ -18,11 +18,11 @@ import (
 const maxNTALifetime = 30 * 24 * time.Hour
 
 var trustAnchorStates = map[controlv1.TrustAnchorState]DnssecStatusEnginesTrustAnchorsState{
-	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_CONFIGURED: Configured,
-	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_ADD_PEND:   AddPend,
-	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_VALID:      Valid,
-	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_MISSING:    Missing,
-	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_REVOKED:    Revoked,
+	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_CONFIGURED: DnssecStatusEnginesTrustAnchorsStateConfigured,
+	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_ADD_PEND:   DnssecStatusEnginesTrustAnchorsStateAddPend,
+	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_VALID:      DnssecStatusEnginesTrustAnchorsStateValid,
+	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_MISSING:    DnssecStatusEnginesTrustAnchorsStateMissing,
+	controlv1.TrustAnchorState_TRUST_ANCHOR_STATE_REVOKED:    DnssecStatusEnginesTrustAnchorsStateRevoked,
 }
 
 func dnssecOut(s store.DnssecSettings) DnssecSettings {
@@ -89,7 +89,7 @@ func (h *handlers) GetDnssecStatus(ctx context.Context, _ GetDnssecStatusRequest
 			t.Zone, t.KeyTag, t.Algorithm, t.LastError = a.Zone, int(a.KeyTag), int(a.Algorithm), a.LastError
 			t.State = trustAnchorStates[a.State]
 			if t.State == "" {
-				t.State = Configured
+				t.State = DnssecStatusEnginesTrustAnchorsStateConfigured
 			}
 			t.LastRefreshSuccess, t.HoldDownUntil = unixOrNil(a.LastRefreshSuccessUnix), unixOrNil(a.HoldDownUntilUnix)
 		}

@@ -87,7 +87,7 @@ func safeSearchFields(google, bing, ddg bool, youtube string) (store.SafeSearch,
 }
 
 func validatePolicyGroup(in PolicyGroupInput) (store.PolicyGroup, error) {
-	g := store.PolicyGroup{Name: in.Name}
+	g := store.PolicyGroup{Name: in.Name, EngineGroupID: in.EngineGroupId}
 	if !groupNameRE.MatchString(in.Name) {
 		return g, failed("name must match ^[A-Za-z0-9][A-Za-z0-9 _.-]{0,62}$")
 	}
@@ -149,7 +149,10 @@ func validatePolicyGroup(in PolicyGroupInput) (store.PolicyGroup, error) {
 }
 
 func validateRewrite(in RewriteInput) (store.Rewrite, error) {
-	r := store.Rewrite{GroupID: in.GroupId, Type: string(in.Type), TTL: 300}
+	r := store.Rewrite{GroupID: in.GroupId, EngineGroupID: in.EngineGroupId, Type: string(in.Type), TTL: 300}
+	if in.GroupId != nil && in.EngineGroupId != nil {
+		return r, coded(http.StatusUnprocessableEntity, "engine_group_scope", "a rewrite inside a policy group follows the policy group's engine group")
+	}
 	name, wildcard := strings.TrimSpace(in.Name), false
 	if rest, ok := strings.CutPrefix(name, "*."); ok {
 		name, wildcard = rest, true

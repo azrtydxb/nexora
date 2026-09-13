@@ -15,6 +15,9 @@ var (
 // ErrReadOnly refuses record changes on secondary zones.
 var ErrReadOnly = errors.New("zone is a secondary zone and read-only")
 
+// ErrUnknownEngineGroup is returned when a zone names an engine group that does not exist.
+var ErrUnknownEngineGroup = errors.New("engine group does not exist")
+
 // LineError locates a problem in submitted zone data.
 type LineError struct {
 	Line    int    `json:"line"`

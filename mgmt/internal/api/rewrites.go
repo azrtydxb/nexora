@@ -11,7 +11,7 @@ import (
 )
 
 func rewriteOut(r store.Rewrite) Rewrite {
-	return Rewrite{Id: r.ID, GroupId: r.GroupID, Name: r.Name, Type: RewriteType(r.Type), Value: r.Value, Ttl: int(r.TTL),
+	return Rewrite{Id: r.ID, GroupId: r.GroupID, EngineGroupId: r.EngineGroupID, Name: r.Name, Type: RewriteType(r.Type), Value: r.Value, Ttl: int(r.TTL),
 		Revision: r.Revision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }
 
@@ -36,6 +36,9 @@ func (h *handlers) CreateRewrite(ctx context.Context, req CreateRewriteRequestOb
 	var after Rewrite
 	if err == nil {
 		err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+			if err := requireEngineGroup(ctx, tx, r.EngineGroupID); err != nil {
+				return auth.Change{}, err
+			}
 			created, err := store.CreateRewrite(ctx, tx, r)
 			after = rewriteOut(created)
 			return auth.Change{Action: "createRewrite", TargetType: "rewrite", TargetID: created.ID.String(), After: after}, err
@@ -55,13 +58,16 @@ func (h *handlers) CreateRewrite(ctx context.Context, req CreateRewriteRequestOb
 
 func (h *handlers) UpdateRewrite(ctx context.Context, req UpdateRewriteRequestObject) (UpdateRewriteResponseObject, error) {
 	b := req.Body
-	r, err := validateRewrite(RewriteInput{GroupId: b.GroupId, Name: b.Name, Type: RewriteInputType(b.Type), Value: b.Value, Ttl: b.Ttl})
+	r, err := validateRewrite(RewriteInput{GroupId: b.GroupId, EngineGroupId: b.EngineGroupId, Name: b.Name, Type: RewriteInputType(b.Type), Value: b.Value, Ttl: b.Ttl})
 	var after Rewrite
 	if err == nil {
 		r.ID, r.Revision = req.Id, b.Revision
 		err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 			before, err := store.GetRewrite(ctx, tx, req.Id)
 			if err != nil {
+				return auth.Change{}, err
+			}
+			if err := requireEngineGroup(ctx, tx, r.EngineGroupID); err != nil {
 				return auth.Change{}, err
 			}
 			updated, err := store.UpdateRewrite(ctx, tx, r)

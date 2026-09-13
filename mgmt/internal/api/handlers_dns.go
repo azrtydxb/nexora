@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -51,12 +53,12 @@ func deref(s *string) string {
 
 // ---- upstreams ----
 
-const upstreamColumns = "id::text, name, protocol, address, tls_server_name, doh_url, timeout_ms, ca_certificate_pem, position, enabled, revision"
+const upstreamColumns = "id::text, name, protocol, address, tls_server_name, doh_url, timeout_ms, ca_certificate_pem, position, enabled, revision, engine_group_id"
 
 func scanUpstream(row pgx.Row) (Upstream, error) {
 	var u Upstream
 	var id, protocol string
-	err := row.Scan(&id, &u.Name, &protocol, &u.Address, &u.TlsServerName, &u.DohUrl, &u.TimeoutMs, &u.CaCertificatePem, &u.Position, &u.Enabled, &u.Revision)
+	err := row.Scan(&id, &u.Name, &protocol, &u.Address, &u.TlsServerName, &u.DohUrl, &u.TimeoutMs, &u.CaCertificatePem, &u.Position, &u.Enabled, &u.Revision, &u.EngineGroupId)
 	if err != nil {
 		return u, store.MapError(err)
 	}
@@ -150,10 +152,13 @@ func (h *handlers) CreateUpstream(ctx context.Context, req CreateUpstreamRequest
 	}
 	var after Upstream
 	err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+		if err := requireEngineGroup(ctx, tx, req.Body.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
 		var err error
 		after, err = scanUpstream(tx.QueryRow(ctx, `insert into upstreams(name, protocol, address, tls_server_name, doh_url,
-			timeout_ms, ca_certificate_pem, position, enabled) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning `+upstreamColumns,
-			f.name, f.protocol, f.address, f.tlsName, f.dohURL, f.timeout, f.caPEM, f.position, f.enabled))
+			timeout_ms, ca_certificate_pem, position, enabled, engine_group_id) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning `+upstreamColumns,
+			f.name, f.protocol, f.address, f.tlsName, f.dohURL, f.timeout, f.caPEM, f.position, f.enabled, req.Body.EngineGroupId))
 		return auth.Change{Action: "createUpstream", TargetType: "upstream", TargetID: after.Id.String(), After: after}, err
 	})
 	if err != nil {
@@ -180,10 +185,13 @@ func (h *handlers) UpdateUpstream(ctx context.Context, req UpdateUpstreamRequest
 		if err := checkRevision(before.Revision, rev); err != nil {
 			return auth.Change{}, err
 		}
+		if err := requireEngineGroup(ctx, tx, req.Body.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
 		after, err = scanUpstream(tx.QueryRow(ctx, `update upstreams set name = $2, protocol = $3, address = $4, tls_server_name = $5,
-			doh_url = $6, timeout_ms = $7, ca_certificate_pem = $8, position = $9, enabled = $10,
+			doh_url = $6, timeout_ms = $7, ca_certificate_pem = $8, position = $9, enabled = $10, engine_group_id = $11,
 			revision = revision + 1, updated_at = now() where id = $1 returning `+upstreamColumns,
-			req.Id, f.name, f.protocol, f.address, f.tlsName, f.dohURL, f.timeout, f.caPEM, f.position, f.enabled))
+			req.Id, f.name, f.protocol, f.address, f.tlsName, f.dohURL, f.timeout, f.caPEM, f.position, f.enabled, req.Body.EngineGroupId))
 		return auth.Change{Action: "updateUpstream", TargetType: "upstream", TargetID: req.Id.String(), Before: before, After: after}, err
 	})
 	if err != nil {
@@ -379,13 +387,13 @@ func (h *handlers) UpdateAllowlist(ctx context.Context, req UpdateAllowlistReque
 const filterListColumns = `id::text, name, kind, url, refresh_interval_seconds, enabled, current_blob_sha256, entry_count,
 	invalid_line_count, last_success_at, last_attempt_at, last_error,
 	(last_error <> '' or last_success_at is null or
-		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second') as stale, revision`
+		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second') as stale, revision, engine_group_id`
 
 func scanFilterList(row pgx.Row) (FilterList, error) {
 	var f FilterList
 	var id, kind string
 	err := row.Scan(&id, &f.Name, &kind, &f.Url, &f.RefreshIntervalSeconds, &f.Enabled, &f.CurrentBlobSha256, &f.EntryCount,
-		&f.InvalidLineCount, &f.LastSuccessAt, &f.LastAttemptAt, &f.LastError, &f.Stale, &f.Revision)
+		&f.InvalidLineCount, &f.LastSuccessAt, &f.LastAttemptAt, &f.LastError, &f.Stale, &f.Revision, &f.EngineGroupId)
 	if err != nil {
 		return f, store.MapError(err)
 	}
@@ -442,9 +450,13 @@ func (h *handlers) CreateFilterList(ctx context.Context, req CreateFilterListReq
 	}
 	var after FilterList
 	err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+		if err := requireEngineGroup(ctx, tx, req.Body.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
 		var err error
-		after, err = scanFilterList(tx.QueryRow(ctx, `insert into filter_lists(name, kind, url, refresh_interval_seconds, enabled)
-			values ($1, $2, $3, $4, $5) returning `+filterListColumns, name, string(req.Body.Kind), rawURL, req.Body.RefreshIntervalSeconds, req.Body.Enabled))
+		after, err = scanFilterList(tx.QueryRow(ctx, `insert into filter_lists(name, kind, url, refresh_interval_seconds, enabled, engine_group_id)
+			values ($1, $2, $3, $4, $5, $6) returning `+filterListColumns, name, string(req.Body.Kind), rawURL, req.Body.RefreshIntervalSeconds,
+			req.Body.Enabled, req.Body.EngineGroupId))
 		return auth.Change{Action: "createFilterList", TargetType: "filter_list", TargetID: after.Id.String(), After: after}, err
 	})
 	if err != nil {
@@ -479,9 +491,16 @@ func (h *handlers) UpdateFilterList(ctx context.Context, req UpdateFilterListReq
 		if err := checkRevision(before.Revision, rev); err != nil {
 			return auth.Change{}, err
 		}
+		if err := requireEngineGroup(ctx, tx, req.Body.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
+		if err := checkFilterListScope(ctx, tx, req.Id, req.Body.EngineGroupId); err != nil {
+			return auth.Change{}, err
+		}
 		after, err = scanFilterList(tx.QueryRow(ctx, `update filter_lists set name = $2, kind = $3, url = $4,
-			refresh_interval_seconds = $5, enabled = $6, revision = revision + 1, updated_at = now()
-			where id = $1 returning `+filterListColumns, req.Id, name, string(req.Body.Kind), rawURL, req.Body.RefreshIntervalSeconds, req.Body.Enabled))
+			refresh_interval_seconds = $5, enabled = $6, engine_group_id = $7, revision = revision + 1, updated_at = now()
+			where id = $1 returning `+filterListColumns, req.Id, name, string(req.Body.Kind), rawURL, req.Body.RefreshIntervalSeconds,
+			req.Body.Enabled, req.Body.EngineGroupId))
 		return auth.Change{Action: "updateFilterList", TargetType: "filter_list", TargetID: req.Id.String(), Before: before, After: after}, err
 	})
 	if err != nil {
@@ -523,4 +542,24 @@ func (h *handlers) RefreshFilterList(ctx context.Context, req RefreshFilterListR
 		return nil, err
 	}
 	return RefreshFilterList200JSONResponse(f), nil
+}
+
+// checkFilterListScope refuses scoping filter list id to engineGroupID while a policy group of
+// another scope selects it: a policy group may select only global lists or lists of its own
+// engine group.
+func checkFilterListScope(ctx context.Context, tx pgx.Tx, id uuid.UUID, engineGroupID *uuid.UUID) error {
+	if engineGroupID == nil {
+		return nil
+	}
+	var name string
+	err := tx.QueryRow(ctx, `select g.name from policy_group_filter_lists l join policy_groups g on g.id = l.group_id
+		where l.filter_list_id = $1 and g.engine_group_id is distinct from $2 order by g.name limit 1`, id, *engineGroupID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return coded(http.StatusUnprocessableEntity, "engine_group_scope",
+		"policy group %q of another engine group selects this filter list; a policy group may select only global lists or lists of its own engine group", name)
 }

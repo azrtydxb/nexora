@@ -149,6 +149,7 @@ type Target struct {
 	Version         uint64
 	Snapshot        *controlv1.ConfigSnapshot
 	RotateRequested bool
+	Revoked         bool
 }
 
 // TargetFor loads engine engineID's target (store.ErrNotFound for an unknown or deleted engine).
@@ -178,7 +179,8 @@ func Targets(ctx context.Context, q store.PolicyQuerier, f EngineFilter) (map[uu
 	snaps := map[key]*controlv1.ConfigSnapshot{}
 	out := make(map[uuid.UUID]Target, len(views))
 	for _, v := range views {
-		t := Target{EngineGroupID: v.EngineGroupID, Version: v.TargetVersion, RotateRequested: v.CertRotateRequestedAt != nil}
+		t := Target{EngineGroupID: v.EngineGroupID, Version: v.TargetVersion, RotateRequested: v.CertRotateRequestedAt != nil,
+			Revoked: v.RevokedAt != nil}
 		if t.Version > 0 {
 			k := key{v.EngineGroupID, t.Version}
 			if snaps[k] == nil {

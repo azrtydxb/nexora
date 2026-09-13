@@ -288,3 +288,21 @@ func HashSecret(secret string) []byte {
 	sum := sha256.Sum256([]byte(secret))
 	return sum[:]
 }
+
+// FingerprintFile is the lowercase hex SHA-256 of the DER of the PEM certificate in certFile, like
+// (*CA).Fingerprint, for callers that hold only the CA certificate.
+func FingerprintFile(certFile string) (string, error) {
+	raw, err := os.ReadFile(certFile)
+	if err != nil {
+		return "", err
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("%s: no PEM certificate", certFile)
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return "", fmt.Errorf("%s: %w", certFile, err)
+	}
+	sum := sha256.Sum256(block.Bytes)
+	return hex.EncodeToString(sum[:]), nil
+}

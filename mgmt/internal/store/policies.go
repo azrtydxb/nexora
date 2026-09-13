@@ -95,8 +95,8 @@ func GetPolicyGroup(ctx context.Context, q PolicyQuerier, id uuid.UUID) (PolicyG
 func CreatePolicyGroup(ctx context.Context, tx pgx.Tx, g PolicyGroup) (PolicyGroup, error) {
 	ss := normalSafeSearch(g.SafeSearch)
 	err := tx.QueryRow(ctx, `insert into policy_groups(name, description, safe_search_google, safe_search_bing,
-		safe_search_duckduckgo, safe_search_youtube) values ($1, $2, $3, $4, $5, $6) returning id`,
-		g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube).Scan(&g.ID)
+		safe_search_duckduckgo, safe_search_youtube, engine_group_id) values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+		g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.EngineGroupID).Scan(&g.ID)
 	if err != nil {
 		return PolicyGroup{}, policyError(err)
 	}
@@ -111,9 +111,9 @@ func UpdatePolicyGroup(ctx context.Context, tx pgx.Tx, g PolicyGroup) (PolicyGro
 	ss := normalSafeSearch(g.SafeSearch)
 	var rev int64
 	err := tx.QueryRow(ctx, `update policy_groups set name = $2, description = $3, safe_search_google = $4,
-		safe_search_bing = $5, safe_search_duckduckgo = $6, safe_search_youtube = $7, revision = revision + 1,
+		safe_search_bing = $5, safe_search_duckduckgo = $6, safe_search_youtube = $7, engine_group_id = $9, revision = revision + 1,
 		updated_at = now() where id = $1 and revision = $8 returning revision`,
-		g.ID, g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.Revision).Scan(&rev)
+		g.ID, g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.Revision, g.EngineGroupID).Scan(&rev)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PolicyGroup{}, missingOrStale(ctx, tx, "policy_groups", g.ID)
 	}
