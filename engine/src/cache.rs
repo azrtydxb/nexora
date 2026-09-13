@@ -154,6 +154,10 @@ impl Cache {
         InsertOutcome::Inserted { ttl }
     }
 
+    pub fn clear(&self) {
+        self.inner.clear()
+    }
+
     pub fn entries(&self) -> u64 {
         self.inner.len() as u64
     }
