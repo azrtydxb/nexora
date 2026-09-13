@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -25,6 +26,8 @@ type dnsConfig struct {
 // dnsFixture is an upstream DNS server over UDP, TCP, DoT and DoH whose answers depend on the
 // first label of the query name, with a JSON control API.
 type dnsFixture struct {
+	// bound holds the listening addresses, with kernel-chosen ports resolved.
+	bound       dnsConfig
 	dnsServers  []*dns.Server
 	httpServers []*http.Server
 
@@ -37,7 +40,7 @@ type dnsFixture struct {
 
 const maxDNSMessage = 65535
 
-func runDNS(args []string) (func(), error) {
+func runDNS(args []string) (func(), string, error) {
 	fs := flag.NewFlagSet("dns", flag.ContinueOnError)
 	var cfg dnsConfig
 	fs.StringVar(&cfg.UDP, "udp", "", "UDP listen address")
@@ -47,13 +50,46 @@ func runDNS(args []string) (func(), error) {
 	fs.StringVar(&cfg.Control, "control", "", "control API listen address")
 	fs.StringVar(&cfg.CertDir, "cert-dir", "", "directory for the generated CA and server certificate")
 	if err := fs.Parse(args); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	fx, err := startDNSFixture(cfg)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return fx.Close, nil
+	b := fx.bound
+	return fx.Close, "udp=" + b.UDP + " tcp=" + b.TCP + " dot=" + b.DoT + " doh=" + b.DoH + " control=" + b.Control, nil
+}
+
+// pairAttempts bounds how often a kernel-chosen UDP port is re-picked when its TCP twin is taken.
+const pairAttempts = 16
+
+// listenDNS binds the UDP and TCP listeners. When both name the same address with port 0 they
+// share one kernel-chosen port, as on a real DNS server: resolvers retry a truncated UDP reply
+// over TCP to the same address.
+func listenDNS(udpAddr, tcpAddr string) (net.PacketConn, net.Listener, error) {
+	_, port, err := net.SplitHostPort(udpAddr)
+	if err != nil {
+		return nil, nil, err
+	}
+	paired := udpAddr == tcpAddr && port == "0"
+	for attempt := 1; ; attempt++ {
+		pc, err := net.ListenPacket("udp", udpAddr)
+		if err != nil {
+			return nil, nil, err
+		}
+		target := tcpAddr
+		if paired {
+			target = pc.LocalAddr().String()
+		}
+		tl, err := net.Listen("tcp", target)
+		if err == nil {
+			return pc, tl, nil
+		}
+		_ = pc.Close()
+		if !paired || !errors.Is(err, syscall.EADDRINUSE) || attempt == pairAttempts {
+			return nil, nil, err
+		}
+	}
 }
 
 func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
@@ -70,22 +106,20 @@ func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
 		return nil, err
 	}
 
-	pc, err := net.ListenPacket("udp", cfg.UDP)
+	pc, tl, err := listenDNS(cfg.UDP, cfg.TCP)
 	if err != nil {
 		return fail(err)
 	}
 	f.serveDNS(&dns.Server{Net: "udp", PacketConn: pc})
-	tl, err := net.Listen("tcp", cfg.TCP)
-	if err != nil {
-		return fail(err)
-	}
 	f.serveDNS(&dns.Server{Net: "tcp", Listener: tl})
+	f.bound = dnsConfig{UDP: pc.LocalAddr().String(), TCP: tl.Addr().String(), CertDir: cfg.CertDir}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	dl, err := tls.Listen("tcp", cfg.DoT, tlsCfg)
 	if err != nil {
 		return fail(err)
 	}
 	f.serveDNS(&dns.Server{Net: "tcp-tls", Listener: dl})
+	f.bound.DoT = dl.Addr().String()
 
 	doh := http.NewServeMux()
 	doh.HandleFunc("POST /dns-query", f.dohPost)
@@ -98,6 +132,7 @@ func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2"}, MinVersion: tls.VersionTLS12}}
 	f.httpServers = append(f.httpServers, dohSrv)
 	go func() { _ = dohSrv.ServeTLS(hl, "", "") }()
+	f.bound.DoH = hl.Addr().String()
 
 	ctl := http.NewServeMux()
 	ctl.HandleFunc("GET /stats", f.stats)
@@ -111,6 +146,7 @@ func startDNSFixture(cfg dnsConfig) (*dnsFixture, error) {
 	ctlSrv := &http.Server{Handler: ctl, ReadHeaderTimeout: 5 * time.Second}
 	f.httpServers = append(f.httpServers, ctlSrv)
 	go func() { _ = ctlSrv.Serve(cl) }()
+	f.bound.Control = cl.Addr().String()
 	return f, nil
 }
 

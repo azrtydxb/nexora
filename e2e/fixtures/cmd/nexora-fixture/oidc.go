@@ -56,41 +56,45 @@ var authorizePage = template.Must(template.New("authorize").Parse(`<!doctype htm
 {{end}}</form>
 `))
 
-func runOIDC(args []string) (func(), error) {
+func runOIDC(args []string) (func(), string, error) {
 	fs := flag.NewFlagSet("oidc", flag.ContinueOnError)
 	listen := fs.String("listen", "", "listen address")
 	clientID := fs.String("client-id", "", "client id")
 	secretFile := fs.String("client-secret-file", "", "client secret file")
 	usersFile := fs.String("users-file", "", "users JSON file")
 	if err := fs.Parse(args); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if *listen == "" || *clientID == "" || *secretFile == "" || *usersFile == "" {
-		return nil, errors.New("--listen, --client-id, --client-secret-file and --users-file are required")
+		return nil, "", errors.New("--listen, --client-id, --client-secret-file and --users-file are required")
 	}
 	secret, err := os.ReadFile(*secretFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	raw, err := os.ReadFile(*usersFile)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var users []oidcUser
 	if err := json.Unmarshal(raw, &users); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{Key: key, KeyID: "fixture"}},
 		(&jose.SignerOptions{}).WithType("JWT"))
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	lis, err := net.Listen("tcp", *listen)
+	if err != nil {
+		return nil, "", err
 	}
 	p := &oidcProvider{
-		issuer: "http://" + *listen, clientID: *clientID, clientSecret: strings.TrimSpace(string(secret)),
+		issuer: "http://" + lis.Addr().String(), clientID: *clientID, clientSecret: strings.TrimSpace(string(secret)),
 		users: map[string]oidcUser{}, signer: signer,
 		jwks:  jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}},
 		codes: map[string]authCode{}, access: map[string]oidcUser{},
@@ -105,17 +109,13 @@ func runOIDC(args []string) (func(), error) {
 	mux.HandleFunc("POST /authorize", p.authorize)
 	mux.HandleFunc("POST /token", p.token)
 	mux.HandleFunc("GET /userinfo", p.userinfo)
-	lis, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return nil, err
-	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.Serve(lis) }()
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
-	}, nil
+	}, "http=" + lis.Addr().String(), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -18,7 +18,7 @@ import (
 )
 
 // Engine is a running nexora-engine. DNS is the UDP+TCP host:port, Metrics the metrics
-// host:port.
+// host:port (both chosen by the kernel and reported on the engine's READY line).
 type Engine struct {
 	DNS, Metrics, StateDir, ConfigPath string
 	Proc                               *Proc
@@ -44,25 +44,35 @@ func (e *Env) StartStandaloneEngine(snap *controlv1.ConfigSnapshot, blobs map[st
 		}
 	}
 	en.writeSnapshot(e.T, snap, blobs)
-	dnsPort, metricsPort := e.FreePort(), e.FreePort()
-	en.DNS = fmt.Sprintf("127.0.0.1:%d", dnsPort)
-	en.Metrics = fmt.Sprintf("127.0.0.1:%d", metricsPort)
 	toml := fmt.Sprintf(`node_name = "e2e-%s"
 state_dir = %q
-listen_udp = ["127.0.0.1:%d"]
-listen_tcp = ["127.0.0.1:%d"]
-metrics_listen = "127.0.0.1:%d"
+listen_udp = [%q]
+listen_tcp = [%q]
+metrics_listen = %q
 workers = 2
 standalone_snapshot = %q
 standalone_blob_dir = %q
-`, filepath.Base(dir)[len("engine-"):], en.StateDir, dnsPort, dnsPort, metricsPort, en.snapPath, en.blobDir)
+`, filepath.Base(dir)[len("engine-"):], en.StateDir, loopbackPort0, loopbackPort0, loopbackPort0, en.snapPath, en.blobDir)
 	if err := os.WriteFile(en.ConfigPath, []byte(toml), 0o600); err != nil {
 		e.T.Fatal(err)
 	}
 	en.Proc = e.Start("nexora-engine", []string{"--config", en.ConfigPath},
 		[]string{"NEXORA_DOH_RESOLVE=fixture.nexora.test=127.0.0.1"})
+	en.readAddrs()
 	en.WaitVersion(e.T, snap.Version)
 	return en
+}
+
+// readAddrs waits for the engine's READY line and records its DNS and metrics addresses. Both
+// listen on port 0: the engine shares the kernel-chosen port between UDP and TCP.
+func (en *Engine) readAddrs() {
+	p := en.Proc
+	p.t.Helper()
+	ready := p.WaitReady(30 * time.Second)
+	en.DNS, en.Metrics = p.Addr(ready, "udp"), p.Addr(ready, "metrics")
+	if tcp := p.Addr(ready, "tcp"); tcp != en.DNS {
+		p.t.Fatalf("nexora-engine: UDP %s and TCP %s listeners differ", en.DNS, tcp)
+	}
 }
 
 func (en *Engine) writeSnapshot(t *testing.T, snap *controlv1.ConfigSnapshot, blobs map[string][]byte) {
