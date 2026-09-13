@@ -6,3 +6,5 @@ node_modules/
 *.binpb.tmp
 .DS_Store
 /.procoder/ask/QA.md
+*.tsbuildinfo
+/.procoder/state/
