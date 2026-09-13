@@ -12,8 +12,14 @@ is committed.
 
 ## Acceptance criteria
 
-- [ ] Every step of Task 4 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
+- [x] Every step of Task 4 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
 - [ ] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
+- RED: `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::iterate_tests'` -> unresolved import `super::iterate`.
+- GREEN: same command -> `test result: ok. 10 passed` (9 plan tests + `unrelated_answer_records_are_not_cached`, which failed first with "stuffed record cached" before answer scrubbing). `recursor::` run 5x -> `22 passed` each time (no flakes).
+- Mutation: removing the glue bailiwick check makes `out_of_bailiwick_glue_is_ignored` fail ("out-of-bailiwick glue was cached"); reverted.
+- clippy -D warnings (all targets) clean; `cargo fmt --check` clean; `cargo test --locked -p nexora-engine --lib` -> `76 passed; 0 failed; 1 ignored`.
+- Deviations (hickory has no DNAME RDATA, per-step failover, SERVFAIL not lame, answer scrubbing, DS-only-for-owner) recorded in the plan's Task 4 "As built" notes.
+- Not committed (lead commits serially).

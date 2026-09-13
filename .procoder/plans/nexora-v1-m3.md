@@ -941,6 +941,7 @@ const IANA: [(&str, &str, &str); 13] = [
 
 - [ ] Implement `budget.rs`: `spend_query` increments then errors when the count exceeds `max_queries`; `check_depth(d)` errors when `d > max_depth`; `enter` compares lowercase names and pushes on success.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::infra_tests` — expect PASS (8 tests).
+- As built: `InfraCache` and `RrCache` also have `is_empty` (clippy `len_without_is_empty`; `RrCache::len` added with it); `CachedRrset` derives `Clone, Debug`; `RootHints` derives `Clone, Debug`; `InfraCache` updates are get-modify-insert on `quick_cache` (a lost concurrent update only skews one sample, marked `debt:`).
 - [ ] Commit: `git add engine/src/recursor && git commit -m "feat(recursor): infrastructure cache, rrset cache, root hints and work budget"`.
 
 ## Task 4: Iterative resolver (delegations, bailiwick, glueless NS, CNAME/DNAME, QNAME minimisation, limits)
@@ -1230,7 +1231,13 @@ fn classify(m: &Message, zone: &Name, qn: &Name, qt: RecordType) -> Class {
 4. Missing NS addresses: for up to 3 NS names without cached addresses, skip names where `!budget.enter(name, A)` (cycle), otherwise `Box::pin(self.resolve_chain(ns_name, A, depth + 1))` (and `AAAA` when `ipv6`), `budget.leave`, add addresses to `cut.addrs`. Errors other than `Limit` are ignored for that NS name; `Limit` propagates.
 
 - `fetch` is `resolve_one` without the CNAME loop. `detect_ipv6` sets `ipv6` when `std::net::UdpSocket::bind("[::]:0")` followed by `connect("[2001:500:2::c]:53")` succeeds (no packet is sent).
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::iterate_tests` — expect PASS (9 tests).
+- As built (reality and hardening deviations from the steps above):
+  - hickory-proto 0.26.3 has no DNAME RDATA: DNAME decodes as `RData::Unknown { code: RecordType::DNAME, rdata: NULL }` and its zone parser rejects DNAME lines. `iterate.rs` exports `dname_target(&Record) -> Option<Name>` and `dname_record(owner, ttl, &target) -> Record`; `testnet.rs` builds DNAME lines itself before handing the rest to `Parser` and uses `dname_target` instead of `RData::DNAME`. Several zones may share one address (the deepest containing origin answers).
+  - Server failover is per step: a server that times out, fails at the network/TCP level, is lame, or answers SERVFAIL is excluded for the rest of that step (instead of "`cut.addrs.len() + 2` attempts"); when no server is left, glueless NS addresses are resolved, then `NoReachableAuthority`. SERVFAIL is not marked lame (it is often transient; a 900 s mark could make a zone unreachable). Only REFUSED/other rcodes and upward/sideways referrals mark lame.
+  - Answer sections are scrubbed to the CNAME/DNAME chain from the query name (`relevant_answers`, in-bailiwick) before caching or returning, so records a server stuffs into the answer section never reach the cache; test `unrelated_answer_records_are_not_cached` with `Behaviour::AnswerStuffing` (appends `victim.<origin> A 6.6.6.6`). Referral DS records are cached only for the delegated owner; NSEC/NSEC3 anywhere inside the parent.
+  - `resolve_one`'s cache check also returns a cached CNAME at `sname` (credibility `>= AnswerNonAa`), so chains are not re-queried. Glueless resolution stops at the first NS name that yields an address (at most 3 names per cut). `fetch` is bounded by `RESOLUTION_DEADLINE` too. `RecursionParams::from_config(None)` uses the IANA hints with QNAME minimisation on. `resolve_chain` returns `LocalBoxFuture` (the recursion point). `From<Limit> for RecursionError`.
+  - `out_of_bailiwick_glue_is_ignored` additionally asserts right after the poisoning lookup that `ns.example.test A 127.0.54.66` is not cached (the final assertion alone passed with the bailiwick check removed, because the later authoritative answer overwrote the poisoned glue).
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::iterate_tests` — expect PASS (10 tests).
 - [ ] Commit: `git add engine/src/recursor && git commit -m "feat(recursor): iterative resolution with bailiwick checks, QNAME minimisation and limits"`.
 
 ## Task 5: Mode selection, forward zones and query-path integration
@@ -1269,10 +1276,10 @@ impl ResolutionRuntime {
 pub fn config_key(s: &proto::ConfigSnapshot) -> String;
 /// Sends a complete DNS query (the client's bytes on the forward route) to the global upstreams.
 pub trait ForwardUpstream { fn forward<'a>(&'a self, query_wire: &'a [u8]) -> LocalBoxFuture<'a, Result<Bytes, String>>; }
-#[derive(Clone, Debug, Default)] pub enum RpzPending { #[default] None }
+pub use crate::recursor::rpz::RpzPending; // built by Task 9 in engine/src/recursor/rpz/mod.rs (None, Deferred, Apply)
 pub struct MissQuery<'a> { pub qname: Name, pub qtype: RecordType, pub client_ip: IpAddr, pub dnssec_ok: bool, pub checking_disabled: bool, pub authentic_data: bool, pub over_tcp: bool, pub query: &'a [u8], pub rpz: RpzPending }
 impl<'a> MissQuery<'a> { pub fn from_view(q: &QueryView<'_>, query: &'a [u8], client_ip: IpAddr, transport: Transport, rpz: RpzPending) -> Option<Self>; } // None when the name does not decode
-#[derive(Clone, Debug, PartialEq, Eq)] pub struct Ede { pub code: u16, pub text: String }
+pub use crate::recursor::rpz::apply::Ede; // built by Task 9: #[derive(Clone, Debug, PartialEq, Eq)] pub struct Ede { pub code: u16, pub text: String }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum RouteTaken { Forward = 0, Recursive = 1, ForwardZone = 2 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum SecurityTag { None = 0, Secure = 1, Insecure = 2, Bogus = 3, Indeterminate = 4 }
 pub struct MissAnswer {
@@ -1775,6 +1782,13 @@ fn nsec3_covers_hash(owner_hash: &[u8], next: &[u8], h: &[u8]) -> bool {
 - `nsec3_proves_nxdomain`: find closest encloser `ce` by walking `qname`'s ancestors down to `zone` and taking the first whose hash matches an NSEC3 owner hash; `nc` = the ancestor of `qname` one label longer than `ce`; require an NSEC3 covering `H(nc)` (`NotProven("next closer not covered")`); if that NSEC3 has opt-out → `ProvenOptOut`; require an NSEC3 covering `H(*.ce)` (`NotProven("wildcard not covered")`); else `Proven`.
 - `nsec3_proves_nodata`: an NSEC3 matching `H(qname)` whose bitmap lacks `qtype` and `CNAME` → `Proven` (present → `NotProven("type present in bitmap")`); if no match and `qtype == DS`: closest encloser proof where the NSEC3 covering the next closer has opt-out → `ProvenOptOut` (RFC 5155 §8.6); otherwise `NotProven("no matching NSEC3")`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::dnssec::primitives_tests` — expect PASS (8 tests).
+      As built (Task 6):
+- `validity_window_with_skew_and_wraparound`: the original 1-hour-span assertions contradicted the formula (10% of 3600 s is 360 s, not a clamp to 300). The test now checks the 300 s clamp with a 30-minute span (valid at +300, expired at +301) and the 1-hour span at +360/+361.
+- `canonical_order_rfc4034_section_6_1` builds the `\001` and `\200` labels from raw bytes (`Name::from_labels`), because hickory-proto 0.26.3's text parser rejects control-character labels.
+- `match_ds` also requires the DS key tag and algorithm to match the key (`DS::covers` compares only the digest). `nsec_proves_nodata` also proves NODATA for an empty non-terminal (covering NSEC whose next name is below `qname`). Extra public helpers: `verify::{rrsig, revoked_key_signs}` (Task 8), `denial::{closest_encloser, nsec3_owner_hash, nsec3_hash, nsec3_match, nsec3_proves_no_closer_match}` (Task 7). `TestKey::set_revoked` sets the REVOKE flag (Task 8 tests).
+- `dnssec/mod.rs` also holds `Ede { code, text }` (with `Ede::new`) and `DnssecRuntime::build(&ConfigSnapshot)`; Task 5's `dispatch` re-exports `Ede` instead of defining it.
+- The test modules carry `#![allow(clippy::cloned_ref_to_slice_refs)]` for the `&[x.clone()]` literals.
+
 - [ ] Commit: `git add engine/src/recursor/dnssec && git commit -m "feat(dnssec): signature verification, DS matching and NSEC/NSEC3 denial proofs"`.
 
 ## Task 7: Validator — chain of trust, EDE, NTAs, CD/AD, forward-zone validation, aggressive NSEC
@@ -2016,6 +2030,12 @@ async fn signed_nxdomain_validates_and_feeds_aggressive_cache() {
   - After a successful resolution on a validating route: when `q.checking_disabled` → no validation, `SecurityTag::None`, AD=0 (RFC 4035 §3.2.2 CD honoured; the M1 cache key already separates CD). Otherwise run `validator.validate` with `TrustPoints` from `state.anchors.trust_points()` (Task 8; until then `TrustPoints::from_config(&rt.dnssec.anchors)`), `rt.dnssec.ntas`, and `RoutedFetcher`. `Secure` → `build_response(.., secure: true)`; `Insecure(ede)` → AD=0 and EDE attached; `Bogus(ede)`/`Indeterminate(ede)` → SERVFAIL, `failed: false` (the SERVFAIL is the answer, stale data must not be served), `cacheable: false`, EDE attached.
   - `RoutedFetcher::fetch` builds `FetchedSet` from the route of the fetched name: `Route::Recursive` → `recursor.fetch(name, rtype, params, budget)`; `Route::ForwardZone` → the forward-zone exchange with DO=1, CD=1; `Route::Forward` (a validating forward zone below a name the global upstreams answer, e.g. the root DS/DNSKEY in forward mode) → `upstream.forward` of a query built with `hickory_proto::op::Message` (random ID from `rand::rng()`, RD=1, EDNS 1232, DO=1, CD=1); `WorkerForward` parses the question from those bytes, so reply matching stays M1's. An upstream that strips RRSIGs produces `Bogus(10)`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::dnssec::validator_tests` — expect PASS (9 tests).
+      As built (Task 7), recorded before Task 5 exists:
+- `TrustPoint` is `#[derive(Debug, Clone, Default)] pub struct TrustPoint { pub ds: Vec<DS>, pub keys: Vec<DNSKEY> }` with `key_count()` (Task 8 merges both kinds per zone, which an enum cannot hold); `TrustPoints` gains `add_ds`/`add_key`, and `validator::ds_from_text` parses DS text. The test builds `TrustPoint { ds: vec![root.ds()], keys: vec![] }` and imports `super::Ede`.
+- `AggressiveNsecCache::new(max_zones, metrics: Arc<RecursorMetrics>)` (it counts `dnssec_aggressive_synthesized` itself) and `clear()`; `Validator::clear()` drops cached zone states and denials and must be called when trust points change (`RecursorState::sync`). Zone states are cached as `(state, key zone, expiry)`; a fetch failure is EDE 23, reported `Indeterminate` and never cached. The signer of an RRSIG must be the apex of the zone the walk reaches (else EDE 6). An RRSIG with an unsupported algorithm in a secure zone is bogus (EDE 6), never insecure, so stripping signatures cannot downgrade a zone.
+- `dnssec/forward.rs` holds the global-forward validation building blocks: `validation_query(qname, qtype)` (random ID from `rand::rng()`, RD=1, CD=1, EDNS 1232, DO=1), `fetched_set(reply, qname, qtype)` (undecodable, other question, or rcode other than NOERROR/NXDOMAIN -> `FetchError::Unreachable`) and `fetch_via(send, name, rtype)`; `RoutedFetcher`'s `Route::Forward` arm is `fetch_via(|q| async move { upstream.forward(&q).await }, name, rtype)`, and the validating `Route::Forward` branch sends `validation_query` the same way.
+- Tests: the plan's 8, plus `forward_mode_validates_through_the_forwarder` (a forwarder over the in-memory hierarchy answers `validation_query` wire queries; secure name -> `Secure`, broken signature -> `Bogus` EDE 6, all DS/DNSKEY fetched through it), `unreachable_authority_is_indeterminate` and `wildcard_expansion_needs_a_next_closer_proof` (11 tests). The dispatch-level `forward_mode_validates_when_enabled` case and every `dispatch.rs` step above stay open until Task 5 creates `dispatch.rs`.
+
 - [ ] Commit: `git add engine/src/recursor && git commit -m "feat(dnssec): chain-of-trust validation, EDE, NTAs and aggressive NSEC"`.
 
 ## Task 8: Trust anchor store with RFC 5011 automated rollover
@@ -2226,9 +2246,19 @@ pub fn apply_rfc5011(z: &mut ZoneAnchors, zone: &Name, obs: &Observation<'_>, no
 - [ ] Implement `RecursorState::sync(&self, rt)`: `self.anchors.merge_config(&rt.resolution.dnssec.anchors, rt.resolution.dnssec.rfc5011, clock::unix_now())`; a persist failure is kept in the zone's `last_error` (reported through `DnssecStats.trust_anchors[].last_error`) and never rejects the snapshot. Call it in `control.rs` `apply_snapshot` inside the `spawn_blocking` closure when `snapshot::apply` returned `ApplyOutcome::Applied` (`shared.recursor.sync(&shared.runtime.load_full())`), and in `main.rs` after `report` succeeds for the persisted snapshot and in `apply_standalone`; `main.rs` calls `recursor::spawn_background(shared.clone())` after the workers start.
 - [ ] `Metrics::stats(rt, recursor)` gains `recursion: Some(RecursionStats { .. })` (from `RecursorMetrics` and `recursor.recursor.infra.len()`) and `dnssec: Some(DnssecStats { .. })` (counters, `recursor.anchors.status()`, `active_negative_trust_anchors` = NTAs in `rt.resolution.dnssec.ntas` expiring after now); `render` exposes the trust-anchor metrics listed under Files.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::dnssec::anchors_tests` — expect PASS (6 tests).
+      As built (Task 8), recorded before Task 5 exists:
+- `TrustAnchorStore.path` is `Option<PathBuf>`; a read/parse failure of `trust-anchors.json` is kept and written into `last_error` of the zones created by the next `merge_config`; a persist failure is written into every zone's `last_error` and returned.
+- With `rfc5011` false, `trust_points()` contains only the configured DS anchors (not revoked); with it true, `Configured` keys as DS and `Valid`/`Missing` keys as DNSKEYs.
+- `apply_rfc5011` never adds a key listed in `revoked_self_signed` as `AddPend` (the caller passes it with REVOKE cleared, so `!k.revoke()` alone would add it).
+- The refresh itself is `pub async fn refresh_zone(store: &TrustAnchorStore, zone: &Name, fetcher: &dyn Fetcher, metrics: &RecursorMetrics, now: i64)` plus `TrustAnchorStore::{due(now) -> Vec<Name>, rfc5011_enabled()}`; `refresh_loop` (Task 5 state) is `for zone in store.due(now) { refresh_zone(&shared.recursor.anchors, &zone, &routed_fetcher, &shared.recursor.metrics, now).await }` every 60 s, followed by `validator.clear()` when trust points changed. `record_failure` schedules the retry one hour later. debt: a revocation is only accepted when the RRset also verifies with another trusted key.
+- Added test `refresh_authenticates_rollover_and_self_signed_revocation` (7 tests).
+- `refresh_loop`, `spawn_background`, `RecursorState::sync`, and the `control.rs`/`main.rs`/`telemetry/metrics.rs` steps stay open until Task 5 creates `RecursorState`, `Shared.recursor` and `RoutedFetcher`.
+
 - [ ] Commit: `git add engine && git commit -m "feat(dnssec): RFC 5011 trust anchor store persisted in state_dir"`.
 
 ## Task 9: RPZ policy engine — parsing, triggers, precedence, actions and query-path hooks
+
+Build note (Tasks 9-10 were built before Task 5): the RPZ library below is built and tested; `RecursorState`, `dispatch.rs`, `Runtime.resolution` and `Shared.recursor` do not exist yet, so the query-path, dispatch, control-stream and metrics wiring steps are marked **Integration (after Task 5)** and are done together with (or right after) Task 5. The process-wide RPZ state is its own `rpz::RpzState` (in `rpz/mod.rs`) that Task 5's `RecursorState` embeds as `pub rpz: rpz::RpzState`; `RpzPending` lives in `rpz/mod.rs` and `Ede` in `rpz/apply.rs`, re-exported by `dispatch.rs`.
 
 Files:
 
@@ -2237,9 +2267,10 @@ Files:
 - `engine/src/recursor/rpz/index.rs` — `RpzZoneIndex`, `RpzSet`, trigger lookup and precedence.
 - `engine/src/recursor/rpz/apply.rs` — action → response synthesis.
 - `engine/src/recursor/rpz/rpz_tests.rs` — unit tests.
-- `engine/src/recursor/mod.rs` — `RecursorState.rpz`, `rpz_query_triggers`, `publish_rpz`.
-- `engine/src/recursor/dispatch.rs` — `RpzPending::{Deferred, Apply}`; query-phase CNAME chasing and the response-phase check after validation.
-- `engine/src/server/mod.rs` — query-phase check before the cache lookup; `MissJob.rpz`; RPZ-affected misses bypass in-flight coalescing and the cache.
+- `engine/src/recursor/rpz/mod.rs` — `RpzPending::{None, Deferred, Apply}`, `RpzState { set, query_triggers, manager }` with `publish`.
+- `engine/src/recursor/mod.rs` — `pub mod rpz;` (built); Integration (after Task 5): `RecursorState.rpz: rpz::RpzState`.
+- Integration (after Task 5): `engine/src/recursor/dispatch.rs` — re-exports `RpzPending`/`Ede`; query-phase CNAME chasing and the response-phase check after validation.
+- Integration (after Task 5): `engine/src/server/mod.rs` — query-phase check before the cache lookup; `MissJob.rpz`; RPZ-affected misses bypass in-flight coalescing and the cache.
 
 Interfaces:
 
@@ -2248,6 +2279,7 @@ Interfaces:
 #[derive(Clone, Debug, PartialEq)] pub enum CnameTarget { Name(Name), WildcardSuffix(Name) }
 #[derive(Clone, Debug, PartialEq)] pub struct LocalData { pub records: Vec<(RecordType, u32, RData)>, pub cname: Option<(u32, CnameTarget)> }
 #[derive(Clone, Debug, PartialEq)] pub enum RpzAction { Nxdomain, Nodata, Passthru, Drop, TcpOnly, LocalData(Arc<LocalData>) }
+impl RpzAction { pub fn log_code(&self) -> u8; } // QueryRecord.rpz_action: nxdomain 1 .. local_data 6
 #[derive(Clone, Debug, PartialEq)] pub enum Trigger { Qname { name: Name, wildcard: bool }, ClientIp(ipnet::IpNet), ResponseIp(ipnet::IpNet), Nsdname { name: Name, wildcard: bool }, Nsip(ipnet::IpNet) }
 #[derive(Clone, Debug)] pub struct ParsedRpz { pub origin: Name, pub serial: u32, pub soa: Record, pub rules: Vec<(Trigger, RpzAction)>, pub skipped: u64, pub records: u64 }
 pub fn parse_rpz_text(origin: &Name, text: &str) -> Result<ParsedRpz, String>;
@@ -2265,20 +2297,23 @@ impl RpzSet {
     pub fn effective_action<'a>(&'a self, zone: usize, action: &'a RpzAction) -> Option<RpzAction>; // applies policy_override; None = DISABLED
 }
 // apply.rs
-#[derive(Debug)] pub enum PolicyOutcome { Respond { wire: Vec<u8>, ede: Ede }, Drop, Truncate { wire: Vec<u8> }, Passthru, ChaseCname { cname: Record, target: Name } }
+#[derive(Clone, Debug, PartialEq, Eq)] pub struct Ede { pub code: u16, pub text: String }
+#[derive(Debug)] pub enum PolicyOutcome { Respond { wire: Vec<u8>, ede: Ede }, Drop, Truncate { wire: Vec<u8> }, Passthru, ChaseCname { cname: Box<Record>, target: Name } }
 pub fn apply_action(qname: &Name, qtype: RecordType, over_tcp: bool, zone: &RpzZoneIndex, action: &RpzAction) -> PolicyOutcome;
-// dispatch.rs (replaces Task 5's single-variant enum)
+// rpz/mod.rs (re-exported by dispatch.rs)
 #[derive(Clone, Debug, Default)] pub enum RpzPending { #[default] None, Deferred { zone: usize, action: RpzAction }, Apply { zone: usize, action: RpzAction } }
-// mod.rs
-// RecursorState gains: pub rpz: arc_swap::ArcSwap<rpz::index::RpzSet>, pub rpz_query_triggers: AtomicBool
-impl RecursorState { pub fn publish_rpz(&self, set: rpz::index::RpzSet); } // stores the set, then rpz_query_triggers = set.has_query_triggers
-// server/mod.rs
+pub struct RpzState { pub set: arc_swap::ArcSwap<index::RpzSet>, pub query_triggers: AtomicBool, pub manager: manager::RpzManager }
+impl RpzState { pub fn new(state_dir: Option<&Path>) -> Self; pub fn publish(&self, set: index::RpzSet); } // stores the set, then query_triggers = set.has_query_triggers
+// recursor/mod.rs (Integration, after Task 5): RecursorState gains pub rpz: rpz::RpzState
+// server/mod.rs (Integration, after Task 5)
 // MissJob gains: pub rpz: RpzPending
 ```
 
 Precedence (draft-vixie-dnsop-dns-rpz): zones in snapshot order, the first zone with a matching trigger wins; within one zone CLIENT-IP > QNAME > response IP > NSDNAME > NSIP; exact QNAME/NSDNAME beats wildcard, deeper wildcard beats shallower; longest IP prefix wins. QNAME triggers are also checked against every CNAME target in the resolved chain. RPZ runs after Nexora's own blocklist/allowlist, per-client policy and rewrites (M1/M2), so a Nexora block decision is final.
 
-- [ ] Create `engine/src/recursor/rpz/rpz_tests.rs`:
+`RpzSet::has_response_triggers` is true when any zone has response-IP/NSDNAME/NSIP triggers or QNAME triggers (so CNAME targets are checked); `RpzZoneIndex::has_response_triggers` (used for `Deferred`) counts only response-IP/NSDNAME/NSIP triggers.
+
+- [x] Create `engine/src/recursor/rpz/rpz_tests.rs` (as built: the test file also imports `hickory_proto::serialize::binary::BinEncodable` for `to_bytes`, and the NSIP owner is `24.0.113.0.203.rpz-nsip`, the 5-label form of 203.0.113.0/24):
 
 ```rust
 use super::apply::*;
@@ -2287,6 +2322,7 @@ use super::parse::*;
 use crate::proto::RpzPolicyOverride;
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::{rdata::{A, CNAME}, Name, RData, Record, RecordType};
+use hickory_proto::serialize::binary::BinEncodable;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
@@ -2307,7 +2343,7 @@ wild.example CNAME *.garden.
 48.zz.db8.2001.rpz-ip CNAME .
 32.2.0.0.127.rpz-client-ip CNAME rpz-tcp-only.
 ns.evil.rpz-nsdname CNAME .
-24.0.113.203.rpz-nsip CNAME .
+24.0.113.0.203.rpz-nsip CNAME .
 garbage.rpz-ip CNAME .
 ";
 
@@ -2420,12 +2456,12 @@ fn policy_override_replaces_or_disables_action() {
 }
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::rpz_tests` — expect FAIL with "unresolved import `super::apply`".
-- [ ] Implement `parse.rs`:
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::rpz_tests` — expect FAIL with "unresolved import `super::apply`".
+- [x] Implement `parse.rs` (label counts use `Name::iter().count()`: `Name::num_labels` does not count a leading `*`; a zone without `$TTL` whose first record has no TTL is parsed with `$TTL <SOA MINIMUM>` per RFC 2308):
   - `parse_rpz_text`: if any line, after trimming leading whitespace, starts with `$INCLUDE` (ASCII case-insensitive) → `Err("$INCLUDE is not allowed in RPZ zones")`; parse with `Parser::new(text, None, Some(origin.clone())).parse()`; flatten the `RecordSet`s into records and call `parse_rpz_records`.
   - `parse_rpz_records`: the apex SOA is required (`Err("RPZ zone has no SOA")`); apex NS/SOA are not rules. Every other owner must be under `origin` (else `skipped += 1`); relative labels = owner minus origin. Suffix dispatch on the last relative label: `rpz-client-ip` → `ClientIp`, `rpz-ip` → `ResponseIp`, `rpz-nsip` → `Nsip` (labels before the suffix through `decode_ip_trigger`, `None` → skipped), `rpz-nsdname` → `Nsdname` over the preceding labels (leading `*` → wildcard), anything else → `Qname` (leading `*` → wildcard). Records of one owner are grouped into one action: a single CNAME whose target (with `origin` stripped when it ends in `origin`) is the root → `Nxdomain`; `*.` → `Nodata`; `rpz-passthru.` or equal to the trigger name → `Passthru`; `rpz-drop.` → `Drop`; `rpz-tcp-only.` → `TcpOnly`; target whose first label is `*` → `LocalData { cname: WildcardSuffix(target minus the "*" label) }`; other CNAME target → `LocalData { cname: Name(target) }`; non-CNAME records → `LocalData { records }`; CNAME mixed with other types → skipped. `records` counts every non-apex record read.
   - `decode_ip_trigger`: first label = prefix length; IPv4 when exactly 5 labels, all octets decimal ≤ 255, prefix 1..=32, octets given least-significant first; IPv6 otherwise: remaining labels are hex words least-significant first, at most one `zz` meaning the run of zero words needed to make 8, prefix 1..=128; the network is truncated to the prefix (`IpNet::trunc`).
-- [ ] Implement `index.rs` lookup tables per zone: `qname_exact`, `qname_wild`, `nsdname_exact`, `nsdname_wild` as `FxHashMap<Box<[u8]>, RpzAction>` keyed by lowercase wire names; `client_ip`, `resp_ip`, `nsip` as `IpTable { v4: FxHashMap<(u8, u32), RpzAction>, v6: FxHashMap<(u8, u128), RpzAction>, v4_lens: Vec<u8>, v6_lens: Vec<u8> }` with prefix lengths sorted descending; lookup masks the address for each present length (longest first). Name lookup over wire bytes without allocation:
+- [x] Implement `index.rs` lookup tables per zone: `qname_exact`, `qname_wild`, `nsdname_exact`, `nsdname_wild` as `FxHashMap<Box<[u8]>, RpzAction>` keyed by lowercase wire names; `client_ip`, `resp_ip`, `nsip` as `IpTable { v4: FxHashMap<(u8, u32), RpzAction>, v6: FxHashMap<(u8, u128), RpzAction>, v4_lens: Vec<u8>, v6_lens: Vec<u8> }` with prefix lengths sorted descending; lookup masks the address for each present length (longest first). Name lookup over wire bytes without allocation:
 
 ```rust
 fn lookup_name<'a>(exact: &'a FxHashMap<Box<[u8]>, RpzAction>, wild: &'a FxHashMap<Box<[u8]>, RpzAction>, wire: &[u8]) -> Option<&'a RpzAction> {
@@ -2442,14 +2478,14 @@ fn lookup_name<'a>(exact: &'a FxHashMap<Box<[u8]>, RpzAction>, wild: &'a FxHashM
 
 `wild` keys are the wire form of the name after the `*` label, so `*.bad.example` matches `x.bad.example` and `x.y.bad.example` but not `bad.example`. `check_query`: iterate zones in order; for zone `i` check `client_ip` then QNAME; on a hit return `Deferred { zone: i, .. }` if any zone `< i` `has_response_triggers()`, else `Hit`. `check_response(upto_zone, ..)`: for zones `0..upto_zone` (when called for `NoMatch`, `upto_zone = zones.len()`), per zone in precedence order: QNAME over `chain[1..]`, response IP over A/AAAA answers, NSDNAME over `ns_names` (lowercased wire, computed once per call), NSIP over `ns_addrs`; first hit returns. `effective_action`: `policy_override` `GIVEN` → clone; `DISABLED` → `None`; others → the corresponding fixed action. Each hit increments `hits`.
 
-- [ ] Implement `apply.rs`: responses are `Message::response(0, Query)`, RA=1, AA=0, AD=0, question `qname` lowercased. `Nxdomain`/`Nodata` → rcode NXDOMAIN/NOERROR with the zone SOA in the authority section (TTL = min(SOA TTL, SOA minimum)), EDE `{15, "rpz <origin>"}`. `LocalData`: records of `qtype` (or all when `qtype == ANY`) with owner = `qname` and their own TTL → EDE `{4, "rpz <origin>"}`; with `cname` → `ChaseCname { cname: CNAME record qname → target (WildcardSuffix: qname labels + suffix), target }`; no records of `qtype` and no CNAME → NOERROR/NODATA with SOA and EDE 4. `TcpOnly` over UDP → `Truncate` (NOERROR, TC=1, no records); over TCP → `Passthru`. `Drop` → `Drop`. `Passthru` → `Passthru`.
-- [ ] Wire into the query path:
+- [x] Implement `apply.rs`: responses are `Message::response(0, Query)`, RA=1, AA=0, AD=0, question `qname` lowercased. `Nxdomain`/`Nodata` → rcode NXDOMAIN/NOERROR with the zone SOA in the authority section (TTL = min(SOA TTL, SOA minimum)), EDE `{15, "rpz <origin>"}`. `LocalData`: records of `qtype` (or all when `qtype == ANY`) with owner = `qname` and their own TTL → EDE `{4, "rpz <origin>"}`; with `cname` → `ChaseCname { cname: CNAME record qname → target (WildcardSuffix: qname labels + suffix), target }`; no records of `qtype` and no CNAME → NOERROR/NODATA with SOA and EDE 4. `TcpOnly` over UDP → `Truncate` (NOERROR, TC=1, no records); over TCP → `Passthru`. `Drop` → `Drop`. `Passthru` → `Passthru`.
+- [ ] Integration (after Task 5) — wire into the query path:
   - `server/mod.rs` `handle_packet`, after the M2 verdict `match` (so only `Pass`/`Allowed` reach it) and before `CacheKey::in_partition`:
 
 ```rust
 let recursor = &ctx.shared.recursor;
-if recursor.rpz_query_triggers.load(Ordering::Relaxed) {
-    let set = recursor.rpz.load();
+if recursor.rpz.query_triggers.load(Ordering::Relaxed) {
+    let set = recursor.rpz.set.load();
     let pending = match set.check_query(q.key.as_wire(), client.ip()) {
         QueryPhase::NoMatch => RpzPending::None,
         QueryPhase::Hit { zone, action } => match set.effective_action(zone, action) {
@@ -2474,13 +2510,13 @@ if recursor.rpz_query_triggers.load(Ordering::Relaxed) {
 }
 ```
 
-- [ ] Complete the RPZ wiring:
+- [ ] Integration (after Task 5) — complete the RPZ wiring:
   - `rpz_reply` (a private helper next to `reply`) builds `cache::prepare_uncached(wire, q)`, writes it with `cache::write_cached(&entry, q, 0, ServeMode::Fresh, out, limit, opt.map(|o| ReplyOpt { ede, ..o }).as_ref())`, sets `rec.rpz_action` and finishes like `reply`. The M1 `MissJob` literal at the end of `handle_packet` sets `rpz: RpzPending::None`.
-  - `server/mod.rs` `resolve_miss`: when `job.rpz` is not `RpzPending::None`, skip `ctx.shared.inflight.join` (the answer is policy-specific), call `dispatch::resolve_miss` directly with `MissQuery { rpz: job.rpz.clone(), .. }` and never insert into the cache. For ordinary misses the leader records `let rpz_at_start = ctx.shared.recursor.rpz.load_full();` before resolving and passes the answer to `leader_answer` only when `Arc::ptr_eq(&rpz_at_start, &ctx.shared.recursor.rpz.load_full())` still holds (otherwise it serves the answer uncached).
+  - `server/mod.rs` `resolve_miss`: when `job.rpz` is not `RpzPending::None`, skip `ctx.shared.inflight.join` (the answer is policy-specific), call `dispatch::resolve_miss` directly with `MissQuery { rpz: job.rpz.clone(), .. }` and never insert into the cache. For ordinary misses the leader records `let rpz_at_start = ctx.shared.recursor.rpz.set.load_full();` before resolving and passes the answer to `leader_answer` only when `Arc::ptr_eq(&rpz_at_start, &ctx.shared.recursor.rpz.set.load_full())` still holds (otherwise it serves the answer uncached).
   - `dispatch::resolve_miss`: `RpzPending::Apply` whose `apply_action` yields `ChaseCname { cname, target }` → resolve `target` on its own route (with validation as usual), prepend `cname` to the answers, EDE `{4, "rpz <origin>"}`, `cacheable: false`. After validation, and only when `rpz.has_response_triggers` or the query carries `RpzPending::Deferred`: decode the answer (`Message::from_vec` of the upstream bytes on the forward route), `chain` = `qname` plus CNAME targets in `answers`; `check_response(deferred zone or zones.len(), ..)` with `Resolution.ns_names/ns_addrs` (empty for forward routes, so NSDNAME/NSIP triggers only fire in recursive mode); a hit (or else the deferred action) goes through `effective_action` + `apply_action`; policy results set `cacheable: false`, `rpz_action`, `ede`, `drop`.
   - No cache stamping: cache invalidation for RPZ changes is Architecture change 4 (`r:` key in `filter_hashes` for snapshot changes, cache clear on transfer publication in Task 10, the `rpz_at_start` check above).
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::rpz_tests` — expect PASS (8 tests).
-- [ ] Run `scripts/dev-exec.sh make engine-test` — expect PASS including `cache_hit_path_does_not_allocate`.
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::rpz_tests` — expect PASS (8 tests).
+- [x] Run `scripts/dev-exec.sh make engine-test` — expect PASS including `cache_hit_path_does_not_allocate` (library build; re-run after the integration steps).
 - [ ] Commit: `git add engine/src && git commit -m "feat(rpz): RPZ triggers, precedence and actions on the query path"`.
 
 ## Task 10: RPZ sources — blob files, AXFR/IXFR with TSIG, SOA refresh, last-good persistence
@@ -2491,10 +2527,11 @@ Files:
 - `engine/src/recursor/rpz/transfer.rs` — SOA check, IXFR (RFC 1995) with AXFR fallback, RFC 1982 serial comparison, timers.
 - `engine/src/recursor/rpz/manager.rs` — per-zone lifecycle, `RpzSet` publication, persistence under `state_dir/rpz/`, in-memory TSIG keys, status.
 - `engine/src/recursor/rpz/transfer_tests.rs` — unit tests with an in-test primary.
-- `engine/src/recursor/dispatch.rs` — `ResolutionRuntime.rpz: Vec<RpzZoneConfig>` built from `s.rpz_zones` (file zones parsed from their blobs).
-- `engine/src/recursor/mod.rs` — `RecursorState.rpz_manager`, `set_rpz_tsig_keys`; `sync` and `spawn_background` drive the manager.
-- `engine/src/control.rs` — applies `ServerMessage.rpz_tsig_keys`; `Stats.rpz_zones`.
-- `engine/src/telemetry/metrics.rs` — `nexora_rpz_hits_total{zone}`, `nexora_rpz_zone_serial{zone}`, `nexora_rpz_zone_records{zone}`, `nexora_rpz_zone_stale{zone}`, `nexora_rpz_zone_last_success_timestamp_seconds{zone}`, `nexora_rpz_refresh_failures_total{zone}` (`zone` label = zone origin; counters registered without `_total`).
+- `engine/src/recursor/rpz/manager.rs` also holds `RpzZoneConfig`, `RpzSourceConfig` and `zone_configs` (the snapshot → RPZ configuration builder) and `RpzManager::register_metrics`.
+- Integration (after Task 5): `engine/src/recursor/dispatch.rs` — `ResolutionRuntime.rpz: Vec<RpzZoneConfig>` = `rpz::manager::zone_configs(s, blobs)?`.
+- Integration (after Task 5): `engine/src/recursor/mod.rs` — `sync` calls `self.rpz.manager.apply_config(&self.rpz, &rt.resolution.rpz)`; `spawn_background` runs `shared.recursor.rpz.manager.run(&shared.recursor.rpz, &shared.runtime)`.
+- Integration (after Task 5): `engine/src/control.rs` — applies `ServerMessage.rpz_tsig_keys`; `Stats.rpz_zones`.
+- Integration (after Task 5): `engine/src/telemetry/metrics.rs` — `render` calls `recursor.rpz.manager.register_metrics(&mut reg)`, which registers `nexora_rpz_hits_total{zone}`, `nexora_rpz_zone_serial{zone}`, `nexora_rpz_zone_records{zone}`, `nexora_rpz_zone_stale{zone}`, `nexora_rpz_zone_last_success_timestamp_seconds{zone}`, `nexora_rpz_refresh_failures_total{zone}` (`zone` label = zone origin; counters registered without `_total`).
 
 Interfaces:
 
@@ -2520,52 +2557,85 @@ pub fn serial_gt(a: u32, b: u32) -> bool;
 #[derive(Debug, PartialEq, Eq)] pub struct Timers { pub refresh: u64, pub retry: u64, pub expire: u64 }
 pub fn timers_from_soa(refresh: u32, retry: u32, expire: u32, min_refresh: u32) -> Timers;
 pub fn apply_ixfr(current: &ZoneData, answers: &[Record]) -> Result<ZoneData, String>;
-pub async fn soa_serial(primary: SocketAddr, zone: &Name, key: Option<&TsigKey>) -> Result<(u32, SOA), String>;
+pub async fn soa_serial(primary: SocketAddr, zone: &Name, key: Option<&TsigKey>) -> Result<(u32, SOA), String>; // over TCP
 pub async fn transfer(primary: SocketAddr, zone: &Name, current: Option<&ZoneData>, key: Option<&TsigKey>) -> Result<ZoneData, String>;
-// dispatch.rs
+// manager.rs (ResolutionRuntime.rpz holds the result of zone_configs after Task 5)
 #[derive(Clone)] pub enum RpzSourceConfig { File(Arc<RpzZoneIndex>), Transfer { primary: SocketAddr, tsig_key_name: String, tsig_algorithm: i32, min_refresh_seconds: u32 } }
 #[derive(Clone)] pub struct RpzZoneConfig { pub id: String, pub origin: Name, pub policy_override: i32, pub refresh_nonce: u64, pub source: RpzSourceConfig }
-// ResolutionRuntime gains: pub rpz: Vec<RpzZoneConfig>  (snapshot order)
-// manager.rs
+pub fn zone_configs(s: &proto::ConfigSnapshot, blobs: &dyn BlobSource) -> Result<Vec<RpzZoneConfig>, String>; // snapshot order; ids must be [A-Za-z0-9-]+ (they name files)
 pub struct RpzManager { /* dir: Option<PathBuf>, Mutex<Vec<ZoneTask>> in config order, Mutex<FxHashMap<String, TsigKey>>, tokio::sync::Notify */ }
 impl RpzManager {
     pub fn new(state_dir: Option<&Path>) -> Self;
-    pub fn apply_config(&self, state: &RecursorState, zones: &[RpzZoneConfig]); // publishes file zones and persisted transfer copies immediately
-    pub fn set_tsig_keys(&self, keys: &proto::RpzTsigKeys);                    // replaces the in-memory key set; zones whose key changed refresh at once
-    pub async fn refresh_now(&self, state: &RecursorState, id: &str) -> Result<bool, String>; // Ok(true) when new data was published
-    pub async fn run(&self, shared: Arc<crate::server::Shared>);              // timer loop on the nexora-recursor thread
+    pub fn apply_config(&self, state: &RpzState, zones: &[RpzZoneConfig]); // publishes file zones and persisted transfer copies immediately
+    pub fn set_tsig_keys(&self, keys: proto::RpzTsigKeys);                // by value: secrets are moved into Zeroizing, never copied; zones whose key changed refresh at once
+    pub async fn refresh_now(&self, state: &RpzState, id: &str) -> Result<bool, String>; // Ok(true) when new data was published
+    pub async fn run(&self, state: &RpzState, runtime: &ArcSwap<Runtime>); // timer loop on the nexora-recursor thread; clears runtime.load().cache after a publication
     pub fn status(&self) -> Vec<proto::RpzZoneStatus>;
+    pub fn register_metrics(&self, reg: &mut prometheus_client::registry::Registry);
 }
-// mod.rs
-// RecursorState gains: pub rpz_manager: RpzManager
-impl RecursorState { pub fn set_rpz_tsig_keys(&self, keys: &proto::RpzTsigKeys); }
+// rpz/mod.rs
+impl RpzState { pub fn set_tsig_keys(&self, keys: proto::RpzTsigKeys); }
 ```
 
-- [ ] Create `engine/src/recursor/rpz/transfer_tests.rs`:
+- [x] Create `engine/src/recursor/rpz/transfer_tests.rs` (as built: `RpzState`/`zone_configs` stand in for the Task 5 types, the AXFR test ends with an incremental transfer, and a file-zone/metrics test was added; 8 tests):
 
 ```rust
+use super::RpzState;
+use super::manager::{RpzZoneConfig, zone_configs};
 use super::transfer::*;
 use super::tsig::*;
 use crate::proto;
-use crate::recursor::dispatch::ResolutionRuntime;
-use crate::recursor::RecursorState;
 use crate::snapshot::DirBlobs;
 use hickory_proto::op::{Message, OpCode, Query};
-use hickory_proto::rr::{rdata::{CNAME, SOA}, Name, RData, Record, RecordType};
+use hickory_proto::rr::{
+    Name, RData, Record, RecordType,
+    rdata::{CNAME, SOA},
+};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use zeroize::Zeroizing;
 
-fn n(s: &str) -> Name { Name::from_ascii(s).unwrap() }
-fn key() -> TsigKey { TsigKey { name: n("rpz-key."), alg: TsigAlg::HmacSha256, secret: Zeroizing::new(vec![0x42; 32]) } }
-fn soa(serial: u32) -> Record { Record::from_rdata(n("rpz.test."), 60, RData::SOA(SOA::new(n("ns.rpz.test."), n("h.rpz.test."), serial, 2, 1, 30, 60))) }
-fn block(name: &str) -> Record { Record::from_rdata(n(&format!("{name}.rpz.test.")), 60, RData::CNAME(CNAME(Name::root()))) }
+fn n(s: &str) -> Name {
+    Name::from_ascii(s).unwrap()
+}
+fn key() -> TsigKey {
+    TsigKey {
+        name: n("rpz-key."),
+        alg: TsigAlg::HmacSha256,
+        secret: Zeroizing::new(vec![0x42; 32]),
+    }
+}
+fn soa(serial: u32) -> Record {
+    Record::from_rdata(
+        n("rpz.test."),
+        60,
+        RData::SOA(SOA::new(
+            n("ns.rpz.test."),
+            n("h.rpz.test."),
+            serial,
+            2,
+            1,
+            30,
+            60,
+        )),
+    )
+}
+fn block(name: &str) -> Record {
+    Record::from_rdata(
+        n(&format!("{name}.rpz.test.")),
+        60,
+        RData::CNAME(CNAME(Name::root())),
+    )
+}
 
 /// Serves AXFR/IXFR/SOA over TCP from `zone` (serial, records); each AXFR is split into one message per record and TSIG-signed
 /// on the first and last message only, exercising the unsigned-intermediate rule.
-async fn primary(zone: Arc<Mutex<(u32, Vec<Record>)>>, signing: Option<TsigKey>) -> std::net::SocketAddr {
+async fn primary(
+    zone: Arc<Mutex<(u32, Vec<Record>)>>,
+    signing: Option<TsigKey>,
+) -> std::net::SocketAddr {
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = l.local_addr().unwrap();
     tokio::spawn(async move {
@@ -2582,8 +2652,15 @@ async fn primary(zone: Arc<Mutex<(u32, Vec<Record>)>>, signing: Option<TsigKey>)
                 let (serial, records) = zone.lock().unwrap().clone();
                 let qt = req.queries[0].query_type();
                 let mut bodies: Vec<Vec<Record>> = vec![];
-                if qt == RecordType::SOA { bodies.push(vec![soa(serial)]); }
-                else { bodies.push(vec![soa(serial)]); for r in records { bodies.push(vec![r]); } bodies.push(vec![soa(serial)]); }
+                if qt == RecordType::SOA {
+                    bodies.push(vec![soa(serial)]);
+                } else {
+                    bodies.push(vec![soa(serial)]);
+                    for r in records {
+                        bodies.push(vec![r]);
+                    }
+                    bodies.push(vec![soa(serial)]);
+                }
                 let mut prior = request_mac;
                 let mut unsigned = Vec::new();
                 let last = bodies.len() - 1;
@@ -2610,10 +2687,17 @@ async fn primary(zone: Arc<Mutex<(u32, Vec<Record>)>>, signing: Option<TsigKey>)
     addr
 }
 
-fn now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() }
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
 
 /// MAC of the TSIG RR at the end of a signed request, empty when unsigned.
-fn req_mac(wire: &[u8]) -> Vec<u8> { extract_mac(wire).unwrap_or_default() }
+fn req_mac(wire: &[u8]) -> Vec<u8> {
+    extract_mac(wire).unwrap_or_default()
+}
 
 #[test]
 fn serial_arithmetic_rfc1982() {
@@ -2621,14 +2705,31 @@ fn serial_arithmetic_rfc1982() {
     assert!(serial_gt(0, 0xFFFF_FFFF));
     assert!(!serial_gt(1, 1));
     assert!(serial_gt(0x7FFF_FFFF, 0));
-    assert!(!serial_gt(0x8000_0000, 0), "distance 2^31 is undefined and treated as not greater");
+    assert!(
+        !serial_gt(0x8000_0000, 0),
+        "distance 2^31 is undefined and treated as not greater"
+    );
     assert!(!serial_gt(1, 2));
 }
 
 #[test]
 fn timers_respect_min_refresh() {
-    assert_eq!(timers_from_soa(2, 1, 30, 60), Timers { refresh: 60, retry: 60, expire: 60 });
-    assert_eq!(timers_from_soa(3600, 600, 86400, 60), Timers { refresh: 3600, retry: 600, expire: 86400 });
+    assert_eq!(
+        timers_from_soa(2, 1, 30, 60),
+        Timers {
+            refresh: 60,
+            retry: 60,
+            expire: 60
+        }
+    );
+    assert_eq!(
+        timers_from_soa(3600, 600, 86400, 60),
+        Timers {
+            refresh: 3600,
+            retry: 600,
+            expire: 86400
+        }
+    );
 }
 
 #[test]
@@ -2641,51 +2742,111 @@ fn tsig_sign_and_verify_detects_tampering_wrong_key_and_time() {
     assert_eq!(v.verify(&resp, 1_800_000_100), Ok(()));
     let mut tampered = resp.clone();
     tampered[3] ^= 0x01;
-    assert_eq!(TsigVerifier::new(key(), mac.clone()).verify(&tampered, 1_800_000_100), Err(TsigError::BadSig));
-    let wrong = TsigKey { secret: Zeroizing::new(vec![0x43; 32]), ..key() };
-    assert_eq!(TsigVerifier::new(wrong, mac.clone()).verify(&resp, 1_800_000_100), Err(TsigError::BadSig));
-    assert_eq!(TsigVerifier::new(key(), mac.clone()).verify(&resp, 1_800_000_301), Err(TsigError::BadTime));
+    assert_eq!(
+        TsigVerifier::new(key(), mac.clone()).verify(&tampered, 1_800_000_100),
+        Err(TsigError::BadSig)
+    );
+    let wrong = TsigKey {
+        secret: Zeroizing::new(vec![0x43; 32]),
+        ..key()
+    };
+    assert_eq!(
+        TsigVerifier::new(wrong, mac.clone()).verify(&resp, 1_800_000_100),
+        Err(TsigError::BadSig)
+    );
+    assert_eq!(
+        TsigVerifier::new(key(), mac.clone()).verify(&resp, 1_800_000_301),
+        Err(TsigError::BadTime)
+    );
     let unsigned = Message::response(0, OpCode::Query).to_vec().unwrap();
     let mut v = TsigVerifier::new(key(), mac);
-    assert_eq!(v.verify(&unsigned, 1_800_000_000), Err(TsigError::Missing), "first message must be signed");
+    assert_eq!(
+        v.verify(&unsigned, 1_800_000_000),
+        Err(TsigError::Missing),
+        "first message must be signed"
+    );
 }
 
 #[test]
 fn ixfr_applies_deletions_and_additions() {
-    let cur = ZoneData { serial: 1, records: vec![soa(1), block("a"), block("b")] };
+    let cur = ZoneData {
+        serial: 1,
+        records: vec![soa(1), block("a"), block("b")],
+    };
     // IXFR: new SOA, old SOA, deleted..., new SOA, added..., new SOA
     let answers = vec![soa(2), soa(1), block("a"), soa(2), block("c"), soa(2)];
     let next = apply_ixfr(&cur, &answers).unwrap();
     assert_eq!(next.serial, 2);
-    assert!(next.records.contains(&block("b")) && next.records.contains(&block("c")) && !next.records.contains(&block("a")));
+    assert!(
+        next.records.contains(&block("b"))
+            && next.records.contains(&block("c"))
+            && !next.records.contains(&block("a"))
+    );
     // AXFR-style reply to an IXFR request replaces the zone
     let full = apply_ixfr(&cur, &[soa(3), block("z"), soa(3)]).unwrap();
     assert_eq!(full.records, vec![soa(3), block("z")]);
-    assert!(apply_ixfr(&cur, &[soa(1)]).unwrap() == cur, "single SOA with current serial = up to date");
+    assert!(
+        apply_ixfr(&cur, &[soa(1)]).unwrap() == cur,
+        "single SOA with current serial = up to date"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn axfr_with_tsig_then_incremental_update() {
     let zone = Arc::new(Mutex::new((5u32, vec![block("a"), block("b")])));
     let addr = primary(zone.clone(), Some(key())).await;
-    let z = transfer(addr, &n("rpz.test."), None, Some(&key())).await.unwrap();
+    let z = transfer(addr, &n("rpz.test."), None, Some(&key()))
+        .await
+        .unwrap();
     assert_eq!(z.serial, 5);
     assert_eq!(z.records.len(), 3);
     let unsigned_primary = primary(zone.clone(), None).await;
-    assert!(transfer(unsigned_primary, &n("rpz.test."), None, Some(&key())).await.unwrap_err().contains("TSIG"));
-    assert_eq!(soa_serial(addr, &n("rpz.test."), Some(&key())).await.unwrap().0, 5);
+    assert!(
+        transfer(unsigned_primary, &n("rpz.test."), None, Some(&key()))
+            .await
+            .unwrap_err()
+            .contains("TSIG")
+    );
+    assert_eq!(
+        soa_serial(addr, &n("rpz.test."), Some(&key()))
+            .await
+            .unwrap()
+            .0,
+        5
+    );
+    *zone.lock().unwrap() = (6, vec![block("a"), block("b"), block("c")]);
+    let z2 = transfer(addr, &n("rpz.test."), Some(&z), Some(&key()))
+        .await
+        .unwrap();
+    assert_eq!(z2.serial, 6);
+    assert!(
+        z2.records.contains(&block("c"))
+            && z2.records.contains(&soa(6))
+            && !z2.records.contains(&soa(5))
+    );
+}
 
 fn transfer_snapshot(primary: SocketAddr, tsig: bool) -> proto::ConfigSnapshot {
     proto::ConfigSnapshot {
         rpz_zones: vec![proto::RpzZone {
             id: "z1".into(),
             name: "rpz.test.".into(),
-            source: Some(proto::rpz_zone::Source::Transfer(proto::RpzTransferSource {
-                primary: primary.to_string(),
-                tsig_key_name: if tsig { "rpz-key.".into() } else { String::new() },
-                tsig_algorithm: if tsig { proto::TsigAlgorithm::HmacSha256 as i32 } else { 0 },
-                min_refresh_seconds: 1,
-            })),
+            source: Some(proto::rpz_zone::Source::Transfer(
+                proto::RpzTransferSource {
+                    primary: primary.to_string(),
+                    tsig_key_name: if tsig {
+                        "rpz-key.".into()
+                    } else {
+                        String::new()
+                    },
+                    tsig_algorithm: if tsig {
+                        proto::TsigAlgorithm::HmacSha256 as i32
+                    } else {
+                        0
+                    },
+                    min_refresh_seconds: 1,
+                },
+            )),
             policy_override: 0,
             refresh_nonce: 0,
         }],
@@ -2693,8 +2854,14 @@ fn transfer_snapshot(primary: SocketAddr, tsig: bool) -> proto::ConfigSnapshot {
     }
 }
 
-fn resolution(s: &proto::ConfigSnapshot) -> ResolutionRuntime {
-    ResolutionRuntime::build(s, &DirBlobs { dir: "/nonexistent/nexora-test-blobs".into() }).unwrap()
+fn resolution(s: &proto::ConfigSnapshot) -> Vec<RpzZoneConfig> {
+    zone_configs(
+        s,
+        &DirBlobs {
+            dir: "/nonexistent/nexora-test-blobs".into(),
+        },
+    )
+    .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2702,21 +2869,40 @@ async fn manager_keeps_last_good_zone_when_primary_fails_and_reloads_from_disk()
     let zone = Arc::new(Mutex::new((5u32, vec![block("a")])));
     let addr = primary(zone.clone(), None).await;
     let dir = tempfile::tempdir().unwrap();
-    let state = RecursorState::new(Some(dir.path()));
-    state.rpz_manager.apply_config(&state, &resolution(&transfer_snapshot(addr, false)).rpz);
-    assert!(state.rpz_manager.refresh_now(&state, "z1").await.unwrap(), "first transfer publishes");
-    assert_eq!(state.rpz.load().zones.len(), 1);
+    let state = RpzState::new(Some(dir.path()));
+    state
+        .manager
+        .apply_config(&state, &resolution(&transfer_snapshot(addr, false)));
+    assert!(
+        state.manager.refresh_now(&state, "z1").await.unwrap(),
+        "first transfer publishes"
+    );
+    assert_eq!(state.set.load().zones.len(), 1);
     assert!(dir.path().join("rpz/z1.zone").exists());
+    assert!(metrics(&state).contains("nexora_rpz_zone_serial{zone=\"rpz.test.\"} 5"));
     let dead: SocketAddr = "127.0.0.1:1".parse().unwrap();
-    state.rpz_manager.apply_config(&state, &resolution(&transfer_snapshot(dead, false)).rpz);
-    assert!(state.rpz_manager.refresh_now(&state, "z1").await.is_err());
-    assert_eq!(state.rpz.load().zones.len(), 1, "last good zone kept");
-    let st = &state.rpz_manager.status()[0];
+    state
+        .manager
+        .apply_config(&state, &resolution(&transfer_snapshot(dead, false)));
+    assert!(state.manager.refresh_now(&state, "z1").await.is_err());
+    assert_eq!(state.set.load().zones.len(), 1, "last good zone kept");
+    let st = &state.manager.status()[0];
     assert!(!st.last_error.is_empty());
     assert_eq!(st.serial, 5);
-    let state2 = RecursorState::new(Some(dir.path()));
-    state2.rpz_manager.apply_config(&state2, &resolution(&transfer_snapshot(dead, false)).rpz);
-    assert_eq!(state2.rpz.load().zones.len(), 1, "persisted zone served after restart before any transfer");
+    assert!(
+        metrics(&state).contains("nexora_rpz_refresh_failures_total{zone=\"rpz.test.\"} 1"),
+        "{}",
+        metrics(&state)
+    );
+    let state2 = RpzState::new(Some(dir.path()));
+    state2
+        .manager
+        .apply_config(&state2, &resolution(&transfer_snapshot(dead, false)));
+    assert_eq!(
+        state2.set.load().zones.len(),
+        1,
+        "persisted zone served after restart before any transfer"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2724,16 +2910,29 @@ async fn tsig_zone_waits_for_key_material_held_in_memory_only() {
     let zone = Arc::new(Mutex::new((9u32, vec![block("a")])));
     let addr = primary(zone.clone(), Some(key())).await;
     let dir = tempfile::tempdir().unwrap();
-    let state = RecursorState::new(Some(dir.path()));
-    state.rpz_manager.apply_config(&state, &resolution(&transfer_snapshot(addr, true)).rpz);
-    let err = state.rpz_manager.refresh_now(&state, "z1").await.unwrap_err();
+    let state = RpzState::new(Some(dir.path()));
+    state
+        .manager
+        .apply_config(&state, &resolution(&transfer_snapshot(addr, true)));
+    let err = state.manager.refresh_now(&state, "z1").await.unwrap_err();
     assert!(err.contains("tsig key material not received"), "{err}");
-    state.set_rpz_tsig_keys(&proto::RpzTsigKeys { keys: vec![proto::RpzTsigKey { zone_id: "z1".into(), key_name: "rpz-key.".into(), algorithm: proto::TsigAlgorithm::HmacSha256 as i32, secret: vec![0x42; 32] }] });
-    assert!(state.rpz_manager.refresh_now(&state, "z1").await.unwrap());
-    assert_eq!(state.rpz_manager.status()[0].serial, 9);
+    state.set_tsig_keys(proto::RpzTsigKeys {
+        keys: vec![proto::RpzTsigKey {
+            zone_id: "z1".into(),
+            key_name: "rpz-key.".into(),
+            algorithm: proto::TsigAlgorithm::HmacSha256 as i32,
+            secret: vec![0x42; 32],
+        }],
+    });
+    assert!(state.manager.refresh_now(&state, "z1").await.unwrap());
+    assert_eq!(state.manager.status()[0].serial, 9);
     for entry in walk(dir.path()) {
         let bytes = std::fs::read(&entry).unwrap();
-        assert!(!bytes.windows(32).any(|w| w == [0x42u8; 32]), "{} holds the TSIG secret", entry.display());
+        assert!(
+            !bytes.windows(32).any(|w| w == [0x42u8; 32]),
+            "{} holds the TSIG secret",
+            entry.display()
+        );
     }
 }
 
@@ -2741,14 +2940,86 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).unwrap() {
         let p = e.unwrap().path();
-        if p.is_dir() { out.extend(walk(&p)); } else { out.push(p); }
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else {
+            out.push(p);
+        }
     }
     out
 }
+
+fn metrics(state: &RpzState) -> String {
+    let mut reg = prometheus_client::registry::Registry::default();
+    state.manager.register_metrics(&mut reg);
+    let mut out = String::new();
+    prometheus_client::encoding::text::encode(&mut out, &reg).unwrap();
+    out
+}
+
+#[test]
+fn file_zone_blob_is_published_on_apply_and_bad_zones_reject_the_snapshot() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let put = |text: &str| {
+        let bytes = zstd::encode_all(text.as_bytes(), 3).unwrap();
+        let sha = hex::encode(Sha256::digest(&bytes));
+        std::fs::write(dir.path().join(&sha), &bytes).unwrap();
+        proto::BlobRef {
+            sha256: sha,
+            size: bytes.len() as u64,
+            name: "rpz.file.".into(),
+        }
+    };
+    let snap = |id: &str, blob: proto::BlobRef| proto::ConfigSnapshot {
+        rpz_zones: vec![proto::RpzZone {
+            id: id.into(),
+            name: "rpz.file.".into(),
+            source: Some(proto::rpz_zone::Source::File(proto::RpzFileSource {
+                blob: Some(blob),
+            })),
+            policy_override: 0,
+            refresh_nonce: 0,
+        }],
+        ..Default::default()
+    };
+    let blobs = DirBlobs {
+        dir: dir.path().into(),
+    };
+    let good = put("$TTL 60\n@ SOA ns h 3 60 60 60 60\nbad.example CNAME .\n");
+    let state = RpzState::new(None);
+    state.manager.apply_config(
+        &state,
+        &zone_configs(&snap("f1", good.clone()), &blobs).unwrap(),
+    );
+    assert_eq!(state.set.load().zones[0].serial, 3);
+    assert!(
+        state
+            .query_triggers
+            .load(std::sync::atomic::Ordering::Relaxed)
+    );
+    assert_eq!(state.manager.status()[0].id, "f1");
+    let bad = put("$INCLUDE /etc/passwd\n");
+    assert_eq!(
+        zone_configs(&snap("f1", bad), &blobs).err().unwrap(),
+        "rpz_zones[0]: $INCLUDE is not allowed in RPZ zones"
+    );
+    assert_eq!(
+        zone_configs(&snap("../x", good), &blobs).err().unwrap(),
+        "rpz_zones[0]: id must be letters, digits and '-'"
+    );
+    state.manager.apply_config(&state, &[]);
+    assert!(
+        state.set.load().zones.is_empty()
+            && !state
+                .query_triggers
+                .load(std::sync::atomic::Ordering::Relaxed)
+    );
+}
 ```
 
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::transfer_tests` — expect FAIL with "cannot find type `TsigKey` in this scope".
-- [ ] Implement `tsig.rs`. Wire helpers:
+- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::transfer_tests` — expect FAIL with "cannot find type `TsigKey` in this scope". (Not observed: the implementation was written before this test file; the tests were instead shown to catch breaks by mutation — ignoring the HMAC verification result fails `tsig_sign_and_verify_detects_tampering_wrong_key_and_time`.)
+- [x] Implement `tsig.rs`. Wire helpers:
 
 ```rust
 pub fn skip_name(b: &[u8], mut i: usize) -> Option<usize> {
@@ -2804,18 +3075,18 @@ fn variables(key: &TsigKey, time_signed: u64, error: u16, other: &[u8], timers_o
 
 `TsigAlg::name()` → `"hmac-sha256."` / `"hmac-sha512."`; ring algorithm `hmac::HMAC_SHA256` / `HMAC_SHA512`. Request MAC input = message (as sent, ARCOUNT not yet incremented) ‖ `variables(.., timers_only=false)`. Response MAC input (RFC 8945 §5.3): `u16 len(prior_mac) ‖ prior_mac ‖ unsigned_before ‖ message_without_tsig ‖ variables(.., timers_only = !first)` where `message_without_tsig` has ARCOUNT decremented and the ID replaced by the TSIG original ID. The appended RR: owner = key name wire, TYPE 250, CLASS 255, TTL 0, RDATA = algorithm name wire ‖ 48-bit time ‖ fudge ‖ `u16` MAC size ‖ MAC ‖ original ID ‖ error 0 ‖ other len 0; ARCOUNT incremented. `TsigVerifier::verify`: `tsig_offset` absent → if `first` → `Missing`; else append the whole message to `unsigned`, `unsigned_count += 1`, `> 99` → `TooManyUnsigned`, return `Ok`. Present → parse the RR (algorithm name must equal the key's, owner must equal key name, case-insensitive, else `BadKey`), rebuild the MAC input as above, `ring::hmac::verify` (constant time) → `BadSig`; `|now - time_signed| > fudge` → `BadTime`; then `prior_mac = mac`, `first = false`, clear `unsigned`, `unsigned_count = 0`. `finish` returns `Missing` when `unsigned_count > 0`.
 
-- [ ] Implement `transfer.rs`: `serial_gt(a, b) = a != b && (a.wrapping_sub(b) as i32) > 0` (the undefined 2^31 distance counts as not greater); `timers_from_soa` floors each value at `min_refresh` (0 → 60). `soa_serial`: UDP query for `SOA` (Transport-style random ID from `rand::rng()`), TCP retry on TC; with a key the query is TSIG-signed and the reply verified. `transfer`: open TCP; with `current` send IXFR (question `IXFR`, authority section = `current` SOA) otherwise AXFR; sign when `key`; read length-prefixed messages until the second occurrence of the SOA whose serial equals the first answer's serial (for IXFR: a single SOA equal to the current serial → up to date); every message rcode must be NOERROR (`NOTIMP`/`REFUSED`/`FORMERR` to IXFR → retry once with AXFR); verify each message with `TsigVerifier` and call `finish`; TSIG failures produce `Err(format!("TSIG verification failed: {e:?}"))`; overall deadline 60 s; limit 10 000 000 records. `apply_ixfr` implements RFC 1995 §4: `[SOA n]` only with serial == current → `current.clone()`; `[SOA n, SOA old, …]` → sequences of (old SOA, deletions, new SOA, additions) applied in order, verifying each old SOA serial equals the running serial; `[SOA n, non-SOA…, SOA n]` → full replacement (records = everything before the trailing SOA).
-- [ ] Implement `ResolutionRuntime.rpz` in `dispatch.rs`: for each `s.rpz_zones[i]` (snapshot order) — file source: `blobs.read(blob)` → `zstd::decode_all` → UTF-8 → `parse_rpz_text(origin, text)` → `Arc::new(RpzZoneIndex::build(id, &parsed, policy_override))`; any error returns `Err(format!("rpz_zones[{i}]: {error}"))`, which `Runtime::build` turns into a rejected snapshot; transfer source: `RpzSourceConfig::Transfer` with `primary` parsed as `SocketAddr`.
-- [ ] Implement `manager.rs`:
+- [x] Implement `transfer.rs` (as built, `soa_serial` queries over TCP only: the serial is never taken from spoofable UDP and TCP-only primaries work): `serial_gt(a, b) = a != b && (a.wrapping_sub(b) as i32) > 0` (the undefined 2^31 distance counts as not greater); `timers_from_soa` floors each value at `min_refresh` (0 → 60). `soa_serial`: UDP query for `SOA` (Transport-style random ID from `rand::rng()`), TCP retry on TC; with a key the query is TSIG-signed and the reply verified. `transfer`: open TCP; with `current` send IXFR (question `IXFR`, authority section = `current` SOA) otherwise AXFR; sign when `key`; read length-prefixed messages until the second occurrence of the SOA whose serial equals the first answer's serial (for IXFR: a single SOA equal to the current serial → up to date); every message rcode must be NOERROR (`NOTIMP`/`REFUSED`/`FORMERR` to IXFR → retry once with AXFR); verify each message with `TsigVerifier` and call `finish`; TSIG failures produce `Err(format!("TSIG verification failed: {e:?}"))`; overall deadline 60 s; limit 10 000 000 records. `apply_ixfr` implements RFC 1995 §4: `[SOA n]` only with serial == current → `current.clone()`; `[SOA n, SOA old, …]` → sequences of (old SOA, deletions, new SOA, additions) applied in order, verifying each old SOA serial equals the running serial; `[SOA n, non-SOA…, SOA n]` → full replacement (records = everything before the trailing SOA).
+- [x] Implement `zone_configs` in `manager.rs` (Integration after Task 5: `ResolutionRuntime.rpz` in `dispatch.rs` calls it): for each `s.rpz_zones[i]` (snapshot order) — file source: `blobs.read(blob)` → `zstd::decode_all` → UTF-8 → `parse_rpz_text(origin, text)` → `Arc::new(RpzZoneIndex::build(id, &parsed, policy_override))`; any error returns `Err(format!("rpz_zones[{i}]: {error}"))`, which `Runtime::build` turns into a rejected snapshot; transfer source: `RpzSourceConfig::Transfer` with `primary` parsed as `SocketAddr`.
+- [x] Implement `manager.rs` (as built, last-good copies are `u32 length ‖ record wire` per record rather than zone text, because hickory's TXT presentation does not round-trip):
   - `apply_config` (called from `RecursorState::sync` after every applied snapshot): zones not present in the config are dropped (their `state_dir/rpz/<id>.zone` deleted). File zones take the prebuilt index. Transfer zones create or update a `ZoneTask`; if `state_dir/rpz/<id>.zone` exists and no data is loaded yet, parse it (`parse_rpz_text` with `$ORIGIN` taken from the zone name) and serve it immediately. A changed `refresh_nonce` or primary schedules an immediate refresh (`notify_one`). Then publish.
   - Keys: `set_tsig_keys` converts each `RpzTsigKey` into a `TsigKey` (secret moved into `Zeroizing`, name via `Name::from_ascii`, unknown algorithms skipped) keyed by `zone_id`, replaces the map and notifies. A transfer zone with `tsig_algorithm != NONE` and no key in the map fails its refresh with `"tsig key material not received from the management plane"` (the last good copy keeps serving); a key whose name or algorithm differs from the zone's configuration fails with `"tsig key does not match the zone configuration"`. Keys are never logged, persisted or included in `status()`.
   - A refresh of one transfer zone: `soa_serial`; `serial_gt(remote, local)` or no local data → `transfer`; success → build `RpzZoneIndex`, publish, persist records one per line with `format!("{record}\n")` via write-temp + fsync + rename (same pattern as `snapshot::persist`), `last_success = now`, `stale = false`, `next_refresh = now + refresh`, `Ok(true)`; up to date → `Ok(false)`; failure → `last_error`, refresh-failure counter `+= 1`, `next_refresh = now + retry`, and `stale = true` once `now - last_success > expire` — the last good data keeps serving (never dropped).
   - `run(shared)`: loop forever — wait for the earliest `next_refresh` or a notification (`tokio::time::timeout` around `Notify::notified`), refresh every due zone, and when any refresh returned `Ok(true)` call `shared.runtime.load().cache.clear()` so answers cached under the old RPZ data are not served.
   - Publication: rebuild `RpzSet::new(zones in config order)` from every zone with data and `state.publish_rpz(set)`.
   - `refresh_now` performs one refresh cycle synchronously and returns its result. `status()` produces `proto::RpzZoneStatus` per zone in config order (hits from the index).
-- [ ] `mod.rs`: `RecursorState` gains `pub rpz_manager: RpzManager` (created with the same `state_dir`); `set_rpz_tsig_keys` delegates to it; `sync` also calls `self.rpz_manager.apply_config(self, &rt.resolution.rpz)`; `spawn_background` also runs `shared.recursor.rpz_manager.run(shared.clone())` on the `nexora-recursor` `LocalSet`.
-- [ ] `control.rs` `session`: replace the Task 1 no-op arm with `Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.set_rpz_tsig_keys(&keys),` (no log line carries the message); `Metrics::stats` sets `rpz_zones: recursor.rpz_manager.status()` and `render` exposes the RPZ metrics listed under Files.
-- [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::transfer_tests` — expect PASS (7 tests); run `scripts/dev-exec.sh make engine-test` — expect PASS.
+- [ ] Integration (after Task 5) — `mod.rs`: `RecursorState` gains `pub rpz: rpz::RpzState` (`RpzState::new(state_dir)`, same `state_dir`); `sync` also calls `self.rpz.manager.apply_config(&self.rpz, &rt.resolution.rpz)`; `spawn_background` also runs `shared.recursor.rpz.manager.run(&shared.recursor.rpz, &shared.runtime)` on the `nexora-recursor` `LocalSet`.
+- [ ] Integration (after Task 5) — `control.rs` `session`: replace the Task 1 no-op arm with `Some(ServerMsg::RpzTsigKeys(keys)) => shared.recursor.rpz.set_tsig_keys(keys),` (no log line carries the message); `Metrics::stats` sets `rpz_zones: recursor.rpz.manager.status()` and `render` calls `recursor.rpz.manager.register_metrics(&mut reg)`.
+- [x] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib recursor::rpz::transfer_tests` — expect PASS (8 tests); run `scripts/dev-exec.sh make engine-test` — expect PASS (re-run after the integration steps).
 - [ ] Commit: `git add engine/src && git commit -m "feat(rpz): file and AXFR/IXFR sources with in-memory TSIG keys and last-good persistence"`.
 
 ## Task 11: Management plane — key storage helper, migrations, OpenAPI operations, handlers, snapshot builder, TSIG key delivery, stats ingestion
@@ -2836,6 +3107,9 @@ Files:
 - `mgmt/cmd/nexora-mgmt/main.go` — KEK loading, `Deps.Secrets`, `hub.RPZTsig`, `OnStats`, NTA expiry job.
 - `e2e/harness/mgmt.go` — `(*API).DisableForwardedValidation()`; `e2e/auth_test.go`, `e2e/blocklist_test.go`, `e2e/control_test.go`, `e2e/encrypted_transports_test.go`, `e2e/gui_test.go`, `e2e/observability_test.go`, `e2e/per_client_policy_test.go`, `e2e/safe_search_rewrites_test.go` — call it after `harness.Bootstrap` (Architecture change 2).
 - `mgmt/api/openapi.yaml`, `mgmt/internal/api/gen.go` (oapi-codegen in the dev pod, copied back), `web/src/api/schema.d.ts` (`pnpm --dir web run gen:api`).
+- `mgmt/internal/blocklist/fetcher.go`, `mgmt/internal/blocklist/gc_test.go` — blob garbage collection keeps blobs referenced by `rpz_zones.blob_sha256` and by snapshot RPZ file zones (without it the collector hits the `rpz_zones_blob_sha256_fkey` foreign key and fails every run once a zone file is uploaded).
+- `mgmt/internal/api/handlers_admin.go` — the new `TrustAnchorSource` enum value `operator` collides with `Role`, so oapi-codegen now prefixes every enum constant with its type (`Admin` → `RoleAdmin`).
+- `mgmt/internal/api/api_test.go`, `mgmt/internal/api/policies_test.go` — `newAPIWith(t, adjust func(*api.Deps))` and `roleClientsWith` so `TestResolutionAndRPZLifecycleWithKeyStorage` (forward-zone CRUD, DNSSEC settings, RPZ upload/TSIG create/update-keeping-secret/refresh/reorder, snapshot and audit checks) runs with `Deps.Secrets` set.
 
 Interfaces:
 
@@ -2865,6 +3139,7 @@ func TsigPurpose(zoneID uuid.UUID) string        // "nexora/rpz-tsig/v1:<uuid>"
 func ValidateDS(ds string) error
 func ValidateDomain(name string) (fqdnLower string, err error)
 func ValidateForwardAddresses(addrs []string) error
+func IsIPPort(a string) bool                    // also used for the RPZ primary
 func ValidateRootHints(h []RootHint) error
 type RootHint struct{ Name string `json:"name"`; Addresses []string `json:"addresses"` }
 var IANARootAnchors = []string{
@@ -3705,7 +3980,7 @@ func gcm(key []byte) (cipher.AEAD, error) {
 ```
 
 - [ ] Implement `Unseal`: `!Configured()` → `ErrUnconfigured`; length < 101 or magic ≠ `NXE1` → `errors.New("not an NXE1 envelope")`; byte 4 ≠ `WrapFileKEK` → `ErrBackendUnavailable`; bytes 5..13 ≠ `kekID` → `ErrKEKMismatch`; open `wrapped` (bytes 25..73) with the KEK, nonce bytes 13..25 and aad `NXE1-dek`; open bytes 85.. with the DEK, nonce bytes 73..85 and aad = purpose; `clear` the DEK; any GCM failure → `errors.New("envelope authentication failed")`.
-- [ ] Implement `mgmt/internal/rpz/validate.go`: reject any line whose trimmed prefix is `$INCLUDE` (case-insensitive) with `errors.New("$INCLUDE is not allowed in RPZ zones")`; content longer than `MaxZoneBytes` → `fmt.Errorf("zone file exceeds %d bytes", MaxZoneBytes)`; parse with `dns.NewZoneParser(strings.NewReader(content), dns.Fqdn(origin), "")` and `zp.SetIncludeAllowed(false)`; iterate `zp.Next()`; the first parse error → `fmt.Errorf("line %d: %v", ...)`; the apex SOA is required (`"zone has no SOA at the apex"`) and supplies `Serial`; `Records` counts non-apex records. `Pack` uses a package-level `zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderConcurrency(1))` and `EncodeAll`. `TsigPurpose(id)` = `"nexora/rpz-tsig/v1:" + id.String()`.
+- [ ] Implement `mgmt/internal/rpz/validate.go`: reject any line whose trimmed prefix is `$INCLUDE` (case-insensitive) with `errors.New("$INCLUDE is not allowed in RPZ zones")`; content longer than `MaxZoneBytes` → `fmt.Errorf("zone file exceeds %d bytes", MaxZoneBytes)`; parse with `dns.NewZoneParser(strings.NewReader(content), dns.Fqdn(origin), "")` and `zp.SetIncludeAllowed(false)`; iterate `zp.Next()`; the first parse error is returned as miekg's `*dns.ParseError`, whose message already names the line and column (its lexer position is unexported); the apex SOA is required (`"zone has no SOA at the apex"`) and supplies `Serial`; `Records` counts non-apex records. `Pack` uses a package-level `zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderConcurrency(1))` and `EncodeAll`. `TsigPurpose(id)` = `"nexora/rpz-tsig/v1:" + id.String()`.
 - [ ] Implement `dnssecconf`: `ValidateDS` = four fields, key tag 0..65535, algorithm and digest type 0..255, hex digest with length 40/64/96 hex characters for types 1/2/4 (`digest is not hex`, `digest length N does not match digest type T`); `ValidateDomain` uses `dns.IsDomainName` and returns lowercase FQDN; `ValidateForwardAddresses` uses `net.SplitHostPort` + `netip.ParseAddr` (`addresses[i]: not ip:port: V`); `ValidateRootHints` requires FQDN names and bare IP addresses (`root_hints[i].addresses[j]: not an IP address: V`).
 - [ ] Write the three migrations literally as above.
 - [ ] Implement `store/resolution.go` and `store/blobs.go`: row structs and functions from Interfaces; revision-checked updates and deletes follow M2's `missingOrStale` (zero rows → `ErrNotFound` or `ErrConflict`); `LoadResolution` selects everything (`forward_zones ORDER BY domain`, `trust_anchors ORDER BY zone, ds`, `negative_trust_anchors ORDER BY domain`, `rpz_zones` left-joined to `blobs` for `BlobSize`, `ORDER BY position`); `DeleteTrustAnchor` returns `ErrLastRootAnchor` when the row is the only one with `zone = '.'` (checked under `SELECT ... FOR UPDATE`); `ReorderRPZZones` requires `ids` to be exactly the set of zone IDs (else `fmt.Errorf("%w: ids must list every RPZ zone exactly once", ErrConflict)`) and rewrites positions `1..n` after negating them (unique index); `PutBlob` computes SHA-256 hex and runs `insert into blobs(sha256, size, data) values ($1, $2, $3) on conflict do nothing`.
@@ -3810,7 +4085,7 @@ func TestRPZTsigLoadUnsealsKeysAndDigestTracksChanges(t *testing.T) {
 ```
 
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/ -run TestRPZTsig` — expect FAIL with "undefined: control.NewRPZTsig".
-- [ ] Implement `control/rpztsig.go`: `Load` selects `id, tsig_key_name, tsig_algorithm, tsig_secret_envelope from rpz_zones where tsig_secret_envelope is not null order by id`, unseals each with `rpz.TsigPurpose(id)` (errors returned wrapped as `rpz zone <id>: %w`), builds `RpzTsigKeys`, and returns `digest = hex(sha256(proto.MarshalOptions{Deterministic: true}.Marshal(keys)))` when `len(keys.Keys) > 0`, else `""`. Wire delivery in `hub.go` and `server.go`: `subscriber` gains `keys chan *controlv1.RpzTsigKeys` (capacity 1) and `keysDigest string`, with `offerKeys(k *controlv1.RpzTsigKeys, digest string)` that returns when `digest == keysDigest`, else records the digest, drains an undelivered value and sends; `Hub` gains the field `RPZTsig *RPZTsig`; `broadcast` — after offering the snapshot — loads the keys once (`slog.Warn("load rpz tsig keys", "err", err)` on error, never the keys) and offers them to every subscriber; `Server.Connect` offers the loaded keys to the new subscriber before offering the latest snapshot, and its send loop gains `case k := <-sub.keys:` sending `&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}`.
+- [ ] Implement `control/rpztsig.go`: `Load` selects `id, tsig_key_name, tsig_algorithm, tsig_secret_envelope from rpz_zones where tsig_secret_envelope is not null order by id`, unseals each with `rpz.TsigPurpose(id)` (errors returned wrapped as `rpz zone <id>: %w`), builds `RpzTsigKeys`, and returns `digest = hex(sha256(proto.MarshalOptions{Deterministic: true}.Marshal(keys)))` when `len(keys.Keys) > 0`, else `""`. Wire delivery in `hub.go` and `server.go`: `subscriber` gains `keys chan *controlv1.RpzTsigKeys` (capacity 1) and `keysDigest string`, with `offerKeys(k *controlv1.RpzTsigKeys, digest string)` that returns when `digest == keysDigest`, else records the digest, drains an undelivered value and sends; `Hub` gains the field `RPZTsig *RPZTsig`; `broadcast` — after offering the snapshot — loads the keys once (`slog.Warn("load rpz tsig keys", "err", err)` on error, never the keys) and offers them to every subscriber; `Server.Connect` offers the loaded keys to the new subscriber before offering the latest snapshot, and its send loop drains a pending key set before selecting (so keys queued with a snapshot are sent first) and gains `case k := <-sub.keys:` sending `&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}`.
 - [ ] Run `scripts/dev-exec.sh go test ./mgmt/internal/control/` — expect PASS (M1/M2 control tests included).
 - [ ] Create `mgmt/internal/api/resolution_test.go`:
 
@@ -3818,6 +4093,7 @@ func TestRPZTsigLoadUnsealsKeysAndDigestTracksChanges(t *testing.T) {
 package api_test
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strings"
 	"testing"
@@ -3895,8 +4171,8 @@ func TestResolutionDnssecAndRPZAPI(t *testing.T) {
   - `createNegativeTrustAnchor`: `ValidateDomain`; `expires_at` must be after now and at most 30 days ahead (`expires_at must be in the future and at most 30 days ahead`); `created_by = PrincipalFrom(ctx).Actor().Name`.
   - `createRpzZone`/`updateRpzZone`: `ValidateDomain(name)`; transfer zones need `primary` as `ip:port`; `tsig_algorithm` requires `tsig_key_name` (`ValidateDomain`) and, on create, `tsig_secret`; a provided `tsig_secret` must decode from base64 to 16..=64 bytes and is sealed with `h.d.Secrets.Seal(rpz.TsigPurpose(id), secret)` (the create handler assigns `id := uuid.New()` first) before the transaction starts, so an unconfigured box fails with `secrets.ErrUnconfigured` and nothing is written; clearing `tsig_algorithm` on update clears the key name and envelope; `source_type` never changes on update; file zones reject transfer fields.
   - `uploadRpzZoneFile`: file zones only (409 `conflict` for transfer zones); `rpz.ValidateZone(zone.Name, body.Content)`; `sha, _, err := store.PutBlob(ctx, tx, rpz.Pack(body.Content))`; `store.SetRPZZoneFile(ctx, tx, id, body.Revision, sha, int32(summary.Records))`.
-  - `refreshRpzZone`: transfer zones only; `store.BumpRPZRefreshNonce`; 202 with an empty body.
-  - `reorderRpzZones`: `store.ReorderRPZZones`; 204.
+  - `refreshRpzZone`: transfer zones only; `store.BumpRPZRefreshNonce` (the revision is unchanged: a refresh is not an edit); 202 with an empty body.
+  - `reorderRpzZones`: `store.ReorderRPZZones`; 204; its `ErrConflict` (ids not exactly the zone set) is answered as 400 `invalid_request`, matching the operation's declared errors.
   - `getRpzZone`/`listRpzZones` join `store.ListRPZEngineStatus` into `status` and set `tsig_secret_set = TSIGSecretEnvelope != nil`; `getDnssecStatus` decodes each `engine_dnssec_status.stats` with `protojson.Unmarshal` into `controlv1.DnssecStats` and maps states to the lowercase enum (`0` unix times → `null`).
 - [ ] In `api/server.go`: `Deps` gains `Secrets *secrets.Box`; `mapError` gains, before the default case, `errors.Is(err, secrets.ErrUnconfigured)` → `writeError(w, http.StatusServiceUnavailable, "key_storage_unconfigured", "Key storage is not configured on the management plane (NEXORA_KEK_FILE)")` and `errors.Is(err, store.ErrLastRootAnchor)` → `writeError(w, http.StatusConflict, "last_root_anchor", store.ErrLastRootAnchor.Error())`.
 - [ ] Add every operationId to `mgmt/internal/auth/permissions.go` and `web/src/auth/permissions.ts`: `getResolutionSettings`, `listForwardZones`, `getDnssecSettings`, `getDnssecStatus`, `listTrustAnchors`, `listNegativeTrustAnchors`, `listRpzZones`, `getRpzZone` → viewer; the other fifteen → operator.
@@ -3991,7 +4267,7 @@ Files:
 - `web/src/pages/DnssecPage.tsx` — validation settings, trust anchors, NTAs, per-engine validation stats and anchor states with rollover warning.
 - `web/src/pages/ResolutionSection.tsx` — mode, QNAME minimisation, aggressive NSEC, limits, authority port, root-hint override.
 - `web/src/pages/ForwardZonesSection.tsx` — forward zone CRUD.
-- `web/src/pages/UpstreamsPage.tsx` — renders the two sections above the M1 upstream list.
+- `web/src/pages/UpstreamsPage.tsx` — renders the two sections above the M1 upstream list (which gains a "Global upstreams" heading carrying the "Add upstream" button).
 - `web/src/app/router.tsx` — routes `rpz` and `dnssec` under the authenticated `AppShell`.
 - `web/src/components/layout/AppShell.tsx` — `Resolver` nav items `{ route: "rpz", path: "/rpz", label: "RPZ", icon: ShieldBan, op: "listRpzZones" }` and `{ route: "dnssec", path: "/dnssec", label: "DNSSEC", icon: BadgeCheck, op: "getDnssecSettings" }` (lucide-react).
 - `web/e2e/screens/15-rpz.spec.ts`, `web/e2e/screens/16-dnssec.spec.ts`, `web/e2e/screens/17-resolution.spec.ts` — Playwright tests run by `TestGUICoverage`.
@@ -4371,13 +4647,13 @@ test("operator edits resolution settings and forward zones", async ({
 ```
 
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test -count=1 ./e2e/ -run TestGUICoverage'` — expect FAIL in the Playwright run of `15-rpz.spec.ts` with `getByTestId('nav-rpz')` not found (the route and nav item do not exist).
-- [ ] Implement `web/src/api/resolution.ts` hooks in the style of `web/src/api/policies.ts` (query keys `["resolution"]`, `["forward-zones"]`, `["dnssec", "settings"]`, `["dnssec", "status"]`, `["dnssec", "anchors"]`, `["dnssec", "ntas"]`, `["rpz-zones"]`, `["rpz-zones", id]`; every mutation invalidates its list key; errors surface through `ErrorAlert` from `@/components/common`, which renders `role="alert"` with the server `message`).
+- [ ] Implement `web/src/api/resolution.ts` hooks in the style of `web/src/api/policies.ts` (query keys `["resolution"]`, `["forward-zones"]`, `["dnssec", "settings"]`, `["dnssec", "status"]`, `["dnssec", "anchors"]`, `["dnssec", "ntas"]`, `["rpz-zones"]`, `["rpz-zones", id]`; every list mutation invalidates its list key, the two settings mutations write the saved object into their query; errors surface through `ErrorAlert` from `@/components/common`, which renders `role="alert"` with the server `message`).
 - [ ] Implement the pages with the exact accessible names used in the tests (mutating controls hidden unless `useCan` allows the operation, as the M2 pages do):
   - `RpzPage`: heading "Response policy zones"; button "New zone"; table rows ordered by `position` showing name, source ("File"/"Zone transfer"), `N records` or "no file" (file) or primary (transfer), override, "secret set" badge when `tsig_secret_set`, `min_refresh_seconds` as `N s`, and per-engine serial/last success/stale badge (red "stale" when any engine reports `stale`, amber when `last_error` is non-empty); row buttons `Move <name> up`, `Move <name> down` (call `reorderRpzZones` with the full new ID order), `Edit <name>` (opens "Edit RPZ zone" and fetches `GET /rpz-zones/{id}`), `Upload file for <name>` (file zones), `Refresh <name>` (transfer zones; a `role="status"` note "Refresh requested"), `Delete <name>` (`ConfirmDialog`).
   - RPZ zone dialog ("New RPZ zone" / "Edit RPZ zone"): labels "Zone name", "Source" (options "File", "Zone transfer"; create only), "Primary", "TSIG algorithm" (options "None", "hmac-sha256", "hmac-sha512"), "TSIG key name" and "TSIG secret (base64)" (shown when an algorithm is chosen; on edit the secret field is empty and its placeholder says "leave empty to keep the stored secret"), "Policy override" (options "Given", "Disabled", "NXDOMAIN", "NODATA", "PASSTHRU", "DROP", "TCP-only"), "Minimum refresh (seconds)"; the dialog stays open and shows the API error on failure. Upload dialog "Upload zone file": label "Zone file" (`<input type="file">` read with `File.text()`), button "Upload".
-  - `DnssecPage`: heading "DNSSEC"; `<section aria-label="Validation settings">` with switches "Validate answers", "Validate forwarded answers" (`validate_forwarded`, disabled while "Validate answers" is off) and "Automated trust anchor updates (RFC 5011)", button "Save settings" and `SavedNote` "Settings saved"; `<section aria-label="Trust anchors">` table (zone, DS, source badge "IANA"/"Operator", `Delete trust anchor <key tag> for <zone>`), button "Add trust anchor" (dialog "Add trust anchor", labels "Zone", "DS record"); `<section aria-label="Negative trust anchors">` table (domain, reason, expiry, creator, `Delete negative trust anchor <domain>`), button "Add negative trust anchor" (dialog labels "Domain", "Reason", "Expires in" with options "1 hour", "1 day", "7 days", "30 days" converted to `expires_at`); `<section aria-label="Validation by engine">` listing each engine name with secure/insecure/bogus/indeterminate counts and trust anchor key states; a red banner "Trust anchor refresh failing" when any anchor for `.` has a `last_error` and `last_refresh_success` older than 72 h, or when no key for `.` is in state `valid`/`configured`.
+  - `DnssecPage`: heading "DNSSEC"; `<section aria-label="Validation settings">` with switches "Validate answers", "Validate forwarded answers" (`validate_forwarded`, disabled while "Validate answers" is off) and "Automated trust anchor updates (RFC 5011)", button "Save settings" and `SavedNote` "Settings saved"; `<section aria-label="Trust anchors">` table (zone, DS, source badge "IANA"/"Operator", `Delete trust anchor <key tag> for <zone>`), button "Add trust anchor" (dialog "Add trust anchor", labels "Zone", "DS record"); `<section aria-label="Negative trust anchors">` table (domain, reason, expiry, creator, `Delete negative trust anchor <domain>`), button "Add negative trust anchor" (dialog labels "Domain", "Reason", "Expires in" with options "1 hour", "1 day", "7 days", "30 days" converted to `expires_at`); `<section aria-label="Validation by engine">` listing each engine name with secure/insecure/bogus/indeterminate counts and trust anchor key states (engines from `listEngines` that have not reported `DnssecStats` yet are listed with "No validation report yet", so the section names every enrolled engine); a red banner "Trust anchor refresh failing" when any anchor for `.` has a `last_error` and `last_refresh_success` older than 72 h, or when no key for `.` is in state `valid`/`configured`.
   - `ResolutionSection` (`<section aria-label="Resolution">`): labels "Mode" (options "Forward", "Recursive"), "QNAME minimisation", "Aggressive NSEC caching", "Maximum upstream queries per client query", "Maximum delegation depth", "Authority port", root-hint rows ("Add root hint", "Root hint name N", "Root hint addresses N" comma-separated, "Remove root hint N"), button "Save resolution settings" and `SavedNote` "Resolution settings saved"; help text states that forward zones override the mode and that DNSSEC validation applies to recursion and validating forward zones.
-  - `ForwardZonesSection` (`<section aria-label="Forward zones">`): "New forward zone", dialogs "New forward zone" / "Edit forward zone" with labels "Domain", "Servers" (comma-separated `ip:port`), switch "Validate DNSSEC"; row buttons `Edit <domain>`, `Delete <domain>`; row badge "validated" when `validate`.
+  - `ForwardZonesSection` (`<section aria-label="Forward zones">`): "New forward zone", dialogs "New forward zone" / "Edit forward zone" with labels "Domain", "Servers" (comma-separated `ip:port`), switch "Validate DNSSEC"; row buttons `Edit <domain>`, `Delete <domain>`; row badge "validated" when `validate` ("Off" otherwise, so the badge text is unambiguous).
   - `router.tsx` gains `{ path: "rpz", element: <RpzPage /> }` and `{ path: "dnssec", element: <DnssecPage /> }`; `AppShell.tsx` gains the two nav items listed under Files (after "Rewrites").
 - [ ] Run `scripts/dev-exec.sh make web-test` — expect PASS (typecheck, lint incl. permission parity, build).
 - [ ] Run `scripts/dev-exec.sh bash -c 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test -count=1 ./e2e/ -run TestGUICoverage'` — expect PASS (all 23 new operationIds covered; the three new specs green).
@@ -4390,11 +4666,12 @@ Files:
 - `e2e/fixtures/authhier/spec.go` — `Spec`, `ZoneSpec`, `DefaultSpec`.
 - `e2e/fixtures/authhier/sign.go` — key generation, DS, RRSIG, NSEC and NSEC3 chains with miekg/dns.
 - `e2e/fixtures/authhier/server.go` — shared-port binding, per-zone authoritative UDP/TCP servers, spoofing behaviour, validating-forwarder endpoint, stats HTTP.
-- `e2e/fixtures/authhier/authhier_test.go` — in-process tests.
+- `e2e/fixtures/authhier/authhier_test.go` — in-process tests, plus `TestLameDelegationHasUnreachableLameAndWorkingServers` and `TestDelvValidatesTheHierarchyIndependently` (BIND `delv` through the forwarder under the per-run root DS; skipped when `delv` is absent).
 - `e2e/fixtures/cmd/nexora-fixture/authhier.go` — `runAuthhier`; `e2e/fixtures/cmd/nexora-fixture/main.go` — `case "authhier"` and usage line.
 - `e2e/harness/hierarchy.go` — `StartHierarchy`, `ConfigureRecursion`, `Stats`.
 - `e2e/harness/named.go` — `StartNamed` (BIND 9 primary with TSIG, IXFR from differences).
-- `e2e/harness/named_test.go` — harness self-test for BIND.
+- `e2e/harness/named_test.go` — harness self-test for BIND (AXFR, reload, incremental IXFR from serial 1, unsigned AXFR refused).
+- `e2e/harness/hierarchy_test.go` — `TestHierarchyHarnessReadsReadyAndStats` (needs the built `nexora-fixture`).
 - `e2e/harness/kek.go` — `WriteKEK` (the helper M4 Task 8 names; M4 extends this file).
 
 Interfaces:
@@ -4445,17 +4722,18 @@ func WriteKEK(t *testing.T) string // base64 of 32 random bytes in a 0600 temp f
 
 `DefaultSpec` (all servers on `127.0.53.0/24`, one shared port):
 
-| origin           | server     | signed              | notes                                                                                                                                                                                                                            |
-| ---------------- | ---------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`              | 127.0.53.1 | NSEC                | delegates `test.` (NS `ns.test.` glue 127.0.53.2) with DS                                                                                                                                                                        |
-| `test.`          | 127.0.53.2 | NSEC                | delegates `good` (glue 127.0.53.3, DS), `bad` (127.0.53.4, DS), `n3` (127.0.53.8, DS), `plain` (127.0.53.5, no DS), `glueless` (NS `ns2.plain.test.`, no glue, no DS), `spoof` (127.0.53.7, no DS), `poison` (127.0.53.9, no DS) |
-| `good.test.`     | 127.0.53.3 | NSEC                | `www A 192.0.2.10`, `alias CNAME www.good.test.`, `big TXT` ×40 strings of 60 octets (response > 1232 octets), `ns A 127.0.53.3`                                                                                                 |
-| `bad.test.`      | 127.0.53.4 | NSEC, broken        | `www A 192.0.2.11`                                                                                                                                                                                                               |
-| `n3.test.`       | 127.0.53.8 | NSEC3, 0 iterations | `www A 192.0.2.40`                                                                                                                                                                                                               |
-| `plain.test.`    | 127.0.53.5 | no                  | `www A 192.0.2.12`, `mail A 192.0.2.13`, `ip A 192.0.2.66`, `pass A 192.0.2.14`, `later A 192.0.2.15`, `ns2 A 127.0.53.6`                                                                                                        |
-| `glueless.test.` | 127.0.53.6 | no                  | `www A 192.0.2.20`                                                                                                                                                                                                               |
-| `spoof.test.`    | 127.0.53.7 | no, spoofing        | `www A 192.0.2.77`                                                                                                                                                                                                               |
-| `poison.test.`   | 127.0.53.9 | no                  | `www A 192.0.2.30`, `sub NS ns.good.test.` with out-of-bailiwick glue `ns.good.test. A 127.0.53.66`                                                                                                                              |
+| origin           | server      | signed              | notes                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | ----------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`              | 127.0.53.1  | NSEC                | NS `rootns.test.` (glue 127.0.53.1; the root hint); delegates `test.` (NS `ns.test.` glue 127.0.53.2) with DS                                                                                                                                                                                                                     |
+| `test.`          | 127.0.53.2  | NSEC                | delegates `good` (glue 127.0.53.3, DS), `bad` (127.0.53.4, DS), `n3` (127.0.53.8, DS), `plain` (127.0.53.5, no DS), `glueless` (NS `ns2.plain.test.`, no glue, no DS), `spoof` (127.0.53.7, no DS), `poison` (127.0.53.9, no DS), `lame` (NS `ns.lame.test.` 127.0.53.11, `dead.lame.test.` 127.0.53.10, `ns.plain.test.`; no DS) |
+| `good.test.`     | 127.0.53.3  | NSEC                | `www A 192.0.2.10`, `alias CNAME www.good.test.`, `big TXT` ×40 strings of 60 octets (response > 1232 octets), `ns A 127.0.53.3`                                                                                                                                                                                                  |
+| `bad.test.`      | 127.0.53.4  | NSEC, broken        | `www A 192.0.2.11`                                                                                                                                                                                                                                                                                                                |
+| `n3.test.`       | 127.0.53.8  | NSEC3, 0 iterations | `www A 192.0.2.40`                                                                                                                                                                                                                                                                                                                |
+| `plain.test.`    | 127.0.53.5  | no                  | `www A 192.0.2.12`, `mail A 192.0.2.13`, `ip A 192.0.2.66`, `pass A 192.0.2.14`, `later A 192.0.2.15`, `ns2 A 127.0.53.6`                                                                                                                                                                                                         |
+| `glueless.test.` | 127.0.53.6  | no                  | `www A 192.0.2.20`                                                                                                                                                                                                                                                                                                                |
+| `spoof.test.`    | 127.0.53.7  | no, spoofing        | `www A 192.0.2.77`                                                                                                                                                                                                                                                                                                                |
+| `poison.test.`   | 127.0.53.9  | no                  | `www A 192.0.2.30`, `sub NS ns.good.test.` with out-of-bailiwick glue `ns.good.test. A 127.0.53.66`                                                                                                                                                                                                                               |
+| `lame.test.`     | 127.0.53.11 | no                  | `www A 192.0.2.50`; of its three name servers 127.0.53.10 is unreachable (nothing listens) and `ns.plain.test.` is lame (REFUSED)                                                                                                                                                                                                 |
 
 Forwarder endpoint `127.0.53.100` answers RD=1 queries with RA=1 from the deepest zone in the hierarchy containing the name (DS queries from the parent zone), including RRSIG/NSEC when DO=1.
 
@@ -4778,7 +5056,7 @@ func (h *Hierarchy) ConfigureRecursion(t *testing.T, api *API, nodeName string) 
 }
 ```
 
-- [ ] Implement `e2e/harness/named.go`: a directory from `os.MkdirTemp(e.Dir, "named-")` holding `zone.db` and `named.conf`:
+- [ ] Implement `e2e/harness/named.go`: a directory from `os.MkdirTemp("", "nexora-named-")` (mode 0755, removed at cleanup; as root chowned with its files to user `dev`, because `t.TempDir()` parents are root-only and named refuses `-u root`) holding `zone.db` and `named.conf` (`controls { };` keeps concurrent instances off port 953; session key and managed keys stay in the directory):
 
 ```go
 const namedConf = `options {
@@ -4786,12 +5064,15 @@ const namedConf = `options {
 	listen-on port {{.Port}} { 127.0.0.1; };
 	listen-on-v6 { none; };
 	pid-file "{{.Dir}}/named.pid";
+	session-keyfile "{{.Dir}}/session.key";
+	managed-keys-directory "{{.Dir}}";
 	recursion no;
 	notify no;
 	allow-transfer { key "{{.KeyName}}"; };
 	ixfr-from-differences yes;
 	dnssec-validation no;
 };
+controls { };
 key "{{.KeyName}}" {
 	algorithm hmac-sha256;
 	secret "{{.Secret}}";
@@ -4803,9 +5084,9 @@ zone "{{.Zone}}" {
 `
 ```
 
-- [ ] Finish `StartNamed`: render `namedConf` with `KeyName = "rpz-key."`, a random 32-byte base64 secret and `Port = e.FreePort()` (BIND cannot listen on port 0). Start `e.Start("named", []string{"-g", "-c", <dir>/named.conf, "-u", <current user name from os/user>}, nil)` (`Bin` resolves `named` from `$PATH`; the dev pod ships `bind9`); wait up to 10 s for a TCP SOA query to `127.0.0.1:Port` to succeed; when the process exits first (the port was taken meanwhile), pick a new port and retry, at most 3 times. `UpdateZone` rewrites `zone.db` and calls `n.Proc.Signal(syscall.SIGHUP)`; `Stop` calls `n.Proc.Stop()`.
+- [ ] Finish `StartNamed`: render `namedConf` with `KeyName = "rpz-key."`, a random 32-byte base64 secret and `Port = e.FreePort()` (BIND cannot listen on port 0). Start `e.Start("named", []string{"-g", "-c", <dir>/named.conf}, nil)`, adding `-u dev` when running as root (`Bin` resolves `named` from `$PATH`; the dev pod ships `bind9`); wait up to 10 s for a TCP SOA query to `127.0.0.1:Port` to succeed; when the process exits first (the port was taken meanwhile), pick a new port and retry, at most 3 times. `UpdateZone` rewrites `zone.db` and calls `n.Proc.Signal(syscall.SIGHUP)`; `Stop` calls `n.Proc.Stop()`.
 - [ ] Implement `e2e/harness/kek.go` `WriteKEK`: 32 bytes from `crypto/rand`, base64-encoded with a trailing newline into `filepath.Join(t.TempDir(), "kek")` with mode `0600`.
-- [ ] Run `scripts/dev-exec.sh go test ./e2e/fixtures/authhier/ ./e2e/harness/ -run 'Test(Root|Signed|Negative|Big|Spoof|Forwarder|NamedHarness|WriteKEK)'` — expect PASS (8 tests); then `scripts/dev-exec.sh go vet ./e2e/fixtures/cmd/nexora-fixture` — expect exit 0.
+- [ ] Run `scripts/dev-exec.sh go test ./e2e/fixtures/authhier/ ./e2e/harness/ -run 'Test(Root|Signed|Negative|Big|Spoof|Forwarder|Lame|Delv|NamedHarness|WriteKEK|HierarchyHarness)'` with `NEXORA_E2E_BIN_DIR` holding a fresh `nexora-fixture` build — expect PASS (11 tests); then `scripts/dev-exec.sh go vet ./e2e/fixtures/cmd/nexora-fixture` — expect exit 0.
 - [ ] Commit: `git add e2e/fixtures e2e/harness && git commit -m "test(e2e): private signed DNS hierarchy fixture, BIND primary and KEK harness helpers"`.
 
 ## Task 14: Acceptance tests — TestRecursionRootHints, TestSpoofedReplyRejected, TestDNSSECValidation, TestRPZPolicy

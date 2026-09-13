@@ -13,8 +13,13 @@ is committed.
 ## Acceptance criteria
 
 - [ ] Every step of Task 7 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] `TestKey` passes in the dev pod (`scripts/dev-exec.sh`)
+- [ ] `TestKey` passes in the dev pod (`scripts/dev-exec.sh`) — validator tests pass; dispatch wiring not built (Task 5 missing)
 - [ ] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
+- `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::dnssec::validator_tests'` -> `test result: ok. 11 passed; 0 failed`.
+- Mutation check: disabling the NTA check and the wildcard next-closer proof each failed their test (`negative_trust_anchor_...`, `wildcard_expansion_needs_a_next_closer_proof`); reverted.
+- OPEN: every `dispatch.rs` step (RoutedFetcher, validation/CD/NTA/AD in resolve_miss, validating Route::Forward branch, aggressive NSEC lookup, dispatch-level `forward_mode_validates_when_enabled`) waits for Task 5, which has not created `dispatch.rs`. Building blocks are in `dnssec/forward.rs`.
+- `cargo fmt -p nexora-engine --check` clean (dev pod); `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` reports nothing under `recursor/dnssec` (the crate still fails clippy on the concurrent RPZ work in `rpz/apply.rs` and `rpz/tsig.rs`); `cargo test --locked -p nexora-engine --lib` -> `117 passed; 0 failed; 2 ignored`.
+- Not committed (lead commits serially).

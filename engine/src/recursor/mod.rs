@@ -1,7 +1,21 @@
 //! Iterative recursion, DNSSEC validation and RPZ (M3).
 
+pub mod budget;
+pub mod dnssec;
+pub mod infra;
+pub mod iterate;
 pub mod metrics;
+pub mod roothints;
+pub mod rpz;
+pub mod rrcache;
 pub mod transport;
+
+#[cfg(test)]
+mod infra_tests;
+#[cfg(test)]
+mod iterate_tests;
+#[cfg(test)]
+pub(crate) mod testnet;
 
 use std::time::Duration;
 
