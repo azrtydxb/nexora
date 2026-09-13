@@ -1,0 +1,1326 @@
+openapi: 3.1.0
+info: { title: Nexora management API, version: 1.0.0 }
+servers: [{ url: /api/v1 }]
+security: [{ session: [] }, { bearer: [] }]
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: nexora_session }
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    Id:
+      {
+        name: id,
+        in: path,
+        required: true,
+        schema: { type: string, format: uuid },
+      }
+    Revision:
+      {
+        name: revision,
+        in: query,
+        required: true,
+        schema: { type: integer, format: int64 },
+      }
+  responses:
+    Error:
+      {
+        description: error,
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/Error" } },
+          },
+      }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties: { code: { type: string }, message: { type: string } }
+    Health:
+      type: object
+      required: [status, database, version]
+      properties:
+        {
+          status: { type: string, enum: [ok, degraded] },
+          database: { type: string, enum: [ok, unavailable] },
+          version: { type: string },
+        }
+    SetupStatus:
+      {
+        type: object,
+        required: [required],
+        properties: { required: { type: boolean } },
+      }
+    SetupRequest:
+      type: object
+      required: [token, username, email, password]
+      properties:
+        {
+          token: { type: string },
+          username: { type: string },
+          email: { type: string },
+          password: { type: string, minLength: 12 },
+        }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties: { username: { type: string }, password: { type: string } }
+    AuthProviders:
+      {
+        type: object,
+        required: [local, oidc],
+        properties: { local: { type: boolean }, oidc: { type: boolean } },
+      }
+    Role: { type: string, enum: [viewer, operator, admin] }
+    User:
+      type: object
+      required:
+        [id, username, email, role, source, disabled, revision, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        source: { type: string, enum: [local, oidc] }
+        disabled: { type: boolean }
+        revision: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    UserCreate:
+      type: object
+      required: [username, email, password, role]
+      properties:
+        {
+          username: { type: string },
+          email: { type: string },
+          password: { type: string, minLength: 12 },
+          role: { $ref: "#/components/schemas/Role" },
+        }
+    UserUpdate:
+      type: object
+      required: [revision, email, role, disabled]
+      properties:
+        {
+          revision: { type: integer, format: int64 },
+          email: { type: string },
+          role: { $ref: "#/components/schemas/Role" },
+          disabled: { type: boolean },
+          password: { type: string, minLength: 12 },
+        }
+    Upstream:
+      type: object
+      required:
+        [
+          id,
+          name,
+          protocol,
+          address,
+          tls_server_name,
+          doh_url,
+          timeout_ms,
+          ca_certificate_pem,
+          position,
+          enabled,
+          revision,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        protocol: { type: string, enum: [udp, tcp, dot, doh] }
+        address: { type: string }
+        tls_server_name: { type: string }
+        doh_url: { type: string }
+        timeout_ms: { type: integer, minimum: 50, maximum: 5000 }
+        ca_certificate_pem: { type: string }
+        position: { type: integer }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
+    UpstreamInput:
+      type: object
+      required: [name, protocol, timeout_ms, enabled, position]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        protocol: { type: string, enum: [udp, tcp, dot, doh] }
+        address: { type: string }
+        tls_server_name: { type: string }
+        doh_url: { type: string }
+        timeout_ms: { type: integer, minimum: 50, maximum: 5000 }
+        ca_certificate_pem: { type: string }
+        position: { type: integer, minimum: 0 }
+        enabled: { type: boolean }
+        revision:
+          { type: integer, format: int64, description: required on update }
+    ResolverSettings:
+      type: object
+      required:
+        [
+          strategy,
+          cache_max_bytes,
+          cache_min_ttl,
+          cache_max_ttl,
+          cache_negative_max_ttl,
+          cache_stale_window,
+          block_mode,
+          block_ttl,
+          otlp_endpoint,
+          trace_sample_one_in,
+          trace_slow_threshold_us,
+          revision,
+        ]
+      properties:
+        strategy: { type: string, enum: [ordered, fastest] }
+        cache_max_bytes: { type: integer, format: int64, minimum: 1048576 }
+        cache_min_ttl: { type: integer, minimum: 0 }
+        cache_max_ttl: { type: integer, minimum: 0 }
+        cache_negative_max_ttl: { type: integer, minimum: 0 }
+        cache_stale_window: { type: integer, minimum: 0 }
+        block_mode: { type: string, enum: [null_ip, nxdomain, refused] }
+        block_ttl: { type: integer, minimum: 0 }
+        otlp_endpoint: { type: string }
+        trace_sample_one_in: { type: integer, minimum: 0 }
+        trace_slow_threshold_us: { type: integer, minimum: 0 }
+        revision: { type: integer, format: int64 }
+    AccessControl:
+      type: object
+      required: [allow_cidrs, revision]
+      properties:
+        {
+          allow_cidrs: { type: array, items: { type: string } },
+          revision: { type: integer, format: int64 },
+        }
+    FilterList:
+      type: object
+      required:
+        [
+          id,
+          name,
+          kind,
+          url,
+          refresh_interval_seconds,
+          enabled,
+          entry_count,
+          invalid_line_count,
+          last_error,
+          stale,
+          revision,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [block, allow] }
+        url: { type: string }
+        refresh_interval_seconds: { type: integer, minimum: 300 }
+        enabled: { type: boolean }
+        current_blob_sha256: { type: [string, "null"] }
+        entry_count: { type: integer }
+        invalid_line_count: { type: integer }
+        last_success_at: { type: [string, "null"], format: date-time }
+        last_attempt_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        stale:
+          {
+            type: boolean,
+            description: last attempt failed or last success older than 2 x refresh interval,
+          }
+        revision: { type: integer, format: int64 }
+    FilterListInput:
+      type: object
+      required: [name, kind, url, refresh_interval_seconds, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        kind: { type: string, enum: [block, allow] }
+        url: { type: string, pattern: "^https?://" }
+        refresh_interval_seconds: { type: integer, minimum: 300 }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
+    Allowlist:
+      type: object
+      required: [domains, revision]
+      properties:
+        {
+          domains: { type: array, items: { type: string } },
+          revision: { type: integer, format: int64 },
+        }
+    Engine:
+      type: object
+      required:
+        [
+          id,
+          node_name,
+          engine_version,
+          enrolled_at,
+          connected,
+          applied_version,
+          rejected_reason,
+          persist_error,
+          version_ahead,
+          status,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        node_name: { type: string }
+        engine_version: { type: string }
+        enrolled_at: { type: string, format: date-time }
+        last_seen_at: { type: [string, "null"], format: date-time }
+        connected: { type: boolean }
+        applied_version: { type: integer, format: int64 }
+        rejected_version: { type: [integer, "null"], format: int64 }
+        rejected_reason: { type: string }
+        persist_error: { type: string }
+        version_ahead: { type: boolean }
+        status:
+          {
+            type: string,
+            enum: [current, behind, rejected, ahead, disconnected],
+          }
+    JoinToken:
+      type: object
+      required: [id, name, created_by, created_at, expires_at, uses]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        uses: { type: integer }
+    JoinTokenCreate:
+      type: object
+      required: [name, ttl_seconds]
+      properties:
+        {
+          name: { type: string },
+          ttl_seconds: { type: integer, minimum: 60, maximum: 31536000 },
+        }
+    JoinTokenCreated:
+      type: object
+      required: [join_token, token]
+      properties:
+        {
+          join_token: { $ref: "#/components/schemas/JoinToken" },
+          token: { type: string },
+        }
+    ConfigVersion:
+      type: object
+      required: [version, created_at, created_by, summary]
+      properties:
+        {
+          version: { type: integer, format: int64 },
+          created_at: { type: string, format: date-time },
+          created_by: { type: string },
+          summary: { type: string },
+        }
+    ApiToken:
+      type: object
+      required: [id, user_id, name, prefix, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    ApiTokenCreate:
+      type: object
+      required: [name, role]
+      properties:
+        {
+          name: { type: string },
+          role: { $ref: "#/components/schemas/Role" },
+          expires_at: { type: [string, "null"], format: date-time },
+        }
+    ApiTokenCreated:
+      type: object
+      required: [api_token, token]
+      properties:
+        {
+          api_token: { $ref: "#/components/schemas/ApiToken" },
+          token: { type: string },
+        }
+    AuditEvent:
+      type: object
+      required:
+        [
+          id,
+          at,
+          actor_type,
+          actor_id,
+          actor_name,
+          action,
+          target_type,
+          target_id,
+          diff,
+        ]
+      properties:
+        id: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        actor_type: { type: string, enum: [user, api_token, system] }
+        actor_id: { type: string }
+        actor_name: { type: string }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string }
+        diff: { type: object, additionalProperties: true }
+        config_version: { type: [integer, "null"], format: int64 }
+    QueryLogRecord:
+      type: object
+      required:
+        [
+          time,
+          client,
+          name,
+          qtype,
+          rcode,
+          cache,
+          filter,
+          upstream,
+          transport,
+          engine_id,
+          duration_us,
+        ]
+      properties:
+        time: { type: string, format: date-time }
+        client: { type: string }
+        name: { type: string }
+        qtype: { type: string }
+        rcode: { type: string }
+        cache: { type: string, enum: [hit, miss, stale, none] }
+        filter: { type: string, enum: [none, blocked, allowed] }
+        upstream: { type: string }
+        transport: { type: string }
+        engine_id: { type: string }
+        duration_us: { type: integer, format: int64 }
+    QueryLogPage:
+      type: object
+      required: [backend, records, next_cursor]
+      properties:
+        {
+          backend: { type: string },
+          records:
+            {
+              type: array,
+              items: { $ref: "#/components/schemas/QueryLogRecord" },
+            },
+          next_cursor: { type: string },
+        }
+    Dashboard:
+      type: object
+      required:
+        [
+          queries_total,
+          blocked_total,
+          qps,
+          cache_hit_ratio,
+          engines_total,
+          engines_connected,
+          upstreams,
+          series,
+        ]
+      properties:
+        queries_total: { type: integer, format: int64 }
+        blocked_total: { type: integer, format: int64 }
+        qps: { type: number }
+        cache_hit_ratio: { type: number }
+        engines_total: { type: integer }
+        engines_connected: { type: integer }
+        upstreams:
+          type: array
+          items:
+            {
+              type: object,
+              required: [name, up_engines, total_engines, rtt_ms],
+              properties:
+                {
+                  name: { type: string },
+                  up_engines: { type: integer },
+                  total_engines: { type: integer },
+                  rtt_ms: { type: number },
+                },
+            }
+        series:
+          type: array
+          items:
+            {
+              type: object,
+              required: [at, qps],
+              properties:
+                {
+                  at: { type: string, format: date-time },
+                  qps: { type: number },
+                },
+            }
+paths:
+  /health:
+    get:
+      {
+        operationId: getHealth,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Health" } },
+                  },
+              },
+            "503":
+              {
+                description: degraded,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Health" } },
+                  },
+              },
+          },
+      }
+  /setup:
+    get:
+      {
+        operationId: getSetupStatus,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/SetupStatus" } },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: completeSetup
+      security: []
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/SetupRequest" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; sets the session cookie,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/LoginRequest" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: logged in; sets the session cookie,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "401": { $ref: "#/components/responses/Error" },
+        }
+  /auth/logout:
+    post:
+      { operationId: logout, responses: { "204": { description: logged out } } }
+  /auth/me:
+    get:
+      {
+        operationId: getCurrentUser,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/User" } },
+                  },
+              },
+            "401": { $ref: "#/components/responses/Error" },
+          },
+      }
+  /auth/providers:
+    get:
+      {
+        operationId: listAuthProviders,
+        security: [],
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/AuthProviders" },
+                      },
+                  },
+              },
+          },
+      }
+  /auth/oidc/start:
+    get:
+      operationId: startOidcLogin
+      security: []
+      parameters: [{ name: return_to, in: query, schema: { type: string } }]
+      responses:
+        {
+          "302": { description: redirect to the identity provider },
+          "503": { $ref: "#/components/responses/Error" },
+        }
+  /auth/oidc/callback:
+    get:
+      operationId: oidcCallback
+      security: []
+      parameters:
+        [
+          { name: state, in: query, required: true, schema: { type: string } },
+          { name: code, in: query, required: true, schema: { type: string } },
+        ]
+      responses:
+        {
+          "302":
+            { description: redirect into the GUI with the session cookie set },
+          "401": { $ref: "#/components/responses/Error" },
+        }
+  /dashboard:
+    get:
+      {
+        operationId: getDashboard,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Dashboard" } },
+                  },
+              },
+          },
+      }
+  /upstreams:
+    get:
+      {
+        operationId: listUpstreams,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/Upstream" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: createUpstream
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UpstreamInput" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Upstream" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /upstreams/{id}:
+    put:
+      operationId: updateUpstream
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UpstreamInput" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Upstream" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+    delete:
+      operationId: deleteUpstream
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /resolver-settings:
+    get:
+      {
+        operationId: getResolverSettings,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          { $ref: "#/components/schemas/ResolverSettings" },
+                      },
+                  },
+              },
+          },
+      }
+    put:
+      operationId: updateResolverSettings
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/ResolverSettings" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/ResolverSettings" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /access-control:
+    get:
+      {
+        operationId: getAccessControl,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/AccessControl" },
+                      },
+                  },
+              },
+          },
+      }
+    put:
+      operationId: updateAccessControl
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/AccessControl" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/AccessControl" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /filter-lists:
+    get:
+      {
+        operationId: listFilterLists,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/FilterList" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: createFilterList
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/FilterListInput" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /filter-lists/{id}:
+    get:
+      operationId: getFilterList
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+    put:
+      operationId: updateFilterList
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/FilterListInput" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+    delete:
+      operationId: deleteFilterList
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /filter-lists/{id}/refresh:
+    post:
+      operationId: refreshFilterList
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: refresh attempted; body is the list after the attempt,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/FilterList" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /allowlist:
+    get:
+      {
+        operationId: getAllowlist,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/Allowlist" } },
+                  },
+              },
+          },
+      }
+    put:
+      operationId: updateAllowlist
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/Allowlist" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Allowlist" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /engines:
+    get:
+      {
+        operationId: listEngines,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/Engine" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+  /engines/{id}:
+    get:
+      operationId: getEngine
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Engine" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+    delete:
+      operationId: deleteEngine
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /join-tokens:
+    get:
+      {
+        operationId: listJoinTokens,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/JoinToken" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: createJoinToken
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/JoinTokenCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; token shown once,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/JoinTokenCreated" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+        }
+  /join-tokens/{id}:
+    delete:
+      operationId: revokeJoinToken
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: revoked },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /config-versions:
+    get:
+      operationId: listConfigVersions
+      parameters:
+        [
+          {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 50 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: "#/components/schemas/ConfigVersion" },
+                        },
+                    },
+                },
+            },
+        }
+  /users:
+    get:
+      {
+        operationId: listUsers,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/User" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: createUser
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UserCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /users/{id}:
+    put:
+      operationId: updateUser
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/UserUpdate" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: updated,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/User" } },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+    delete:
+      operationId: deleteUser
+      parameters:
+        [
+          { $ref: "#/components/parameters/Id" },
+          { $ref: "#/components/parameters/Revision" },
+        ]
+      responses:
+        {
+          "204": { description: deleted },
+          "404": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /api-tokens:
+    get:
+      {
+        operationId: listApiTokens,
+        responses:
+          {
+            "200":
+              {
+                description: ok,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema:
+                          {
+                            type: array,
+                            items: { $ref: "#/components/schemas/ApiToken" },
+                          },
+                      },
+                  },
+              },
+          },
+      }
+    post:
+      operationId: createApiToken
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/ApiTokenCreate" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: created; token shown once,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/ApiTokenCreated" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Error" },
+          "403": { $ref: "#/components/responses/Error" },
+        }
+  /api-tokens/{id}:
+    delete:
+      operationId: revokeApiToken
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        {
+          "204": { description: revoked },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /audit:
+    get:
+      operationId: listAuditEvents
+      parameters:
+        [
+          {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 100 },
+          },
+          {
+            name: before_id,
+            in: query,
+            schema: { type: integer, format: int64 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: "#/components/schemas/AuditEvent" },
+                        },
+                    },
+                },
+            },
+        }
+  /query-log:
+    get:
+      operationId: searchQueryLog
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: client, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: qtype, in: query, schema: { type: string } }
+        - { name: rcode, in: query, schema: { type: string } }
+        - { name: cache, in: query, schema: { type: string } }
+        - { name: filter, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 100 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        {
+          "200":
+            {
+              description: ok,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/QueryLogPage" } },
+                },
+            },
+          "503": { $ref: "#/components/responses/Error" },
+        }

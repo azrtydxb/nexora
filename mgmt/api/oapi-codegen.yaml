@@ -1,0 +1,12 @@
+package: api
+output: ../internal/api/gen.go
+generate:
+  chi-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+output-options:
+  skip-prune: true
+compatibility:
+  # Keep operationIds as written: permissions.go and the embedded-spec test key on them.
+  preserve-original-operation-id-casing-in-embedded-spec: true

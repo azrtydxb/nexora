@@ -5556,7 +5556,12 @@ generate:
   embedded-spec: true
 output-options:
   skip-prune: true
+compatibility:
+  # Keep operationIds as written: permissions.go and the embedded-spec test key on them.
+  preserve-original-operation-id-casing-in-embedded-spec: true
 ```
+
+(Built note: without the `compatibility` option oapi-codegen v2.8.0 upper-cases the first letter of every operationId in the embedded spec, and `TestPermissionsCoverEveryOperation` fails for all operations.)
 
 - [ ] Write the failing test `mgmt/internal/api/api_test.go`:
 
@@ -5785,7 +5790,8 @@ func TestCSRFAndDatabaseDown(t *testing.T) {
 - [ ] Implement `handlers_admin.go`: users CRUD with revision checks (admins cannot delete or demote the last enabled admin -> 409 `conflict`), API tokens (`createApiToken` owner = principal, token returned once; `listApiTokens` all tokens), `listAuditEvents` (`limit`, `before_id`, newest first), `searchQueryLog` -> `d.QueryLog.Search` mapped to `QueryLogPage{backend: d.QueryLog.Name()}`. User and token changes are audited with `auth.WriteAudit` in a plain `store.InTx` (they do not create config versions).
 - [ ] Implement `querylog/backend.go`, `stats/stats.go` and `webui/embed.go` per the interfaces (`webui.Handler` serves files from `dist` with `index.html` fallback for paths without a file extension and `Cache-Control: no-cache` on `index.html`).
 - [ ] Extend `serve` in `main.go`: `auth.NewService(st, cfg.SecureCookies)`; `EnsureSetupToken` and, when `created`, `log.Printf("setup token: %s", token)`; `server.OnStats = func(ctx, id, s) { _ = stats.Record(ctx, st, id, s) }`; `api.NewHandler(api.Deps{..., QueryLog: querylog.Noop{}})` on `cfg.HTTPListen` with `ReadHeaderTimeout: 10 * time.Second`; print `http listening on <addr>`. Add `user create --admin --username U --email E --password-file F` using `auth.CreateUser` + `auth.WriteAudit` with actor `{system, "cli", "cli"}`.
-- [ ] Run `scripts/dev-exec.sh bash -c 'make mgmt-test'` — expect PASS: `ok github.com/piwi3910/nexora/mgmt/internal/api` among all packages.
+- Built notes (reconciled with the code): the strict middleware receives the generated Go method name (`Login`), so `authz` lower-cases its first letter to get the operationId; the generated strict server decodes JSON bodies and path parameters before middleware runs, so a malformed body on a protected route is 400 before 401. Cookie-setting and 302 responses are local types implementing the generated `Visit...Response` interfaces (`sessionResponse`, `redirectResponse`, `logoutResponse`). `jsonOnly` also caps request bodies at 4 MiB; unknown `/api/*` routes return JSON 404; PostgreSQL data exceptions (class 22) and check/not-null violations map to 400 `invalid_request`; `auth.ErrWeakPassword` -> 400, `auth.ErrSetupDone` -> 409, `auth.ErrOIDCUnavailable` -> 503 `unavailable`. `api.Version` (default `dev`, set with `-ldflags -X`) is the health version. Access-control CIDRs are stored masked (`10.1.2.3/8` -> `10.0.0.0/8`); allowlist domains are deduplicated. Every `Mutate` closure locks the row (`select ... for update`) and compares revisions instead of `update ... where revision=$2`. `revokeJoinToken` also runs through `Mutate` (audited like `createJoinToken`); `updateUser` rejects passwords for OIDC users and deletes the user's sessions when disabling it or changing its password; `createApiToken` requires a future `expires_at`. `querylog.Noop.Name()` is `none`. `stats.Record` stamps samples with the database's `now()` (engine clocks may be skewed). `user create` applies migrations first; `serve` stops both listeners on shutdown or when either fails.
+- [ ] Run `scripts/dev-exec.sh bash -c 'make mgmt-test'` — expect PASS: `ok github.com/piwi3910/nexora/mgmt/internal/api` among all packages. (Until Task 21 creates `bench/`, `make mgmt-test` reports `FAIL ./bench/... [setup failed]` after every mgmt package passes.)
 - [ ] Commit: `git add mgmt go.mod go.sum && git commit -m "mgmt: OpenAPI 3.1 spec, strict HTTP API with RBAC, CSRF, optimistic concurrency and audit"`.
 
 ## Task 16: Engine management-plane client and control-plane acceptance tests
