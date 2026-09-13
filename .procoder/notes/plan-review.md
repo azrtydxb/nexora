@@ -12,3 +12,6 @@
 - Task 22: images.yml must push to Nexus (192.168.10.131:5000 via NEXUS_USER/NEXUS_PASSWORD, runners arc-azrtydxb-publish), not ghcr.io. Repo has no GitHub remote yet; kw deploys use scripts/build-image.sh images.
 - Accepted: join tokens reusable until expiry (needed for autoscaled engines; M5 adds group binding).
 - Accepted for M1 only: engine state emptyDir on kw (re-enrolls on restart); M5 moves to hostPath.
+
+## Open follow-ups found during M1 build
+- e2e harness free-port picking can race (DNS fixture once exited at startup during Task 11). Harden before M1 closes: bind listeners on :0 inside the child and report the bound port back (e.g. via a ready line on stdout) instead of pre-picking ports.
