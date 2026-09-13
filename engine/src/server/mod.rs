@@ -2,7 +2,12 @@
 //! inline by the listeners, miss resolution in `spawn_local` tasks, and the
 //! per-core worker threads.
 
+pub mod proxy;
+pub mod stream;
 pub mod tcp;
+#[cfg(test)]
+pub mod testutil;
+pub mod tls;
 pub mod udp;
 
 use crate::bootstrap::Bootstrap;
@@ -78,6 +83,42 @@ impl WorkerCtx {
 
     fn counters(&self) -> &WorkerCounters {
         &self.shared.metrics.workers[self.index]
+    }
+}
+
+/// Where a query came from, as the listener resolved it (PROXY header source included).
+#[derive(Clone, Copy, Debug)]
+pub struct ClientInfo {
+    pub addr: SocketAddr,
+    pub transport: Transport,
+}
+
+/// The transport-agnostic answer path every stream, HTTP and QUIC listener feeds.
+// Futures stay on the per-core `LocalSet`, so no `Send` bound is wanted on them.
+#[allow(async_fn_in_trait)]
+pub trait Answerer {
+    /// Clears `out` and writes the full response; leaves `out` empty when the
+    /// message must be dropped.
+    async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>);
+}
+
+/// The M1 pipeline (`handle_packet`, then `resolve_miss` on a miss) behind [`Answerer`].
+pub struct WorkerAnswerer(pub Rc<WorkerCtx>);
+
+impl Answerer for WorkerAnswerer {
+    async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>) {
+        let rt = self.0.shared.runtime.load_full();
+        out.clear();
+        out.resize(65535, 0);
+        match handle_packet(&self.0, &rt, query, client.addr, client.transport, out) {
+            FastOutcome::Reply(n) => out.truncate(n),
+            FastOutcome::Drop => out.clear(),
+            FastOutcome::Miss(job) => {
+                let reply = resolve_miss(self.0.clone(), rt, job).await;
+                out.clear();
+                out.extend_from_slice(&reply);
+            }
+        }
     }
 }
 

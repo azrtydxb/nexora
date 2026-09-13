@@ -1,5 +1,6 @@
 use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
+use nexora_engine::server::tls::CertStore;
 use nexora_engine::server::{self, Shared};
 use nexora_engine::snapshot::{self, ApplyOutcome, DirBlobs};
 use nexora_engine::telemetry::{metrics, otlp};
@@ -28,11 +29,13 @@ fn main() -> ExitCode {
     clock::start_ticker();
     let shared = Shared::new(boot.worker_count());
     shared.node_name.store(Arc::new(boot.node_name.clone()));
+    let cert_store = Arc::new(CertStore::new());
 
     if boot.is_standalone() {
         if !apply_standalone(&shared, &boot) {
             return ExitCode::FAILURE;
         }
+        load_standalone_tls(&cert_store, &boot);
     } else {
         match snapshot::load(&boot.state_dir) {
             Ok(Some(s)) => {
@@ -92,10 +95,13 @@ fn main() -> ExitCode {
             Ok(mut hangup) => {
                 control.spawn(async move {
                     while hangup.recv().await.is_some() {
-                        let (shared, boot) = (shared.clone(), boot.clone());
-                        let _ =
-                            tokio::task::spawn_blocking(move || apply_standalone(&shared, &boot))
-                                .await;
+                        let (shared, boot, cert_store) =
+                            (shared.clone(), boot.clone(), cert_store.clone());
+                        let _ = tokio::task::spawn_blocking(move || {
+                            apply_standalone(&shared, &boot);
+                            load_standalone_tls(&cert_store, &boot);
+                        })
+                        .await;
                     }
                 });
             }
@@ -103,7 +109,11 @@ fn main() -> ExitCode {
         }
     } else {
         // The persisted snapshot (if any) is already served; the control stream only updates it.
-        control.spawn(nexora_engine::control::run(shared.clone(), boot.clone()));
+        control.spawn(nexora_engine::control::run(
+            shared.clone(),
+            boot.clone(),
+            cert_store.clone(),
+        ));
     }
 
     for w in workers.handles {
@@ -158,6 +168,30 @@ fn apply_standalone(shared: &Arc<Shared>, boot: &Bootstrap) -> bool {
         },
     };
     report(shared, outcome)
+}
+
+/// Installs `tls_cert_file`/`tls_key_file` when set; a bad certificate leaves the
+/// previous one (if any) serving and UDP/TCP unaffected.
+fn load_standalone_tls(cert_store: &CertStore, boot: &Bootstrap) {
+    if boot.tls_cert_file.is_empty() {
+        return;
+    }
+    let installed = std::fs::read(&boot.tls_cert_file)
+        .map_err(|e| format!("read {}: {e}", boot.tls_cert_file))
+        .and_then(|chain| {
+            let mut key = std::fs::read(&boot.tls_key_file)
+                .map_err(|e| format!("read {}: {e}", boot.tls_key_file))?;
+            let r = cert_store.install_pem(&chain, &key, clock::unix_now());
+            zeroize::Zeroize::zeroize(&mut key);
+            r
+        });
+    match installed {
+        Ok(info) => eprintln!(
+            "nexora-engine: standalone TLS certificate {} installed",
+            info.fingerprint_sha256
+        ),
+        Err(e) => eprintln!("nexora-engine: standalone TLS certificate rejected: {e}"),
+    }
 }
 
 fn report(shared: &Shared, outcome: ApplyOutcome) -> bool {

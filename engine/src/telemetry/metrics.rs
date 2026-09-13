@@ -21,7 +21,7 @@ use std::array;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 pub const DURATION_BOUNDS_US: [u64; 15] = [
@@ -30,12 +30,18 @@ pub const DURATION_BOUNDS_US: [u64; 15] = [
 ];
 /// Rcodes 0..=5, then "other".
 pub const RCODE_SLOTS: usize = 7;
-pub const TRANSPORT_SLOTS: usize = 2;
+pub const TRANSPORT_SLOTS: usize = 5;
 /// The `rcode` label per slot of `WorkerCounters::queries`.
 pub const RCODE_LABELS: [&str; RCODE_SLOTS] = [
     "NOERROR", "FORMERR", "SERVFAIL", "NXDOMAIN", "NOTIMP", "REFUSED", "other",
 ];
-const TRANSPORTS: [Transport; TRANSPORT_SLOTS] = [Transport::Udp, Transport::Tcp];
+const TRANSPORTS: [Transport; TRANSPORT_SLOTS] = [
+    Transport::Udp,
+    Transport::Tcp,
+    Transport::Dot,
+    Transport::Doh,
+    Transport::Doq,
+];
 const SIGNALS: [(Signal, &str); 3] = [
     (Signal::Logs, "logs"),
     (Signal::Traces, "traces"),
@@ -75,12 +81,8 @@ impl WorkerCounters {
     }
 
     pub fn observe(&self, t: Transport, rcode: u8, duration_us: u64) {
-        let transport = match t {
-            Transport::Udp => 0,
-            Transport::Tcp => 1,
-        };
         let slot = usize::from(rcode).min(RCODE_SLOTS - 1);
-        self.queries[transport][slot].fetch_add(1, Ordering::Relaxed);
+        self.queries[t.slot()][slot].fetch_add(1, Ordering::Relaxed);
         let bucket = DURATION_BOUNDS_US
             .iter()
             .position(|&b| duration_us <= b)
@@ -88,6 +90,52 @@ impl WorkerCounters {
         self.duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
         self.duration_sum_us
             .fetch_add(duration_us, Ordering::Relaxed);
+    }
+}
+
+/// Process-wide counters of the encrypted client transports.
+pub struct EncryptedMetrics {
+    /// Unix seconds; 0 while no certificate was ever installed.
+    tls_not_after: AtomicI64,
+    /// Index 0 `applied`, 1 `rejected`.
+    tls_updates: [AtomicU64; 2],
+}
+
+pub static ENCRYPTED: EncryptedMetrics = EncryptedMetrics {
+    tls_not_after: AtomicI64::new(0),
+    tls_updates: [AtomicU64::new(0), AtomicU64::new(0)],
+};
+
+impl EncryptedMetrics {
+    pub fn set_tls_not_after(&self, v: i64) {
+        self.tls_not_after.store(v, Ordering::Relaxed);
+    }
+
+    /// Counts one `TlsMaterial` push by outcome.
+    pub fn tls_update(&self, applied: bool) {
+        self.tls_updates[usize::from(!applied)].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn register(&self, reg: &mut Registry) {
+        let not_after = self.tls_not_after.load(Ordering::Relaxed);
+        if not_after != 0 {
+            reg.register(
+                "nexora_tls_certificate_not_after_seconds",
+                "Expiry of the installed DNS serving certificate",
+                ConstGauge::new(not_after),
+            );
+        }
+        let updates = Family::<Labels, PromCounter>::default();
+        for (i, result) in ["applied", "rejected"].into_iter().enumerate() {
+            updates
+                .get_or_create(&vec![("result", result.to_owned())])
+                .inc_by(self.tls_updates[i].load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_tls_material_updates",
+            "DNS serving certificates received over the control stream",
+            updates,
+        );
     }
 }
 
@@ -326,6 +374,8 @@ impl Metrics {
             "1 while the management control stream is up",
             ConstGauge::new(i64::from(self.control_connected.load(Ordering::Relaxed))),
         );
+
+        ENCRYPTED.register(&mut reg);
 
         let mut out = String::with_capacity(4096);
         text::encode(&mut out, &reg).expect("writing to a String cannot fail");

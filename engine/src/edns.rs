@@ -19,6 +19,9 @@ const UDP_MAX_LIMIT: usize = 1232;
 pub enum Transport {
     Udp,
     Tcp,
+    Dot,
+    Doh,
+    Doq,
 }
 
 impl Transport {
@@ -26,7 +29,15 @@ impl Transport {
         match self {
             Transport::Udp => "udp",
             Transport::Tcp => "tcp",
+            Transport::Dot => "dot",
+            Transport::Doh => "doh",
+            Transport::Doq => "doq",
         }
+    }
+
+    /// The index of this transport in per-transport counter arrays.
+    pub const fn slot(self) -> usize {
+        self as usize
     }
 }
 
@@ -105,9 +116,9 @@ pub fn parse_opt(rr: &[u8]) -> Result<(OptView<'_>, usize), ParseError> {
 /// The largest reply the client accepts over `transport`.
 pub fn reply_limit(opt: Option<&OptView<'_>>, transport: Transport) -> usize {
     match (transport, opt) {
-        (Transport::Tcp, _) => 65535,
         (Transport::Udp, None) => UDP_NO_EDNS_LIMIT,
         (Transport::Udp, Some(o)) => (o.udp_size as usize).clamp(UDP_NO_EDNS_LIMIT, UDP_MAX_LIMIT),
+        (Transport::Tcp | Transport::Dot | Transport::Doh | Transport::Doq, _) => 65535,
     }
 }
 
@@ -187,7 +198,15 @@ mod tests {
             ..big
         };
         assert_eq!(reply_limit(Some(&mid), Transport::Udp), 1000);
-        assert_eq!(reply_limit(None, Transport::Tcp), 65535);
+        for t in [
+            Transport::Tcp,
+            Transport::Dot,
+            Transport::Doh,
+            Transport::Doq,
+        ] {
+            assert_eq!(reply_limit(None, t), 65535);
+            assert_eq!(reply_limit(Some(&small), t), 65535);
+        }
     }
 
     #[test]

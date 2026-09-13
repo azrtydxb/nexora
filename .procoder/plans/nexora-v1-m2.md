@@ -204,14 +204,14 @@ message TlsMaterialResult {
 
 Files:
 
-- `engine/Cargo.toml` — no change: M1 already depends on `ipnet = "2.12"` (locked 2.12.2).
+- `engine/Cargo.toml` — M1 already depends on `ipnet = "2.12"` (locked 2.12.2); the dev-dependency `tokio = { version = "=1.53", features = ["test-util"] }` is added for the paused-clock stream test (`start_paused`, `time::advance`).
 - `engine/src/bootstrap.rs` — M1 `Bootstrap` gains the M2 listener keys and their validation.
 - `engine/src/edns.rs` — M1 `Transport` gains `Dot`, `Doh`, `Doq`.
 - `engine/src/telemetry/metrics.rs` — `TRANSPORT_SLOTS` becomes 5, the `TRANSPORTS` array gains `Dot`, `Doh`, `Doq`, and `WorkerCounters::observe` indexes with `Transport::slot`.
 - `engine/src/server/mod.rs` — `ClientInfo`; trait `Answerer`; `WorkerAnswerer` (M1 pipeline behind `Answerer`); module declarations `stream`, `proxy`, `testutil`.
 - `engine/src/server/proxy.rs` — PROXY protocol v2 header parser and trusted-peer policy.
 - `engine/src/server/stream.rs` — length-prefixed pipelined DNS stream server generic over the I/O type.
-- `engine/src/server/tcp.rs` — M1 `run_tcp` spawns `stream::serve_dns_stream` instead of M1's private `serve_connection`, which is deleted.
+- `engine/src/server/tcp.rs` — M1 `run_tcp` spawns `stream::serve_dns_stream` (one `Rc<WorkerAnswerer>` per listener, cloned per connection) instead of M1's private `serve_connection`, which is deleted.
 - `engine/src/server/testutil.rs` — `#[cfg(test)]` `EchoAnswerer` and `test_query` shared by Tasks 2, 4, 5.
 
 Interfaces:
@@ -553,7 +553,10 @@ where
         }
         let _ = wr.shutdown().await;
     });
-    let permits = Rc::new(tokio::sync::Semaphore::new(MAX_PIPELINED));
+    // As built: `Arc` (acquire_owned needs it); writer write/flush and the permit wait are
+    // bounded by `idle`, and the reader stops once the writer has closed, so a client that
+    // never reads its replies cannot hold the connection open (M1 bounded writes the same way).
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_PIPELINED));
     loop {
         let mut len = [0u8; 2];
         match tokio::time::timeout(idle, rd.read_exact(&mut len)).await {
@@ -613,11 +616,12 @@ with `fn default_doh_path() -> String { "/dns-query".into() }`, and extend `boot
 
 Files:
 
-- `engine/Cargo.toml` — add `x509-parser = "0.18.1"`, `zeroize = "1.9.0"`, `aws-lc-rs = "1.18.1"` (all already in `Cargo.lock`; aws-lc-rs is compiled in through M1's reqwest, while M1's own TLS code uses the ring provider); `rcgen = { version = "0.14", features = ["pem", "x509-parser"] }` is already an M1 dependency (locked 0.14.10), so the tests use it without a dev-dependency.
+- `engine/Cargo.toml` — add `x509-parser = "0.18.1"`, `zeroize = "1.9.0"` (both already in `Cargo.lock`) and the rustls feature `aws_lc_rs` (aws-lc-rs is compiled in through M1's reqwest, while M1's own TLS code uses the ring provider; no direct aws-lc-rs dependency — fingerprints use M1's `sha2` + `hex`); `rcgen = { version = "0.14", features = ["pem", "x509-parser"] }` is already an M1 dependency (locked 0.14.10), so the tests use it without a dev-dependency.
 - `engine/src/server/tls.rs` — `CertStore` (in-memory certificate, `ResolvesServerCert`), rustls server config builders, PEM installation.
-- `engine/src/server/mod.rs` — `pub mod tls;`; `spawn_workers(shared: Arc<Shared>, boot: &Bootstrap)` gains a third parameter `cert_store: Arc<CertStore>`.
+- `engine/src/server/mod.rs` — `pub mod tls;`. (As built: `spawn_workers` is unchanged here; Task 4 adds its third parameter `cert_store: Arc<CertStore>` together with the listeners that use it.)
 - `engine/src/control.rs` — `run(shared, boot)` gains a third parameter `cert_store: Arc<CertStore>` passed to `session`; handle `TlsMaterial`, reply `TlsMaterialResult`, send `Hello.tls_fingerprint_sha256` (replacing Task 1's placeholders).
-- `engine/src/main.rs` — create one `Arc<CertStore>` per process and pass it to `server::spawn_workers` and `control::run`; in standalone mode load `tls_cert_file`/`tls_key_file` at start and on `SIGHUP`.
+- `engine/src/main.rs` — create one `Arc<CertStore>` per process and pass it to `control::run` (Task 4 also passes it to `server::spawn_workers`); in standalone mode load `tls_cert_file`/`tls_key_file` at start and on `SIGHUP` (`load_standalone_tls`).
+- `engine/src/clock.rs` — `pub fn unix_now() -> i64` (wall-clock seconds for certificate expiry checks).
 - `engine/src/telemetry/metrics.rs` — `nexora_tls_certificate_not_after_seconds`, `nexora_tls_material_updates_total{result}`.
 
 Interfaces:
@@ -717,7 +721,7 @@ mod tests {
 ```
 
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib server::tls` — expect FAIL with "cannot find type `CertStore` in this scope".
-- [ ] Implement `engine/src/server/tls.rs`:
+- [ ] Implement `engine/src/server/tls.rs` (as built: the fingerprint is `hex::encode(sha2::Sha256::digest(leaf))` instead of the aws-lc-rs digest and `hex_lower`, `Installed` keeps no unused `not_after_unix`, and `CertStore` also implements `Default`; the unit test additionally asserts the two TLS metric lines in `Metrics::render`):
 
 ```rust
 use crate::proto;
@@ -814,9 +818,9 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 ```
 
-- [ ] Add to `engine/src/telemetry/metrics.rs` the static `ENCRYPTED: EncryptedMetrics` (full struct written in Task 4) with, for this task, `tls_not_after: AtomicI64`, `tls_updates: [AtomicU64; 2]` (index 0 `applied`, 1 `rejected`), `pub fn set_tls_not_after(&self, v: i64)`, `pub fn tls_update(&self, applied: bool)`, registered in M1's `Metrics::render` (prometheus-client, names registered without the `_total` suffix as M1 does) so the scrape shows `nexora_tls_certificate_not_after_seconds <v>` (omitted while 0) and `nexora_tls_material_updates_total{result="applied"} <n>` / `{result="rejected"} <n>`.
+- [ ] Add to `engine/src/telemetry/metrics.rs` the static `ENCRYPTED: EncryptedMetrics` (full struct written in Task 4) with, for this task, `tls_not_after: AtomicI64`, `tls_updates: [AtomicU64; 2]` (index 0 `applied`, 1 `rejected`), `pub fn set_tls_not_after(&self, v: i64)`, `pub fn tls_update(&self, applied: bool)`, registered in M1's `Metrics::render` (through `EncryptedMetrics::register(&self, reg: &mut Registry)`) (prometheus-client, names registered without the `_total` suffix as M1 does) so the scrape shows `nexora_tls_certificate_not_after_seconds <v>` (omitted while 0) and `nexora_tls_material_updates_total{result="applied"} <n>` / `{result="rejected"} <n>`.
 - [ ] In `engine/src/control.rs` `session`: the `Hello` sent on every (re)connect sets `tls_fingerprint_sha256: cert_store.fingerprint().unwrap_or_default()`; the `Some(ServerMsg::TlsMaterial(m))` arm (replacing Task 1's no-op arm) calls `cert_store.install_material(m, now_unix)` on the control runtime and sends `EngineMessage { msg: Some(Msg::TlsMaterialResult(result)) }` on `tx`; the key bytes are never logged (log only `fingerprint_sha256`, `applied`, `error`) and never passed to `snapshot.rs`.
-- [ ] In `engine/src/main.rs`: construct `let cert_store = Arc::new(server::tls::CertStore::new());` before `server::spawn_workers(shared.clone(), &boot, cert_store.clone())` and pass a clone to `control::run(shared.clone(), boot.clone(), cert_store.clone())`; in standalone mode with `tls_cert_file` set, read both files, call `install_pem`, and on failure log `nexora-engine: standalone TLS certificate rejected: <error>` (M1's `eprintln!` prefix) and continue serving UDP/TCP; repeat inside the `SIGHUP` `spawn_blocking` closure after `apply_standalone`.
+- [ ] In `engine/src/main.rs`: construct `let cert_store = Arc::new(server::tls::CertStore::new());` (Task 4 passes it to `server::spawn_workers(shared.clone(), &boot, cert_store.clone())`) and pass a clone to `control::run(shared.clone(), boot.clone(), cert_store.clone())`; in standalone mode with `tls_cert_file` set, read both files, call `install_pem`, and on failure log `nexora-engine: standalone TLS certificate rejected: <error>` (M1's `eprintln!` prefix) and continue serving UDP/TCP; repeat inside the `SIGHUP` `spawn_blocking` closure after `apply_standalone`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib server::tls` — expect PASS (2 tests).
 - [ ] Run `scripts/dev-exec.sh sh -c 'cargo test --locked -p nexora-engine && grep -rn "private_key_pem" engine/src/snapshot.rs; test $? -eq 1'` — expect all tests PASS and the grep to find nothing (exit status check succeeds).
 - [ ] Commit: `git add engine && git commit -m "feat(engine): in-memory DNS TLS certificate store with rotation"`.
@@ -1131,7 +1135,7 @@ let _ = builder.serve_connection(hyper_util::rt::TokioIo::new(tls), service).awa
 
 The client address is the TCP peer (or the PROXY v2 source); `X-Forwarded-For` and `Forwarded` headers are ignored.
 
-- [ ] In `server::spawn_workers`: before the worker threads start, build once `dot_acceptor = TlsAcceptor::from(tls::stream_server_config(cert_store.clone(), &[b"dot"]))` and `doh_acceptor = TlsAcceptor::from(tls::stream_server_config(cert_store.clone(), &[b"h2", b"http/1.1"]))`. In M1's `bind_all`, bind every `listen_dot` and `listen_doh` address per worker with `tcp::bind_tcp(addr)` exactly like `listen_tcp` (port 0 fixed by the first worker's socket), wrapping a failure as `std::io::Error::new(e.kind(), format!("bind dot {addr}: {e}"))` / `format!("bind doh {addr}: {e}")` (M1's `main` prints it as a startup error `nexora-engine: listen: ...` and exits), and return the bound addresses in new `Workers.dot` / `Workers.doh` fields. Move each worker's std listeners into its thread and, inside its `LocalSet`, convert with `tokio::net::TcpListener::from_std` and `spawn_local(dot::run_dot(listener, dot_acceptor.clone(), cert_store.clone(), Rc::new(WorkerAnswerer(ctx.clone())), proxy))` / `spawn_local(doh::run_doh(listener, doh_acceptor.clone(), cert_store.clone(), Rc::new(WorkerAnswerer(ctx.clone())), proxy, Rc::from(boot.doh_path.as_str())))`, passing `Some(Rc::new(ProxyPolicy::new(&boot.proxy_protocol_trusted_cidrs)?))` (built before the threads start; `bootstrap::load` already validated it) only when the matching `proxy_protocol_*` flag is true. In `main.rs` `ready_line`, append ` dot=<addrs>` and ` doh=<addrs>` (comma-joined like `udp`/`tcp`) when the lists are non-empty.
+- [ ] Give `server::spawn_workers` its third parameter `cert_store: Arc<CertStore>` (deferred from Task 3; update the callers in `main.rs`, `engine/tests/server_pipeline.rs` and `engine/tests/listen_port_zero.rs`). In `server::spawn_workers`: before the worker threads start, build once `dot_acceptor = TlsAcceptor::from(tls::stream_server_config(cert_store.clone(), &[b"dot"]))` and `doh_acceptor = TlsAcceptor::from(tls::stream_server_config(cert_store.clone(), &[b"h2", b"http/1.1"]))`. In M1's `bind_all`, bind every `listen_dot` and `listen_doh` address per worker with `tcp::bind_tcp(addr)` exactly like `listen_tcp` (port 0 fixed by the first worker's socket), wrapping a failure as `std::io::Error::new(e.kind(), format!("bind dot {addr}: {e}"))` / `format!("bind doh {addr}: {e}")` (M1's `main` prints it as a startup error `nexora-engine: listen: ...` and exits), and return the bound addresses in new `Workers.dot` / `Workers.doh` fields. Move each worker's std listeners into its thread and, inside its `LocalSet`, convert with `tokio::net::TcpListener::from_std` and `spawn_local(dot::run_dot(listener, dot_acceptor.clone(), cert_store.clone(), Rc::new(WorkerAnswerer(ctx.clone())), proxy))` / `spawn_local(doh::run_doh(listener, doh_acceptor.clone(), cert_store.clone(), Rc::new(WorkerAnswerer(ctx.clone())), proxy, Rc::from(boot.doh_path.as_str())))`, passing `Some(Rc::new(ProxyPolicy::new(&boot.proxy_protocol_trusted_cidrs)?))` (built before the threads start; `bootstrap::load` already validated it) only when the matching `proxy_protocol_*` flag is true. In `main.rs` `ready_line`, append ` dot=<addrs>` and ` doh=<addrs>` (comma-joined like `udp`/`tcp`) when the lists are non-empty.
 - [ ] Add a `#[tokio::test(flavor = "current_thread")]` test `dot_end_to_end_with_proxy_header` in `engine/src/server/dot.rs` that runs inside a `LocalSet`: installs an rcgen self-signed cert for `dns.test` in a `CertStore`, binds `127.0.0.1:0`, spawns `run_dot` with `EchoAnswerer` and `ProxyPolicy::new(&["127.0.0.0/8".into()])`, connects with a tokio-rustls client trusting that cert, first writes the PROXY v2 bytes `SIGNATURE ++ [0x21, 0x11, 0x00, 0x0c, 198, 51, 100, 23, 127, 0, 0, 1, 0x9c, 0x40, 0x03, 0x55]` on the raw TCP stream before the TLS handshake, sends `test_query(0x4242, "example.com.")` length-prefixed, and asserts the reply has id `0x4242` and `answers[1].data == RData::A(A(Ipv4Addr::new(198, 51, 100, 23)))`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib server::` — expect PASS for `server::dot`, `server::doh`, `server::stream`, `server::proxy`, `server::tls`.
 - [ ] Commit: `git add engine && git commit -m "feat(engine): DoT and DoH (HTTP/2, GET+POST) listeners"`.

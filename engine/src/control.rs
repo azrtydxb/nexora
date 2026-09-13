@@ -9,6 +9,7 @@ use crate::proto::{
     Applied, ConfigSnapshot, EngineMessage, EnrollRequest, GetBlobRequest, Hello, Rejected,
 };
 use crate::server::Shared;
+use crate::server::tls::CertStore;
 use crate::snapshot::{self, ApplyOutcome, DirBlobs, SnapshotError, verify_blob};
 use rand::RngExt;
 use rustls::client::WebPkiServerVerifier;
@@ -393,12 +394,12 @@ pub async fn fetch_blobs(
 }
 
 /// Enrolls when needed, then keeps a control stream to one of `management_urls` forever.
-pub async fn run(shared: Arc<Shared>, boot: Bootstrap) {
+pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore>) {
     let identity = obtain_identity(&boot).await;
     shared.engine_id.store(Arc::new(identity.engine_id.clone()));
     let mut attempt = 0;
     for url in boot.management_urls.iter().cycle() {
-        let err = session(&shared, &boot, &identity, url, &mut attempt).await;
+        let err = session(&shared, &boot, &cert_store, &identity, url, &mut attempt).await;
         shared
             .metrics
             .control_connected
@@ -456,6 +457,7 @@ fn stream_closed() -> ControlError {
 async fn session(
     shared: &Arc<Shared>,
     boot: &Bootstrap,
+    cert_store: &CertStore,
     id: &Identity,
     url: &str,
     attempt: &mut u32,
@@ -471,8 +473,7 @@ async fn session(
         node_name: boot.node_name.clone(),
         applied_version: shared.runtime.load().version,
         engine_version: ENGINE_VERSION.to_owned(),
-        // M2 Task 3 reports the installed DNS serving certificate here.
-        tls_fingerprint_sha256: String::new(),
+        tls_fingerprint_sha256: cert_store.fingerprint().unwrap_or_default(),
     });
     if tx.send(EngineMessage { msg: Some(hello) }).await.is_err() {
         return stream_closed();
@@ -527,8 +528,21 @@ async fn session(
                 v.server_version,
                 shared.runtime.load().version
             ),
-            // M2 Task 3 installs the certificate and replies with TlsMaterialResult.
-            Some(ServerMsg::TlsMaterial(_)) | None => {}
+            Some(ServerMsg::TlsMaterial(m)) => {
+                // The key bytes are never logged and never reach the persisted snapshot.
+                let result = cert_store.install_material(m, crate::clock::unix_now());
+                eprintln!(
+                    "nexora-engine: tls material {} applied={} error={:?}",
+                    result.fingerprint_sha256, result.applied, result.error
+                );
+                let reply = EngineMessage {
+                    msg: Some(Msg::TlsMaterialResult(result)),
+                };
+                if tx.send(reply).await.is_err() {
+                    break stream_closed();
+                }
+            }
+            None => {}
         }
     };
     ticker.abort();

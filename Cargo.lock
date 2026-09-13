@@ -1210,6 +1210,8 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "webpki-roots",
+ "x509-parser",
+ "zeroize",
  "zstd",
 ]
 

@@ -19,7 +19,7 @@ socket2 = { version = "0.6", features = ["all"] }
 tonic = { version = "=0.14.6", features = ["tls-ring"] }
 tonic-prost = "0.14"
 prost = "=0.14.4"
-rustls = { version = "=0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "=0.23.44", default-features = false, features = ["ring", "aws_lc_rs", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2"] }
 opentelemetry-proto = { version = "0.32", features = ["gen-tonic", "logs", "trace", "metrics"] }
@@ -51,9 +51,12 @@ sha2 = "0.11"
 hex = "0.4"
 pem = "4"
 tokio-stream = "0.1"
+x509-parser = "0.18.1"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "=1.53", features = ["test-util"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
 

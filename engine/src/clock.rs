@@ -29,6 +29,13 @@ pub fn now_micros() -> u64 {
     start().elapsed().as_micros() as u64
 }
 
+/// Wall-clock Unix seconds (0 if the system clock is before 1970); not for the hot path.
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
 /// Starts the `nexora-clock` thread updating `now_secs` every 100 ms; later calls do nothing.
 pub fn start_ticker() {
     TICKER.call_once(|| {
