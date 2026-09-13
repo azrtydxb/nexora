@@ -248,7 +248,8 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   sent to `telemetry.otlp_endpoint` over gRPC. Attributes:
   `client.address`, `dns.question.name`, `dns.question.type`,
   `dns.response.code`, `nexora.cache` (`hit|miss|stale`), `nexora.filter`
-  (`none|blocked|allowed`), `nexora.upstream`, `nexora.duration_us`,
+  (`none|blocked|allowed|rewritten`), `nexora.policy.group` (policy group id,
+  empty for global clients), `nexora.upstream`, `nexora.duration_us`,
   `nexora.transport`, `nexora.engine.id`. Resource `service.name=nexora-engine`.
 - Traces: a query becomes a trace when `trace_sample_one_in` selects it, or
   its duration exceeds `trace_slow_threshold_us`, or its rcode is SERVFAIL.

@@ -1,7 +1,7 @@
 //! Per-worker UDP listener: `recvmmsg` a batch, answer what the fast path can
 //! inline, flush those replies with one `sendmmsg`, and spawn a task per miss.
 
-use super::{FastOutcome, MissJob, WorkerCtx, handle_packet, resolve_miss};
+use super::{FastOutcome, MissJob, WorkerCtx, handle_packet, resolve_miss, rewrite};
 use crate::edns::Transport;
 use crate::runtime::Runtime;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -136,6 +136,10 @@ pub async fn run_udp(ctx: Rc<WorkerCtx>, sock: UdpSocket) {
                     let rt = ctx.shared.runtime.load_full();
                     tokio::task::spawn_local(answer_miss(ctx.clone(), fd.clone(), rt, job));
                 }
+                FastOutcome::Rewrite(job) => {
+                    let rt = ctx.shared.runtime.load_full();
+                    tokio::task::spawn_local(answer_rewrite(ctx.clone(), fd.clone(), rt, job));
+                }
             }
         }
         if queued > 0 {
@@ -218,6 +222,22 @@ async fn answer_miss(
 ) {
     let client = job.client;
     let reply = resolve_miss(ctx, rt, job).await;
+    send_reply(&fd, &reply, client).await;
+}
+
+async fn answer_rewrite(
+    ctx: Rc<WorkerCtx>,
+    fd: Rc<AsyncFd<UdpSocket>>,
+    rt: Arc<Runtime>,
+    job: rewrite::RewriteJob,
+) {
+    let client = job.client;
+    let reply = rewrite::run_rewrite_job(ctx, rt, job).await;
+    send_reply(&fd, &reply, client).await;
+}
+
+/// Sends one reply built off the fast path; an empty reply sends nothing.
+async fn send_reply(fd: &AsyncFd<UdpSocket>, reply: &[u8], client: SocketAddr) {
     if reply.is_empty() {
         return;
     }
@@ -227,7 +247,7 @@ async fn answer_miss(
         };
         // Any error other than would-block drops the reply.
         if guard
-            .try_io(|inner| inner.get_ref().send_to(&reply, client))
+            .try_io(|inner| inner.get_ref().send_to(reply, client))
             .is_ok()
         {
             return;

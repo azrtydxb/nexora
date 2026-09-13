@@ -2,7 +2,7 @@
 
 use crate::acl::Acl;
 use crate::cache::{Cache, CacheSettings};
-use crate::filter::{self, BlockMode, FilterSet, ListStats};
+use crate::filter::{self, BlockMode, FilterSet, ListStats, PolicyTable};
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
 use crate::snapshot::{BlobSource, SnapshotError};
 use crate::upstream::{Protocol, Strategy, UpstreamSet, UpstreamSpec};
@@ -22,8 +22,12 @@ pub struct TelemetrySettings {
 pub struct Runtime {
     pub version: u64,
     pub acl: Acl,
-    pub filter: FilterSet,
-    /// `b:<sha256>` per blocklist then `a:<sha256>` per allowlist.
+    /// The global selection (`FilterConfig`), for clients in no policy group.
+    pub filter: Arc<FilterSet>,
+    /// Per-client policy groups and rewrites; selects `filter` for global clients.
+    pub policy: PolicyTable,
+    /// `b:<sha256>` per blocklist, `a:<sha256>` per allowlist, then `g:<key>`
+    /// per policy-group cache partition.
     pub filter_hashes: Vec<String>,
     pub filter_stats: ListStats,
     pub cache: Arc<Cache>,
@@ -34,10 +38,12 @@ pub struct Runtime {
 impl Runtime {
     /// Before any snapshot: every client is REFUSED and nothing is forwarded.
     pub fn initial() -> Runtime {
+        let filter = Arc::new(FilterSet::empty());
         Runtime {
             version: 0,
             acl: Acl::parse(&[]).expect("empty acl"),
-            filter: FilterSet::empty(),
+            filter: filter.clone(),
+            policy: PolicyTable::global_only(filter),
             filter_hashes: Vec::new(),
             filter_stats: ListStats::default(),
             cache: Arc::new(Cache::new(CacheSettings {
@@ -112,16 +118,21 @@ impl Runtime {
             mode,
             f.block_ttl,
         );
+        let filter = Arc::new(filter);
+        let policy =
+            PolicyTable::build(s, filter.clone(), blobs).map_err(SnapshotError::Invalid)?;
         let filter_hashes: Vec<String> = f
             .blocklists
             .iter()
             .map(|b| format!("b:{}", b.sha256))
             .chain(f.allowlists.iter().map(|a| format!("a:{}", a.sha256)))
+            .chain(policy.partition_keys().iter().map(|k| format!("g:{k}")))
             .collect();
         if let Some(p) = reused
             && p.filter_hashes != filter_hashes
         {
-            // Cached answers must be re-filtered: CNAME cloaking is checked on the miss path.
+            // Cached answers must be re-filtered: CNAME cloaking is checked on the
+            // miss path, per cache partition.
             cache.clear();
         }
 
@@ -130,6 +141,7 @@ impl Runtime {
             version: s.version,
             acl,
             filter,
+            policy,
             filter_hashes,
             filter_stats,
             cache,

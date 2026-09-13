@@ -29,6 +29,7 @@ fn record(rcode: u8) -> QueryRecord {
         filter: FilterOutcome::None,
         upstream: 0,
         config_version: 1,
+        policy_group: u16::MAX,
         transport: Transport::Udp,
         filter_us: 3,
         cache_us: 5,
@@ -120,7 +121,7 @@ fn shared_with_endpoint(endpoint: &str) -> Arc<Shared> {
 
 #[test]
 fn log_record_attributes_and_trace_rules() {
-    let lr = log_record(&record(0), "fixture", "engine-uuid");
+    let lr = log_record(&record(0), "fixture", "engine-uuid", "");
     let keys: Vec<&str> = lr.attributes.iter().map(|kv| kv.key.as_str()).collect();
     for k in [
         "client.address",
@@ -129,6 +130,7 @@ fn log_record_attributes_and_trace_rules() {
         "dns.response.code",
         "nexora.cache",
         "nexora.filter",
+        "nexora.policy.group",
         "nexora.upstream",
         "nexora.duration_us",
         "nexora.transport",

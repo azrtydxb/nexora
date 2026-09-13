@@ -2,7 +2,11 @@
 //! inline by the listeners, miss resolution in `spawn_local` tasks, and the
 //! per-core worker threads.
 
+pub mod doh;
+pub mod doq;
+pub mod dot;
 pub mod proxy;
+pub mod rewrite;
 pub mod stream;
 pub mod tcp;
 #[cfg(test)]
@@ -14,11 +18,13 @@ use crate::bootstrap::Bootstrap;
 use crate::cache::{self, CacheKey, CachedResponse, Lookup, ServeMode};
 use crate::clock;
 use crate::edns::{self, CookieSecret, ReplyOpt, Transport};
-use crate::filter::FilterDecision;
+use crate::filter::{EffectivePolicy, RewriteAnswer, Verdict};
 use crate::inflight::{self, InFlight, Join, Resolution};
 use crate::runtime::Runtime;
 use crate::telemetry::metrics::{Metrics, WorkerCounters};
-use crate::telemetry::querylog::{self, CacheOutcome, FilterOutcome, QueryRecord, RING_CAPACITY};
+use crate::telemetry::querylog::{
+    self, CacheOutcome, FilterOutcome, NO_POLICY_GROUP, QueryRecord, RING_CAPACITY,
+};
 use crate::upstream::{self, Question, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -118,6 +124,11 @@ impl Answerer for WorkerAnswerer {
                 out.clear();
                 out.extend_from_slice(&reply);
             }
+            FastOutcome::Rewrite(job) => {
+                let reply = rewrite::run_rewrite_job(self.0.clone(), rt, job).await;
+                out.clear();
+                out.extend_from_slice(&reply);
+            }
         }
     }
 }
@@ -127,6 +138,8 @@ pub enum FastOutcome {
     Reply(usize),
     Drop,
     Miss(MissJob),
+    /// A CNAME rewrite, chased off the fast path; never cached.
+    Rewrite(rewrite::RewriteJob),
 }
 
 pub struct MissJob {
@@ -163,6 +176,7 @@ impl Scope<'_> {
             filter: FilterOutcome::None,
             upstream: u8::MAX,
             config_version: self.rt.version,
+            policy_group: NO_POLICY_GROUP,
             transport: self.transport,
             filter_us: 0,
             cache_us: 0,
@@ -252,25 +266,44 @@ pub fn handle_packet(
         reply_opt.cookie = Some((client_cookie, server));
     }
 
-    let decision = rt.filter.decide(q.key.as_wire());
+    let (policy, group) = rt.policy.select(client.ip());
+    rec.policy_group = group.unwrap_or(NO_POLICY_GROUP);
+    let verdict = policy.check(q.key.as_wire());
     rec.filter_us = micros(scope.started.elapsed());
-    match decision {
-        FilterDecision::None => {}
-        FilterDecision::Allowed => rec.filter = FilterOutcome::Allowed,
-        FilterDecision::Blocked => {
+    match verdict {
+        Verdict::Pass => {}
+        Verdict::Allowed => rec.filter = FilterOutcome::Allowed,
+        Verdict::Blocked => {
             ctx.counters()
                 .filter_blocked
                 .fetch_add(1, Ordering::Relaxed);
             rec.filter = FilterOutcome::Blocked;
-            let n = rt
-                .filter
+            let n = policy
+                .filter()
                 .write_block_reply(&q, &mut out[..limit], opt.as_ref());
             return reply(&scope, rec, out, n);
+        }
+        // Rewrite replies never enter the cache.
+        Verdict::Rewrite(answer @ RewriteAnswer::Addrs { .. }) => {
+            rec.filter = FilterOutcome::Rewritten;
+            let bytes = rewrite::answer_inline(policy, packet, answer).unwrap_or_default();
+            let bytes = rewrite::fit_limit(bytes, limit);
+            out[..bytes.len()].copy_from_slice(&bytes);
+            return reply(&scope, rec, out, bytes.len());
+        }
+        Verdict::Rewrite(RewriteAnswer::Cname { .. }) => {
+            return FastOutcome::Rewrite(rewrite::RewriteJob {
+                query: packet.into(),
+                client,
+                transport,
+                limit,
+                started: scope.started,
+            });
         }
     }
 
     let now = clock::now_secs();
-    let key = CacheKey::from_query(&q);
+    let key = CacheKey::in_partition(&q, policy.cache_partition());
     let lookup = rt.cache.lookup(&key, now);
     rec.cache_us = micros(scope.started.elapsed()).saturating_sub(rec.filter_us);
     if let Lookup::Fresh(entry) = lookup {
@@ -320,7 +353,9 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
         transport: job.transport,
         started: job.started,
     };
+    let (policy, group) = rt.policy.select(job.client.ip());
     let mut rec = scope.record(q.key, q.qtype);
+    rec.policy_group = group.unwrap_or(NO_POLICY_GROUP);
     rec.filter_us = job.filter_us;
     rec.cache_us = job.cache_us;
     rec.cache = CacheOutcome::Miss;
@@ -333,7 +368,8 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
             {
                 Ok(fwd) => {
                     rec.upstream = fwd.upstream_index.min(usize::from(u8::MAX - 1)) as u8;
-                    let answer = leader_answer(&ctx, &rt, &q, job.key, fwd.response, &mut rec);
+                    let answer =
+                        leader_answer(&ctx, &rt, policy, &q, job.key, fwd.response, &mut rec);
                     // The cache insert above happens before the in-flight entry is freed.
                     guard.complete(match &answer {
                         Some(bytes) => Resolution::Answer(bytes.clone()),
@@ -380,24 +416,26 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
     reply
 }
 
-/// Checks a forwarded response for CNAME cloaking and caches it; `None` when
-/// the response does not walk.
+/// Checks a forwarded response for CNAME cloaking against the client's
+/// policy and caches it in that policy's partition (`key`); `None` when the
+/// response does not walk.
 fn leader_answer(
     ctx: &WorkerCtx,
     rt: &Runtime,
+    policy: &EffectivePolicy,
     q: &QueryView<'_>,
     key: CacheKey,
     response: Bytes,
     rec: &mut QueryRecord,
 ) -> Option<Bytes> {
     let info = wire::walk_response(&response, q).ok()?;
-    if rt.filter.cloaked(&info.cname_targets) {
+    if policy.filter().cloaked(&info.cname_targets) {
         ctx.counters()
             .filter_blocked
             .fetch_add(1, Ordering::Relaxed);
         rec.filter = FilterOutcome::Blocked;
         let mut buf = vec![0u8; HEADER_LEN + q.qname.len() + 4 + 16 + 12];
-        let n = rt.filter.write_block_reply(q, &mut buf, None);
+        let n = policy.filter().write_block_reply(q, &mut buf, None);
         buf.truncate(n);
         return Some(Bytes::from(buf));
     }
@@ -424,21 +462,46 @@ pub struct Workers {
     pub handles: Vec<std::thread::JoinHandle<()>>,
     pub udp: Vec<SocketAddr>,
     pub tcp: Vec<SocketAddr>,
+    pub dot: Vec<SocketAddr>,
+    pub doh: Vec<SocketAddr>,
+    pub doq: Vec<SocketAddr>,
 }
 
-type WorkerSockets = Vec<(Vec<std::net::UdpSocket>, Vec<std::net::TcpListener>)>;
+/// One worker's bound listeners.
+struct WorkerSockets {
+    udp: Vec<std::net::UdpSocket>,
+    tcp: Vec<std::net::TcpListener>,
+    dot: Vec<std::net::TcpListener>,
+    doh: Vec<std::net::TcpListener>,
+    doq: Vec<std::net::UdpSocket>,
+}
+
+/// Every worker's listeners and the addresses they resolved to.
+struct Bound {
+    sockets: Vec<WorkerSockets>,
+    udp: Vec<SocketAddr>,
+    tcp: Vec<SocketAddr>,
+    dot: Vec<SocketAddr>,
+    doh: Vec<SocketAddr>,
+    doq: Vec<SocketAddr>,
+}
 
 /// How often a kernel-chosen UDP port is re-picked when its TCP twin is taken.
 const PORT_ZERO_ATTEMPTS: usize = 16;
 
 /// Binds every listener, then starts one `nexora-worker-{i}` thread per core,
 /// each with a `current_thread` runtime running its listeners in a `LocalSet`.
+/// DoT, DoH (and DoQ) handshakes resolve their certificate from `cert_store`.
 ///
 /// Port 0 lets the kernel choose: the first worker's socket fixes the port and
 /// the other workers share it. A TCP listener on port 0 takes the port chosen
 /// for the first UDP listener on the same IP with port 0, since clients retry
 /// truncated UDP answers over TCP at the same address.
-pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<Workers> {
+pub fn spawn_workers(
+    shared: Arc<Shared>,
+    boot: &Bootstrap,
+    cert_store: Arc<tls::CertStore>,
+) -> std::io::Result<Workers> {
     let workers = boot.worker_count();
     if workers > shared.metrics.workers.len() {
         return Err(std::io::Error::new(
@@ -449,13 +512,33 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
             ),
         ));
     }
+    let proxy_policy = |enabled: bool| -> std::io::Result<Option<proxy::ProxyPolicy>> {
+        if !enabled {
+            return Ok(None);
+        }
+        proxy::ProxyPolicy::new(&boot.proxy_protocol_trusted_cidrs)
+            .map(Some)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+    };
+    let dot_proxy = proxy_policy(boot.proxy_protocol_dot)?;
+    let doh_proxy = proxy_policy(boot.proxy_protocol_doh)?;
+    let dot_acceptor =
+        tokio_rustls::TlsAcceptor::from(tls::stream_server_config(cert_store.clone(), &[b"dot"]));
+    let doh_acceptor = tokio_rustls::TlsAcceptor::from(tls::stream_server_config(
+        cert_store.clone(),
+        &[b"h2", b"http/1.1"],
+    ));
+    let mut reset_key = [0u8; 64];
+    aws_lc_rs::rand::fill(&mut reset_key)
+        .map_err(|_| std::io::Error::other("DoQ stateless reset key: no randomness"))?;
+    let quic_config = tls::quic_server_config(cert_store.clone());
     let any_zero = boot
         .listen_udp
         .iter()
         .chain(&boot.listen_tcp)
         .any(|a| a.port() == 0);
     let mut attempt = 1;
-    let (sockets, udp_addrs, tcp_addrs) = loop {
+    let bound = loop {
         match bind_all(boot, workers) {
             Err(e)
                 if any_zero
@@ -467,11 +550,17 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
             r => break r?,
         }
     };
-    let handles = sockets
+    let handles = bound
+        .sockets
         .into_iter()
         .enumerate()
-        .map(|(index, (udp, tcp))| {
+        .map(|(index, sockets)| {
             let shared = shared.clone();
+            let cert_store = cert_store.clone();
+            let (dot_acceptor, doh_acceptor) = (dot_acceptor.clone(), doh_acceptor.clone());
+            let (dot_proxy, doh_proxy) = (dot_proxy.clone(), doh_proxy.clone());
+            let doh_path = boot.doh_path.clone();
+            let quic_config = quic_config.clone();
             std::thread::Builder::new()
                 .name(format!("nexora-worker-{index}"))
                 .spawn(move || {
@@ -481,11 +570,58 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
                         .expect("worker runtime");
                     let local = tokio::task::LocalSet::new();
                     let ctx = Rc::new(WorkerCtx::new(index, shared));
-                    for sock in udp {
+                    for sock in sockets.udp {
                         local.spawn_local(udp::run_udp(ctx.clone(), sock));
                     }
-                    for listener in tcp {
+                    for listener in sockets.tcp {
                         local.spawn_local(tcp::run_tcp(ctx.clone(), listener));
+                    }
+                    let dot_proxy = dot_proxy.map(Rc::new);
+                    for listener in sockets.dot {
+                        let (acceptor, certs, proxy) =
+                            (dot_acceptor.clone(), cert_store.clone(), dot_proxy.clone());
+                        let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
+                        local.spawn_local(async move {
+                            if let Some(listener) = from_std_listener(listener, "dot") {
+                                dot::run_dot(listener, acceptor, certs, answerer, proxy).await;
+                            }
+                        });
+                    }
+                    let doh_proxy = doh_proxy.map(Rc::new);
+                    let doh_path: Rc<str> = Rc::from(doh_path.as_str());
+                    for listener in sockets.doh {
+                        let (acceptor, certs, proxy, path) = (
+                            doh_acceptor.clone(),
+                            cert_store.clone(),
+                            doh_proxy.clone(),
+                            doh_path.clone(),
+                        );
+                        let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
+                        local.spawn_local(async move {
+                            if let Some(listener) = from_std_listener(listener, "doh") {
+                                doh::run_doh(listener, acceptor, certs, answerer, proxy, path)
+                                    .await;
+                            }
+                        });
+                    }
+                    for socket in sockets.doq {
+                        let (config, certs) = (quic_config.clone(), cert_store.clone());
+                        let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
+                        local.spawn_local(async move {
+                            let addr = socket.local_addr();
+                            match quinn::Endpoint::new(
+                                doq::endpoint_config(&reset_key),
+                                Some(config),
+                                socket,
+                                Arc::new(quinn::TokioRuntime),
+                            ) {
+                                Ok(endpoint) => doq::run_doq(endpoint, answerer, certs).await,
+                                Err(e) => match addr {
+                                    Ok(a) => eprintln!("nexora-engine: doq endpoint {a}: {e}"),
+                                    Err(_) => eprintln!("nexora-engine: doq endpoint: {e}"),
+                                },
+                            }
+                        });
                     }
                     local.block_on(&runtime, std::future::pending::<()>());
                 })
@@ -493,46 +629,96 @@ pub fn spawn_workers(shared: Arc<Shared>, boot: &Bootstrap) -> std::io::Result<W
         .collect::<std::io::Result<Vec<_>>>()?;
     Ok(Workers {
         handles,
-        udp: udp_addrs,
-        tcp: tcp_addrs,
+        udp: bound.udp,
+        tcp: bound.tcp,
+        dot: bound.dot,
+        doh: bound.doh,
+        doq: bound.doq,
     })
+}
+
+/// Registers a bound std listener with the current worker runtime.
+fn from_std_listener(
+    listener: std::net::TcpListener,
+    kind: &str,
+) -> Option<tokio::net::TcpListener> {
+    match tokio::net::TcpListener::from_std(listener) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            eprintln!("nexora-engine: {kind} listener: {e}");
+            None
+        }
+    }
+}
+
+/// Binds one TCP listener per address in `addrs`, fixing port 0 to the bound port.
+fn bind_tcp_each(
+    addrs: &mut [SocketAddr],
+    kind: &str,
+) -> std::io::Result<Vec<std::net::TcpListener>> {
+    addrs
+        .iter_mut()
+        .map(|addr| {
+            let listener = tcp::bind_tcp(*addr)
+                .map_err(|e| std::io::Error::new(e.kind(), format!("bind {kind} {addr}: {e}")))?;
+            *addr = listener.local_addr()?;
+            Ok(listener)
+        })
+        .collect()
 }
 
 /// Binds `workers` copies of every configured listener, resolving port 0 as
 /// described on [`spawn_workers`].
-fn bind_all(
-    boot: &Bootstrap,
-    workers: usize,
-) -> std::io::Result<(WorkerSockets, Vec<SocketAddr>, Vec<SocketAddr>)> {
-    let mut udp_addrs = boot.listen_udp.clone();
-    let mut tcp_addrs = boot.listen_tcp.clone();
-    let mut sockets = Vec::with_capacity(workers);
+fn bind_all(boot: &Bootstrap, workers: usize) -> std::io::Result<Bound> {
+    let mut bound = Bound {
+        sockets: Vec::with_capacity(workers),
+        udp: boot.listen_udp.clone(),
+        tcp: boot.listen_tcp.clone(),
+        dot: boot.listen_dot.clone(),
+        doh: boot.listen_doh.clone(),
+        doq: boot.listen_doq.clone(),
+    };
     for w in 0..workers {
-        let mut udp = Vec::with_capacity(udp_addrs.len());
-        for addr in &mut udp_addrs {
+        let mut udp = Vec::with_capacity(bound.udp.len());
+        for addr in &mut bound.udp {
             let sock = udp::bind_udp(*addr)?;
             *addr = sock.local_addr()?;
             udp.push(sock);
         }
         if w == 0 {
-            for addr in tcp_addrs.iter_mut().filter(|a| a.port() == 0) {
+            for addr in bound.tcp.iter_mut().filter(|a| a.port() == 0) {
                 let twin = boot
                     .listen_udp
                     .iter()
-                    .zip(&udp_addrs)
+                    .zip(&bound.udp)
                     .find(|(conf, _)| conf.port() == 0 && conf.ip() == addr.ip());
-                if let Some((_, bound)) = twin {
-                    addr.set_port(bound.port());
+                if let Some((_, b)) = twin {
+                    addr.set_port(b.port());
                 }
             }
         }
-        let mut tcp = Vec::with_capacity(tcp_addrs.len());
-        for addr in &mut tcp_addrs {
+        let mut tcp = Vec::with_capacity(bound.tcp.len());
+        for addr in &mut bound.tcp {
             let listener = tcp::bind_tcp(*addr)?;
             *addr = listener.local_addr()?;
             tcp.push(listener);
         }
-        sockets.push((udp, tcp));
+        let dot = bind_tcp_each(&mut bound.dot, "dot")?;
+        let doh = bind_tcp_each(&mut bound.doh, "doh")?;
+        let mut doq = Vec::with_capacity(bound.doq.len());
+        for addr in &mut bound.doq {
+            let sock = doq::bind_doq_socket(*addr)
+                .map_err(|e| std::io::Error::new(e.kind(), format!("bind doq {addr}: {e}")))?;
+            *addr = sock.local_addr()?;
+            doq.push(sock);
+        }
+        bound.sockets.push(WorkerSockets {
+            udp,
+            tcp,
+            dot,
+            doh,
+            doq,
+        });
     }
-    Ok((sockets, udp_addrs, tcp_addrs))
+    Ok(bound)
 }

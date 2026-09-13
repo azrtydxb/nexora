@@ -46,7 +46,28 @@ fn cache_hit_path_does_not_allocate() {
             negative_max_ttl: 3600,
             stale_window: 0,
         }),
-        acl_allow_cidrs: vec!["127.0.0.0/8".into()],
+        acl_allow_cidrs: vec!["127.0.0.0/8".into(), "10.0.0.0/8".into()],
+        policy_groups: vec![PolicyGroup {
+            id: "g1".into(),
+            name: "g1".into(),
+            cidrs: vec![
+                "10.0.0.0/8".into(),
+                "10.1.0.0/16".into(),
+                "2001:db8::/32".into(),
+            ],
+            rewrite_set_ids: vec!["r".into()],
+            ..Default::default()
+        }],
+        rewrite_sets: vec![RewriteSet {
+            id: "r".into(),
+            label: "r".into(),
+            rules: vec![RewriteRule {
+                name: "*.home.test".into(),
+                r#type: RewriteType::A as i32,
+                value: "192.168.1.1".into(),
+                ttl: 60,
+            }],
+        }],
         filter: Some(FilterConfig {
             block_mode: BlockMode::NullIp as i32,
             block_ttl: 60,
@@ -85,18 +106,20 @@ fn cache_hit_path_does_not_allocate() {
         RData::A(A::new(192, 0, 2, 1)),
     ));
     let upstream = r.to_bytes().unwrap();
+    let client: std::net::SocketAddr = "10.1.2.3:5353".parse().unwrap();
     {
         let rt = shared.runtime.load();
         let v = parse_query(&query).unwrap();
+        let (policy, group) = rt.policy.select(client.ip());
+        assert_eq!(group, Some(0), "the measured client is in policy group g1");
         rt.cache.insert(
-            CacheKey::from_query(&v),
+            CacheKey::in_partition(&v, policy.cache_partition()),
             &upstream,
             &v,
             nexora_engine::clock::now_secs(),
         );
     }
     let ctx = WorkerCtx::new(0, shared.clone());
-    let client: std::net::SocketAddr = "127.0.0.1:40000".parse().unwrap();
     let mut out = [0u8; 1232];
     for _ in 0..64 {
         let rt = shared.runtime.load();

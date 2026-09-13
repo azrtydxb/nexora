@@ -3,6 +3,7 @@ use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use nexora_engine::bootstrap::Bootstrap;
 use nexora_engine::proto::*;
+use nexora_engine::server::tls::CertStore;
 use nexora_engine::server::{Shared, spawn_workers};
 use nexora_engine::snapshot::{DirBlobs, apply};
 use std::net::{SocketAddr, UdpSocket};
@@ -101,7 +102,7 @@ fn start_engine(
         apply(&shared.runtime, snap, &DirBlobs { dir: dir.clone() }, None),
         nexora_engine::snapshot::ApplyOutcome::Applied { .. }
     ));
-    spawn_workers(shared.clone(), &boot).unwrap();
+    spawn_workers(shared.clone(), &boot, Arc::new(CertStore::new())).unwrap();
     std::thread::sleep(Duration::from_millis(200));
     (format!("127.0.0.1:{port}").parse().unwrap(), shared)
 }

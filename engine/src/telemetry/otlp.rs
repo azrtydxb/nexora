@@ -57,7 +57,12 @@ pub fn spawn_telemetry_thread(shared: Arc<Shared>) -> JoinHandle<()> {
 }
 
 /// One OTLP log record with the attributes of `docs/architecture.md`.
-pub fn log_record(r: &QueryRecord, upstream_name: &str, engine_id: &str) -> LogRecord {
+pub fn log_record(
+    r: &QueryRecord,
+    upstream_name: &str,
+    engine_id: &str,
+    policy_group: &str,
+) -> LogRecord {
     let name = presentation(r.name.as_wire());
     LogRecord {
         time_unix_nano: r.unix_micros.saturating_mul(1000),
@@ -71,6 +76,7 @@ pub fn log_record(r: &QueryRecord, upstream_name: &str, engine_id: &str) -> LogR
             kv("dns.response.code", rcode_name(r.rcode)),
             kv("nexora.cache", r.cache.as_str()),
             kv("nexora.filter", r.filter.as_str()),
+            kv("nexora.policy.group", policy_group),
             kv("nexora.upstream", upstream_name),
             KeyValue {
                 key: "nexora.duration_us".into(),
@@ -336,7 +342,10 @@ impl Exporter {
                 self.current.spans.extend(spans_for(&r, trace_id, upstream));
             }
             if keep_logs {
-                self.current.logs.push(log_record(&r, upstream, &engine_id));
+                let group = rt.policy.group(r.policy_group).map_or("", |g| g.group_id());
+                self.current
+                    .logs
+                    .push(log_record(&r, upstream, &engine_id, group));
             }
             self.current.opened.get_or_insert_with(Instant::now);
             if self.current.logs.len() >= BATCH_MAX {

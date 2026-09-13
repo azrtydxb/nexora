@@ -835,6 +835,10 @@ Files:
 - `engine/src/server/mod.rs` — `pub mod dot; pub mod doh;`; `bind_all` binds DoT/DoH listeners per worker; `Workers` gains `dot` and `doh` bound addresses; per-worker spawn of DoT/DoH listeners.
 - `engine/src/main.rs` — `ready_line` reports the bound DoT/DoH addresses.
 - `engine/src/telemetry/metrics.rs` — `EncryptedMetrics` complete.
+- `engine/src/server/proxy.rs` — `ProxyPolicy` derives `Clone` (one validated policy is cloned into each worker thread, then wrapped in `Rc`).
+- `engine/tests/listen_port_zero.rs` — `encrypted_listeners_on_port_zero_are_bound_by_every_worker_and_reported` (DoT/DoH/DoQ on port 0 across 2 workers).
+
+As built: `bind_all` returns a private `Bound { sockets: Vec<WorkerSockets>, udp, tcp, dot, doh, doq }`; DoT/DoH listeners bind through `bind_tcp_each(addrs, kind)`; the std-to-tokio listener conversion runs inside each spawned local task (`from_std_listener`, logging `nexora-engine: dot listener: <err>`). `engine/src/server/doh.rs` also carries `http2_get_and_post_over_tls` (reqwest over HTTP/2 against `run_doh`).
 
 Interfaces:
 
@@ -1144,7 +1148,7 @@ The client address is the TCP peer (or the PROXY v2 source); `X-Forwarded-For` a
 
 Files:
 
-- `engine/Cargo.toml` — add `quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }`.
+- `engine/Cargo.toml` — add `quinn = { version = "=0.11.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }` and `aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }` (direct dependency for `hmac::Key` and `rand::fill`; default features off so no second `untrusted` version enters the lock).
 - `engine/src/server/doq.rs` — DoQ endpoint per worker, stream handling, framing checks.
 - `engine/src/server/tls.rs` — `quic_server_config`.
 - `engine/src/server/mod.rs` — `pub mod doq;`; `bind_all` binds DoQ UDP sockets per worker; `Workers` gains `doq`; per-worker spawn of DoQ endpoints.
@@ -1372,6 +1376,8 @@ pub async fn run_doq<A: Answerer + 'static>(endpoint: quinn::Endpoint, answerer:
 
 With no certificate installed, `CertStore::resolve` returns `None`, the QUIC handshake fails, and the failure is counted as `result="no_certificate"`.
 
+As built: `decode_query` returns `Short` below 2 bytes and `LengthMismatch` when the prefix disagrees with the stream length or the message is shorter than a 12-byte header (same results as the sketch above); the per-query stream/answer/frame buffers carry a `debt:` marker; the endpoint is created inside a spawned local task of the worker's `LocalSet`.
+
 - [ ] In `server::spawn_workers`: generate one 64-byte reset key per process with `aws_lc_rs::rand::fill`, build `quic_server_config(cert_store.clone())` once; in M1's `bind_all` bind every `listen_doq` address per worker with `doq::bind_doq_socket(addr)` (port 0 fixed by the first worker's socket, as for `listen_udp`), wrapping a failure as `std::io::Error::new(e.kind(), format!("bind doq {addr}: {e}"))`, and return the bound addresses in a new `Workers.doq` field; inside each worker's `LocalSet` (the endpoint needs the worker's tokio runtime) create `quinn::Endpoint::new(endpoint_config(&reset_key), Some(cfg.clone()), socket, Arc::new(quinn::TokioRuntime))` and `spawn_local(doq::run_doq(endpoint, Rc::new(WorkerAnswerer(ctx.clone())), cert_store.clone()))`; an endpoint creation failure is logged as `nexora-engine: doq endpoint <addr>: <io error>`. In `main.rs` `ready_line`, append ` doq=<addrs>` when non-empty.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine --lib server::doq` — expect PASS (2 tests).
 - [ ] Run `scripts/dev-exec.sh cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` — expect exit 0.
@@ -1381,7 +1387,6 @@ With no certificate installed, `CertStore::resolve` returns `None`, the QUIC han
 
 Files:
 
-- `engine/Cargo.toml` — add `futures-util = "0.3"` (locked 0.3.34; `FutureExt::now_or_never`).
 - `engine/src/filter.rs` — `PolicyTable`, `EffectivePolicy`, `RewriteTable`, `RewriteAnswer`, `Verdict`; build + validation from the snapshot.
 - `engine/src/server/rewrite.rs` — rewrite response synthesis (A/AAAA/NODATA, CNAME with bounded chase) and `WorkerRewriteCtx`.
 - `engine/src/server/mod.rs` — `pub mod rewrite;`; `handle_packet` selects the client's `EffectivePolicy` and applies its verdict; `FastOutcome::Rewrite(RewriteJob)`.
@@ -1390,6 +1395,12 @@ Files:
 - `engine/src/snapshot.rs` — `apply` rejects with the `PolicyTable::build` reason (through `Runtime::build`).
 - `engine/src/telemetry/querylog.rs` — `FilterOutcome::Rewritten` (`rewritten`); `QueryRecord.policy_group: u16`; OTLP attribute `nexora.policy.group`.
 - `engine/tests/hot_path_alloc.rs` — the `cache_hit_path_does_not_allocate` snapshot gains policy groups and rewrites.
+- `engine/src/cache.rs` — `CacheKey.partition: u16` and `CacheKey::in_partition` (answers never cross filter sets).
+- `engine/src/control.rs` — `fetch_blobs` also fetches every `PolicyGroup.blocklists` blob.
+- `engine/src/telemetry/otlp.rs` — `log_record(r, upstream_name, engine_id, policy_group)` emits `nexora.policy.group`.
+- `engine/tests/policy_pipeline.rs` — cross-group cache isolation and pipeline rewrite tests.
+- `engine/tests/{inflight,telemetry_export}.rs` — follow the `CacheKey`/`QueryRecord`/`log_record` additions.
+- `docs/architecture.md` — `nexora.filter` gains `rewritten`; `nexora.policy.group` attribute.
 
 Interfaces:
 
@@ -1837,6 +1848,8 @@ pub async fn rewrite_response<C: RewriteContext>(ctx: &C, query: &[u8], first: &
 - [ ] Extend the snapshot in `engine/tests/hot_path_alloc.rs` (`cache_hit_path_does_not_allocate`) with `policy_groups: vec![PolicyGroup { id: "g1".into(), name: "g1".into(), cidrs: vec!["10.0.0.0/8".into(), "10.1.0.0/16".into(), "2001:db8::/32".into()], rewrite_set_ids: vec!["r".into()], ..Default::default() }]` and `rewrite_sets: vec![RewriteSet { id: "r".into(), label: "r".into(), rules: vec![RewriteRule { name: "*.home.test".into(), r#type: RewriteType::A as i32, value: "192.168.1.1".into(), ttl: 60 }] }]`, extend its ACL with `10.0.0.0/8`, and send the measured cache-hit query from client `10.1.2.3:5353`.
 - [ ] Run `scripts/dev-exec.sh cargo test --locked -p nexora-engine` — expect PASS including `cache_hit_path_does_not_allocate`, `filter::policy_tests`, `server::rewrite`.
 - [ ] Commit: `git add engine && git commit -m "feat(engine): per-client policy groups, rewrites and safe-search answers"`.
+
+As built (2026-09-13): (1) No `futures-util` dependency: `rewrite::answer_inline(policy, query, first) -> Option<Vec<u8>>` polls `rewrite_response` once with `std::task::Waker::noop()` (an `Addrs` answer never awaits), and `rewrite::fit_limit(reply, limit)` applies the TC=1 re-encode; `engine/Cargo.toml` is unchanged. (2) Cache isolation: M1's `CacheKey` (also the in-flight coalescing key) gains `partition: u16`; `EffectivePolicy::cache_partition()` is 0 for the global filter and 1.. for each distinct group `FilterSet` (groups sharing a filter share a partition), so an upstream answer admitted by one filter's CNAME-cloaking check is never served to, nor coalesced with, clients of another filter; `handle_packet` uses `CacheKey::in_partition(&q, policy.cache_partition())`. `PolicyTable::partition_keys()` is appended to `Runtime.filter_hashes` as `g:<key>`, so a snapshot that remaps partitions clears the reused cache. Proven by `engine/tests/policy_pipeline.rs::groups_never_see_each_others_cached_answers` (fails with the partition forced to 0). (3) Extra public API: `PolicyTable::global_only(Arc<FilterSet>)` (used by `Runtime::initial`), `PolicyTable::group(u16)` (OTLP export lookup), `querylog::NO_POLICY_GROUP` (= `u16::MAX`), `RewriteJob.started: Instant` (for the rewrite's query-log record, written by `run_rewrite_job` with `filter = rewritten`). (4) Rule type `UNSPECIFIED` is rejected with `rewrite set <set id>: <name> type <t> is invalid`; more than 65534 groups with `<n> policy groups exceed 65534`. (5) `snapshot.rs` is unchanged: rejection flows through `Runtime::build` as `invalid snapshot: <reason>`. (6) `control::fetch_blobs` downloads group blocklist blobs too, otherwise `DirBlobs` would reject a group's list as `blob not present`.
 
 ## Task 7: Management plane schema, store and snapshot policy section
 

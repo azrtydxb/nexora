@@ -93,20 +93,114 @@ impl WorkerCounters {
     }
 }
 
-/// Process-wide counters of the encrypted client transports.
+#[derive(Clone, Copy)]
+pub enum HandshakeResult {
+    Ok = 0,
+    Failed = 1,
+    NoCertificate = 2,
+}
+
+const ENC_TRANSPORTS: [&str; 3] = ["dot", "doh", "doq"];
+const HANDSHAKE_RESULTS: [&str; 3] = ["ok", "failed", "no_certificate"];
+const DOH_METHODS: [&str; 3] = ["GET", "POST", "other"];
+const DOH_STATUSES: [&str; 6] = ["200", "400", "404", "405", "413", "415"];
+const PROXY_REASONS: [&str; 3] = ["untrusted_peer", "invalid_header", "timeout"];
+
+/// Process-wide counters of the encrypted client transports; they sit off the
+/// cache-hit path, so shared atomics are acceptable.
 pub struct EncryptedMetrics {
+    /// `[dot, doh, doq]` x `[ok, failed, no_certificate]`.
+    handshakes: [[AtomicU64; 3]; 3],
+    /// Open connections per `[dot, doh, doq]`.
+    connections: [AtomicI64; 3],
+    /// `[GET, POST, other]` x `[200, 400, 404, 405, 413, 415]`.
+    doh_requests: [[AtomicU64; 6]; 3],
+    doq_protocol_errors: AtomicU64,
+    /// `[dot, doh]` x `[untrusted_peer, invalid_header, timeout]`.
+    proxy_rejected: [[AtomicU64; 3]; 2],
     /// Unix seconds; 0 while no certificate was ever installed.
     tls_not_after: AtomicI64,
     /// Index 0 `applied`, 1 `rejected`.
     tls_updates: [AtomicU64; 2],
+    rewritten: AtomicU64,
 }
 
 pub static ENCRYPTED: EncryptedMetrics = EncryptedMetrics {
+    handshakes: [const { [const { AtomicU64::new(0) }; 3] }; 3],
+    connections: [const { AtomicI64::new(0) }; 3],
+    doh_requests: [const { [const { AtomicU64::new(0) }; 6] }; 3],
+    doq_protocol_errors: AtomicU64::new(0),
+    proxy_rejected: [const { [const { AtomicU64::new(0) }; 3] }; 2],
     tls_not_after: AtomicI64::new(0),
-    tls_updates: [AtomicU64::new(0), AtomicU64::new(0)],
+    tls_updates: [const { AtomicU64::new(0) }; 2],
+    rewritten: AtomicU64::new(0),
 };
 
+/// Index into the `[dot, doh, doq]` arrays; plain transports never reach it.
+fn tidx(t: Transport) -> usize {
+    match t {
+        Transport::Dot => 0,
+        Transport::Doh => 1,
+        _ => 2,
+    }
+}
+
+/// Counts one open encrypted connection for as long as it lives.
+pub struct ConnectionGuard(Transport);
+
+impl ConnectionGuard {
+    pub fn new(t: Transport) -> Self {
+        ENCRYPTED.connections[tidx(t)].fetch_add(1, Ordering::Relaxed);
+        Self(t)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        ENCRYPTED.connections[tidx(self.0)].fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl EncryptedMetrics {
+    pub fn handshake(&self, t: Transport, r: HandshakeResult) {
+        self.handshakes[tidx(t)][r as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts a DoH response; statuses outside the known set count as `415`,
+    /// the only other status the handler produces.
+    pub fn doh_request(&self, m: &http::Method, s: http::StatusCode) {
+        let mi = if m == http::Method::GET {
+            0
+        } else if m == http::Method::POST {
+            1
+        } else {
+            2
+        };
+        let si = match s.as_u16() {
+            200 => 0,
+            400 => 1,
+            404 => 2,
+            405 => 3,
+            413 => 4,
+            _ => 5,
+        };
+        self.doh_requests[mi][si].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn doq_protocol_error(&self) {
+        self.doq_protocol_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn proxy_rejected(&self, t: Transport, r: &crate::server::proxy::ProxyReject) {
+        use crate::server::proxy::ProxyReject;
+        let ri = match r {
+            ProxyReject::UntrustedPeer => 0,
+            ProxyReject::InvalidHeader => 1,
+            ProxyReject::Timeout => 2,
+        };
+        self.proxy_rejected[usize::from(tidx(t) != 0)][ri].fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn set_tls_not_after(&self, v: i64) {
         self.tls_not_after.store(v, Ordering::Relaxed);
     }
@@ -116,7 +210,12 @@ impl EncryptedMetrics {
         self.tls_updates[usize::from(!applied)].fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn rewritten(&self) {
+        self.rewritten.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn register(&self, reg: &mut Registry) {
+        let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
         let not_after = self.tls_not_after.load(Ordering::Relaxed);
         if not_after != 0 {
             reg.register(
@@ -129,12 +228,83 @@ impl EncryptedMetrics {
         for (i, result) in ["applied", "rejected"].into_iter().enumerate() {
             updates
                 .get_or_create(&vec![("result", result.to_owned())])
-                .inc_by(self.tls_updates[i].load(Ordering::Relaxed));
+                .inc_by(load(&self.tls_updates[i]));
         }
         reg.register(
             "nexora_tls_material_updates",
             "DNS serving certificates received over the control stream",
             updates,
+        );
+
+        let handshakes = Family::<Labels, PromCounter>::default();
+        let connections = Family::<Labels, Gauge>::default();
+        for (ti, transport) in ENC_TRANSPORTS.iter().enumerate() {
+            for (ri, result) in HANDSHAKE_RESULTS.iter().enumerate() {
+                handshakes
+                    .get_or_create(&vec![
+                        ("transport", (*transport).to_owned()),
+                        ("result", (*result).to_owned()),
+                    ])
+                    .inc_by(load(&self.handshakes[ti][ri]));
+            }
+            connections
+                .get_or_create(&vec![("transport", (*transport).to_owned())])
+                .set(self.connections[ti].load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_tls_handshakes",
+            "TLS and QUIC handshakes on the encrypted client listeners",
+            handshakes,
+        );
+        reg.register(
+            "nexora_encrypted_connections",
+            "Open encrypted client connections",
+            connections,
+        );
+
+        let doh = Family::<Labels, PromCounter>::default();
+        for (mi, method) in DOH_METHODS.iter().enumerate() {
+            for (si, status) in DOH_STATUSES.iter().enumerate() {
+                doh.get_or_create(&vec![
+                    ("method", (*method).to_owned()),
+                    ("status", (*status).to_owned()),
+                ])
+                .inc_by(load(&self.doh_requests[mi][si]));
+            }
+        }
+        reg.register(
+            "nexora_doh_requests",
+            "DoH requests by method and status",
+            doh,
+        );
+
+        reg.register(
+            "nexora_doq_protocol_errors",
+            "DoQ connections closed with DOQ_PROTOCOL_ERROR",
+            ConstCounter::new(load(&self.doq_protocol_errors)),
+        );
+
+        let proxy = Family::<Labels, PromCounter>::default();
+        for (ti, transport) in ENC_TRANSPORTS[..2].iter().enumerate() {
+            for (ri, reason) in PROXY_REASONS.iter().enumerate() {
+                proxy
+                    .get_or_create(&vec![
+                        ("transport", (*transport).to_owned()),
+                        ("reason", (*reason).to_owned()),
+                    ])
+                    .inc_by(load(&self.proxy_rejected[ti][ri]));
+            }
+        }
+        reg.register(
+            "nexora_proxy_protocol_rejected",
+            "Connections refused while reading the PROXY protocol header",
+            proxy,
+        );
+
+        reg.register(
+            "nexora_filter_rewritten",
+            "Queries answered from a DNS rewrite",
+            ConstCounter::new(load(&self.rewritten)),
         );
     }
 }
@@ -481,4 +651,41 @@ fn scrape<B>(req: &Request<B>, shared: &Shared) -> Response<Full<Bytes>> {
         *resp.status_mut() = StatusCode::NOT_FOUND;
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_positive(text: &str, prefix: &str) -> bool {
+        text.lines().any(|l| {
+            l.strip_prefix(prefix)
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .is_some_and(|v| v >= 1.0)
+        })
+    }
+
+    #[test]
+    fn encrypted_metrics_render() {
+        ENCRYPTED.handshake(Transport::Doh, HandshakeResult::NoCertificate);
+        ENCRYPTED.doh_request(
+            &http::Method::POST,
+            http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        );
+        let text = Metrics::new(1).render(&Runtime::initial());
+        assert!(
+            has_positive(
+                &text,
+                "nexora_tls_handshakes_total{transport=\"doh\",result=\"no_certificate\"} "
+            ),
+            "{text}"
+        );
+        assert!(
+            has_positive(
+                &text,
+                "nexora_doh_requests_total{method=\"POST\",status=\"415\"} "
+            ),
+            "{text}"
+        );
+    }
 }

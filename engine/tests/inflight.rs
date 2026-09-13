@@ -11,6 +11,7 @@ fn key(n: &[u8]) -> CacheKey {
         qclass: 1,
         do_bit: false,
         cd_bit: false,
+        partition: 0,
     }
 }
 

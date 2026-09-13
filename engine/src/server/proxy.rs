@@ -98,6 +98,7 @@ pub async fn read_proxy_v2<S: AsyncRead + Unpin>(io: &mut S) -> Result<ProxyHead
 }
 
 /// The peers allowed to send PROXY headers; every other peer is refused.
+#[derive(Clone)]
 pub struct ProxyPolicy {
     trusted: Vec<ipnet::IpNet>,
 }

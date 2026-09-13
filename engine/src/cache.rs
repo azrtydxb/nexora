@@ -16,16 +16,26 @@ pub struct CacheKey {
     pub qclass: u16,
     pub do_bit: bool,
     pub cd_bit: bool,
+    /// The client policy's filter set (`EffectivePolicy::cache_partition`):
+    /// answers admitted by one filter's CNAME-cloaking check never reach
+    /// clients of another.
+    pub partition: u16,
 }
 
 impl CacheKey {
+    /// The key in the global partition (0).
     pub fn from_query(q: &QueryView<'_>) -> CacheKey {
+        CacheKey::in_partition(q, 0)
+    }
+
+    pub fn in_partition(q: &QueryView<'_>, partition: u16) -> CacheKey {
         CacheKey {
             name: q.key,
             qtype: q.qtype,
             qclass: q.qclass,
             do_bit: q.do_bit(),
             cd_bit: q.cd(),
+            partition,
         }
     }
 }

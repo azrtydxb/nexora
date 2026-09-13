@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         }
     }
 
-    let workers = match server::spawn_workers(shared.clone(), &boot) {
+    let workers = match server::spawn_workers(shared.clone(), &boot, cert_store.clone()) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("nexora-engine: listen: {e}");
@@ -134,7 +134,8 @@ fn bind_metrics(
 
 /// The machine-readable line naming every bound address (ports chosen by the
 /// kernel for port 0 included), e.g.
-/// `READY udp=127.0.0.1:5353 tcp=127.0.0.1:5353 metrics=127.0.0.1:9153`.
+/// `READY udp=127.0.0.1:5353 tcp=127.0.0.1:5353 dot=127.0.0.1:853 metrics=127.0.0.1:9153`
+/// (`dot`, `doh` and `doq` appear only when configured).
 fn ready_line(workers: &server::Workers, metrics: Option<SocketAddr>) -> String {
     let join = |addrs: &[SocketAddr]| {
         addrs
@@ -148,6 +149,15 @@ fn ready_line(workers: &server::Workers, metrics: Option<SocketAddr>) -> String 
         join(&workers.udp),
         join(&workers.tcp)
     );
+    for (name, addrs) in [
+        ("dot", &workers.dot),
+        ("doh", &workers.doh),
+        ("doq", &workers.doq),
+    ] {
+        if !addrs.is_empty() {
+            line.push_str(&format!(" {name}={}", join(addrs)));
+        }
+    }
     if let Some(m) = metrics {
         line.push_str(&format!(" metrics={m}"));
     }

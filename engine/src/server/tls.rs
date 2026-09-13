@@ -156,6 +156,32 @@ pub fn stream_server_config(store: Arc<CertStore>, alpn: &[&[u8]]) -> Arc<rustls
     Arc::new(cfg)
 }
 
+/// The DoQ server config: TLS 1.3 only, ALPN `doq`, no 0-RTT, certificate from `store`.
+pub fn quic_server_config(store: Arc<CertStore>) -> quinn::ServerConfig {
+    let mut tls = rustls::ServerConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("aws-lc-rs supports TLS 1.3")
+        .with_no_client_auth()
+        .with_cert_resolver(store);
+    tls.alpn_protocols = vec![b"doq".to_vec()];
+    tls.max_early_data_size = 0; // no 0-RTT: DNS queries must not be replayable
+    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+        .expect("aws-lc-rs has TLS13_AES_128_GCM_SHA256");
+    let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .max_concurrent_bidi_streams(100u32.into())
+        .max_concurrent_uni_streams(0u32.into())
+        .max_idle_timeout(Some(
+            std::time::Duration::from_secs(30)
+                .try_into()
+                .expect("30 s fits a VarInt"),
+        ));
+    cfg.transport_config(Arc::new(transport));
+    cfg.migration(false); // per-worker SO_REUSEPORT endpoints cannot follow a migrated 4-tuple
+    cfg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

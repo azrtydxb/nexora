@@ -351,10 +351,14 @@ pub async fn fetch_blobs(
     snap: &ConfigSnapshot,
     blob_dir: &Path,
 ) -> Result<(), SnapshotError> {
-    let Some(filter) = &snap.filter else {
-        return Ok(());
-    };
-    for r in filter.blocklists.iter().chain(&filter.allowlists) {
+    let refs = snap
+        .filter
+        .iter()
+        .flat_map(|f| f.blocklists.iter().chain(&f.allowlists))
+        .chain(snap.policy_groups.iter().flat_map(|g| &g.blocklists))
+        // Collected so no closure is held across an await (keeps the future `Send`).
+        .collect::<Vec<_>>();
+    for r in refs {
         let fail = |reason: String| SnapshotError::Blob {
             sha256: r.sha256.clone(),
             reason,

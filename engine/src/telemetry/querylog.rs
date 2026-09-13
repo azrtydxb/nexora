@@ -8,6 +8,8 @@ use std::net::IpAddr;
 use std::sync::atomic::Ordering;
 
 pub const RING_CAPACITY: usize = 65536;
+/// `QueryRecord.policy_group` of a client in no policy group.
+pub const NO_POLICY_GROUP: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOutcome {
@@ -33,6 +35,7 @@ pub enum FilterOutcome {
     None,
     Blocked,
     Allowed,
+    Rewritten,
 }
 
 impl FilterOutcome {
@@ -41,6 +44,7 @@ impl FilterOutcome {
             FilterOutcome::None => "none",
             FilterOutcome::Blocked => "blocked",
             FilterOutcome::Allowed => "allowed",
+            FilterOutcome::Rewritten => "rewritten",
         }
     }
 }
@@ -58,6 +62,8 @@ pub struct QueryRecord {
     /// Index into the runtime's upstreams; `u8::MAX` when none was used.
     pub upstream: u8,
     pub config_version: u64,
+    /// Index of the client's policy group; `NO_POLICY_GROUP` for global clients.
+    pub policy_group: u16,
     pub transport: Transport,
     pub filter_us: u32,
     pub cache_us: u32,
