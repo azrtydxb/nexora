@@ -823,9 +823,14 @@ async fn session(
                     }
                 }
             }
-            // debt: no engine log ring buffer yet, so the request goes unanswered and management
-            // times out; revisit when the ring buffer answers LogRequest with a LogBatch.
-            Some(ServerMsg::LogRequest(_)) | None => {}
+            // A full queue drops the reply; the management plane times out with 504.
+            Some(ServerMsg::LogRequest(req)) => {
+                let batch = crate::telemetry::logbuf::GLOBAL.read(&req);
+                let _ = tx.try_send(EngineMessage {
+                    msg: Some(Msg::LogBatch(batch)),
+                });
+            }
+            None => {}
         }
     };
     ticker.abort();

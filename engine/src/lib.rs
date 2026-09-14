@@ -1,3 +1,18 @@
+// The crate's `eprintln!` shadows std's, so every existing stderr line also reaches the engine log
+// ring buffer (`telemetry::logbuf`). Declared before every `mod` so textual scoping applies crate-wide.
+#[macro_export]
+macro_rules! eprintln {
+    ($($arg:tt)*) => { $crate::telemetry::logbuf::emit(None, format_args!($($arg)*)) };
+}
+#[macro_export]
+macro_rules! log_error { ($($arg:tt)*) => { $crate::telemetry::logbuf::emit(Some($crate::proto::LogLevel::Error), format_args!($($arg)*)) }; }
+#[macro_export]
+macro_rules! log_warn { ($($arg:tt)*) => { $crate::telemetry::logbuf::emit(Some($crate::proto::LogLevel::Warn), format_args!($($arg)*)) }; }
+#[macro_export]
+macro_rules! log_info { ($($arg:tt)*) => { $crate::telemetry::logbuf::emit(Some($crate::proto::LogLevel::Info), format_args!($($arg)*)) }; }
+#[macro_export]
+macro_rules! log_debug { ($($arg:tt)*) => { $crate::telemetry::logbuf::emit(Some($crate::proto::LogLevel::Debug), format_args!($($arg)*)) }; }
+
 pub mod acl;
 pub mod authoritative;
 pub mod bootstrap;

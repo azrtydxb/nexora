@@ -10,8 +10,8 @@ use crate::proto::{
 use crate::recursor::RecursorState;
 use crate::runtime::Runtime;
 use crate::server::Shared;
-use crate::telemetry::process;
 use crate::telemetry::querylog::{CacheOutcome, FilterOutcome, QueryRecord};
+use crate::telemetry::{logbuf, process};
 use crate::upstream::RACE;
 use bytes::Bytes;
 use crossbeam_utils::CachePadded;
@@ -749,6 +749,11 @@ impl Metrics {
             "Engine certificates renewed over the control stream",
             ConstCounter::new(self.cert_renewals.load(Ordering::Relaxed)),
         );
+        reg.register(
+            "nexora_log_lines_dropped",
+            "Engine log lines refused by the log ring buffer's rate cap",
+            ConstCounter::new(logbuf::GLOBAL.dropped()),
+        );
 
         ENCRYPTED.register(&mut reg);
         self.register_auth(&mut reg, rt);
@@ -989,8 +994,7 @@ impl Metrics {
                 .map(|(label, n)| ((*label).to_owned(), n))
                 .collect(),
             tls_certificate_not_after_unix: ENCRYPTED.tls_not_after.load(Ordering::Relaxed),
-            // Filled by the engine log ring buffer (M6 Task 13).
-            log_lines_dropped_total: 0,
+            log_lines_dropped_total: logbuf::GLOBAL.dropped(),
             race_duration_bucket_counts: RACE.cumulative(),
         }
     }

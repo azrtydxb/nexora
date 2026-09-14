@@ -1,6 +1,7 @@
 use nexora_engine::authoritative;
 use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
+use nexora_engine::eprintln;
 use nexora_engine::lifecycle;
 use nexora_engine::recursor::{self, RecursorState};
 use nexora_engine::server::tls::CertStore;
