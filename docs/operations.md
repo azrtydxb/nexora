@@ -251,8 +251,40 @@ namespace `nexora`, so the prefix is `nexora`.
    `workloadName` is set), ConfigMap with `engine.toml`, and DNS Service
    (`<prefix>-dns-<name>` unless `service.name` is set). The Service exposes 53,
    and 853/TCP, 853/UDP and 443/TCP for the encrypted listeners that are
-   enabled. `groups[].name` in the chart only names the workload; the engine
-   group an engine joins comes from its join token.
+   enabled. `groups[].extraServices` adds more addresses over the same group.
+   `groups[].name` in the chart only names the workload; the engine group an
+   engine joins comes from its join token.
+
+   To run one engine per address instead, give the group `instances`: each
+   renders its own workload `<group workload>-<instance name>` pinned to
+   `node` (node affinity `kubernetes.io/hostname In [node]`, added to every
+   term of the group's `nodeAffinity`) with the pod label
+   `nexora.io/engine-instance: <instance name>`, and its optional `service`
+   selects only that engine. The instances share the group's ConfigMap and
+   state directory name, so an instance on a node keeps the identity of the
+   group workload's engine there. With `instances` the group renders no
+   workload of its own, and `service` and `extraServices` only when set:
+
+   ```yaml
+   groups:
+     - name: default
+       joinTokenSecret: nexora-join-default
+       instances:
+         - {
+             name: a,
+             node: node-1,
+             service: { name: dns-a, loadBalancerIP: 192.0.2.53 },
+           }
+         - {
+             name: b,
+             node: node-2,
+             service: { name: dns-b, loadBalancerIP: 192.0.2.54 },
+           }
+   ```
+
+   Moving an existing group to instances replaces its workload and Services
+   (selectors are immutable); an address is not served between the removal
+   of the old objects and the new engine becoming ready.
 
 What the chart sets up:
 
@@ -271,7 +303,7 @@ What the chart sets up:
   identity. Pods run as uid 10001 with the namespaced sysctl
   `net.ipv4.ip_unprivileged_port_start=0` to bind port 53.
 - **Engine state**: `engine.stateDir.type=hostPath` (default) keeps identity,
-  snapshot and caches in `<hostPathPrefix>/<workload>` on the node across pod
+  snapshot and caches in `<hostPathPrefix>/<group workload>` on the node across pod
   restarts. `emptyDir` enrolls a new engine after every pod restart and needs
   a join token that is still valid.
 - **Client addresses**: DNS Services default to `externalTrafficPolicy: Local`,
@@ -876,6 +908,9 @@ sources; 2026-09-14, `ce26a9e` plus the uncommitted Task 20 fixes, image `sha-ce
 engine memory limit, 2 build threads) reported through `GET /api/v1/engines/{id}/stats`
 (`filter_index`; decisions uncached, so "blocked" is a cold blocked name):
 
+The `edge-b-worker-24` and `edge-b-worker-25` rows were measured on the engines of the former
+engine group `edge-b` (removed 2026-09-14); kw now runs two engines, on `master-12` and `master-13`.
+
 | node             | CPU        | names     | index bytes | cap     | build  | blocked ns | clean ns |
 | ---------------- | ---------- | --------- | ----------- | ------- | ------ | ---------- | -------- |
 | edge-b-worker-24 | cortex-a76 | 5,134,849 | 117,781,571 | 512 MiB | 1.81 s | 159        | 79       |
@@ -932,31 +967,31 @@ scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example f
 
 kw is the project's lab cluster (arm64 k3s). The procedure, secrets and manual
 checks are in `deploy/kw/README.md`. `scripts/kw-deploy.sh` builds the images
-from a clean worktree of HEAD (tag `sha-<7>`), creates the secrets, labels the
-`edge-b` nodes and installs the Helm release `nexora` in two phases: the
-management plane first, then `deploy/kw/bootstrap.sh` (idempotent API
-configuration, including engine group `edge-b` and both join token secrets),
-then the engines of both groups. The release uses `deploy/kw/values-kw.yaml`:
+from a clean worktree of HEAD (tag `sha-<7>`), creates the secrets and installs
+the Helm release `nexora`; on a first install the management plane comes first,
+then `deploy/kw/bootstrap.sh` (idempotent API configuration, including the join
+token secret, and removal of the former engine group `edge-b`), then the
+engines. The release uses `deploy/kw/values-kw.yaml`:
 
 ```sh
 helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
 ```
 
-`scripts/kw-acceptance.sh` restarts the `edge-b` engines and runs
+`scripts/kw-acceptance.sh` runs
 `TestKwSmoke`, `TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories`
 from the dev pod against the live release. The admin password is in the secret `nexora-admin`
 (`kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d`).
 
-| Component                                           | Address                                                                                            |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| GUI and API                                         | `https://nexora.kw.local` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                      |
-| Engine gRPC                                         | `192.168.10.135:9443`, in cluster `nexora-mgmt-grpc.nexora.svc.cluster.local:9443`                 |
-| DNS, engine group `default` (`nexora-engine`)       | `192.168.10.136`: 53, DoT 853, DoH 443 `/dns-query`, DoQ 853; `externalTrafficPolicy: Local`       |
-| DNS, engine group `edge-b` (`nexora-engine-edge-b`) | `192.168.10.137`, nodes labelled `nexora.io/engine-group=edge-b`; `externalTrafficPolicy: Cluster` |
-| Database                                            | CNPG cluster `nexora-db` (`deploy/kw/cnpg-cluster.yaml`), secret `nexora-db-app`                   |
-| Query logs                                          | OpenSearch in namespace `nexora` via `nexora-otelcol`                                              |
-| Traces                                              | Jaeger `jaeger.observability:4317`                                                                 |
-| Metrics                                             | kube-prometheus-stack; ServiceMonitor and PrometheusRule in `monitoring` with `release: kps`       |
+| Component                                   | Address                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| GUI and API                                 | `https://nexora.kw.local` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                               |
+| Engine gRPC                                 | `192.168.10.135:9443`, in cluster `nexora-mgmt-grpc.nexora.svc.cluster.local:9443`                          |
+| DNS, engine `nexora-engine-a` (`master-12`) | `192.168.10.136` (`nexora-dns`): 53, DoT 853, DoH 443 `/dns-query`, DoQ 853; `externalTrafficPolicy: Local` |
+| DNS, engine `nexora-engine-b` (`master-13`) | `192.168.10.139` (`nexora-dns-2`), same ports; `externalTrafficPolicy: Local`                               |
+| Database                                    | CNPG cluster `nexora-db` (`deploy/kw/cnpg-cluster.yaml`), secret `nexora-db-app`                            |
+| Query logs                                  | OpenSearch in namespace `nexora` via `nexora-otelcol`                                                       |
+| Traces                                      | Jaeger `jaeger.observability:4317`                                                                          |
+| Metrics                                     | kube-prometheus-stack; ServiceMonitor and PrometheusRule in `monitoring` with `release: kps`                |
 
 kw runs recursive mode (from the root servers) with DNSSEC validation, including
 validation of forwarded answers.
@@ -973,14 +1008,12 @@ validation of forwarded answers.
   with DNSSEC validation works through the redirect).
 - **Client addresses behind `externalTrafficPolicy: Cluster`**: engines see node
   addresses, so per-client policy groups and the query log's client address do
-  not work. On kw this applies to engine group `edge-b` (`192.168.10.137`):
-  kube-vip may announce the VIP from a node without an `edge-b` engine, where
-  `Local` would drop the traffic. Per-client policy on kw is verified on the
-  `default` group (`192.168.10.136`, `Local`).
+  not work. kw uses `Local` on both DNS addresses.
 - **`externalTrafficPolicy: Local` and the announcing node**: kube-vip (ARP)
-  holds a VIP on one node; queries to it are dropped while that node's engine
-  restarts, and the node must run an engine of the group (kw tolerates the
-  control-plane taints for this).
+  holds a VIP on one node, which must run an engine behind that Service (kw
+  tolerates the control-plane taints for this). On kw each address has one
+  engine pinned to one node (chart `instances`): the address does not answer
+  while kube-vip announces it from another node or that node is down.
 - **Engine restart without the management plane**: the engine serves its
   persisted snapshot, but the DNS serving certificate and TSIG secrets are only
   held in memory, so DoT/DoH/DoQ handshakes fail

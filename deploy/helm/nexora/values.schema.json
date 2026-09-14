@@ -151,6 +151,12 @@
           }
         },
         "tolerations": { "type": "array" },
+        "shutdownDrainSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "minReadySeconds": { "type": "integer", "minimum": 0 },
         "resources": { "type": "object" },
         "groups": {
           "type": "array",
@@ -180,6 +186,37 @@
                   "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                 }
               },
+              "instances": {
+                "type": "array",
+                "description": "One engine per entry pinned to one node, each with an optional Service selecting only it.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "node"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9])?$"
+                    },
+                    "node": { "type": "string", "minLength": 1 },
+                    "service": {
+                      "type": "object",
+                      "required": ["name"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": { "type": "string" },
+                        "type": {
+                          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+                        },
+                        "loadBalancerIP": { "type": "string" },
+                        "externalTrafficPolicy": {
+                          "enum": ["Local", "Cluster"]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
               "extraServices": {
                 "type": "array",
                 "description": "Additional Services (addresses) for the same engine group, e.g. a second DNS server IP.",
@@ -188,7 +225,9 @@
                   "required": ["name"],
                   "properties": {
                     "name": { "type": "string" },
-                    "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+                    "type": {
+                      "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+                    },
                     "loadBalancerIP": { "type": "string" },
                     "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                   },

@@ -1,6 +1,7 @@
 use nexora_engine::authoritative;
 use nexora_engine::bootstrap::{self, Bootstrap};
 use nexora_engine::clock;
+use nexora_engine::lifecycle;
 use nexora_engine::recursor::{self, RecursorState};
 use nexora_engine::server::tls::CertStore;
 use nexora_engine::server::{self, Shared};
@@ -100,6 +101,13 @@ fn main() -> ExitCode {
             None
         }
     };
+    // Registered before the READY line, so SIGTERM and SIGINT always start the drain.
+    let stop_signals = {
+        use tokio::signal::unix::{SignalKind, signal};
+        let _entered = control.enter();
+        signal(SignalKind::terminate()).and_then(|t| Ok((t, signal(SignalKind::interrupt())?)))
+    };
+    let drain = std::time::Duration::from_secs(boot.shutdown_drain_seconds);
     println!("{}", ready_line(&workers, metrics_addr));
     if boot.is_standalone() {
         // Registered before workers serve long, so a SIGHUP never takes the default action.
@@ -109,6 +117,7 @@ fn main() -> ExitCode {
         };
         match hangup {
             Ok(mut hangup) => {
+                let (shared, boot, cert_store) = (shared.clone(), boot.clone(), cert_store.clone());
                 control.spawn(async move {
                     while hangup.recv().await.is_some() {
                         let (shared, boot, cert_store) =
@@ -132,10 +141,24 @@ fn main() -> ExitCode {
         ));
     }
 
-    for w in workers.handles {
-        let _ = w.join();
+    match stop_signals {
+        Ok((mut term, mut int)) => control.block_on(async {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = int.recv() => {}
+            }
+            lifecycle::drain(&shared, drain).await;
+        }),
+        Err(e) => {
+            // Without signal handlers the engine serves until killed.
+            eprintln!("nexora-engine: signal handlers: {e}");
+            for w in workers.handles {
+                let _ = w.join();
+            }
+        }
     }
-    ExitCode::SUCCESS
+    // Worker threads never return on their own; exiting the process ends them.
+    std::process::exit(0)
 }
 
 fn bind_metrics(

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Bootstrap a running nexora-mgmt on kw through its API: the first admin, upstream forwarders,
 # the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone, the M4
-# authoritative demo (TSIG key, signed primary nexora-demo.kw., secondary bind-demo.kw.), the M5
-# engine group edge-b and the join tokens of both engine groups (Secrets nexora-join-token and
-# nexora-join-token-edge-b), and the catalog filter categories malware, phishing, ads-tracking and
-# crypto-mining. Idempotent; run twice by scripts/kw-deploy.sh (before and after the engines).
+# authoritative demo (TSIG key, signed primary nexora-demo.kw., secondary bind-demo.kw.), the join
+# token of the default engine group (Secret nexora-join-token), and the catalog filter categories
+# malware, phishing, ads-tracking and crypto-mining. It removes the former engine group edge-b and
+# engines that no longer run. Idempotent; scripts/kw-deploy.sh runs it after the release (and, on a
+# first install, before the engines too).
 #
 # The admin credentials live only in the Secret nexora-admin (keys username, password), created
 # here with a random password on the first run. Read the password with:
@@ -105,16 +106,6 @@ if [ "$(jq -r .file_records <<<"$rpz")" = null ]; then
 	echo "RPZ zone rpz.kw.nexora. uploaded"
 fi
 
-# Engine group edge-b (M5): the engines on nodes labelled nexora.io/engine-group=edge-b. Created with
-# canary parameters (one canary, 20 s health window) but the all_at_once strategy, so the smoke
-# tests' config changes reach every engine quickly; TestKwFullProduct switches it to canary and back.
-edge=$(call "$api/api/v1/engine-groups" | jq -r '.[] | select(.name=="edge-b") | .id')
-if [ -z "$edge" ]; then
-	edge=$(call -d '{"name":"edge-b","description":"engines on nodes labelled nexora.io/engine-group=edge-b","rollout_strategy":"all_at_once","canary_count":1,"health_window_seconds":20,"ack_timeout_seconds":60,"max_servfail_ratio":0.05,"min_health_queries":20}' \
-		"$api/api/v1/engine-groups" | jq -r .id)
-	echo "engine group edge-b created"
-fi
-
 # Authoritative demo (M4). The TSIG key nexora-demo-xfr. comes from the Secret nexora-demo-tsig
 # (scripts/kw-deploy.sh). Transfers need the key and a pod address (10.42.0.0/16: the engines see the
 # real client address); dynamic updates need the key.
@@ -195,15 +186,44 @@ if ! k get secret nexora-join-token >/dev/null 2>&1; then
 	call -d '{"name":"kw-engines","ttl_seconds":31536000}' "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token"
 	k create secret generic nexora-join-token --from-file=join-token="$tmp/join-token"
 fi
-if ! k get secret nexora-join-token-edge-b >/dev/null 2>&1; then
-	jq -n --arg g "$edge" '{name:"kw-engines-edge-b", ttl_seconds:31536000, engine_group_id:$g}' |
-		call -d @- "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token-edge-b"
-	k create secret generic nexora-join-token-edge-b --from-file=join-token="$tmp/join-token-edge-b"
-fi
 
-# Engines enrolled before M5 were named after their (emptyDir) pods and never reconnect.
-call "$api/api/v1/engines" |
-	jq -r '.[] | select(.connected | not) | select(.node_name | test("^(edge-b-)?(master|worker)-[0-9]+$") | not) | .id' |
-	while read -r id; do
-		call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed pre-M5 engine $id"
+# The former engine group edge-b (removed 2026-09-14): a group can only be deleted when empty, so its
+# engines, join tokens and group-scoped configuration go first (store.EngineScopedTables: upstreams,
+# filter lists, policy groups, rewrites, forward zones, zones, RPZ zones). Its DaemonSet is already
+# gone with the Helm release.
+edge=$(call "$api/api/v1/engine-groups" | jq -r '.[] | select(.name=="edge-b") | .id')
+if [ -n "$edge" ]; then
+	call "$api/api/v1/engines" | jq -r --arg g "$edge" '.[] | select(.engine_group_id==$g) | .id' |
+		while read -r id; do
+			call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed edge-b engine $id"
+		done
+	call "$api/api/v1/join-tokens" | jq -r --arg g "$edge" '.[] | select(.engine_group_id==$g and .state=="active") | .id' |
+		while read -r id; do
+			call -X DELETE "$api/api/v1/join-tokens/$id" >/dev/null && echo "revoked edge-b join token $id"
+		done
+	# Rewrites before policy groups (a policy group's rewrites go with it); zones use /zones/{id} too.
+	for res in rewrites policy-groups upstreams filter-lists forward-zones zones rpz-zones; do
+		call "$api/api/v1/$res" | jq -r --arg g "$edge" '.[] | select(.engine_group_id==$g) | .id+" "+(.revision|tostring)' |
+			while read -r id rev; do
+				call -X DELETE "$api/api/v1/$res/$id?revision=$rev" >/dev/null && echo "removed edge-b $res $id"
+			done
 	done
+	rev=$(call "$api/api/v1/engine-groups/$edge" | jq -r .revision)
+	call -X DELETE "$api/api/v1/engine-groups/$edge?revision=$rev" >/dev/null
+	echo "engine group edge-b deleted"
+fi
+k delete secret nexora-join-token-edge-b --ignore-not-found
+
+# Engines that no longer run: disconnected engines named after a node without a running engine pod
+# (pre-M5 pod-named engines, and the nodes kw stopped running engines on). A connected engine, or one
+# on a node with a running engine pod (briefly disconnected by a restart), is kept. Skipped while no
+# engine pod runs (first install).
+nodes=$(k get pods -l app.kubernetes.io/name=nexora-engine --field-selector=status.phase=Running \
+	-o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort -u | jq -R . | jq -sc .)
+if [ "$nodes" != "[]" ]; then
+	call "$api/api/v1/engines" |
+		jq -r --argjson nodes "$nodes" '.[] | select(.connected | not) | select(.node_name as $n | $nodes | index($n) == null) | .id' |
+		while read -r id; do
+			call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed engine $id that no longer runs"
+		done
+fi

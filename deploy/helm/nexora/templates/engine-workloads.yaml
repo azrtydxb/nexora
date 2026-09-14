@@ -1,40 +1,90 @@
 {{- if .Values.engine.enabled }}
-{{- $e := .Values.engine }}
-{{- range $g := $e.groups }}
-{{- $workload := include "nexora.engineWorkload" (dict "root" $ "group" $g) }}
+{{- range $g := .Values.engine.groups }}
+{{- $group := include "nexora.engineWorkload" (dict "root" $ "group" $g) }}
+{{- /* One workload per group, or, with instances, one per instance pinned to its node. */}}
+{{- if not $g.instances }}
+{{ include "nexora.engineWorkloadDoc" (dict "root" $ "group" $g "name" $group "instance" dict) }}
+{{- end }}
+{{- range $i := $g.instances | default list }}
+{{ include "nexora.engineWorkloadDoc" (dict "root" $ "group" $g "name" (printf "%s-%s" $group $i.name) "instance" $i) }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* dict root, group, name (workload name), instance (empty dict for the group workload) */}}
+{{- define "nexora.engineWorkloadDoc" -}}
+{{- $root := .root }}
+{{- $e := $root.Values.engine }}
+{{- $g := .group }}
+{{- $workload := .name }}
+{{- /* Instances share the group's ConfigMap and state directory name: an instance on the node of
+     the former group workload keeps that engine's identity. */}}
+{{- $group := include "nexora.engineWorkload" (dict "root" $root "group" $g) }}
+{{- $instance := .instance.name | default "" }}
+{{- $affinity := deepCopy ($g.nodeAffinity | default dict) }}
+{{- if $instance }}
+{{- $pin := dict "key" "kubernetes.io/hostname" "operator" "In" "values" (list (required (printf "engine.groups[%s].instances[%s].node is required" $g.name $instance) .instance.node)) }}
+{{- $req := $affinity.requiredDuringSchedulingIgnoredDuringExecution | default dict }}
+{{- $terms := list }}
+{{- range $t := $req.nodeSelectorTerms | default (list dict) }}
+{{- $term := deepCopy $t }}
+{{- $_ := set $term "matchExpressions" (append ($term.matchExpressions | default list) $pin) }}
+{{- $terms = append $terms $term }}
+{{- end }}
+{{- $_ := set $req "nodeSelectorTerms" $terms }}
+{{- $_ := set $affinity "requiredDuringSchedulingIgnoredDuringExecution" $req }}
+{{- end -}}
 ---
 apiVersion: apps/v1
 kind: {{ $e.kind }}
 metadata:
   name: {{ $workload }}
   labels:
-    {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
+    {{- include "nexora.labels" (dict "root" $root "name" "nexora-engine") | nindent 4 }}
     nexora.io/engine-group: {{ $g.name }}
+    {{- with $instance }}
+    nexora.io/engine-instance: {{ . }}
+    {{- end }}
 spec:
+  # Zero-downtime updates: the new engine starts beside the old one (same node for a DaemonSet,
+  # sharing its hostPath state directory, which the engine supports), and the old one is only
+  # stopped once the new one is ready (/ready: configuration applied) and stayed ready for
+  # minReadySeconds. hostNetwork engines cannot run twice on a node (same host ports), so they
+  # are replaced one at a time instead.
+  {{- $rolling := ternary (dict "maxSurge" 0 "maxUnavailable" 1) (dict "maxSurge" 1 "maxUnavailable" 0) (and $e.hostNetwork true) }}
+  minReadySeconds: {{ $e.minReadySeconds }}
   {{- if eq $e.kind "Deployment" }}
-  replicas: {{ ternary $g.replicas 1 (hasKey $g "replicas") }}
-  # Never two engines of one group on the same state directory (hostPath) at once.
+  replicas: {{ ternary 1 (ternary $g.replicas 1 (hasKey $g "replicas")) (ne $instance "") }}
   strategy:
     type: RollingUpdate
-    rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }
+    rollingUpdate: { maxSurge: {{ $rolling.maxSurge }}, maxUnavailable: {{ $rolling.maxUnavailable }} }
   {{- else }}
   updateStrategy:
     type: RollingUpdate
-    rollingUpdate: { maxUnavailable: 1 }
+    rollingUpdate: { maxSurge: {{ $rolling.maxSurge }}, maxUnavailable: {{ $rolling.maxUnavailable }} }
   {{- end }}
   selector:
     matchLabels:
-      {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-engine") | nindent 6 }}
+      {{- include "nexora.selectorLabels" (dict "root" $root "name" "nexora-engine") | nindent 6 }}
       nexora.io/engine-group: {{ $g.name }}
+      {{- with $instance }}
+      nexora.io/engine-instance: {{ . }}
+      {{- end }}
   template:
     metadata:
       labels:
-        {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 8 }}
+        {{- include "nexora.labels" (dict "root" $root "name" "nexora-engine") | nindent 8 }}
         nexora.io/engine-group: {{ $g.name }}
+        {{- with $instance }}
+        nexora.io/engine-instance: {{ . }}
+        {{- end }}
       annotations:
-        checksum/config: {{ include "nexora.engineToml" (dict "root" $ "group" $g) | sha256sum }}
+        checksum/config: {{ include "nexora.engineToml" (dict "root" $root "group" $g) | sha256sum }}
     spec:
-      {{- with $.Values.imagePullSecrets }}
+      # The engine drains for shutdownDrainSeconds after SIGTERM, then finishes in-flight queries
+      # (at most 5 s).
+      terminationGracePeriodSeconds: {{ add $e.shutdownDrainSeconds 15 }}
+      {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if $e.hostNetwork }}
@@ -51,7 +101,7 @@ spec:
         # Port 53 without NET_BIND_SERVICE (a namespaced sysctl, unavailable with hostNetwork).
         sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
         {{- end }}
-      {{- with $g.nodeAffinity }}
+      {{- with $affinity }}
       affinity:
         nodeAffinity: {{- toYaml . | nindent 10 }}
       {{- end }}
@@ -63,7 +113,7 @@ spec:
         # The hostPath directory is created root-owned; hand it to the engine user.
         - name: state-owner
           image: {{ $e.initImage }}
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]
           securityContext:
             runAsNonRoot: false
@@ -76,8 +126,8 @@ spec:
       {{- end }}
       containers:
         - name: engine
-          image: {{ include "nexora.image" (dict "root" $ "name" "nexora-engine") }}
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: {{ include "nexora.image" (dict "root" $root "name" "nexora-engine") }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           args: ["--config", "/etc/nexora/engine.toml"]
           env:
             - name: K8S_NODE_NAME
@@ -98,30 +148,35 @@ spec:
             - { name: doh, containerPort: {{ . }}, protocol: TCP }
             {{- end }}
             - { name: metrics, containerPort: {{ $e.ports.metrics }}, protocol: TCP }
+          # Ready only with an applied configuration (filter index built) and until shutdown starts.
           readinessProbe:
-            tcpSocket: { port: dns-tcp }
-            periodSeconds: 5
+            httpGet: { path: /ready, port: metrics }
+            periodSeconds: 1
+            failureThreshold: 1
+            successThreshold: 1
+            timeoutSeconds: 1
           livenessProbe:
-            httpGet: { path: /metrics, port: metrics }
+            httpGet: { path: /live, port: metrics }
             periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 2
           resources: {{- toYaml $e.resources | nindent 12 }}
-          securityContext: {{- include "nexora.containerSecurity" $ | nindent 12 }}
+          securityContext: {{- include "nexora.containerSecurity" $root | nindent 12 }}
           volumeMounts:
             - { name: config, mountPath: /etc/nexora/engine.toml, subPath: engine.toml, readOnly: true }
             - { name: join, mountPath: /etc/nexora/join, readOnly: true }
             - { name: state, mountPath: /var/lib/nexora }
       volumes:
         - name: config
-          configMap: { name: {{ $workload }} }
+          configMap: { name: {{ $group }} }
         - name: join
           secret:
             secretName: {{ required (printf "engine.groups[%s].joinTokenSecret is required" $g.name) $g.joinTokenSecret }}
             defaultMode: 0440
         - name: state
           {{- if eq $e.stateDir.type "hostPath" }}
-          hostPath: { path: {{ printf "%s/%s" (trimSuffix "/" $e.stateDir.hostPathPrefix) $workload }}, type: DirectoryOrCreate }
+          hostPath: { path: {{ printf "%s/%s" (trimSuffix "/" $e.stateDir.hostPathPrefix) $group }}, type: DirectoryOrCreate }
           {{- else }}
           emptyDir: {}
           {{- end }}
-{{- end }}
-{{- end }}
+{{- end -}}

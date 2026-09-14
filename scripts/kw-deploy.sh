@@ -2,9 +2,9 @@
 # Deploy Nexora to kw (namespace nexora): build and push the images, apply the supporting manifests in
 # deploy/kw (OpenSearch, CNPG, collector, block list, BIND primary), create the CA, key-encryption key,
 # demo TSIG key and DNS TLS secrets, install the Helm release nexora (deploy/helm/nexora with
-# deploy/kw/values-kw.yaml) in two phases around deploy/kw/bootstrap.sh: the management plane first,
-# then the engines of the engine groups default and edge-b. Ends by printing the environment of the kw
-# tests (see deploy/kw/README.md; scripts/kw-acceptance.sh runs them).
+# deploy/kw/values-kw.yaml) and run deploy/kw/bootstrap.sh. A redeploy is a single rolling upgrade that
+# loses no DNS query; a first install runs in two phases (management plane, bootstrap, engines). Ends by
+# printing the environment of the kw tests (see deploy/kw/README.md; scripts/kw-acceptance.sh runs them).
 #   scripts/kw-deploy.sh [--tag TAG] [--skip-build]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -103,7 +103,9 @@ if ! k get secret nexora-dns-tls >/dev/null 2>&1; then
 	rm -rf "$tmp/ca-in" "$tmp/dnstls"
 fi
 
-kubectl --context "$ctx" label node worker-24 worker-25 nexora.io/engine-group=edge-b --overwrite
+# The former engine group edge-b ran on nodes labelled nexora.io/engine-group=edge-b; the label is no
+# longer used (removing an absent label is a no-op).
+kubectl --context "$ctx" label node worker-24 worker-25 nexora.io/engine-group-
 
 # One-time switch from the kubectl-applied M1-M4 manifests to the chart: remove objects Helm does not own.
 if k get deployment nexora-mgmt >/dev/null 2>&1 &&
@@ -118,28 +120,40 @@ release() {
 		-f "$kw/values-kw.yaml" --set image.tag="$tag" --wait --timeout 15m "$@"
 }
 
-# Phase 1: the management plane; the engine join tokens come from its API.
-release --set engine.enabled=false
-k rollout status deployment/nexora-mgmt --timeout=10m
-k rollout status deployment/nexora-otelcol --timeout=5m
-k rollout status deployment/nexora-blocklist --timeout=5m
-"$kw/bootstrap.sh"
-
-# Phase 2: engines of both engine groups.
+# A redeploy is one helm upgrade: mgmt rolls (two replicas, PodDisruptionBudget) while the engines keep
+# serving their snapshot, and each node's new engine becomes ready beside the old one before the old
+# one drains (maxSurge 1, /ready, shutdownDrainSeconds), so no DNS query is lost (issue #53).
+# Only a first install, before the join token secrets exist, needs two phases: the management plane
+# first (the join tokens come from its API), then the engines.
+# The engines are two instances of the default group (nexora-engine-a, -b); nexora-engine is the
+# group workload they replaced.
+engines_installed() {
+	k get secret nexora-join-token >/dev/null 2>&1 &&
+		{ k get daemonset nexora-engine >/dev/null 2>&1 || k get daemonset nexora-engine-a >/dev/null 2>&1; }
+}
+if ! engines_installed; then
+	release --set engine.enabled=false
+	k rollout status deployment/nexora-mgmt --timeout=10m
+	k rollout status deployment/nexora-otelcol --timeout=5m
+	k rollout status deployment/nexora-blocklist --timeout=5m
+	"$kw/bootstrap.sh"
+fi
 release
-k rollout status daemonset/nexora-engine --timeout=15m
-k rollout status daemonset/nexora-engine-edge-b --timeout=15m
+k rollout status deployment/nexora-mgmt --timeout=10m
+k rollout status daemonset/nexora-engine-a --timeout=15m
+k rollout status daemonset/nexora-engine-b --timeout=15m
 "$kw/bootstrap.sh"
 
 dns_ip=$(k get service nexora-dns -o jsonpath='{.spec.loadBalancerIP}')
-edge_ip=$(k get service nexora-dns-edge-b -o jsonpath='{.spec.loadBalancerIP}')
+dns_ip_2=$(k get service nexora-dns-2 -o jsonpath='{.spec.loadBalancerIP}')
 mgmt_ip=$(k get service nexora-mgmt-lb -o jsonpath='{.spec.loadBalancerIP}')
-engines=$(($(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}') + \
-$(k get daemonset nexora-engine-edge-b -o jsonpath='{.status.desiredNumberScheduled}')))
-edge_ips=$(k get pods -l nexora.io/engine-group=edge-b -o jsonpath='{range .items[*]}{.status.podIP}{","}{end}')
+engines=$(k get daemonsets -l app.kubernetes.io/name=nexora-engine -o jsonpath='{range .items[*]}{.status.desiredNumberScheduled}{"\n"}{end}' |
+	awk '{n += $1} END {print n + 0}')
+engine_ip=$(k get pods -l app.kubernetes.io/name=nexora-engine,nexora.io/engine-instance=a --field-selector=status.phase=Running \
+	-o jsonpath='{.items[0].status.podIP}')
 echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
-echo "NEXORA_KW_EDGE_B_DNS_ADDR=${edge_ip}:53"
-echo "NEXORA_KW_EDGE_B_ENGINE_IPS=${edge_ips%,}"
+echo "NEXORA_KW_DNS_ADDR_2=${dns_ip_2}:53"
+echo "NEXORA_KW_ENGINE_ADDR=${engine_ip}:53"
 echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.local}"
 echo "NEXORA_KW_ENCRYPTED_ADDR=${dns_ip}"
 echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local"

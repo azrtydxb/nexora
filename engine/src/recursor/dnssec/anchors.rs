@@ -14,7 +14,6 @@ use hickory_proto::serialize::binary::BinEncodable;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -390,23 +389,14 @@ impl TrustAnchorStore {
         self.points.store(Arc::new(points));
     }
 
-    /// Write-temp + fsync + rename, like `snapshot.binpb`. A failure is reported on every zone.
+    /// [`crate::statefs::write_atomic`], like `snapshot.binpb`. A failure is reported on every zone.
     fn save(&self, f: &mut AnchorFile) -> std::io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let result = (|| {
-            let tmp = path.with_extension("json.tmp");
-            let mut out = std::fs::File::create(&tmp)?;
-            out.write_all(&serde_json::to_vec_pretty(&*f).map_err(std::io::Error::other)?)?;
-            out.sync_all()?;
-            drop(out);
-            std::fs::rename(&tmp, path)?;
-            match path.parent() {
-                Some(dir) if !dir.as_os_str().is_empty() => std::fs::File::open(dir)?.sync_all(),
-                _ => Ok(()),
-            }
-        })();
+        let result = serde_json::to_vec_pretty(&*f)
+            .map_err(std::io::Error::other)
+            .and_then(|bytes| crate::statefs::write_atomic(path, &bytes));
         if let Err(e) = &result {
             for z in f.zones.values_mut() {
                 z.last_error = format!("persisting trust anchor state: {e}");

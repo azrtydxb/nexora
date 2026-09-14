@@ -72,6 +72,13 @@ engine:
     type: hostPath # hostPath | emptyDir (emptyDir enrolls again after every pod restart)
     hostPathPrefix: /var/lib/nexora
   tolerations: []
+  # After SIGTERM an engine reports not ready and keeps serving this long, so the Service moves
+  # clients to the new engine before the old one stops accepting (terminationGracePeriodSeconds is
+  # this plus 15). With the rolling update (maxSurge 1) each node's new engine must fit next to the
+  # old one: the node needs room for a second copy of resources.requests.
+  shutdownDrainSeconds: 15
+  # How long a new engine must stay ready before the old one on that node is stopped.
+  minReadySeconds: 5
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { cpu: "2", memory: 1Gi }
@@ -88,6 +95,16 @@ engine:
         type: LoadBalancer
         loadBalancerIP: ""
         externalTrafficPolicy: Local
+      # extraServices: [{ name, type, loadBalancerIP, externalTrafficPolicy }] more addresses for the group.
+      #
+      # instances: one engine per entry, pinned to one node, instead of one workload for the group.
+      # Each renders workload <workloadName>-<name> (pod label nexora.io/engine-instance: <name>, node
+      # affinity kubernetes.io/hostname In [node], added to nodeAffinity) with the group's ConfigMap
+      # and state directory, and its optional service selects only that engine. With instances the
+      # group service and extraServices render only when set.
+      #   instances:
+      #     - { name: a, node: node-1, service: { name: dns-a, loadBalancerIP: 192.0.2.1 } }
+      instances: []
 
 # An OpenTelemetry Collector for engine query logs, traces and metrics. Off by default; when on and
 # mgmt.otlpEndpoint is empty, mgmt (and through it the engines) sends OTLP to it.

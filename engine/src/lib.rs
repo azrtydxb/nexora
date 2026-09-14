@@ -8,12 +8,14 @@ pub mod control;
 pub mod edns;
 pub mod filter;
 pub mod inflight;
+pub mod lifecycle;
 pub mod proto;
 pub mod recursor;
 pub mod runtime;
 pub mod server;
 pub mod snapshot;
 pub mod snapshot_m3;
+pub mod statefs;
 pub mod telemetry;
 pub mod tsig;
 #[cfg(test)]

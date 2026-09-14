@@ -644,7 +644,9 @@ components ported from the first Nexora (`components/ui`), openapi-typescript
   and an optional OpenTelemetry Collector (profile `otel`).
 - `deploy/helm/nexora`: mgmt Deployment (`migrate` init container), one
   engine workload per engine group (`DaemonSet` or `Deployment`, node
-  selector, hostPath state), per-group DNS Service, CNPG `Cluster` or an
+  selector, hostPath state), per-group DNS Service, or with `instances` one
+  workload per instance pinned to a node with a Service selecting only that
+  engine, CNPG `Cluster` or an
   external database secret, optional collector, ServiceMonitor,
   PrometheusRule, `values.schema.json`. Static checks live in
   `deploy/deploytest`.
@@ -659,16 +661,15 @@ Namespace `nexora`. `scripts/kw-deploy.sh` applies `deploy/kw/namespace.yaml`,
 OpenSearch) and `blocklist.yaml`, then installs `deploy/helm/nexora` with
 `deploy/kw/values-kw.yaml`: `nexora-mgmt` Deployment (2 replicas) behind ingress
 `nexora.kw.local` (class `nginx`, ClusterIssuer `cluster-ca`, HTTPS only) and a
-gRPC LoadBalancer `192.168.10.135:9443`; engine DaemonSets per engine group,
-selected by node label `nexora.io/engine-group`: `nexora-engine` (group
-`default`, every node without the label, DNS/DoT/DoH/DoQ LoadBalancer
-`nexora-dns` `192.168.10.136`, `externalTrafficPolicy: Local`) and
-`nexora-engine-edge-b` (group `edge-b`, nodes labelled `edge-b`: `worker-24`,
-`worker-25`; LoadBalancer `nexora-dns-edge-b` `192.168.10.137`,
-`externalTrafficPolicy: Cluster`); engine state on hostPath
-`/var/lib/nexora/<workload>`; ServiceMonitor and PrometheusRule in `monitoring`
-with label `release: kps`. `deploy/kw/bootstrap.sh` configures the API (admin,
-upstreams, block list, RPZ, engine group `edge-b`, join token secrets
-`nexora-join-token` and `nexora-join-token-edge-b`). Acceptance:
+gRPC LoadBalancer `192.168.10.135:9443`; two engines of the group `default`
+(chart `instances`, each a DaemonSet pinned to one node and the only endpoint
+of its DNS/DoT/DoH/DoQ LoadBalancer, `externalTrafficPolicy: Local`):
+`nexora-engine-a` on `master-12` behind `nexora-dns` `192.168.10.136`, and
+`nexora-engine-b` on `master-13` behind `nexora-dns-2` `192.168.10.139`; engine
+state on hostPath `/var/lib/nexora/nexora-engine`; ServiceMonitor and
+PrometheusRule in `monitoring` with label `release: kps`.
+`deploy/kw/bootstrap.sh` configures the API (admin, upstreams, block list, RPZ,
+join token secret `nexora-join-token`) and removes the former engine group
+`edge-b` (removed 2026-09-14) and engines that no longer run. Acceptance:
 `scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`),
 `TestKwFullProduct` and `TestKwFilterCategories`.

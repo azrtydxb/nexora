@@ -36,11 +36,10 @@ const kwSmokeGroup = "kw-smoke-client"
 // kwEnv is TestKwSmoke's environment, printed by scripts/kw-deploy.sh (see deploy/kw/README.md).
 type kwEnv struct {
 	dnsAddr, apiURL, encAddr, tlsName, mgmtLBIP string
-	// engineAddr is one default-group engine pod (ip:53). Checks that depend on a single engine's
-	// cache use it: inside the cluster the DNS LoadBalancer IP spreads queries over all engines,
-	// each with its own cache (externalTrafficPolicy: Local only applies to external clients).
+	// engineAddr is the engine pod behind dnsAddr (instance a, ip:53). Checks that depend on a single
+	// engine's cache use it, so they do not depend on how the Service routes in-cluster traffic.
 	engineAddr string
-	// secondDNSAddr is the second client-facing DNS address of the default group (ip:53).
+	// secondDNSAddr is the second client-facing DNS address, served by the other engine (ip:53).
 	secondDNSAddr      string
 	engines            int
 	dnsRoots, apiRoots *x509.CertPool
@@ -101,7 +100,7 @@ func certPool(t *testing.T, file string) *x509.CertPool {
 }
 
 // TestKwSmoke checks the kw deployment from inside the cluster network: HTTPS-only management with
-// Secure cookies, stamped versions, one connected engine per node, forwarding and blocking over
+// Secure cookies, stamped versions, every engine connected, forwarding and blocking over
 // UDP/TCP, DoT/DoH/DoQ on the DNS LoadBalancer, real client addresses in the query log, and
 // per-client policy with rewrites; then M3's DNSSEC validation, recursion, RPZ and metrics (kwSmokeM3).
 func TestKwSmoke(t *testing.T) {

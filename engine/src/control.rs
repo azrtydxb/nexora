@@ -21,8 +21,7 @@ use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, RootCertStore, SignatureScheme};
 use sha2::{Digest, Sha256};
-use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -131,19 +130,22 @@ pub fn save_identity(state_dir: &Path, id: &Identity) -> std::io::Result<()> {
         .create(&dir)?;
     let contents = [&id.cert_pem, &id.key_pem, &id.ca_pem, &id.engine_id];
     for (name, data) in ID_FILES.iter().zip(contents) {
-        let path = dir.join(name);
-        let tmp = dir.join(format!("{name}.tmp"));
-        let _ = std::fs::remove_file(&tmp);
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(data.as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(&tmp, &path)?;
+        crate::statefs::write_atomic(&dir.join(name), data.as_bytes())?;
     }
-    std::fs::File::open(&dir)?.sync_all()
+    Ok(())
+}
+
+/// The state directory lock ([`crate::statefs::StateLock`]) that serializes every read and change
+/// of `identity` and `identity.new` with an engine sharing the directory (rolling update), so no
+/// process reads a half-promoted identity or enrolls twice.
+async fn identity_lock(boot: &Bootstrap) -> Option<crate::statefs::StateLock> {
+    match crate::statefs::StateLock::acquire_async(&boot.state_dir).await {
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            eprintln!("nexora-engine: state directory lock: {e}");
+            None
+        }
+    }
 }
 
 /// 500 ms × 2^attempt, capped at 30 s, with ±20 % jitter.
@@ -444,9 +446,14 @@ pub async fn fetch_blobs(
         }
         verify_blob(r, &data)?;
         tokio::fs::create_dir_all(blob_dir).await?;
-        let tmp = blob_dir.join(format!("{}.tmp", r.sha256));
+        // A unique temporary name: an engine sharing this state directory (rolling update) may
+        // fetch the same blob at the same time.
+        let tmp = crate::statefs::unique_tmp(&path);
         tokio::fs::write(&tmp, &data).await?;
-        tokio::fs::rename(&tmp, &path).await?;
+        if let Err(e) = tokio::fs::rename(&tmp, &path).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(e.into());
+        }
     }
     Ok(())
 }
@@ -459,6 +466,7 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
     let staged_dir = cert_renewal::staged_dir(&boot.state_dir);
     let mut attempt = 0;
     for url in boot.management_urls.iter().cycle() {
+        let lock = identity_lock(&boot).await;
         match load_identity(&boot.state_dir) {
             Ok(Some(id)) => identity = id,
             Ok(None) => {}
@@ -472,6 +480,7 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
                 None
             }
         };
+        drop(lock);
         let id = staged.as_ref().unwrap_or(&identity);
         let err = session(
             &shared,
@@ -512,7 +521,17 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
             eprintln!(
                 "nexora-engine: renewed certificate refused by {url}: {err}; keeping the current identity"
             );
-            match cert_renewal::discard_staged(&boot.state_dir) {
+            let lock = identity_lock(&boot).await;
+            // Only the refused certificate: an engine sharing the state directory may have staged
+            // another one meanwhile.
+            let discarded = match (load_identity_dir(&staged_dir), &staged) {
+                (Ok(Some(on_disk)), Some(refused)) if on_disk.cert_pem != refused.cert_pem => {
+                    Ok(())
+                }
+                _ => cert_renewal::discard_staged(&boot.state_dir),
+            };
+            drop(lock);
+            match discarded {
                 Ok(()) => continue,
                 Err(e) => eprintln!("nexora-engine: discard renewed identity: {e}"),
             }
@@ -539,6 +558,8 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
 async fn obtain_identity(boot: &Bootstrap) -> Identity {
     let mut attempt = 0;
     loop {
+        // Held through enrollment: an engine starting beside this one waits and loads the result.
+        let lock = identity_lock(boot).await;
         if let Err(e) = cert_renewal::recover_identity(&boot.state_dir) {
             eprintln!("nexora-engine: recover identity: {e}");
         }
@@ -572,6 +593,7 @@ async fn obtain_identity(boot: &Bootstrap) -> Identity {
                 boot.join_token_file.display()
             ),
         }
+        drop(lock);
         tokio::time::sleep(backoff(attempt)).await;
         attempt = attempt.saturating_add(1);
     }
@@ -654,7 +676,20 @@ async fn session(
     };
     eprintln!("nexora-engine: control connected to {url}");
     if staged {
-        match cert_renewal::promote_identity(&boot.state_dir) {
+        let lock = identity_lock(boot).await;
+        // Only the identity this stream authenticated with: an engine sharing the state directory
+        // may have promoted or replaced the staged one meanwhile.
+        let promoted = match load_identity_dir(&cert_renewal::staged_dir(&boot.state_dir)) {
+            Ok(Some(on_disk)) if on_disk.cert_pem == id.cert_pem => {
+                cert_renewal::promote_identity(&boot.state_dir)
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "staged identity no longer on disk (promoted by another engine on this state directory)",
+            )),
+        };
+        drop(lock);
+        match promoted {
             Ok(()) => {
                 shared.metrics.cert_renewals.fetch_add(1, Ordering::Relaxed);
                 eprintln!(
@@ -771,11 +806,14 @@ async fn session(
                     Ok(cert_pem) => {
                         // The private key reaches disk only now, 0600, staged beside the current identity.
                         let key_pem = zeroize::Zeroizing::new(key.serialize_pem());
-                        match cert_renewal::stage_identity(
+                        let lock = identity_lock(boot).await;
+                        let staged = cert_renewal::stage_identity(
                             &boot.state_dir,
                             cert_pem.as_bytes(),
                             key_pem.as_bytes(),
-                        ) {
+                        );
+                        drop(lock);
+                        match staged {
                             Ok(()) => break ControlError::Renewed,
                             Err(e) => eprintln!("nexora-engine: store renewed identity: {e}"),
                         }

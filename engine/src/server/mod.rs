@@ -67,6 +67,8 @@ pub struct Shared {
     pub recursor: Arc<RecursorState>,
     /// Authoritative (M4) state that survives snapshot swaps.
     pub auth: Arc<AuthState>,
+    /// Readiness and graceful shutdown.
+    pub lifecycle: crate::lifecycle::Lifecycle,
 }
 
 impl Shared {
@@ -89,6 +91,7 @@ impl Shared {
             mgmt_channel: ArcSwapOption::empty(),
             recursor,
             auth: AuthState::new(),
+            lifecycle: Default::default(),
         })
     }
 }
@@ -876,19 +879,33 @@ pub fn spawn_workers(
                     for sock in sockets.udp {
                         local.spawn_local(udp::run_udp(ctx.clone(), sock));
                     }
+                    // Stream listeners end (and close) once shutdown stops accepting; their
+                    // connections are separate tasks and keep being served until exit.
+                    let until_stopped = |accept: std::pin::Pin<Box<dyn Future<Output = ()>>>| {
+                        let stopped = ctx.shared.lifecycle.accepting_stopped();
+                        async move {
+                            tokio::select! {
+                                _ = accept => {}
+                                _ = stopped => {}
+                            }
+                        }
+                    };
                     for listener in sockets.tcp {
-                        local.spawn_local(tcp::run_tcp(ctx.clone(), listener));
+                        local.spawn_local(until_stopped(Box::pin(tcp::run_tcp(
+                            ctx.clone(),
+                            listener,
+                        ))));
                     }
                     let dot_proxy = dot_proxy.map(Rc::new);
                     for listener in sockets.dot {
                         let (acceptor, certs, proxy) =
                             (dot_acceptor.clone(), cert_store.clone(), dot_proxy.clone());
                         let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
-                        local.spawn_local(async move {
+                        local.spawn_local(until_stopped(Box::pin(async move {
                             if let Some(listener) = from_std_listener(listener, "dot") {
                                 dot::run_dot(listener, acceptor, certs, answerer, proxy).await;
                             }
-                        });
+                        })));
                     }
                     let doh_proxy = doh_proxy.map(Rc::new);
                     let doh_path: Rc<str> = Rc::from(doh_path.as_str());
@@ -900,16 +917,17 @@ pub fn spawn_workers(
                             doh_path.clone(),
                         );
                         let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
-                        local.spawn_local(async move {
+                        local.spawn_local(until_stopped(Box::pin(async move {
                             if let Some(listener) = from_std_listener(listener, "doh") {
                                 doh::run_doh(listener, acceptor, certs, answerer, proxy, path)
                                     .await;
                             }
-                        });
+                        })));
                     }
                     for socket in sockets.doq {
                         let (config, certs) = (quic_config.clone(), cert_store.clone());
                         let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
+                        let stopped = ctx.shared.lifecycle.accepting_stopped();
                         local.spawn_local(async move {
                             let addr = socket.local_addr();
                             match quinn::Endpoint::new(
@@ -918,7 +936,14 @@ pub fn spawn_workers(
                                 socket,
                                 Arc::new(quinn::TokioRuntime),
                             ) {
-                                Ok(endpoint) => doq::run_doq(endpoint, answerer, certs).await,
+                                Ok(endpoint) => {
+                                    let handle = endpoint.clone();
+                                    tokio::select! {
+                                        _ = doq::run_doq(endpoint, answerer, certs) => {}
+                                        // New connections are refused; open ones keep going.
+                                        _ = stopped => handle.set_server_config(None),
+                                    }
+                                }
                                 Err(e) => match addr {
                                     Ok(a) => eprintln!("nexora-engine: doq endpoint {a}: {e}"),
                                     Err(_) => eprintln!("nexora-engine: doq endpoint: {e}"),

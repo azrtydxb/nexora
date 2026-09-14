@@ -49,7 +49,15 @@ pub struct Bootstrap {
     /// Standalone mode only; reloaded on SIGHUP.
     #[serde(default)]
     pub tls_key_file: String,
+    /// Seconds the engine keeps serving after SIGTERM/SIGINT while reporting not ready (`/ready`
+    /// 503), so a load balancer moves clients to another endpoint first; then it stops accepting
+    /// connections, finishes in-flight resolutions and exits. 0 (the default, one engine and no
+    /// load balancer) exits right after the in-flight resolutions. At most 600.
+    #[serde(default)]
+    pub shutdown_drain_seconds: u64,
 }
+
+const MAX_SHUTDOWN_DRAIN_SECONDS: u64 = 600;
 
 fn default_join_token_file() -> PathBuf {
     PathBuf::from("/etc/nexora/join-token")
@@ -120,6 +128,9 @@ pub fn load(path: &Path) -> anyhow::Result<Bootstrap> {
         && let Err(e) = ProxyPolicy::new(&b.proxy_protocol_trusted_cidrs)
     {
         bail!("{e}");
+    }
+    if b.shutdown_drain_seconds > MAX_SHUTDOWN_DRAIN_SECONDS {
+        bail!("shutdown_drain_seconds must be at most {MAX_SHUTDOWN_DRAIN_SECONDS}");
     }
     if b.tls_cert_file.is_empty() != b.tls_key_file.is_empty() {
         bail!("tls_cert_file and tls_key_file must be set together");

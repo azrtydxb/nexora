@@ -1013,7 +1013,9 @@ fn register_recursor(reg: &mut Registry, rt: &Runtime, recursor: &RecursorState)
 
 const SCRAPE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Serves `GET /metrics` over HTTP/1.1 on `addr`; every other request is 404.
+/// Serves `GET /metrics`, `GET /ready` (200 once a configuration is applied and until shutdown
+/// starts, else 503 with the reason) and `GET /live` (200) over HTTP/1.1 on `addr`; every other
+/// request is 404.
 pub async fn serve_metrics(addr: SocketAddr, shared: Arc<Shared>) -> std::io::Result<()> {
     serve_metrics_on(tokio::net::TcpListener::bind(addr).await?, shared).await
 }
@@ -1060,6 +1062,16 @@ fn scrape<B>(req: &Request<B>, shared: &Shared) -> Response<Full<Bytes>> {
                 "application/openmetrics-text; version=1.0.0; charset=utf-8",
             ),
         );
+    } else if req.method() == Method::GET && req.uri().path() == "/ready" {
+        match crate::lifecycle::not_ready_reason(shared) {
+            None => *resp.body_mut() = Full::new(Bytes::from_static(b"ready\n")),
+            Some(reason) => {
+                *resp.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+                *resp.body_mut() = Full::new(Bytes::from(format!("{reason}\n")));
+            }
+        }
+    } else if req.method() == Method::GET && req.uri().path() == "/live" {
+        *resp.body_mut() = Full::new(Bytes::from_static(b"live\n"));
     } else {
         *resp.status_mut() = StatusCode::NOT_FOUND;
     }

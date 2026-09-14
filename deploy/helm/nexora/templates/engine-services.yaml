@@ -15,9 +15,23 @@ spec:
 {{- range $g := .Values.engine.groups }}
 {{- $main := $g.service | default dict }}
 {{- $defaultName := printf "%s-dns-%s" $prefix $g.name }}
-{{- /* extraServices: more addresses for the same group (e.g. a second DNS server IP for clients) */}}
-{{- $all := prepend ($g.extraServices | default list) (merge (dict "name" ($main.name | default $defaultName)) $main) }}
-{{- range $svc := $all }}
+{{- /* Group Services select every engine of the group. extraServices: more addresses for the same
+     group (e.g. a second DNS server IP for clients). With instances, group Services are optional. */}}
+{{- $all := list }}
+{{- if or (not $g.instances) $g.service }}
+{{- $all = append $all (dict "svc" (merge (dict "name" ($main.name | default $defaultName)) $main) "instance" "") }}
+{{- end }}
+{{- range $x := $g.extraServices | default list }}
+{{- $all = append $all (dict "svc" $x "instance" "") }}
+{{- end }}
+{{- /* An instance Service only has that instance's engine as endpoint. */}}
+{{- range $i := $g.instances | default list }}
+{{- with $i.service }}
+{{- $all = append $all (dict "svc" . "instance" $i.name) }}
+{{- end }}
+{{- end }}
+{{- range $entry := $all }}
+{{- $svc := $entry.svc }}
 {{- $type := $svc.type | default ($main.type | default "LoadBalancer") }}
 ---
 apiVersion: v1
@@ -27,6 +41,9 @@ metadata:
   labels:
     {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
     nexora.io/engine-group: {{ $g.name }}
+    {{- with $entry.instance }}
+    nexora.io/engine-instance: {{ . }}
+    {{- end }}
 spec:
   type: {{ $type }}
   {{- with $svc.loadBalancerIP }}
@@ -40,6 +57,9 @@ spec:
   selector:
     {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
     nexora.io/engine-group: {{ $g.name }}
+    {{- with $entry.instance }}
+    nexora.io/engine-instance: {{ . }}
+    {{- end }}
   ports:
     - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
     - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }

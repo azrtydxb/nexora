@@ -97,4 +97,5 @@ listen_doq = ["0.0.0.0:{{ . }}"]
 {{- end }}
 metrics_listen = "0.0.0.0:{{ $p.metrics }}"
 workers = {{ .root.Values.engine.workers }}
+shutdown_drain_seconds = {{ .root.Values.engine.shutdownDrainSeconds }}
 {{- end -}}

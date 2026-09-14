@@ -39,13 +39,14 @@ engine:
   # and refuses a rebuild that would not fit; every catalog category (5.1M names) needs a 112 MiB index.
   # CPU limit 4: the filter index build uses up to four threads (available_parallelism honours the CFS
   # quota); with 2 CPUs shared with the query workers, builds on the busy control-plane node took 2.1-2.6 s.
-  # CPU request 2: a latency-sensitive DNS engine needs a real CPU share on busy nodes (master-12 runs
-  # Prometheus, the database and the kube-vip leader); with 250m it was starved under contention.
+  # CPU request 500m: during a rolling update the new engine starts beside the old one on the same
+  # node (maxSurge 1), so two requests must fit on a busy control-plane node; the limit of 4 keeps
+  # filter index builds fast.
   resources:
-    requests: { cpu: "2", memory: 384Mi }
+    requests: { cpu: 500m, memory: 384Mi }
     limits: { cpu: "4", memory: 1Gi }
   # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
-  # node must run a default-group engine.
+  # node must run the engine behind the address.
   tolerations:
     - {
         key: node-role.kubernetes.io/control-plane,
@@ -57,57 +58,32 @@ engine:
         operator: Exists,
         effect: NoSchedule,
       }
+  # Two engines, one per DNS server address handed out by DHCP (.136 and .139): each address has
+  # exactly one engine as endpoint, pinned to the control-plane node that announces the VIP.
   groups:
     - name: default
       workloadName: nexora-engine
       nodeNamePrefix: ""
       joinTokenSecret: nexora-join-token
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - {
-                    key: nexora.io/engine-group,
-                    operator: NotIn,
-                    values: [edge-b],
-                  }
-      service:
-        {
-          name: nexora-dns,
-          type: LoadBalancer,
-          loadBalancerIP: 192.168.10.136,
-          externalTrafficPolicy: Local,
-        }
-      # Second DNS server address for LAN clients (DHCP hands out .136 and .139). With kube-vip
-      # per-service election each address can be announced from a different control-plane node.
-      extraServices:
-        - {
-            name: nexora-dns-2,
-            type: LoadBalancer,
-            loadBalancerIP: 192.168.10.139,
-            externalTrafficPolicy: Local,
-          }
-    - name: edge-b
-      workloadName: nexora-engine-edge-b
-      nodeNamePrefix: edge-b-
-      joinTokenSecret: nexora-join-token-edge-b
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - {
-                    key: nexora.io/engine-group,
-                    operator: In,
-                    values: [edge-b],
-                  }
-      # The kube-vip node runs no edge-b engine, so Local would drop external traffic to .137.
-      service:
-        {
-          name: nexora-dns-edge-b,
-          type: LoadBalancer,
-          loadBalancerIP: 192.168.10.137,
-          externalTrafficPolicy: Cluster,
-        }
+      instances:
+        - name: a
+          node: master-12
+          service:
+            {
+              name: nexora-dns,
+              type: LoadBalancer,
+              loadBalancerIP: 192.168.10.136,
+              externalTrafficPolicy: Local,
+            }
+        - name: b
+          node: master-13
+          service:
+            {
+              name: nexora-dns-2,
+              type: LoadBalancer,
+              loadBalancerIP: 192.168.10.139,
+              externalTrafficPolicy: Local,
+            }
 metrics:
   serviceMonitor:
     {

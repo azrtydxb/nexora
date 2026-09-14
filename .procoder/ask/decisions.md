@@ -79,3 +79,11 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Don't switch yet: first improve recursion (parallel DNSSEC fetches, fastest-server selection, prefetch) and re-measure
 
 **Answer (2026-09-14):** Switch now in recursive mode (accept slow first lookups) and in parallel improve recursion latency (parallel DNSSEC fetches, fastest-server selection) without prefetching.
+
+## Zero-downtime deploys (#53): cluster changes needed on kw
+
+- Upgrade kube-vip v0.8.7 -> v1.2.3 (one control-plane node at a time, API VIP 192.168.10.100 checked after each) and lower the engine CPU request 2 -> 500m (limit stays 4), then deploy with a live zero-loss check
+- Keep kube-vip v0.8.7: accept that .136/.139 may move node for a few seconds per deploy; only lower the CPU request
+- Code and tests only for now; no kw changes and no deploy yet
+
+**Answer (2026-09-14):** Upgrade kube-vip v0.8.7 -> v1.2.3 one control-plane node at a time (API VIP and LB IPs checked after each) and lower the engine CPU request 2 -> 500m (limit 4), then deploy with a live zero-loss check.

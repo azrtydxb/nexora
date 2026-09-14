@@ -18,7 +18,6 @@ use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
 use rustc_hash::FxHashMap;
-use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -586,18 +585,13 @@ fn publish(state: &RpzState, tasks: &[ZoneTask]) {
 /// Last-good copy: each record as `u32 length ‖ uncompressed wire`, written atomically.
 fn persist(dir: &Path, id: &str, records: &[Record]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!("{id}.zone.tmp"));
-    let mut f = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+    let mut out = Vec::new();
     for r in records {
         let wire = r.to_bytes().map_err(std::io::Error::other)?;
-        f.write_all(&(wire.len() as u32).to_be_bytes())?;
-        f.write_all(&wire)?;
+        out.extend_from_slice(&(wire.len() as u32).to_be_bytes());
+        out.extend_from_slice(&wire);
     }
-    let f = f.into_inner().map_err(|e| e.into_error())?;
-    f.sync_all()?;
-    drop(f);
-    std::fs::rename(&tmp, dir.join(format!("{id}.zone")))?;
-    std::fs::File::open(dir)?.sync_all()
+    crate::statefs::write_atomic(&dir.join(format!("{id}.zone")), &out)
 }
 
 fn decode_records(mut bytes: &[u8]) -> Result<Vec<Record>, String> {

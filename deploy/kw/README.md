@@ -12,12 +12,13 @@ scripts/kw-acceptance.sh
 
 `kw-deploy.sh` builds and pushes `nexora-engine` and `nexora-mgmt` from a clean worktree of HEAD
 (`scripts/build-image.sh`, which stamps the tag into both binaries), applies the manifests here,
-creates the CA, key-encryption key, demo TSIG key and DNS TLS secrets, labels `worker-24` and
-`worker-25` with `nexora.io/engine-group=edge-b`, and installs the release in two phases: the
-management plane (`engine.enabled=false`), `bootstrap.sh` against the API (which creates the engine
-group `edge-b` and both join token secrets), then the engines of both groups and `bootstrap.sh` once
-more. Migrations run in the mgmt pods' `migrate` init container. It ends by printing the test
-environment (`NEXORA_KW_DNS_ADDR`, `NEXORA_KW_EDGE_B_DNS_ADDR`, `NEXORA_KW_EDGE_B_ENGINE_IPS`,
+creates the CA, key-encryption key, demo TSIG key and DNS TLS secrets, removes the label
+`nexora.io/engine-group` of the former engine group `edge-b` from `worker-24` and `worker-25`, and
+installs the release. A redeploy is one rolling upgrade; a first install (no join token secret or
+engine DaemonSet yet) first installs the management plane (`engine.enabled=false`) and runs
+`bootstrap.sh` against the API (which creates the join token secret). The engines roll, then
+`bootstrap.sh` runs once more. Migrations run in the mgmt pods' `migrate` init container. It ends by
+printing the test environment (`NEXORA_KW_DNS_ADDR`, `NEXORA_KW_DNS_ADDR_2`, `NEXORA_KW_ENGINE_ADDR`,
 `NEXORA_KW_API_URL`, `NEXORA_KW_ENCRYPTED_ADDR`, `NEXORA_KW_DNS_TLS_NAME`, `NEXORA_KW_ENGINES`,
 `NEXORA_KW_MGMT_LB_IP`).
 
@@ -32,8 +33,7 @@ kubectl --context kw -n nexora get secret nexora-db-app -o jsonpath='{.data.uri}
 
 `scripts/kw-acceptance.sh [run pattern]` copies the Nexora CA (verifies the DNS TLS certificate), the
 cluster CA (verifies the ingress; the pod does not trust it) and the admin password into the dev pod
-(`/work/kw-ca.crt`, `/work/kw-cluster-ca.crt`, `/work/kw-admin-password`), restarts the `edge-b`
-engines (so `TestKwFullProduct` proves identities survive restarts), and runs `TestKwSmoke`,
+(`/work/kw-ca.crt`, `/work/kw-cluster-ca.crt`, `/work/kw-admin-password`), and runs `TestKwSmoke`,
 `TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories` (default pattern
 `TestKwSmoke|TestKwFullProduct|TestKwFilterCategories`) in the dev pod with the whole environment set.
 
@@ -41,13 +41,16 @@ engines (so `TestKwFullProduct` proves identities survive restarts), and runs `T
 authoritative answer (AA), an AXFR over the TCP LoadBalancer and online signing (RRSIG after
 `PUT /zones/{id}/dnssec`), and deletes the zone.
 
-`TestKwFullProduct` checks the M5 fleet: one engine per node named after it (`edge-b-` prefix in
-group `edge-b`), 8 connected engines, 2 in `edge-b`; a rewrite and a zone scoped to `edge-b` are
-served by the `edge-b` engines and `192.168.10.137` but not by `192.168.10.136`; a canary rollout on
-`edge-b` (canary `edge-b-worker-24`), rollback to the previous version and resume; certificate
-rotation of `edge-b-worker-25`; and the fleet metrics and alert rules in Prometheus
-(`NEXORA_KW_PROMETHEUS_URL`, default `http://kps-prometheus.monitoring.svc:9090`). It leaves `edge-b`
-on the `all_at_once` strategy.
+`TestKwFullProduct` checks the M5 fleet: two engines, both in group `default`, each named after its
+node with one record per node and all connected (`NEXORA_KW_ENGINES`, the scheduled engine pods);
+`192.168.10.136` and `192.168.10.139` are each answered by exactly one engine, a different one (the
+query log's `engine_id`); certificate rotation of the engine behind `NEXORA_KW_ENGINE_ADDR` while it
+keeps answering `www.nexora-demo.kw.` every 50 ms without a failure; and the fleet metrics and alert
+rules in Prometheus (`NEXORA_KW_PROMETHEUS_URL`, default `http://kps-prometheus.monitoring.svc:9090`).
+It changes no configuration clients see and never pauses rollouts. kw no longer proves
+engine-group-scoped configuration or canary rollouts live (they ran on the engine group `edge-b`,
+removed 2026-09-14); the local e2e tests `TestEngineGroupScopedConfig`,
+`TestFleetRolloutAndPartition`, `TestCanaryRolloutHaltsOnFailure` and `TestFleetAPI` do.
 
 The smoke test creates and removes a policy group `kw-smoke-client`, rewrites under
 `nexora-smoke.test` and the RPZ zone `rpz.kwsmoke.nexora.`. Its M3 subtests check DNSSEC validation
@@ -58,16 +61,16 @@ engine, RPZ (`example.net` NXDOMAIN from `rpz.kw.nexora.`) and the engine M3 met
 Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, EDE 9) and
 `dig @192.168.10.136 +dnssec cloudflare.com` has the `ad` flag.
 
-| File                | Objects                                                                                                                                                                                                               |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `namespace.yaml`    | Namespace `nexora`                                                                                                                                                                                                    |
-| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                                                                                                                                                  |
-| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                                                                                                                                                      |
-| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`                                                                                                                                       |
-| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                                                                                                                                                              |
-| `values-kw.yaml`    | Helm release `nexora` (`deploy/helm/nexora`): `nexora-mgmt` (2 replicas), DaemonSets `nexora-engine` and `nexora-engine-edge-b`, DNS LoadBalancers, gRPC LoadBalancer, TLS Ingress, ServiceMonitor and PrometheusRule |
-| `bind-primary.yaml` | `nexora-bind`: BIND primary of the secondary zone `bind-demo.kw.` (ClusterIP 10.43.200.53:5353)                                                                                                                       |
-| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, filter categories, engine group `edge-b`, join tokens, pruning of pre-M5 engines                                                 |
+| File                | Objects                                                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `namespace.yaml`    | Namespace `nexora`                                                                                                                                                                                                 |
+| `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                                                                                                                                               |
+| `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                                                                                                                                                   |
+| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`                                                                                                                                    |
+| `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                                                                                                                                                           |
+| `values-kw.yaml`    | Helm release `nexora` (`deploy/helm/nexora`): `nexora-mgmt` (2 replicas), DaemonSets `nexora-engine-a` and `nexora-engine-b`, DNS LoadBalancers, gRPC LoadBalancer, TLS Ingress, ServiceMonitor and PrometheusRule |
+| `bind-primary.yaml` | `nexora-bind`: BIND primary of the secondary zone `bind-demo.kw.` (ClusterIP 10.43.200.53:5353)                                                                                                                    |
+| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, filter categories, join token, removal of engine group `edge-b` and of engines that no longer run                             |
 
 ## Addresses
 
@@ -76,16 +79,28 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
   LoadBalancer IP `192.168.10.135` has no HTTP port, so there is no cleartext login path.
 - Engine gRPC: `nexora-mgmt-grpc.nexora.svc.cluster.local:9443` in the cluster,
   `192.168.10.135:9443` outside (both in the server certificate).
-- DNS, engine group `default` (DaemonSet `nexora-engine`, every node without the label below), on
-  `192.168.10.136`: 53 UDP/TCP, DoT 853/TCP, DoQ 853/UDP, DoH `https://192.168.10.136/dns-query`
-  (443/TCP), and on the second address `192.168.10.139` (Service `nexora-dns-2`, same group and ports) —
-  hand out both `192.168.10.136` and `192.168.10.139` as DNS servers to LAN clients. The serving
-  certificate names `dns.nexora.kw.local`, `192.168.10.136`, `192.168.10.137` and `192.168.10.139` and is issued
-  by the Nexora CA (`nexora-ca`), e.g.
+- DNS, engine group `default`, two engines (chart `instances`, one workload per engine pinned to a
+  node): DaemonSet `nexora-engine-a` on `master-12` behind Service `nexora-dns` `192.168.10.136`, and
+  DaemonSet `nexora-engine-b` on `master-13` behind Service `nexora-dns-2` `192.168.10.139`. Each
+  Service selects only its engine (pod label `nexora.io/engine-instance`), so each address is
+  answered by exactly one engine. Both serve 53 UDP/TCP, DoT 853/TCP, DoQ 853/UDP and DoH
+  `https://192.168.10.136/dns-query` (443/TCP; `.139` likewise) — hand out both `192.168.10.136` and
+  `192.168.10.139` as DNS servers to LAN clients. The engines share the group's ConfigMap and state
+  directory name (`/var/lib/nexora/nexora-engine`), so an engine keeps the identity the former group
+  DaemonSet had on that node. The serving certificate names `dns.nexora.kw.local`, `192.168.10.136`
+  and `192.168.10.139` (a certificate issued before the removal of `edge-b` also still names
+  `192.168.10.137`, which is unused) and is issued by the Nexora CA (`nexora-ca`), e.g.
   `kdig @192.168.10.136 +tls-ca=/work/kw-ca.crt +tls-hostname=dns.nexora.kw.local example.com`
   (`+https`, `+quic` likewise).
-- The `default` DNS Services use `externalTrafficPolicy: Local` and their engines run on every node
-  kube-vip may announce from, so engines (per-client policy, query log) see the real client address.
+- The DNS Services use `externalTrafficPolicy: Local`, so engines (per-client policy, query log) see
+  the real client address. With `Local`, an address only answers when kube-vip announces it from the
+  node of its engine (`master-12` for `.136`, `master-13` for `.139`); check the leases below after
+  kube-vip changes or node maintenance.
+- kube-vip was upgraded on 2026-09-14 from v0.8.7 to v1.2.3 (DaemonSet `kube-system/kube-vip-ds`,
+  image `ghcr.io/kube-vip/kube-vip:v1.2.3`; env `vip_subnet=32` added because v1 no longer reads
+  `vip_cidr`; ClusterRole `system:kube-vip-role` gained `nodes: patch` and `pods: list`), because
+  v0.8.7 moved a `Local`-policy VIP whenever its tracked endpoint went away, which broke
+  zero-downtime engine updates.
 - kube-vip (DaemonSet `kube-system/kube-vip-ds`, applied by hand, not by this repository) runs with
   per-service election (`svc_election=true`) and `vip_nodename` from `spec.nodeName`, so each
   LoadBalancer IP is announced by one control-plane node and `Local` services match the Kubernetes node
@@ -95,17 +110,15 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
   139–154). Election is first come, first served: check that `.136` and `.139` sit on different nodes
   (`kubectl -n nexora get lease kubevip-nexora-dns kubevip-nexora-dns-2`); if not, delete the lease
   `kubevip-nexora-dns-2` until it moves.
-- More client DNS addresses (up to four are planned): add entries to the `default` group's
-  `extraServices` in `values-kw.yaml` with free pool addresses (`192.168.10.140`–`154`) and run
-  `scripts/kw-deploy.sh`; the DNS serving certificate's SANs are derived from the chart and reissued
-  when an address is missing. kube-vip only runs on the three control-plane nodes, so with four addresses
-  at least two share a node — spread them with the lease check above.
+- More client DNS addresses (up to four are planned): add an instance (`name`, `node`, `service` with
+  a free pool address, `192.168.10.140`–`154`) to the `default` group in `values-kw.yaml`, or
+  `extraServices` for an address over every engine, and run `scripts/kw-deploy.sh`; the DNS serving
+  certificate's SANs are derived from the chart and reissued when an address is missing. kube-vip
+  only runs on the three control-plane nodes, so with four addresses at least two share a node —
+  spread them with the lease check above.
 - Moving a home network over: point DHCP clients at `.136` and `.139`, but keep the gateway's own
   upstream DNS and the kw nodes' resolver (`192.168.10.1`) independent of Nexora, or the cluster ends up
   depending on its own DNS. Every `scripts/kw-deploy.sh` run currently interrupts DNS (issue #53).
-- DNS, engine group `edge-b` (DaemonSet `nexora-engine-edge-b`, nodes `worker-24` and `worker-25`
-  labelled `nexora.io/engine-group=edge-b`, engine names `edge-b-<node>`), on `192.168.10.137` with the
-  same ports and `externalTrafficPolicy: Cluster`: engines there see node addresses.
 - Engine metrics: `nexora-engine-metrics.nexora.svc.cluster.local:9153`; Prometheus (`kps`) scrapes
   mgmt and engines through the ServiceMonitor `monitoring/nexora`, and loads the PrometheusRule
   `monitoring/nexora`.
@@ -145,7 +158,6 @@ No key material or password is in git. The secrets are created imperatively, onc
 
 - `nexora-join-token` (`join-token`), by `bootstrap.sh` from `POST /api/v1/join-tokens`
   (engine group `default`, valid one year, reusable by every engine pod).
-- `nexora-join-token-edge-b` (`join-token`), likewise for engine group `edge-b`.
 - `nexora-db-app` is generated by CNPG.
 
 ## Key storage and HSMs
@@ -212,7 +224,7 @@ Manual checks (laptop):
 
 ```sh
 dig @192.168.10.136 <name from an enabled source> A    # 0.0.0.0 (e.g. doubleclick.net, ads-tracking)
-kdig @192.168.10.137 +https <name> A                   # 0.0.0.0 over DoH (any RFC 8484 client)
+kdig @192.168.10.139 +https <name> A                   # 0.0.0.0 over DoH (any RFC 8484 client)
 kubectl --context kw -n nexora top pod -l app.kubernetes.io/name=nexora-engine
 kubectl --context kw -n nexora exec <engine pod> -c engine -- cat /sys/fs/cgroup/memory.peak
 ```
@@ -236,14 +248,15 @@ they previously listed 8.8.8.8/1.1.1.1, which only worked while the gateway inte
 
 ## Known limits
 
-- Inside the cluster, the DNS LoadBalancer IPs spread queries over all engines of the group (each with
-  its own cache); `externalTrafficPolicy` only applies to clients outside the cluster.
-- Engine state is hostPath `/var/lib/nexora/<workload>`; a restarted pod keeps its engine id; removing
+- Each DNS address has one engine: while its node is down the address does not answer and clients
+  use the other one (a rolling update starts the new engine beside the old one first, so an update
+  does not take the address down).
+- Engine state is hostPath `/var/lib/nexora/nexora-engine` (the group workload name, shared by its
+  instances); a restarted pod keeps its engine id; removing
   that directory and the pod re-enrolls it as a new engine (delete the old engine record).
-- kube-vip (ARP) holds `192.168.10.136` on one control-plane node; with `externalTrafficPolicy: Local`
-  external queries to the VIP are dropped while the engine on that node restarts.
-- Engine group `edge-b` (Helm release, `values-kw.yaml`) is served on `192.168.10.137` with
-  `externalTrafficPolicy: Cluster`: kube-vip may announce that VIP from a node without an `edge-b`
-  engine, where `Local` would drop the traffic, so `edge-b` engines see node addresses and per-client
-  policy does not apply there. Per-client policy on kw is verified on the `default` group
-  (`192.168.10.136`, `Local`).
+- kube-vip (ARP) holds `192.168.10.136` and `192.168.10.139` each on one control-plane node; with
+  `externalTrafficPolicy: Local` external queries to a VIP are dropped when it is announced from a
+  node other than its engine's.
+- The engine group `edge-b` (`192.168.10.137`, nodes `worker-24` and `worker-25`) was removed on
+  2026-09-14 at the user's request, and the default group went from one engine per node to two
+  pinned engines; kw no longer runs engine-group scoping or canary rollouts live.

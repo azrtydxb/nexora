@@ -76,6 +76,44 @@ fn valid_snapshot_applies_persists_and_reloads() {
     assert_eq!(snapshot::load(dir.path()).unwrap().unwrap(), base(1));
 }
 
+/// Two engines on one state directory (rolling update with maxSurge): concurrent persists never
+/// leave a partial file, and a process persisting an older version never replaces a newer one.
+#[test]
+fn engines_sharing_a_state_dir_keep_the_newest_complete_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let writers: Vec<_> = [0u64, 1]
+        .into_iter()
+        .map(|w| {
+            let (state, barrier) = (dir.path().to_path_buf(), barrier.clone());
+            std::thread::spawn(move || {
+                barrier.wait();
+                for v in 1..=200u64 {
+                    // One process runs a version behind the other.
+                    snapshot::persist(&state, &base(v * 2 + w)).unwrap();
+                    let on_disk = snapshot::load(&state).unwrap().unwrap();
+                    assert!(
+                        on_disk.version >= v * 2 + w,
+                        "a newer snapshot was replaced"
+                    );
+                }
+            })
+        })
+        .collect();
+    for w in writers {
+        w.join().unwrap();
+    }
+    assert_eq!(snapshot::load(dir.path()).unwrap().unwrap(), base(401));
+    snapshot::persist(dir.path(), &base(7)).unwrap();
+    assert_eq!(snapshot::load(dir.path()).unwrap().unwrap().version, 401);
+    let stray: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(stray.is_empty(), "temporary files left: {stray:?}");
+}
+
 #[test]
 fn invalid_snapshots_are_rejected_and_previous_runtime_kept() {
     let dir = tempfile::tempdir().unwrap();

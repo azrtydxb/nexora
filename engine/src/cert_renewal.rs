@@ -166,8 +166,16 @@ pub fn stage_identity(state_dir: &Path, cert_pem: &[u8], key_pem: &[u8]) -> io::
 }
 
 /// Renames `identity` -> `identity.old` and `identity.new` -> `identity`, then removes the old one.
+/// Without a complete `identity.new` (e.g. an engine sharing the state directory promoted it
+/// already) nothing is touched and the error is `NotFound`.
 pub fn promote_identity(state_dir: &Path) -> io::Result<()> {
     let (cur, new, old) = paths(state_dir);
+    if !complete(&new) {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no staged identity to promote",
+        ));
+    }
     if old.exists() {
         fs::remove_dir_all(&old)?;
     }
@@ -305,6 +313,12 @@ mod tests {
         assert_eq!(fs::read(id.join("key.pem")).unwrap(), b"new-key");
         assert!(!staged.exists());
         assert!(!dir.path().join("identity.old").exists());
+
+        // A second promotion (another engine on this state directory already promoted) must
+        // leave the identity in place.
+        let e = promote_identity(dir.path()).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read(id.join("key.pem")).unwrap(), b"new-key");
     }
 
     #[test]

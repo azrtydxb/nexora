@@ -6,7 +6,6 @@ use crate::runtime::Runtime;
 use arc_swap::ArcSwap;
 use prost::Message;
 use sha2::{Digest, Sha256};
-use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -147,15 +146,18 @@ pub(crate) fn is_sha256_hex(h: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
-/// Writes `state_dir/snapshot.binpb` atomically: temp file, fsync, rename, fsync dir.
+/// Writes `state_dir/snapshot.binpb` atomically ([`crate::statefs::write_atomic`]) unless the file
+/// already holds this or a newer version: two engines sharing the state directory during a rolling
+/// update both apply the snapshots of the management plane, and the older process must never
+/// replace a newer snapshot the other one persisted.
 pub fn persist(state_dir: &Path, s: &ConfigSnapshot) -> std::io::Result<()> {
-    let tmp = state_dir.join(format!("{SNAPSHOT_FILE}.tmp"));
-    let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(&s.encode_to_vec())?;
-    f.sync_all()?;
-    drop(f);
-    std::fs::rename(&tmp, state_dir.join(SNAPSHOT_FILE))?;
-    std::fs::File::open(state_dir)?.sync_all()
+    let _lock = crate::statefs::StateLock::acquire(state_dir)?;
+    if let Ok(Some(on_disk)) = load(state_dir)
+        && on_disk.version >= s.version
+    {
+        return Ok(());
+    }
+    crate::statefs::write_atomic(&state_dir.join(SNAPSHOT_FILE), &s.encode_to_vec())
 }
 
 /// The persisted snapshot, or `None` when none was written yet.
