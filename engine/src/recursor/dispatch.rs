@@ -5,7 +5,7 @@ use super::budget::{Limit, WorkBudget};
 use super::dnssec::DnssecRuntime;
 use super::dnssec::forward::{fetch_via, fetched_set};
 use super::dnssec::validator::{
-    FetchError, FetchedSet, Fetcher, Security, ValidationInput, under_nta,
+    FetchError, FetchedSet, Fetcher, MemoFetcher, Security, TrustPoints, ValidationInput, under_nta,
 };
 use super::iterate::{RecursionError, RecursionParams, Resolution};
 use super::metrics::RecursorMetrics;
@@ -13,7 +13,7 @@ use super::rpz::apply::{EDE_FORGED, PolicyOutcome, apply_action};
 use super::rpz::manager::{RpzZoneConfig, zone_configs};
 use super::rpz::parse::RpzAction;
 use super::transport::OutboundQuery;
-use super::{EDNS_BUFFER, LocalBoxFuture, RecursorState};
+use super::{EDNS_BUFFER, LocalBoxFuture, RecursorState, poll_with};
 use crate::edns::Transport;
 use crate::snapshot::BlobSource;
 use crate::wire::QueryView;
@@ -343,6 +343,16 @@ impl Fetcher for RoutedFetcher<'_> {
             }
         })
     }
+
+    fn known_cut(&self, name: &Name) -> bool {
+        matches!(self.rt.route(&name_wire(name)), Route::Recursive)
+            && self
+                .state
+                .recursor
+                .rrcache
+                .get(name, RecordType::NS, clock::unix_now().max(0) as u64)
+                .is_some()
+    }
 }
 
 /// An answer before policy: sections decoded, or the upstream's bytes on the plain forward route.
@@ -561,11 +571,42 @@ async fn resolve_name(
         });
     }
     let p = &rt.params;
+    let trust = state.anchors.trust_points();
+    let trust: &TrustPoints = &trust;
+    let validation_budget =
+        WorkBudget::new(p.max_upstream_queries, p.max_delegation_depth).for_validation();
+    let routed = RoutedFetcher {
+        rt,
+        state,
+        upstream,
+        budget: &validation_budget,
+    };
+    let fetcher = MemoFetcher::new(&routed);
+    // Chain-of-trust walks for the zone cuts the recursion passes through, run while it
+    // resolves and while the answer is validated; they share `fetcher` with the validation.
+    let mut ahead: Vec<LocalBoxFuture<'_, ()>> = Vec::new();
     let mut r = match &route {
         Route::Recursive => {
             RecursorMetrics::inc(&m.resolutions_recursive);
             let budget = WorkBudget::new(p.max_upstream_queries, p.max_delegation_depth);
-            match state.recursor.resolve(name, q.qtype, p, &budget).await {
+            let resolution = state.recursor.resolve(name, q.qtype, p, &budget);
+            let result = if validating {
+                let fetcher = &fetcher;
+                poll_with(&mut ahead, resolution, |ahead| {
+                    for zone in budget.take_cuts() {
+                        if under_nta(&zone, &rt.dnssec.ntas, now) {
+                            continue;
+                        }
+                        ahead.push(Box::pin(async move {
+                            state.validator.zone_state(&zone, trust, fetcher, now).await;
+                        }));
+                    }
+                })
+                .await
+            } else {
+                resolution.await
+            };
+            match result {
                 Ok(res) => Resolved::from_recursion(res),
                 Err(e) => return Err(Failure::Unresolved(taken, recursion_ede(m, e))),
             }
@@ -603,14 +644,6 @@ async fn resolve_name(
     if !validating {
         return Ok(r);
     }
-    let trust = state.anchors.trust_points();
-    let budget = WorkBudget::new(p.max_upstream_queries, p.max_delegation_depth);
-    let fetcher = RoutedFetcher {
-        rt,
-        state,
-        upstream,
-        budget: &budget,
-    };
     let input = ValidationInput {
         qname: name,
         qtype: q.qtype,
@@ -618,10 +651,11 @@ async fn resolve_name(
         answers: &r.answers,
         authorities: &r.authorities,
     };
-    let v = state
+    let validation = state
         .validator
-        .validate(&input, &trust, &rt.dnssec.ntas, &fetcher, now)
-        .await;
+        .validate(&input, trust, &rt.dnssec.ntas, &fetcher, now);
+    let v = poll_with(&mut ahead, validation, |_| {}).await;
+    drop(ahead);
     match v.security {
         Security::Secure => {
             r.security = SecurityTag::Secure;

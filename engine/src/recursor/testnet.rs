@@ -26,6 +26,9 @@ pub enum Behaviour {
     Refused,
     /// Normal, but every positive answer also carries `victim.<origin> A 6.6.6.6`.
     AnswerStuffing,
+    /// Off-path spoofer: answers every query at once with `A 6.6.6.6`, once with a wrong ID and
+    /// once with the question in lowercase (breaking 0x20), never with a matching reply.
+    Spoof,
 }
 
 pub struct FakeNet {
@@ -47,7 +50,7 @@ impl ParsedZone {
     fn parse(z: &FakeZone) -> ParsedZone {
         let origin = Name::from_ascii(z.origin).unwrap();
         let mut rrsets: HashMap<(Name, RecordType), Vec<Record>> = HashMap::new();
-        if z.behaviour != Behaviour::Silent && !z.text.is_empty() {
+        if !matches!(z.behaviour, Behaviour::Silent | Behaviour::Spoof) && !z.text.is_empty() {
             // hickory's zone parser has no DNAME support: DNAME lines are built here.
             let mut text = String::new();
             for line in z.text.lines() {
@@ -136,6 +139,7 @@ fn answer(z: &ParsedZone, q: &Message) -> Message {
         && !(query.query_type() == RecordType::DS && &qname == cut)
     {
         r.authorities.extend(z.rrset(cut, RecordType::NS));
+        r.authorities.extend(z.rrset(cut, RecordType::DS));
         for ns in z.rrset(cut, RecordType::NS) {
             if let RData::NS(NS(target)) = &ns.data {
                 // glue as written, even out of bailiwick
@@ -193,8 +197,35 @@ fn answer(z: &ParsedZone, q: &Message) -> Message {
 
 type Log = Arc<Mutex<Vec<(Ipv4Addr, Name, RecordType)>>>;
 
-/// Decodes one query, logs it and builds the reply (`None`: stay silent).
-fn handle(zones: &[ParsedZone], ip: Ipv4Addr, wire: &[u8], log: &Log) -> Option<Vec<u8>> {
+/// Forged replies to `q` that a spoofing-hardened resolver must reject.
+fn spoofed(q: &Message) -> Vec<Vec<u8>> {
+    let query = &q.queries[0];
+    let forged = |id: u16, name: Name| {
+        let mut r = Message::response(id, OpCode::Query);
+        r.metadata.authoritative = true;
+        r.queries.push(hickory_proto::op::Query::query(
+            name.clone(),
+            query.query_type(),
+        ));
+        r.answers.push(Record::from_rdata(
+            name,
+            300,
+            RData::A(A(Ipv4Addr::new(6, 6, 6, 6))),
+        ));
+        r.to_vec().unwrap()
+    };
+    vec![
+        forged(q.metadata.id.wrapping_add(1), query.name().clone()),
+        forged(q.metadata.id, query.name().to_lowercase()),
+    ]
+}
+
+/// Decodes one query, logs it and builds the replies (none: stay silent).
+fn handle(zones: &[ParsedZone], ip: Ipv4Addr, wire: &[u8], log: &Log) -> Vec<Vec<u8>> {
+    handle_one(zones, ip, wire, log).unwrap_or_default()
+}
+
+fn handle_one(zones: &[ParsedZone], ip: Ipv4Addr, wire: &[u8], log: &Log) -> Option<Vec<Vec<u8>>> {
     let q = Message::from_vec(wire).ok()?;
     let query = q.queries.first()?;
     log.lock()
@@ -207,10 +238,11 @@ fn handle(zones: &[ParsedZone], ip: Ipv4Addr, wire: &[u8], log: &Log) -> Option<
         .filter(|z| z.origin.zone_of(&qname))
         .max_by_key(|z| z.origin.num_labels())
         .or(zones.first())?;
-    if z.behaviour == Behaviour::Silent {
-        return None;
+    match z.behaviour {
+        Behaviour::Silent => None,
+        Behaviour::Spoof => Some(spoofed(&q)),
+        _ => Some(vec![answer(z, &q).to_vec().ok()?]),
     }
-    answer(z, &q).to_vec().ok()
 }
 
 impl FakeNet {
@@ -231,7 +263,7 @@ impl FakeNet {
             tokio::spawn(async move {
                 let mut buf = [0u8; 4096];
                 while let Ok((n, peer)) = udp.recv_from(&mut buf).await {
-                    if let Some(reply) = handle(&p, ip, &buf[..n], &log) {
+                    for reply in handle(&p, ip, &buf[..n], &log) {
                         let _ = udp.send_to(&reply, peer).await;
                     }
                 }
@@ -246,7 +278,7 @@ impl FakeNet {
                         if s.read_exact(&mut buf).await.is_err() {
                             return;
                         }
-                        if let Some(reply) = handle(&p, ip, &buf, &log) {
+                        if let Some(reply) = handle(&p, ip, &buf, &log).into_iter().next() {
                             let _ = s.write_u16(reply.len() as u16).await;
                             let _ = s.write_all(&reply).await;
                         }

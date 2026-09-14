@@ -12,13 +12,15 @@ use super::verify::{
     verify_rrset,
 };
 use crate::proto;
-use crate::recursor::LocalBoxFuture;
 use crate::recursor::metrics::RecursorMetrics;
+use crate::recursor::{LocalBoxFuture, join_all, poll_with};
 use crate::snapshot_m3::parse_ds;
 use hickory_proto::dnssec::rdata::{DNSKEY, DNSSECRData, DS, NSEC, NSEC3};
 use hickory_proto::dnssec::{Algorithm, DigestType};
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{Name, RData, Record, RecordType};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Zone states cached between validations.
@@ -32,6 +34,7 @@ const NSEC_CACHE_ZONES: usize = 10_000;
 const EDE_NETWORK_ERROR: u16 = 23;
 
 /// One lookup result used by the validator.
+#[derive(Clone)]
 pub struct FetchedSet {
     pub rcode: ResponseCode,
     pub answers: Vec<Record>,
@@ -51,6 +54,62 @@ pub trait Fetcher {
         name: &'a Name,
         rtype: RecordType,
     ) -> LocalBoxFuture<'a, Result<FetchedSet, FetchError>>;
+
+    /// Whether `name` is known to be a zone cut (its DNSKEY RRset is then worth fetching before
+    /// the walk reaches it). Only a hint: a wrong answer costs one query, never correctness.
+    fn known_cut(&self, _name: &Name) -> bool {
+        false
+    }
+}
+
+type FetchCell = tokio::sync::OnceCell<Result<FetchedSet, FetchError>>;
+type FetchKey = (Name, RecordType);
+
+/// A `Fetcher` that fetches each (name, type) at most once and shares a fetch in progress with
+/// every concurrent caller. One per validation (or per client query): results are not kept
+/// beyond it.
+pub struct MemoFetcher<'f> {
+    inner: &'f dyn Fetcher,
+    cells: RefCell<Vec<(FetchKey, Rc<FetchCell>)>>,
+}
+
+impl<'f> MemoFetcher<'f> {
+    pub fn new(inner: &'f dyn Fetcher) -> Self {
+        MemoFetcher {
+            inner,
+            cells: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn cell(&self, name: &Name, rtype: RecordType) -> Rc<FetchCell> {
+        let key = (name.to_lowercase(), rtype);
+        let mut cells = self.cells.borrow_mut();
+        if let Some((_, c)) = cells.iter().find(|(k, _)| *k == key) {
+            return c.clone();
+        }
+        let c = Rc::new(FetchCell::new());
+        cells.push((key, c.clone()));
+        c
+    }
+}
+
+impl Fetcher for MemoFetcher<'_> {
+    fn fetch<'a>(
+        &'a self,
+        name: &'a Name,
+        rtype: RecordType,
+    ) -> LocalBoxFuture<'a, Result<FetchedSet, FetchError>> {
+        Box::pin(async move {
+            let cell = self.cell(name, rtype);
+            cell.get_or_init(|| self.inner.fetch(name, rtype))
+                .await
+                .clone()
+        })
+    }
+
+    fn known_cut(&self, name: &Name) -> bool {
+        self.inner.known_cut(name)
+    }
 }
 
 /// What is trusted at one zone: configured DS records and keys accepted by RFC 5011.
@@ -407,7 +466,8 @@ impl Validator {
         fetcher: &dyn Fetcher,
         now_unix: u64,
     ) -> ZoneState {
-        self.walk(zone, trust, fetcher, now_unix).await.0
+        let memo = MemoFetcher::new(fetcher);
+        self.walk(zone, trust, &memo, now_unix).await.0
     }
 
     pub async fn validate(
@@ -424,8 +484,8 @@ impl Validator {
                 ttl_cap: None,
             }
         } else {
-            self.validate_response(input, trust, fetcher, now_unix)
-                .await
+            let memo = MemoFetcher::new(fetcher);
+            self.validate_response(input, trust, &memo, now_unix).await
         };
         let m = &self.metrics;
         match &result.security {
@@ -449,7 +509,9 @@ impl Validator {
         now: u64,
     ) -> ValidationResult {
         let answers = group(input.answers);
-        let mut acc = Combined::default();
+        let sname = final_name(input.qname, input.qtype, input.answers);
+        // every RRset and the denial are checked concurrently; the walks share the memo's fetches
+        let mut checks: Vec<LocalBoxFuture<'_, Outcome>> = Vec::new();
         for set in &answers {
             // CNAMEs synthesised from a DNAME carry no RRSIG; the DNAME is validated instead
             let synthesised = set.rtype == RecordType::CNAME
@@ -458,24 +520,29 @@ impl Validator {
                     d.rtype == RecordType::DNAME && d.name.zone_of(&set.name) && d.name != set.name
                 });
             if !synthesised {
-                acc.add(
-                    self.check_rrset(set, input.authorities, trust, fetcher, now)
-                        .await,
-                );
+                checks.push(Box::pin(self.check_rrset(
+                    set,
+                    input.authorities,
+                    trust,
+                    fetcher,
+                    now,
+                )));
             }
         }
         if matches!(input.rcode, ResponseCode::NoError | ResponseCode::NXDomain) {
-            let sname = final_name(input.qname, input.qtype, input.answers);
             let positive = input
                 .answers
                 .iter()
                 .any(|r| r.name == sname && r.record_type() == input.qtype);
             if input.rcode == ResponseCode::NXDomain || !positive {
-                acc.add(
-                    self.check_negative(&sname, input, trust, fetcher, now)
-                        .await,
-                );
+                checks.push(Box::pin(
+                    self.check_negative(&sname, input, trust, fetcher, now),
+                ));
             }
+        }
+        let mut acc = Combined::default();
+        for outcome in join_all(checks).await {
+            acc.add(outcome);
         }
         let ttl_cap = acc.ttl_cap;
         ValidationResult {
@@ -685,60 +752,93 @@ impl Validator {
             let anc = zone.trim_to(l);
             self.cached(&anc, now).map(|c| (anc, c))
         });
-        let (mut cur, mut key_zone, mut keys, mut ttl) = match resume {
-            Some((anc, c)) => match &c.state {
-                ZoneState::Secure(k) => (
-                    anc,
-                    c.key_zone.clone(),
-                    k.clone(),
-                    MAX_ZONE_CACHE_SECS as u32,
-                ),
-                other => {
-                    self.store(&zone, other, &c.key_zone, MAX_ZONE_CACHE_SECS as u32, now);
-                    return (other.clone(), c.key_zone.clone());
+        // Fetch the whole remaining chain at once: DS for every label below the resume point,
+        // DNSKEY for the trust point and for known cuts. The walk below verifies step by step as
+        // before and reads the same (memoised) fetches; whatever it no longer needs is dropped.
+        let mut ahead: Vec<LocalBoxFuture<'_, ()>> = Vec::new();
+        if resume
+            .as_ref()
+            .is_none_or(|(_, c)| matches!(c.state, ZoneState::Secure(_)))
+        {
+            let from = resume
+                .as_ref()
+                .map_or(tp_labels, |(anc, _)| anc.num_labels() as usize);
+            let mut wanted: Vec<(Name, RecordType)> = Vec::new();
+            if resume.is_none() {
+                wanted.push((tp_name.clone(), RecordType::DNSKEY));
+            }
+            for l in from + 1..=zone.num_labels() as usize {
+                let child = zone.trim_to(l);
+                if fetcher.known_cut(&child) {
+                    wanted.push((child.clone(), RecordType::DNSKEY));
                 }
-            },
-            None => match self.trust_point_keys(tp_name, tp, fetcher, now).await {
-                Ok((k, t)) => {
-                    let state = ZoneState::Secure(k.clone());
-                    self.store(tp_name, &state, tp_name, t, now);
-                    (tp_name.clone(), tp_name.clone(), k, t)
-                }
-                Err(state) => {
-                    self.store(tp_name, &state, tp_name, MAX_ZONE_CACHE_SECS as u32, now);
-                    self.store(&zone, &state, tp_name, MAX_ZONE_CACHE_SECS as u32, now);
-                    return (state, tp_name.clone());
-                }
-            },
-        };
-        while cur.num_labels() < zone.num_labels() {
-            let child = zone.trim_to(cur.num_labels() as usize + 1);
-            match self.descend(&child, &key_zone, &keys, fetcher, now).await {
-                Descend::Cut(child_keys, t) => {
-                    key_zone = child.clone();
-                    keys = child_keys;
-                    ttl = ttl.min(t);
-                }
-                Descend::Inside => {}
-                Descend::Nonexistent => break,
-                Descend::Stop(state) => {
-                    self.store(&child, &state, &key_zone, ttl, now);
-                    self.store(&zone, &state, &key_zone, ttl, now);
-                    return (state, key_zone);
+                wanted.push((child, RecordType::DS));
+            }
+            if wanted.len() > 1 {
+                for (name, rtype) in wanted {
+                    ahead.push(Box::pin(async move {
+                        let _ = fetcher.fetch(&name, rtype).await;
+                    }));
                 }
             }
-            self.store(
-                &child,
-                &ZoneState::Secure(keys.clone()),
-                &key_zone,
-                ttl,
-                now,
-            );
-            cur = child;
         }
-        let state = ZoneState::Secure(keys);
-        self.store(&zone, &state, &key_zone, ttl, now);
-        (state, key_zone)
+        let walk = async {
+            let (mut cur, mut key_zone, mut keys, mut ttl) = match resume {
+                Some((anc, c)) => match &c.state {
+                    ZoneState::Secure(k) => (
+                        anc,
+                        c.key_zone.clone(),
+                        k.clone(),
+                        MAX_ZONE_CACHE_SECS as u32,
+                    ),
+                    other => {
+                        self.store(&zone, other, &c.key_zone, MAX_ZONE_CACHE_SECS as u32, now);
+                        return (other.clone(), c.key_zone.clone());
+                    }
+                },
+                None => match self.trust_point_keys(tp_name, tp, fetcher, now).await {
+                    Ok((k, t)) => {
+                        let state = ZoneState::Secure(k.clone());
+                        self.store(tp_name, &state, tp_name, t, now);
+                        (tp_name.clone(), tp_name.clone(), k, t)
+                    }
+                    Err(state) => {
+                        self.store(tp_name, &state, tp_name, MAX_ZONE_CACHE_SECS as u32, now);
+                        self.store(&zone, &state, tp_name, MAX_ZONE_CACHE_SECS as u32, now);
+                        return (state, tp_name.clone());
+                    }
+                },
+            };
+            while cur.num_labels() < zone.num_labels() {
+                let child = zone.trim_to(cur.num_labels() as usize + 1);
+                match self.descend(&child, &key_zone, &keys, fetcher, now).await {
+                    Descend::Cut(child_keys, t) => {
+                        key_zone = child.clone();
+                        keys = child_keys;
+                        ttl = ttl.min(t);
+                    }
+                    Descend::Inside => {}
+                    Descend::Nonexistent => break,
+                    Descend::Stop(state) => {
+                        self.store(&child, &state, &key_zone, ttl, now);
+                        self.store(&zone, &state, &key_zone, ttl, now);
+                        return (state, key_zone);
+                    }
+                }
+                self.store(
+                    &child,
+                    &ZoneState::Secure(keys.clone()),
+                    &key_zone,
+                    ttl,
+                    now,
+                );
+                cur = child;
+            }
+            let state = ZoneState::Secure(keys);
+            self.store(&zone, &state, &key_zone, ttl, now);
+            (state, key_zone)
+        };
+        poll_with(&mut ahead, walk, |_| {}).await
     }
 
     /// The keys of a trust point's zone: its DNSKEY RRset, authorised by the configured DS or

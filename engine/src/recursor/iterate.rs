@@ -2,15 +2,16 @@
 //! nameserver lookups, CNAME/DNAME chains, relaxed QNAME minimisation (RFC 9156) and per-query
 //! work limits. Every outgoing query goes through the spoofing-hardened `Transport`.
 
-use super::budget::{Limit, WorkBudget};
-use super::infra::InfraCache;
+use super::budget::{Dependencies, Dependency, Limit, WorkBudget};
+use super::infra::{InfraCache, Plan, RACE_STAGGER};
 use super::metrics::RecursorMetrics;
 use super::roothints::RootHints;
 use super::rrcache::{Credibility, DnssecStatus, RrCache};
-use super::transport::{OutboundQuery, Transport};
+use super::trace::{self, Trace, TraceEvent};
+use super::transport::{Exchange, ExchangeError, OutboundQuery, Transport};
 use super::{
     DEFAULT_MAX_DELEGATION_DEPTH, DEFAULT_MAX_UPSTREAM_QUERIES, LocalBoxFuture, MAX_CNAME_DEPTH,
-    RESOLUTION_DEADLINE,
+    RESOLUTION_DEADLINE, join_all,
 };
 use crate::{clock, proto};
 use hickory_proto::dnssec::rdata::DNSSECRData;
@@ -21,10 +22,18 @@ use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::Poll;
+use std::time::{Duration, Instant};
 
 // debt: fixed capacities (entries); revisit when memory limits become configurable (not in v1).
 const INFRA_CAPACITY: usize = 10_000;
 const RRSET_CAPACITY: usize = 100_000;
+/// Minimised queries answered inside one zone (the name exists but is not delegated: an empty
+/// non-terminal or a record of another type) before the full name is sent to that zone's
+/// servers. RFC 9156 §2.3 leaves this cap to the resolver; one step still keeps every label
+/// below the zone's first from its parent's servers, and the full name only reaches servers
+/// authoritative for an ancestor of it.
+const MINIMISE_STEPS_PER_ZONE: u32 = 1;
 /// Nameserver names without addresses resolved for one zone cut.
 const MAX_GLUELESS_PER_CUT: usize = 3;
 /// Destination used only to test for a usable IPv6 route (no packet is sent).
@@ -144,6 +153,46 @@ struct Cut {
     glueless_tried: usize,
 }
 
+/// The question of one resolution step.
+struct Attempt<'a> {
+    qname: &'a Name,
+    qtype: RecordType,
+    /// A QNAME-minimised step (trace only).
+    minimised: bool,
+    port: u16,
+    deps: Dependencies<'a>,
+}
+
+/// One finished exchange.
+struct Sent {
+    ip: IpAddr,
+    edns: bool,
+    started: Instant,
+    elapsed: Duration,
+    result: Result<Exchange, ExchangeError>,
+}
+
+impl Sent {
+    fn outcome(&self) -> trace::Outcome {
+        match &self.result {
+            Ok(ex) if ex.via_tcp => trace::Outcome::Tcp,
+            Ok(_) => trace::Outcome::Udp,
+            Err(ExchangeError::Timeout) => trace::Outcome::Timeout,
+            Err(_) => trace::Outcome::NetworkError,
+        }
+    }
+}
+
+/// The result of `Recursor::race`.
+struct Race {
+    /// The first reply.
+    won: Option<Sent>,
+    /// Exchanges that timed out or failed.
+    failed: Vec<Sent>,
+    /// Servers still unanswered when the race was won (server, start).
+    lost: Vec<(IpAddr, Instant)>,
+}
+
 enum Class {
     Answer,
     Referral(Name),
@@ -192,6 +241,15 @@ fn classify(m: &Message, zone: &Name, qn: &Name, qt: RecordType) -> Class {
         Class::NoData
     } else {
         Class::Lame
+    }
+}
+
+/// The label count of the next minimised query after `steps` answers inside the current zone.
+fn next_labels(labels_now: usize, steps: u32, sname_labels: usize) -> usize {
+    if steps >= MINIMISE_STEPS_PER_ZONE {
+        sname_labels
+    } else {
+        labels_now + 1
     }
 }
 
@@ -312,6 +370,7 @@ pub struct Recursor {
     pub rrcache: RrCache,
     pub metrics: Arc<RecursorMetrics>,
     pub ipv6: AtomicBool,
+    pub trace: Trace,
 }
 
 impl Recursor {
@@ -322,6 +381,7 @@ impl Recursor {
             rrcache: RrCache::new(RRSET_CAPACITY),
             metrics,
             ipv6: AtomicBool::new(false),
+            trace: Trace::default(),
         }
     }
 
@@ -347,7 +407,7 @@ impl Recursor {
     ) -> Result<Resolution, RecursionError> {
         tokio::time::timeout(
             RESOLUTION_DEADLINE,
-            self.resolve_chain(qname, qtype, p, budget),
+            self.resolve_chain(qname, qtype, p, budget, Dependencies::default()),
         )
         .await
         .unwrap_or(Err(RecursionError::Deadline))
@@ -364,7 +424,7 @@ impl Recursor {
         let sname = qname.to_lowercase();
         tokio::time::timeout(
             RESOLUTION_DEADLINE,
-            self.resolve_one(&sname, qtype, p, budget),
+            self.resolve_one(&sname, qtype, p, budget, Dependencies::default()),
         )
         .await
         .unwrap_or(Err(RecursionError::Deadline))
@@ -376,6 +436,7 @@ impl Recursor {
         qtype: RecordType,
         p: &'a RecursionParams,
         budget: &'a WorkBudget,
+        deps: Dependencies<'a>,
     ) -> LocalBoxFuture<'a, Result<Resolution, RecursionError>> {
         Box::pin(async move {
             let mut sname = qname.to_lowercase();
@@ -386,7 +447,7 @@ impl Recursor {
             loop {
                 let mut res = match pending.take() {
                     Some(r) => r,
-                    None => self.resolve_one(&sname, qtype, p, budget).await?,
+                    None => self.resolve_one(&sname, qtype, p, budget, deps).await?,
                 };
                 for r in step_records(&res.answers, &sname) {
                     if !answers.contains(r) {
@@ -431,6 +492,7 @@ impl Recursor {
         stype: RecordType,
         p: &RecursionParams,
         budget: &WorkBudget,
+        deps: Dependencies<'_>,
     ) -> Result<Resolution, RecursionError> {
         let now = now();
         let mut types = vec![stype];
@@ -438,8 +500,10 @@ impl Recursor {
             types.push(RecordType::CNAME);
         }
         for t in types {
+            // A DS RRset from a referral comes from the parent, which is authoritative for it
             if let Some(hit) = self.rrcache.get(sname, t, now)
-                && hit.credibility >= Credibility::AnswerNonAa
+                && (hit.credibility >= Credibility::AnswerNonAa
+                    || (t == RecordType::DS && hit.credibility >= Credibility::AuthorityNonAa))
             {
                 let cut = self.closest_cut(sname, stype, p, now);
                 let mut answers = hit.records.clone();
@@ -455,6 +519,9 @@ impl Recursor {
             }
         }
         let mut cut = self.closest_cut(sname, stype, p, now);
+        if !cut.zone.is_root() && deps.is_empty() {
+            budget.note_cut(&cut.zone);
+        }
         let sname_labels = label_count(sname);
         let mut minimise = p.qname_minimisation;
         let mut labels = if minimise {
@@ -463,6 +530,7 @@ impl Recursor {
             sname_labels
         };
         let mut delegations = 0u32;
+        let mut steps_in_zone = 0u32;
         // servers that failed the current step (timeout, lame, SERVFAIL)
         let mut failed: Vec<IpAddr> = Vec::new();
         loop {
@@ -471,9 +539,14 @@ impl Recursor {
             let full = labels_now == sname_labels;
             // RFC 9156 §2.3: hidden labels are asked with QTYPE A
             let query_type = if full { stype } else { RecordType::A };
-            let (msg, ip) = self
-                .ask(&mut cut, &mut failed, &query_name, query_type, p, budget)
-                .await?;
+            let attempt = Attempt {
+                qname: &query_name,
+                qtype: query_type,
+                minimised: !full,
+                port: p.authority_port,
+                deps,
+            };
+            let (msg, ip) = self.ask(&mut cut, &mut failed, &attempt, p, budget).await?;
             let now = self::now();
             match classify(&msg, &cut.zone, &query_name, query_type) {
                 Class::Answer => {
@@ -485,7 +558,8 @@ impl Recursor {
                     };
                     cache_rrsets(&self.rrcache, &kept, credibility, now);
                     if !full {
-                        labels = labels_now + 1;
+                        steps_in_zone += 1;
+                        labels = next_labels(labels_now, steps_in_zone, sname_labels);
                         failed.clear();
                         continue;
                     }
@@ -505,16 +579,21 @@ impl Recursor {
                         return Err(l.into());
                     }
                     cut = self.follow_referral(&msg, &cut.zone, owner, now);
+                    if deps.is_empty() {
+                        budget.note_cut(&cut.zone);
+                    }
                     labels = if minimise {
                         label_count(&cut.zone) + 1
                     } else {
                         sname_labels
                     };
+                    steps_in_zone = 0;
                     failed.clear();
                 }
                 Class::NoData if !full => {
                     // empty non-terminal
-                    labels = labels_now + 1;
+                    steps_in_zone += 1;
+                    labels = next_labels(labels_now, steps_in_zone, sname_labels);
                     failed.clear();
                 }
                 Class::NxDomain if !full => {
@@ -549,14 +628,14 @@ impl Recursor {
         }
     }
 
-    /// Sends one query to a server of `cut` that has not failed this step, resolving glueless
-    /// nameserver addresses when none is left. Returns a NOERROR/NXDOMAIN/other reply to classify.
+    /// Sends one query to the servers of `cut` that have not failed this step (see
+    /// `InfraCache::plan`), resolving glueless nameserver addresses when none is left. Returns a
+    /// NOERROR/NXDOMAIN/other reply to classify.
     async fn ask(
         &self,
         cut: &mut Cut,
         failed: &mut Vec<IpAddr>,
-        qname: &Name,
-        qtype: RecordType,
+        a: &Attempt<'_>,
         p: &RecursionParams,
         budget: &WorkBudget,
     ) -> Result<(Message, IpAddr), RecursionError> {
@@ -569,48 +648,162 @@ impl Recursor {
                 .copied()
                 .filter(|a| !failed.contains(a))
                 .collect();
-            let Some(ip) = self
+            let Some(plan) = self
                 .infra
-                .select(&candidates, &cut.zone, now, &mut rand::rng())
+                .plan(&candidates, &cut.zone, now, &mut rand::rng())
             else {
-                if self.resolve_ns_addresses(cut, p, budget).await? {
+                if self.resolve_ns_addresses(cut, p, budget, a.deps).await? {
                     continue;
                 }
                 return Err(RecursionError::NoReachableAuthority);
             };
             budget.spend_query()?;
-            let edns = !self.infra.no_edns(ip);
-            let q = OutboundQuery {
-                server: SocketAddr::new(ip, p.authority_port),
-                qname,
-                qtype,
-                recursion_desired: false,
-                edns,
-                dnssec_ok: true,
-                checking_disabled: false,
-                use_0x20: true,
-                timeout: self.infra.rto(ip),
-            };
-            let ex = match self.transport.exchange(&q).await {
-                Ok(ex) => ex,
-                Err(_) => {
-                    self.infra.record_timeout(ip, now);
-                    failed.push(ip);
-                    continue;
+            let race = self.race(plan, a, budget).await;
+            for s in race.failed {
+                self.note(a, budget, s.ip, s.started, s.elapsed, s.outcome());
+                if let Err(ExchangeError::Network(std::io::ErrorKind::NetworkUnreachable)) =
+                    s.result
+                    && s.ip.is_ipv6()
+                {
+                    // debt: stays off until the next start (`detect_ipv6`); revisit if hosts
+                    // whose IPv6 route comes up after start need IPv6-only authorities.
+                    self.ipv6.store(false, Ordering::Relaxed);
                 }
+                self.infra.record_timeout(s.ip, now);
+                failed.push(s.ip);
+            }
+            for (ip, started) in race.lost {
+                let elapsed = started.elapsed();
+                self.note(a, budget, ip, started, elapsed, trace::Outcome::Lost);
+                self.infra.record_lost(ip, elapsed);
+            }
+            let Some(won) = race.won else {
+                continue;
             };
-            self.infra.record_rtt(ip, ex.rtt);
+            self.note(a, budget, won.ip, won.started, won.elapsed, won.outcome());
+            let Ok(ex) = won.result else {
+                continue;
+            };
+            self.infra.record_rtt(won.ip, ex.rtt);
             let rcode = ex.message.metadata.response_code;
-            if edns
+            if won.edns
                 && !edns_retried
                 && matches!(rcode, ResponseCode::FormErr | ResponseCode::NotImp)
             {
-                self.infra.set_no_edns(ip);
+                self.infra.set_no_edns(won.ip);
                 RecursorMetrics::inc(&self.metrics.edns_fallbacks);
                 edns_retried = true;
                 continue;
             }
-            return Ok((ex.message, ip));
+            return Ok((ex.message, won.ip));
+        }
+    }
+
+    /// One exchange with `ip` (EDNS unless the server is known not to support it; the timeout
+    /// is the server's RTO).
+    async fn send(&self, a: &Attempt<'_>, ip: IpAddr) -> Sent {
+        let edns = !self.infra.no_edns(ip);
+        let q = OutboundQuery {
+            server: SocketAddr::new(ip, a.port),
+            qname: a.qname,
+            qtype: a.qtype,
+            recursion_desired: false,
+            edns,
+            dnssec_ok: true,
+            checking_disabled: false,
+            use_0x20: true,
+            timeout: self.infra.rto(ip),
+        };
+        let started = Instant::now();
+        let result = self.transport.exchange(&q).await;
+        Sent {
+            ip,
+            edns,
+            started,
+            elapsed: started.elapsed(),
+            result,
+        }
+    }
+
+    /// Sends to `plan.primary`, then to each of `plan.racers` `RACE_STAGGER` after the previous
+    /// server (at once when every exchange started so far has failed) until a reply arrives.
+    /// The first reply wins and the other exchanges are dropped. Each exchange keeps its own
+    /// socket, ID and 0x20 checks, so a spoofed reply to one never completes the race. The
+    /// primary's query is already counted; a racer is sent only while the budget allows.
+    async fn race(&self, plan: Plan, a: &Attempt<'_>, budget: &WorkBudget) -> Race {
+        let mut running: Vec<(IpAddr, Instant, LocalBoxFuture<'_, Sent>)> = vec![(
+            plan.primary,
+            Instant::now(),
+            Box::pin(self.send(a, plan.primary)),
+        )];
+        let mut waiting = plan.racers.into_iter();
+        let mut next = waiting.next();
+        let mut stagger = Box::pin(tokio::time::sleep(RACE_STAGGER));
+        let mut failed = Vec::new();
+        let won = std::future::poll_fn(|cx| {
+            loop {
+                let mut i = 0;
+                while i < running.len() {
+                    match running[i].2.as_mut().poll(cx) {
+                        Poll::Ready(s) => {
+                            drop(running.swap_remove(i));
+                            if s.result.is_ok() {
+                                return Poll::Ready(Some(s));
+                            }
+                            failed.push(s);
+                        }
+                        Poll::Pending => i += 1,
+                    }
+                }
+                let Some(ip) = next else {
+                    return if running.is_empty() {
+                        Poll::Ready(None)
+                    } else {
+                        Poll::Pending
+                    };
+                };
+                if !running.is_empty() && stagger.as_mut().poll(cx).is_pending() {
+                    return Poll::Pending;
+                }
+                next = waiting.next();
+                if budget.try_spend_query() {
+                    running.push((ip, Instant::now(), Box::pin(self.send(a, ip))));
+                    stagger
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + RACE_STAGGER);
+                }
+                // poll the new exchange and the reset timer before waiting
+            }
+        })
+        .await;
+        let lost = running
+            .into_iter()
+            .map(|(ip, started, _)| (ip, started))
+            .collect();
+        Race { won, failed, lost }
+    }
+
+    fn note(
+        &self,
+        a: &Attempt<'_>,
+        budget: &WorkBudget,
+        server: IpAddr,
+        start: Instant,
+        elapsed: Duration,
+        outcome: trace::Outcome,
+    ) {
+        if self.trace.enabled() {
+            self.trace.record(TraceEvent {
+                start,
+                elapsed,
+                server,
+                qname: a.qname.clone(),
+                qtype: a.qtype,
+                phase: budget.phase(),
+                glueless: !a.deps.is_empty(),
+                minimised: a.minimised,
+                outcome,
+            });
         }
     }
 
@@ -762,29 +955,55 @@ impl Recursor {
         }
     }
 
+    /// The label count of the deepest cached delegation (NS RRset) at or above `name`.
+    fn known_cut_labels(&self, name: &Name, now: u64) -> usize {
+        let mut n = name.clone();
+        while !n.is_root() {
+            if self.rrcache.get(&n, RecordType::NS, now).is_some() {
+                return label_count(&n);
+            }
+            n = n.base_name();
+        }
+        0
+    }
+
     /// Resolves addresses for up to `MAX_GLUELESS_PER_CUT` nameserver names of `cut`, stopping at
-    /// the first name that yields one. A lookup already in progress for this client query (a
-    /// dependency cycle) is skipped; work limits propagate, other failures only skip the name.
+    /// the first name that yields one; names under the deepest known delegation go first (then
+    /// the fewest labels below it), and A and AAAA are resolved concurrently when IPv6 is usable. A lookup the current
+    /// one depends on (a dependency cycle) is skipped; work limits propagate, other failures only
+    /// skip the name.
     async fn resolve_ns_addresses(
         &self,
         cut: &mut Cut,
         p: &RecursionParams,
         budget: &WorkBudget,
+        deps: Dependencies<'_>,
     ) -> Result<bool, RecursionError> {
         let mut types = vec![RecordType::A];
         if self.ipv6() {
             types.push(RecordType::AAAA);
         }
+        if cut.glueless_tried == 0 {
+            let now = now();
+            cut.unresolved.sort_by_cached_key(|n| {
+                let known = self.known_cut_labels(n, now);
+                (std::cmp::Reverse(known), label_count(n) - known)
+            });
+        }
         while cut.glueless_tried < MAX_GLUELESS_PER_CUT && !cut.unresolved.is_empty() {
             let name = cut.unresolved.remove(0);
             cut.glueless_tried += 1;
+            let lookups: Vec<Dependency<'_>> =
+                types.iter().filter_map(|&t| deps.enter(&name, t)).collect();
+            let results = join_all(
+                lookups
+                    .iter()
+                    .map(|d| self.resolve_chain(&name, d.rtype(), p, budget, d.chain()))
+                    .collect(),
+            )
+            .await;
             let mut found = false;
-            for &t in &types {
-                if !budget.enter(&name, t) {
-                    continue;
-                }
-                let result = self.resolve_chain(&name, t, p, budget).await;
-                budget.leave(&name, t);
+            for result in results {
                 match result {
                     Ok(res) => {
                         for r in &res.answers {

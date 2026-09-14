@@ -714,3 +714,147 @@ async fn wildcard_expansion_needs_a_next_closer_proof() {
         r.security
     );
 }
+
+/// Answers from `inner` after a short delay, recording every fetch and the peak concurrency.
+struct Delayed<'a> {
+    inner: &'a Mock,
+    fetches: RefCell<Vec<(Name, RecordType)>>,
+    in_flight: std::cell::Cell<u32>,
+    peak: std::cell::Cell<u32>,
+}
+
+impl<'a> Delayed<'a> {
+    fn new(inner: &'a Mock) -> Self {
+        Delayed {
+            inner,
+            fetches: RefCell::new(Vec::new()),
+            in_flight: std::cell::Cell::new(0),
+            peak: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl Fetcher for Delayed<'_> {
+    fn fetch<'a>(
+        &'a self,
+        name: &'a Name,
+        rtype: RecordType,
+    ) -> LocalBoxFuture<'a, Result<FetchedSet, FetchError>> {
+        Box::pin(async move {
+            self.fetches.borrow_mut().push((name.to_lowercase(), rtype));
+            self.in_flight.set(self.in_flight.get() + 1);
+            self.peak.set(self.peak.get().max(self.in_flight.get()));
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            self.in_flight.set(self.in_flight.get() - 1);
+            self.inner.fetch(name, rtype).await
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn memo_fetcher_shares_a_fetch_in_progress() {
+    // catches: concurrent walks each sending their own query for the same RRset
+    let w = world();
+    let slow = Delayed::new(&w.mock);
+    let memo = MemoFetcher::new(&slow);
+    let root = Name::root();
+    let example = n("example.");
+    let results = crate::recursor::join_all(vec![
+        memo.fetch(&root, RecordType::DNSKEY),
+        memo.fetch(&root, RecordType::DNSKEY),
+        memo.fetch(&example, RecordType::DS),
+    ])
+    .await;
+    assert_eq!(
+        *slow.fetches.borrow(),
+        vec![
+            (Name::root(), RecordType::DNSKEY),
+            (n("example."), RecordType::DS)
+        ]
+    );
+    assert_eq!(
+        slow.peak.get(),
+        2,
+        "different RRsets are fetched concurrently"
+    );
+    let answers: Vec<usize> = results
+        .iter()
+        .map(|r| r.as_ref().unwrap().answers.len())
+        .collect();
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn chain_of_trust_is_fetched_concurrently_with_the_same_verdicts() {
+    // catches: DS and DNSKEY lookups sent one after the other (a round trip per step), and
+    // look-ahead fetches changing a verdict (secure, insecure delegation, bogus signature)
+    let w = world();
+    let v = validator();
+    let slow = Delayed::new(&w.mock);
+    let q = n("www.example.");
+    let answers = signed(
+        &w.example,
+        vec![rec(
+            "www.example.",
+            RData::A(A(Ipv4Addr::new(192, 0, 2, 10))),
+        )],
+    );
+    let r = v
+        .validate(
+            &input(&q, ResponseCode::NoError, &answers, &[]),
+            &w.trust,
+            &[],
+            &slow,
+            NOW,
+        )
+        .await;
+    assert_eq!(r.security, Security::Secure);
+    assert!(
+        slow.peak.get() >= 2,
+        "DNSKEY . and DS example. are fetched together (peak {})",
+        slow.peak.get()
+    );
+    let fetched = slow.fetches.borrow().clone();
+    for key in &fetched {
+        assert_eq!(
+            fetched.iter().filter(|k| *k == key).count(),
+            1,
+            "{key:?} fetched twice"
+        );
+    }
+    // a fresh validator: the insecure delegation and a bogus signature keep their verdicts
+    let v = validator();
+    let q = n("www.plain.example.");
+    let plain = vec![rec(
+        "www.plain.example.",
+        RData::A(A(Ipv4Addr::new(192, 0, 2, 20))),
+    )];
+    let r = v
+        .validate(
+            &input(&q, ResponseCode::NoError, &plain, &[]),
+            &w.trust,
+            &[],
+            &Delayed::new(&w.mock),
+            NOW,
+        )
+        .await;
+    assert_eq!(r.security, Security::Insecure(None));
+    let v = validator();
+    let q = n("www.example.");
+    let mut forged = answers.clone();
+    forged[0].data = RData::A(A(Ipv4Addr::new(6, 6, 6, 6)));
+    let r = v
+        .validate(
+            &input(&q, ResponseCode::NoError, &forged, &[]),
+            &w.trust,
+            &[],
+            &Delayed::new(&w.mock),
+            NOW,
+        )
+        .await;
+    assert!(
+        matches!(r.security, Security::Bogus(Ede { code: 6, .. })),
+        "{:?}",
+        r.security
+    );
+}

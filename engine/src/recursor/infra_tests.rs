@@ -1,5 +1,5 @@
-use super::budget::{Limit, WorkBudget};
-use super::infra::InfraCache;
+use super::budget::{Dependencies, Limit, WorkBudget};
+use super::infra::{InfraCache, Plan};
 use super::roothints::RootHints;
 use super::rrcache::{Credibility, DnssecStatus, RrCache};
 use hickory_proto::rr::{
@@ -79,7 +79,9 @@ fn select_skips_lame_and_backed_off_but_probes_when_all_are_down() {
 }
 
 #[test]
-fn select_picks_randomly_within_400ms_band() {
+fn select_picks_the_fastest_measured_server() {
+    // catches: a random choice among similar RTOs sending queries to a 60 ms server when a 20 ms
+    // one is known
     let c = InfraCache::new(1000);
     let zone = Name::root();
     c.record_rtt(ip(7), Duration::from_millis(20));
@@ -88,15 +90,108 @@ fn select_picks_randomly_within_400ms_band() {
         c.record_rtt(ip(9), Duration::from_millis(900));
     }
     let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-    let mut seen = std::collections::HashSet::new();
     for _ in 0..200 {
-        seen.insert(
-            c.select(&[ip(7), ip(8), ip(9)], &zone, 0, &mut rng)
-                .unwrap(),
+        assert_eq!(
+            c.plan(&[ip(7), ip(8), ip(9)], &zone, 0, &mut rng),
+            Some(Plan {
+                primary: ip(7),
+                racers: vec![]
+            })
         );
     }
-    assert!(seen.contains(&ip(7)) && seen.contains(&ip(8)));
-    assert!(!seen.contains(&ip(9)));
+    // a timeout doubles the RTO (60 -> 120 ms), which then ranks the server
+    c.record_timeout(ip(7), 0);
+    assert_eq!(
+        c.select(&[ip(7), ip(8), ip(9)], &zone, 0, &mut rng),
+        Some(ip(8))
+    );
+    // an answer clears the penalty
+    c.record_rtt(ip(7), Duration::from_millis(20));
+    assert_eq!(
+        c.select(&[ip(7), ip(8), ip(9)], &zone, 0, &mut rng),
+        Some(ip(7))
+    );
+}
+
+#[test]
+fn plan_races_unmeasured_servers_only_when_the_best_is_slow() {
+    // catches: never exploring unmeasured servers (stuck on a 110 ms server when a 9 ms one
+    // exists), and racing on every step even when a fast server is known
+    let c = InfraCache::new(1000);
+    let zone = Name::root();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+    c.record_rtt(ip(20), Duration::from_millis(10));
+    c.record_rtt(ip(21), Duration::from_millis(110));
+    assert_eq!(
+        c.plan(&[ip(20), ip(22)], &zone, 0, &mut rng),
+        Some(Plan {
+            primary: ip(20),
+            racers: vec![]
+        }),
+        "fast known server: no race"
+    );
+    assert_eq!(
+        c.plan(&[ip(21), ip(22)], &zone, 0, &mut rng),
+        Some(Plan {
+            primary: ip(21),
+            racers: vec![ip(22)]
+        }),
+        "slow known server raced against the unmeasured one"
+    );
+    // nothing measured: three different unmeasured servers race
+    for _ in 0..50 {
+        let plan = c
+            .plan(&[ip(22), ip(23), ip(24)], &zone, 0, &mut rng)
+            .unwrap();
+        assert_eq!(plan.racers.len(), 2, "cold: the primary and two racers");
+        assert!(!plan.racers.contains(&plan.primary));
+        assert_ne!(plan.racers[0], plan.racers[1]);
+    }
+    // a single candidate never races itself
+    assert_eq!(
+        c.plan(&[ip(22)], &zone, 0, &mut rng),
+        Some(Plan {
+            primary: ip(22),
+            racers: vec![]
+        })
+    );
+    // an unmeasured server that timed out is not raced while a fresh one exists
+    c.record_timeout(ip(23), 0);
+    for _ in 0..50 {
+        let plan = c
+            .plan(&[ip(21), ip(23), ip(24)], &zone, 0, &mut rng)
+            .unwrap();
+        assert_eq!(plan.racers, vec![ip(24)]);
+    }
+}
+
+#[test]
+fn lost_race_estimates_only_unmeasured_servers() {
+    // catches: a loser staying unmeasured (raced again at every step) or a measured server's RTT
+    // being overwritten by a lower-bound guess
+    let c = InfraCache::new(1000);
+    let zone = Name::root();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+    c.record_lost(ip(30), Duration::from_millis(40));
+    c.record_rtt(ip(31), Duration::from_millis(50));
+    assert_eq!(
+        c.plan(&[ip(30), ip(31)], &zone, 0, &mut rng),
+        Some(Plan {
+            primary: ip(31),
+            racers: vec![]
+        }),
+        "the loser now counts as measured at twice its wait (80 ms)"
+    );
+    assert_eq!(
+        c.rto(ip(30)),
+        Duration::from_millis(376),
+        "a lower-bound estimate never shortens the timeout below the unmeasured one"
+    );
+    c.record_lost(ip(31), Duration::from_millis(500));
+    assert_eq!(
+        c.select(&[ip(30), ip(31)], &zone, 0, &mut rng),
+        Some(ip(31))
+    );
 }
 
 #[test]
@@ -176,11 +271,22 @@ fn work_budget_limits_queries_depth_and_detects_cycles() {
     assert_eq!(b.check_depth(2), Ok(()));
     assert_eq!(b.check_depth(3), Err(Limit::DelegationDepth));
     let n = Name::from_ascii("ns.loop.example.").unwrap();
-    assert!(b.enter(&n, RecordType::A));
-    assert!(!b.enter(
-        &Name::from_ascii("NS.loop.example.").unwrap(),
-        RecordType::A
-    ));
-    b.leave(&n, RecordType::A);
-    assert!(b.enter(&n, RecordType::A));
+    let top = Dependencies::default();
+    let lookup = top.enter(&n, RecordType::A).expect("not a cycle");
+    assert!(
+        lookup
+            .chain()
+            .enter(
+                &Name::from_ascii("NS.loop.example.").unwrap(),
+                RecordType::A
+            )
+            .is_none(),
+        "a lookup nested in itself is a cycle"
+    );
+    assert!(lookup.chain().enter(&n, RecordType::AAAA).is_some());
+    // catches: a per-budget stack treating a concurrent lookup of the same name as a cycle
+    assert!(
+        top.enter(&n, RecordType::A).is_some(),
+        "a sibling lookup on another call chain is not a cycle"
+    );
 }
