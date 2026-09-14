@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
+import { ChevronRight, ExternalLink } from "lucide-react";
 
 import { type Schemas } from "@/api/client";
 import {
@@ -14,7 +15,9 @@ import { ErrorAlert, formatAgo, StatusDot } from "@/components/common";
 import { LicenseNoticeDialog } from "@/components/categories";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Table,
@@ -24,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 type Category = Schemas["FilterCategory"];
 type Source = Schemas["FilterCategorySource"];
@@ -31,11 +35,96 @@ type Update = Schemas["FilterCategoryUpdate"];
 
 type Pending = { key: string; body: Update; notices: LicenseNotice[] };
 
+const EXPANDED_KEY = "nexora-categories-expanded";
+
+// The stored expanded set is a convenience: unreadable, corrupt or non-array values start collapsed.
+function readExpanded(): Set<string> {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]");
+    return new Set(
+      Array.isArray(v)
+        ? v.filter((k): k is string => typeof k === "string")
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function writeExpanded(keys: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...keys]));
+  } catch {
+    // Storage unavailable (private mode, quota): the state lasts for this visit only.
+  }
+}
+
+function matches(c: Category, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  const hit = (v: string) => v.toLowerCase().includes(q);
+  return (
+    hit(c.name) ||
+    hit(c.key) ||
+    c.sources.some((s) => hit(s.name) || hit(s.key))
+  );
+}
+
 export function FilterCategoriesPage() {
   const canUpdate = useCan("updateFilterCategory");
   const categories = useFilterCategories();
   const update = useUpdateFilterCategory();
   const [pending, setPending] = useState<Pending | null>(null);
+  const [expanded, setExpanded] = useState(readExpanded);
+  const [query, setQuery] = useState("");
+  // Categories the operator collapsed while a search forces its matches open; reset per query.
+  const [searchClosed, setSearchClosed] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const { hash } = useLocation();
+  const linked = hash.startsWith("#category-")
+    ? hash.slice("#category-".length)
+    : "";
+  const loaded = categories.data !== undefined;
+
+  useEffect(() => writeExpanded(expanded), [expanded]);
+
+  // A #category-<key> link expands its category, on arrival and on in-app hash changes.
+  const [seenLink, setSeenLink] = useState("");
+  if (linked !== seenLink) {
+    setSeenLink(linked);
+    if (linked !== "" && !expanded.has(linked)) {
+      setExpanded(new Set(expanded).add(linked));
+    }
+  }
+
+  useEffect(() => {
+    if (linked !== "" && loaded) {
+      document.getElementById(`category-${linked}`)?.scrollIntoView();
+    }
+  }, [linked, loaded]);
+
+  const searching = query.trim() !== "";
+  const visible = (categories.data ?? []).filter(
+    (c) => !searching || matches(c, query),
+  );
+  const isOpen = (key: string) =>
+    searching ? !searchClosed.has(key) : expanded.has(key);
+
+  function toggle(key: string) {
+    const flip = (prev: Set<string>) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    };
+    if (searching) setSearchClosed(flip);
+    else setExpanded(flip);
+  }
+
+  function setAll(open: boolean) {
+    const keys = (categories.data ?? []).map((c) => c.key);
+    setExpanded(new Set(open ? keys : []));
+    setSearchClosed(new Set(open ? [] : keys));
+  }
 
   function send(key: string, body: Update) {
     update.mutate(
@@ -90,11 +179,50 @@ export function FilterCategoriesPage() {
       {categories.isPending && (
         <p className="text-muted-foreground text-sm">Loading…</p>
       )}
-      <div className="grid gap-5">
-        {(categories.data ?? []).map((c) => (
+      {categories.data && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Input
+            data-testid="categories-search"
+            type="search"
+            aria-label="Search categories and sources"
+            placeholder="Search categories and sources"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSearchClosed(new Set());
+            }}
+            className="w-full sm:w-72"
+          />
+          <Button
+            data-testid="categories-expand-all"
+            variant="outline"
+            size="sm"
+            onClick={() => setAll(true)}
+          >
+            Expand all
+          </Button>
+          <Button
+            data-testid="categories-collapse-all"
+            variant="outline"
+            size="sm"
+            onClick={() => setAll(false)}
+          >
+            Collapse all
+          </Button>
+        </div>
+      )}
+      {categories.data && visible.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          No category or source matches “{query.trim()}”.
+        </p>
+      )}
+      <div className="grid gap-3">
+        {visible.map((c) => (
           <CategoryCard
             key={c.key}
             category={c}
+            open={isOpen(c.key)}
+            onToggleOpen={() => toggle(c.key)}
             disabled={!canUpdate || update.isPending || pending !== null}
             onChange={(body) => apply(c, body)}
           />
@@ -121,45 +249,87 @@ export function FilterCategoriesPage() {
 
 function CategoryCard({
   category: c,
+  open,
+  onToggleOpen,
   disabled,
   onChange,
 }: {
   category: Category;
+  open: boolean;
+  onToggleOpen: () => void;
   disabled: boolean;
   onChange: (body: Update) => void;
 }) {
-  const enabledSources = c.sources.filter((s) => s.enabled).length;
+  const enabledSources = c.sources.filter((s) => s.enabled);
+  const entries = enabledSources.reduce((n, s) => n + s.entry_count, 0);
+  const failed = enabledSources.some((s) => s.last_error);
+  const nonCommercial = c.sources.some((s) => s.commercial_use === false);
   const headingId = `category-heading-${c.key}`;
+  const sourcesId = `category-sources-${c.key}`;
   return (
     <Card
+      id={`category-${c.key}`}
       data-testid={`category-${c.key}`}
       aria-labelledby={headingId}
       role="region"
-      className="overflow-hidden"
+      className="scroll-mt-4 overflow-hidden"
     >
-      <div className="flex items-start justify-between gap-4 px-5 py-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 id={headingId} className="font-semibold">
-              {c.name}
-            </h2>
-            {c.stale && (
-              <Badge
-                variant="destructive"
-                data-testid={`category-stale-${c.key}`}
-              >
-                stale
-              </Badge>
-            )}
-          </div>
-          <p className="text-muted-foreground mt-0.5 text-sm">
-            {c.description}
-          </p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            {c.enabled ? "Blocking for every client" : "Off globally"} ·{" "}
-            {enabledSources} of {c.sources.length} sources enabled
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        {/* Accordion pattern: the heading wraps the disclosure button, the switch stays outside it. */}
+        <h2 className="min-w-0 flex-1 basis-64">
+          <button
+            type="button"
+            data-testid={`category-toggle-${c.key}`}
+            aria-expanded={open}
+            aria-controls={sourcesId}
+            onClick={onToggleOpen}
+            className="focus-visible:ring-ring flex w-full items-start gap-2 rounded-md text-left focus-visible:ring-1 focus-visible:outline-none"
+          >
+            <ChevronRight
+              aria-hidden
+              className={cn(
+                "text-muted-foreground mt-0.5 h-4 w-4 shrink-0 transition-transform",
+                open && "rotate-90",
+              )}
+            />
+            <span className="min-w-0">
+              <span id={headingId} className="block font-semibold">
+                {c.name}
+              </span>
+              <span className="text-muted-foreground block text-sm font-normal">
+                {c.description}
+              </span>
+            </span>
+          </button>
+        </h2>
+        <span
+          data-testid={`category-summary-${c.key}`}
+          className="text-muted-foreground text-xs whitespace-nowrap tabular-nums"
+        >
+          {enabledSources.length} of {c.sources.length} sources on
+          {entries > 0 && ` · ${entries.toLocaleString()} entries`}
+        </span>
+        {failed ? (
+          <span data-testid={`category-stale-${c.key}`}>
+            <StatusDot tone="destructive">Failed</StatusDot>
+          </span>
+        ) : (
+          c.stale && (
+            <span data-testid={`category-stale-${c.key}`}>
+              <StatusDot tone="warning">Stale</StatusDot>
+            </span>
+          )
+        )}
+        {nonCommercial && (
+          <Badge
+            variant="outline"
+            data-testid={`category-noncommercial-${c.key}`}
+            title="A source in this category is not free for commercial use"
+            className="border-warning/50 text-warning whitespace-nowrap"
+          >
+            Non-commercial
+          </Badge>
+        )}
         <Switch
           aria-label={`Enable ${c.name}`}
           checked={c.enabled}
@@ -173,35 +343,39 @@ function CategoryCard({
           }
         />
       </div>
-      <Table className="border-t">
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="pl-5">Source</TableHead>
-            <TableHead>License</TableHead>
-            <TableHead>Attribution</TableHead>
-            <TableHead className="text-right">Entries</TableHead>
-            <TableHead>Last refresh</TableHead>
-            <TableHead className="w-20 pr-5">Enabled</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {c.sources.map((s) => (
-            <SourceRow
-              key={s.key}
-              source={s}
-              disabled={disabled}
-              onToggle={(v) =>
-                onChange({
-                  enabled: c.enabled,
-                  revision: c.revision,
-                  acknowledge_license: false,
-                  sources: [{ key: s.key, enabled: v }],
-                })
-              }
-            />
-          ))}
-        </TableBody>
-      </Table>
+      <div id={sourcesId}>
+        {open && (
+          <Table className="border-t">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-5">Source</TableHead>
+                <TableHead>License</TableHead>
+                <TableHead>Attribution</TableHead>
+                <TableHead className="text-right">Entries</TableHead>
+                <TableHead>Last refresh</TableHead>
+                <TableHead className="w-20 pr-5">Enabled</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {c.sources.map((s) => (
+                <SourceRow
+                  key={s.key}
+                  source={s}
+                  disabled={disabled}
+                  onToggle={(v) =>
+                    onChange({
+                      enabled: c.enabled,
+                      revision: c.revision,
+                      acknowledge_license: false,
+                      sources: [{ key: s.key, enabled: v }],
+                    })
+                  }
+                />
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
     </Card>
   );
 }
