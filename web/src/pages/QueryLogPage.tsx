@@ -1,6 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, RotateCcw, Search } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FilterX,
+  RefreshCw,
+  Search,
+} from "lucide-react";
 
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
 import { useFilterCategories } from "@/api/filterCategories";
@@ -79,6 +85,8 @@ const timeFormat = new Intl.DateTimeFormat(undefined, {
   fractionalSecondDigits: 3,
 });
 
+const liveIntervalMs = 5000;
+
 function param(v: string): string | undefined {
   const t = v.trim();
   return t === "" || t === any ? undefined : t;
@@ -91,6 +99,8 @@ export function QueryLogPage() {
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors[cursors.length - 1];
   const categories = useFilterCategories();
+  // Live mode reloads the newest page every liveIntervalMs; older pages stay put while browsing.
+  const [live, setLive] = useState(true);
 
   const q = useQuery({
     queryKey: ["query-log", applied, cursor],
@@ -114,6 +124,8 @@ export function QueryLogPage() {
       ),
     placeholderData: keepPreviousData,
     retry: false,
+    refetchInterval: live && !cursor ? liveIntervalMs : false,
+    refetchIntervalInBackground: false,
   });
 
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
@@ -135,6 +147,11 @@ export function QueryLogPage() {
     setCursors([]);
   }
 
+  // Refresh reloads the page on screen now (a no-op filter change would not trigger a request).
+  function refresh() {
+    void q.refetch();
+  }
+
   const unavailable =
     q.error instanceof ApiError && q.error.code === "querylog_unavailable";
   const records = q.data?.records ?? [];
@@ -145,18 +162,53 @@ export function QueryLogPage() {
         title="Query log"
         description="Queries answered by the engines, newest first."
         actions={
-          q.data && (
-            <span className="text-muted-foreground flex items-center gap-2 text-sm">
-              Backend
-              <Badge
-                variant="secondary"
-                className="font-mono font-medium"
-                data-testid="querylog-backend"
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            {q.dataUpdatedAt > 0 && (
+              <span
+                className="text-muted-foreground"
+                data-testid="querylog-updated"
+                aria-live="polite"
               >
-                {q.data.backend}
-              </Badge>
-            </span>
-          )
+                Updated {new Date(q.dataUpdatedAt).toLocaleTimeString()}
+              </span>
+            )}
+            <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                data-testid="querylog-live"
+                className="accent-primary h-4 w-4"
+                checked={live}
+                onChange={(e) => setLive(e.target.checked)}
+              />
+              Live{cursor ? " (paused on older pages)" : ""}
+            </label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="querylog-refresh"
+              onClick={refresh}
+              disabled={q.isFetching}
+              aria-label="Refresh"
+            >
+              <RefreshCw
+                className={`mr-1.5 h-4 w-4 ${q.isFetching ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </Button>
+            {q.data && (
+              <span className="text-muted-foreground flex items-center gap-2">
+                Backend
+                <Badge
+                  variant="secondary"
+                  className="font-mono font-medium"
+                  data-testid="querylog-backend"
+                >
+                  {q.data.backend}
+                </Badge>
+              </span>
+            )}
+          </div>
         }
       />
 
@@ -247,7 +299,7 @@ export function QueryLogPage() {
               title="Clear filters"
               onClick={reset}
             >
-              <RotateCcw className="h-4 w-4" />
+              <FilterX className="h-4 w-4" />
             </Button>
           </div>
         </form>
