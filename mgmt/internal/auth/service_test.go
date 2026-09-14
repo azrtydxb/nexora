@@ -90,10 +90,10 @@ func TestSessionsTokensAndDisabledUsers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.Login(ctx, "olga", "nope-nope-nope"); !errors.Is(err, auth.ErrInvalidCredentials) {
+	if _, _, err := svc.Login(ctx, "olga", "nope-nope-nope", "192.0.2.1"); !errors.Is(err, auth.ErrInvalidCredentials) {
 		t.Fatalf("bad login -> %v", err)
 	}
-	sess, _, err := svc.Login(ctx, "olga", "operator-password-1")
+	sess, _, err := svc.Login(ctx, "olga", "operator-password-1", "192.0.2.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestOIDCLoginAndProviderDown(t *testing.T) {
 	if _, err := o2.Start(ctx, "/"); !errors.Is(err, auth.ErrOIDCUnavailable) {
 		t.Fatalf("provider down -> %v", err)
 	}
-	if _, _, err := svc.Login(ctx, "local", "local-password-12"); err != nil {
+	if _, _, err := svc.Login(ctx, "local", "local-password-12", "192.0.2.1"); err != nil {
 		t.Fatalf("local login with OIDC down: %v", err)
 	}
 }

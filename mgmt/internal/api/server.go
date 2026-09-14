@@ -229,6 +229,8 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_request", auth.ErrWeakPassword.Error())
 	case errors.As(err, &maxBytes):
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body too large")
+	case errors.Is(err, auth.ErrTooManyAttempts):
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", auth.ErrTooManyAttempts.Error())
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, "unauthenticated", auth.ErrInvalidCredentials.Error())
 	case errors.Is(err, auth.ErrUnauthenticated):

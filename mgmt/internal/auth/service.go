@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -55,11 +56,14 @@ func (p Principal) Actor() Actor {
 // User is a stored user without its password hash.
 type User struct {
 	ID, Username, Email string
+	DisplayName         string
 	Role                Role
 	Source              string
 	Disabled            bool
 	Revision            int64
 	CreatedAt           time.Time
+	LastLoginAt         *time.Time
+	Preferences         Preferences
 }
 
 // APIToken is a stored API token without its secret.
@@ -71,15 +75,28 @@ type APIToken struct {
 }
 
 // UserColumns is the select list matching ScanUser.
-const UserColumns = "id::text, username, email, role, source, disabled, revision, created_at"
+const UserColumns = "id::text, username, email, role, source, disabled, revision, created_at, display_name, last_login_at, preferences"
 
 // ScanUser scans a row selected with UserColumns.
-func ScanUser(row pgx.Row) (User, error) {
+func ScanUser(row pgx.Row) (User, error) { return scanUser(row) }
+
+// scanUser scans UserColumns followed by extra columns. Preference keys missing from the stored
+// document keep their defaults.
+func scanUser(row pgx.Row, extra ...any) (User, error) {
 	var u User
 	var role string
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &role, &u.Source, &u.Disabled, &u.Revision, &u.CreatedAt)
+	var prefs []byte
+	dest := append([]any{&u.ID, &u.Username, &u.Email, &role, &u.Source, &u.Disabled, &u.Revision, &u.CreatedAt,
+		&u.DisplayName, &u.LastLoginAt, &prefs}, extra...)
+	if err := row.Scan(dest...); err != nil {
+		return u, err
+	}
 	u.Role = Role(role)
-	return u, err
+	u.Preferences = DefaultPreferences()
+	if err := json.Unmarshal(prefs, &u.Preferences); err != nil {
+		return u, fmt.Errorf("user %s preferences: %w", u.ID, err)
+	}
+	return u, nil
 }
 
 // Service authenticates requests and manages users, sessions, API tokens and first-run setup.
@@ -198,25 +215,30 @@ var (
 )
 
 // Login verifies a local user's password and creates a session. Unknown users, users without a
-// password (OIDC) and disabled users all yield ErrInvalidCredentials after the same argon2 work.
-func (s *Service) Login(ctx context.Context, username, password string) (string, User, error) {
+// password (OIDC) and disabled users all yield ErrInvalidCredentials after the same argon2 work,
+// and each such failure counts against username and client (the caller's address). More than
+// maxAuthFailures within authFailureWindow yield ErrTooManyAttempts before any password check.
+func (s *Service) Login(ctx context.Context, username, password, client string) (string, User, error) {
+	if err := s.throttled(ctx, username, client); err != nil {
+		return "", User{}, err
+	}
 	var hash *string
-	var u User
-	var role string
-	err := s.st.Pool.QueryRow(ctx, "select "+UserColumns+", password_hash from users where username = $1", username).
-		Scan(&u.ID, &u.Username, &u.Email, &role, &u.Source, &u.Disabled, &u.Revision, &u.CreatedAt, &hash)
-	u.Role = Role(role)
+	u, err := scanUser(s.st.Pool.QueryRow(ctx, "select "+UserColumns+", password_hash from users where username = $1", username), &hash)
 	if err = store.MapError(err); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return "", User{}, err
 	}
 	if err != nil || hash == nil {
 		dummyHashOnce.Do(func() { dummyHash, _ = HashPassword("nexora-dummy-password") })
 		_, _ = VerifyPassword(dummyHash, password)
-		return "", User{}, ErrInvalidCredentials
+		return "", User{}, s.failed(ctx, username, client, ErrInvalidCredentials)
 	}
 	ok, err := VerifyPassword(*hash, password)
 	if err != nil || !ok || u.Disabled {
-		return "", User{}, ErrInvalidCredentials
+		return "", User{}, s.failed(ctx, username, client, ErrInvalidCredentials)
+	}
+	if err := s.st.Pool.QueryRow(ctx, "update users set last_login_at = now() where id = $1 returning last_login_at", u.ID).
+		Scan(&u.LastLoginAt); err != nil {
+		return "", User{}, store.MapError(err)
 	}
 	sess, err := s.CreateSession(ctx, u.ID)
 	if err != nil {

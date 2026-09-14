@@ -22,9 +22,14 @@ func validateUsername(u string) error {
 	return nil
 }
 
+// apiUser converts a stored user; auth.ScanUser has already applied the preference defaults
+// (theme system, no time zone, 12-hour clock, live query log) for missing keys.
 func apiUser(u auth.User) User {
-	return User{Id: uuid.MustParse(u.ID), Username: u.Username, Email: u.Email, Role: Role(u.Role),
-		Source: UserSource(u.Source), Disabled: u.Disabled, Revision: u.Revision, CreatedAt: u.CreatedAt}
+	return User{Id: uuid.MustParse(u.ID), Username: u.Username, Email: u.Email, DisplayName: u.DisplayName,
+		Role: Role(u.Role), Source: UserSource(u.Source), Disabled: u.Disabled, Revision: u.Revision,
+		CreatedAt: u.CreatedAt, LastLoginAt: u.LastLoginAt,
+		Preferences: UserPreferences{Theme: UserPreferencesTheme(u.Preferences.Theme), TimeZone: u.Preferences.TimeZone,
+			Clock24h: u.Preferences.Clock24h, QuerylogLive: u.Preferences.QuerylogLive}}
 }
 
 // sessionResponse sets the session cookie before writing the user.
@@ -106,9 +111,9 @@ func (h *handlers) CompleteSetup(ctx context.Context, req CompleteSetupRequestOb
 }
 
 func (h *handlers) Login(ctx context.Context, req LoginRequestObject) (LoginResponseObject, error) {
-	token, u, err := h.d.Auth.Login(ctx, req.Body.Username, req.Body.Password)
+	token, u, err := h.d.Auth.Login(ctx, req.Body.Username, req.Body.Password, clientAddr(requestFrom(ctx)))
 	if err != nil {
-		return nil, err
+		return nil, err // auth.ErrTooManyAttempts: 429 too_many_attempts through mapError
 	}
 	return sessionResponse{user: apiUser(u), status: http.StatusOK, cookie: h.d.Auth.SessionCookie(token)}, nil
 }
