@@ -38,6 +38,7 @@ type engineGroupInput struct {
 	extraACL                                                         *[]string
 	canaryCount, canaryPercent, ackTimeout, healthWindow, minQueries *int
 	maxServfail                                                      *float32
+	filterIndexMaxBytes                                              *int64
 }
 
 // applyEngineGroupInput overlays in on base (the table defaults on create, the stored group on
@@ -69,6 +70,9 @@ func applyEngineGroupInput(base fleet.EngineGroup, in engineGroupInput) (fleet.E
 	if in.maxServfail != nil {
 		g.MaxServfailRatio = float64(*in.maxServfail)
 	}
+	if in.filterIndexMaxBytes != nil {
+		g.FilterIndexMaxBytes = *in.filterIndexMaxBytes
+	}
 	if in.extraACL != nil {
 		if len(*in.extraACL) > 256 {
 			return g, invalid("extra_acl_cidrs must list at most 256 prefixes")
@@ -99,6 +103,8 @@ func applyEngineGroupInput(base fleet.EngineGroup, in engineGroupInput) (fleet.E
 		return g, coded(http.StatusBadRequest, "invalid_rollout_params", "health_window_seconds must be 20..3600")
 	case g.MaxServfailRatio < 0 || g.MaxServfailRatio > 1:
 		return g, coded(http.StatusBadRequest, "invalid_rollout_params", "max_servfail_ratio must be 0..1")
+	case g.FilterIndexMaxBytes < 0 || (g.FilterIndexMaxBytes > 0 && g.FilterIndexMaxBytes < 16<<20):
+		return g, invalid("filter_index_max_bytes must be 0 or at least 16777216")
 	case g.MinHealthQueries < 0:
 		return g, coded(http.StatusBadRequest, "invalid_rollout_params", "min_health_queries must not be negative")
 	case g.RolloutStrategy == string(rollout.CanaryStrategy) && g.CanaryCount == 0 && g.CanaryPercent == 0:
@@ -116,7 +122,7 @@ func engineGroupOut(g fleet.EngineGroup, active *Rollout) EngineGroup {
 		ExtraAclCidrs: append([]string{}, g.ExtraACLCIDRs...), OtlpEndpoint: g.OTLPEndpoint,
 		RolloutStrategy: EngineGroupRolloutStrategy(g.RolloutStrategy), CanaryCount: g.CanaryCount, CanaryPercent: g.CanaryPercent,
 		AckTimeoutSeconds: g.AckTimeoutSeconds, HealthWindowSeconds: g.HealthWindowSeconds, MaxServfailRatio: float32(g.MaxServfailRatio),
-		MinHealthQueries: g.MinHealthQueries, RolloutsPaused: g.RolloutsPaused, EngineCount: g.EngineCount, Revision: g.Revision,
+		MinHealthQueries: g.MinHealthQueries, FilterIndexMaxBytes: g.FilterIndexMaxBytes, RolloutsPaused: g.RolloutsPaused, EngineCount: g.EngineCount, Revision: g.Revision,
 		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, ActiveRollout: active}
 	if g.StableVersion != nil {
 		v := int64(*g.StableVersion)
@@ -173,7 +179,8 @@ func (h *handlers) CreateEngineGroup(ctx context.Context, req CreateEngineGroupR
 	g, err := applyEngineGroupInput(newEngineGroupDefaults, engineGroupInput{name: b.Name, description: b.Description,
 		otlpEndpoint: b.OtlpEndpoint, upstreamMode: (*string)(b.UpstreamMode), strategy: (*string)(b.RolloutStrategy),
 		extraACL: b.ExtraAclCidrs, canaryCount: b.CanaryCount, canaryPercent: b.CanaryPercent, ackTimeout: b.AckTimeoutSeconds,
-		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio})
+		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio,
+		filterIndexMaxBytes: b.FilterIndexMaxBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +207,8 @@ func (h *handlers) UpdateEngineGroup(ctx context.Context, req UpdateEngineGroupR
 	in := engineGroupInput{name: b.Name, description: b.Description, otlpEndpoint: b.OtlpEndpoint,
 		upstreamMode: (*string)(b.UpstreamMode), strategy: (*string)(b.RolloutStrategy), extraACL: b.ExtraAclCidrs,
 		canaryCount: b.CanaryCount, canaryPercent: b.CanaryPercent, ackTimeout: b.AckTimeoutSeconds,
-		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio}
+		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio,
+		filterIndexMaxBytes: b.FilterIndexMaxBytes}
 	err := h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 		before, err := fleet.GetEngineGroup(ctx, tx, req.Id)
 		if err != nil {

@@ -40,7 +40,7 @@ components:
         message: { type: string }
         details:
           type: array
-          description: Per-line problems of submitted zone data.
+          description: 'Per-line problems of submitted zone data; for license_acknowledgement_required one entry per source (line 0, message "<source key>: <notice>").'
           items:
             type: object
             required: [line, message]
@@ -227,6 +227,8 @@ components:
           stale,
           revision,
           engine_group_id,
+          category_key,
+          managed_by_catalog,
         ]
       properties:
         engine_group_id:
@@ -234,6 +236,16 @@ components:
             type: [string, "null"],
             format: uuid,
             description: "engine group; null applies to every group",
+          }
+        category_key:
+          {
+            type: [string, "null"],
+            description: "filter category of a catalog-managed list; null for custom lists",
+          }
+        managed_by_catalog:
+          {
+            type: boolean,
+            description: "mirrors a filter category catalog source; read-only (toggle it through /filter-categories)",
           }
         id: { type: string, format: uuid }
         name: { type: string }
@@ -269,6 +281,89 @@ components:
         refresh_interval_seconds: { type: integer, minimum: 300 }
         enabled: { type: boolean }
         revision: { type: integer, format: int64 }
+    FilterCategorySource:
+      type: object
+      required:
+        [
+          key,
+          name,
+          url,
+          format,
+          archive_member,
+          license,
+          license_url,
+          attribution,
+          commercial_use,
+          notice,
+          enabled,
+          list_id,
+          entry_count,
+          last_success_at,
+          last_error,
+          stale,
+        ]
+      properties:
+        key: { type: string }
+        name: { type: string }
+        url: { type: string }
+        format: { type: string, enum: [domains, hosts, wildcard] }
+        archive_member:
+          {
+            type: string,
+            description: "member of a .tar.gz archive; empty for plain lists",
+          }
+        license: { type: string }
+        license_url: { type: string }
+        attribution: { type: string }
+        commercial_use:
+          {
+            type: boolean,
+            description: "false: enabling needs acknowledge_license",
+          }
+        notice: { type: string }
+        enabled: { type: boolean }
+        list_id: { type: string, format: uuid }
+        entry_count: { type: integer }
+        last_success_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        stale: { type: boolean }
+    FilterCategory:
+      type: object
+      required: [key, name, description, enabled, stale, revision, sources]
+      properties:
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        enabled: { type: boolean }
+        stale:
+          {
+            type: boolean,
+            description: "an enabled source failed its last refresh or is older than two intervals",
+          }
+        revision: { type: integer, format: int64 }
+        sources:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/FilterCategorySource" },
+          }
+    FilterCategoryUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled, revision]
+      properties:
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
+        acknowledge_license: { type: boolean, default: false }
+        sources:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, enabled]
+            properties:
+              key: { type: string }
+              enabled: { type: boolean }
     Allowlist:
       type: object
       required: [domains, revision]
@@ -564,6 +659,20 @@ components:
           }
         allowlist:
           { type: array, maxItems: 10000, items: { type: string }, default: [] }
+        category_keys:
+          {
+            type: array,
+            maxItems: 64,
+            items: { type: string },
+            default: [],
+            description: "filter categories whose enabled catalog sources this group blocks",
+          }
+        acknowledge_license:
+          {
+            type: boolean,
+            default: false,
+            description: "required when a newly selected category has enabled sources that are not free for commercial use",
+          }
         safe_search: { $ref: "#/components/schemas/SafeSearch" }
     PolicyGroupUpdate:
       allOf:
@@ -582,6 +691,7 @@ components:
           cidrs,
           filter_list_ids,
           allowlist,
+          category_keys,
           safe_search,
           revision,
           created_at,
@@ -601,6 +711,7 @@ components:
         cidrs: { type: array, items: { type: string } }
         filter_list_ids: { type: array, items: { type: string, format: uuid } }
         allowlist: { type: array, items: { type: string } }
+        category_keys: { type: array, items: { type: string } }
         safe_search: { $ref: "#/components/schemas/SafeSearch" }
         revision: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
@@ -1467,6 +1578,13 @@ components:
         health_window_seconds: { type: integer, minimum: 20, maximum: 3600 }
         max_servfail_ratio: { type: number, minimum: 0, maximum: 1 }
         min_health_queries: { type: integer, minimum: 0 }
+        filter_index_max_bytes:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            description: "filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216",
+          }
     EngineGroupUpdate:
       allOf:
         - { $ref: "#/components/schemas/EngineGroupInput" }
@@ -1494,6 +1612,7 @@ components:
           min_health_queries,
           rollouts_paused,
           engine_count,
+          filter_index_max_bytes,
           revision,
           created_at,
           updated_at,
@@ -1513,6 +1632,7 @@ components:
         max_servfail_ratio: { type: number }
         min_health_queries: { type: integer }
         rollouts_paused: { type: boolean }
+        filter_index_max_bytes: { type: integer, format: int64 }
         stable_version: { type: [integer, "null"], format: int64 }
         engine_count: { type: integer }
         active_rollout:
@@ -2125,6 +2245,7 @@ paths:
           "204": { description: deleted },
           "404": { $ref: "#/components/responses/Error" },
           "409": { $ref: "#/components/responses/Error" },
+          "422": { $ref: "#/components/responses/Error" },
         }
   /filter-lists/{id}/refresh:
     post:
@@ -2143,6 +2264,46 @@ paths:
             },
           "404": { $ref: "#/components/responses/Error" },
         }
+  /filter-categories:
+    get:
+      operationId: listFilterCategories
+      tags: [filtering]
+      responses:
+        "200":
+          description: the catalog in catalog order, with enabled state and fetch status per source
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/FilterCategory" },
+                }
+  /filter-categories/{key}:
+    put:
+      operationId: updateFilterCategory
+      tags: [filtering]
+      parameters:
+        - {
+            name: key,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,31}$" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FilterCategoryUpdate" }
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilterCategory" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
   /allowlist:
     get:
       {

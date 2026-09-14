@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/piwi3910/nexora/e2e/harness"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
@@ -123,5 +124,32 @@ func TestRewritesScopesAndGlobalSafeSearch(t *testing.T) {
 	err = inTx(t, s, func(tx pgx.Tx) error { _, err := store.UpdateGlobalSafeSearch(ctx, tx, g); return err })
 	if !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("stale global safe search: got %v", err)
+	}
+}
+
+func TestPolicyGroupCategoryKeysAndManagedListsExcluded(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	var managed uuid.UUID
+	if _, err := s.Pool.Exec(ctx, "insert into filter_categories(key) values ('gambling')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pool.QueryRow(ctx, `insert into filter_lists(name, kind, url, category_key, source_key, managed_by_catalog, catalog_position)
+		values ('catalog:gambling:x', 'block', 'https://x.test/l.txt', 'gambling', 'x', true, 1) returning id`).Scan(&managed); err != nil {
+		t.Fatal(err)
+	}
+	err := inTx(t, s, func(tx pgx.Tx) error {
+		g, err := store.CreatePolicyGroup(ctx, tx, store.PolicyGroup{Name: "kids", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.9.0.0/16")}, CategoryKeys: []string{"gambling"}})
+		if err != nil || len(g.CategoryKeys) != 1 || g.CategoryKeys[0] != "gambling" {
+			t.Fatalf("create with category keys: %+v %v", g, err)
+		}
+		_, err = store.CreatePolicyGroup(ctx, tx, store.PolicyGroup{Name: "kids2", CIDRs: []netip.Prefix{netip.MustParsePrefix("10.8.0.0/16")}, FilterListIDs: []uuid.UUID{managed}})
+		if !errors.Is(err, store.ErrUnknownFilterList) {
+			t.Fatalf("a catalog-managed list selected by id -> %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

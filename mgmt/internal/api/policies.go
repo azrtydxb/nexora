@@ -16,12 +16,26 @@ func policyGroupOut(g store.PolicyGroup) PolicyGroup {
 	out := PolicyGroup{
 		Id: g.ID, EngineGroupId: g.EngineGroupID, Name: g.Name, Description: g.Description, Revision: g.Revision, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt,
 		Cidrs: make([]string, 0, len(g.CIDRs)), FilterListIds: append([]uuid.UUID{}, g.FilterListIDs...), Allowlist: append([]string{}, g.Allowlist...),
-		SafeSearch: SafeSearch{Google: g.SafeSearch.Google, Bing: g.SafeSearch.Bing, Duckduckgo: g.SafeSearch.DuckDuckGo, Youtube: SafeSearchYoutube(g.SafeSearch.YouTube)},
+		CategoryKeys: append([]string{}, g.CategoryKeys...),
+		SafeSearch:   SafeSearch{Google: g.SafeSearch.Google, Bing: g.SafeSearch.Bing, Duckduckgo: g.SafeSearch.DuckDuckGo, Youtube: SafeSearchYoutube(g.SafeSearch.YouTube)},
 	}
 	for _, c := range g.CIDRs {
 		out.Cidrs = append(out.Cidrs, c.String())
 	}
 	return out
+}
+
+func acknowledgeLicense(b *bool) bool { return b != nil && *b }
+
+// groupAudit is the audited state of a policy group, with the license acknowledgements the change made.
+func groupAudit(g PolicyGroup, acknowledged []string) any {
+	if len(acknowledged) == 0 {
+		return g
+	}
+	return struct {
+		PolicyGroup
+		AcknowledgedLicenses []string `json:"acknowledged_licenses"`
+	}{g, acknowledged}
 }
 
 func globalSafeSearchOut(s store.GlobalSafeSearch) GlobalSafeSearch {
@@ -56,9 +70,14 @@ func (h *handlers) CreatePolicyGroup(ctx context.Context, req CreatePolicyGroupR
 			if err := checkPolicyGroupScope(ctx, tx, g); err != nil {
 				return auth.Change{}, err
 			}
+			acknowledged, err := h.checkGroupCategories(ctx, tx, nil, g, acknowledgeLicense(req.Body.AcknowledgeLicense))
+			if err != nil {
+				return auth.Change{}, err
+			}
 			created, err := store.CreatePolicyGroup(ctx, tx, g)
 			after = policyGroupOut(created)
-			return auth.Change{Action: "createPolicyGroup", TargetType: "policy_group", TargetID: created.ID.String(), After: after}, err
+			return auth.Change{Action: "createPolicyGroup", TargetType: "policy_group", TargetID: created.ID.String(),
+				After: groupAudit(after, acknowledged)}, err
 		})
 	}
 	if status, e, ok := policyFailure(err); ok {
@@ -76,7 +95,8 @@ func (h *handlers) CreatePolicyGroup(ctx context.Context, req CreatePolicyGroupR
 func (h *handlers) UpdatePolicyGroup(ctx context.Context, req UpdatePolicyGroupRequestObject) (UpdatePolicyGroupResponseObject, error) {
 	b := req.Body
 	g, err := validatePolicyGroup(PolicyGroupInput{Name: b.Name, Description: b.Description, Cidrs: b.Cidrs,
-		FilterListIds: b.FilterListIds, Allowlist: b.Allowlist, SafeSearch: b.SafeSearch, EngineGroupId: b.EngineGroupId})
+		FilterListIds: b.FilterListIds, Allowlist: b.Allowlist, SafeSearch: b.SafeSearch, EngineGroupId: b.EngineGroupId,
+		CategoryKeys: b.CategoryKeys})
 	var after PolicyGroup
 	if err == nil {
 		g.ID, g.Revision = req.Id, b.Revision
@@ -88,10 +108,14 @@ func (h *handlers) UpdatePolicyGroup(ctx context.Context, req UpdatePolicyGroupR
 			if err := checkPolicyGroupScope(ctx, tx, g); err != nil {
 				return auth.Change{}, err
 			}
+			acknowledged, err := h.checkGroupCategories(ctx, tx, before.CategoryKeys, g, acknowledgeLicense(b.AcknowledgeLicense))
+			if err != nil {
+				return auth.Change{}, err
+			}
 			updated, err := store.UpdatePolicyGroup(ctx, tx, g)
 			after = policyGroupOut(updated)
 			return auth.Change{Action: "updatePolicyGroup", TargetType: "policy_group", TargetID: req.Id.String(),
-				Before: policyGroupOut(before), After: after}, err
+				Before: policyGroupOut(before), After: groupAudit(after, acknowledged)}, err
 		})
 	}
 	if status, e, ok := policyFailure(err); ok {

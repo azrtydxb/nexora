@@ -30,6 +30,8 @@ type Config struct {
 	RolloutTick time.Duration
 	// EngineCertTTL is the lifetime of the engine certificates this plane issues.
 	EngineCertTTL time.Duration
+	// CatalogMirror, when set, is a base URL serving every filter catalog source at <base>/<source key>.
+	CatalogMirror string
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -68,6 +70,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PKCS11Module:     getenv("NEXORA_PKCS11_MODULE"),
 		PKCS11TokenLabel: getenv("NEXORA_PKCS11_TOKEN_LABEL"),
 		PKCS11PinFile:    getenv("NEXORA_PKCS11_PIN_FILE"),
+		CatalogMirror:    getenv("NEXORA_CATALOG_MIRROR"),
 		OIDC: OIDCConfig{
 			Issuer:           getenv("NEXORA_OIDC_ISSUER"),
 			ClientID:         getenv("NEXORA_OIDC_CLIENT_ID"),
@@ -136,6 +139,9 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("NEXORA_ENGINE_CERT_TTL must be a duration of at least 30s")
 	}
 	c.EngineCertTTL = certTTL
+	if c.CatalogMirror != "" && !strings.HasPrefix(c.CatalogMirror, "http://") && !strings.HasPrefix(c.CatalogMirror, "https://") {
+		return Config{}, fmt.Errorf("NEXORA_CATALOG_MIRROR must be an http(s) URL")
+	}
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {
 			return Config{}, fmt.Errorf("NEXORA_OIDC_CLIENT_ID is required when NEXORA_OIDC_ISSUER is set")

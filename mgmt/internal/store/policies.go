@@ -42,6 +42,7 @@ type PolicyGroup struct {
 	CIDRs                []netip.Prefix
 	FilterListIDs        []uuid.UUID
 	Allowlist            []string
+	CategoryKeys         []string // catalog categories whose enabled sources the group blocks
 	SafeSearch           SafeSearch
 	Revision             int64
 	CreatedAt, UpdatedAt time.Time
@@ -57,13 +58,14 @@ const selectPolicyGroups = `select g.id, g.engine_group_id, g.name, g.descriptio
 	g.safe_search_duckduckgo, g.safe_search_youtube, g.revision, g.created_at, g.updated_at,
 	array(select c.cidr from policy_group_cidrs c where c.group_id = g.id order by c.cidr),
 	array(select l.filter_list_id from policy_group_filter_lists l where l.group_id = g.id order by l.filter_list_id),
-	array(select a.domain from policy_group_allowlist a where a.group_id = g.id order by a.domain)
+	array(select a.domain from policy_group_allowlist a where a.group_id = g.id order by a.domain),
+	g.category_keys
 	from policy_groups g`
 
 func scanPolicyGroup(row pgx.Row) (PolicyGroup, error) {
 	var g PolicyGroup
 	err := row.Scan(&g.ID, &g.EngineGroupID, &g.Name, &g.Description, &g.SafeSearch.Google, &g.SafeSearch.Bing, &g.SafeSearch.DuckDuckGo,
-		&g.SafeSearch.YouTube, &g.Revision, &g.CreatedAt, &g.UpdatedAt, &g.CIDRs, &g.FilterListIDs, &g.Allowlist)
+		&g.SafeSearch.YouTube, &g.Revision, &g.CreatedAt, &g.UpdatedAt, &g.CIDRs, &g.FilterListIDs, &g.Allowlist, &g.CategoryKeys)
 	return g, err
 }
 
@@ -95,8 +97,8 @@ func GetPolicyGroup(ctx context.Context, q PolicyQuerier, id uuid.UUID) (PolicyG
 func CreatePolicyGroup(ctx context.Context, tx pgx.Tx, g PolicyGroup) (PolicyGroup, error) {
 	ss := normalSafeSearch(g.SafeSearch)
 	err := tx.QueryRow(ctx, `insert into policy_groups(name, description, safe_search_google, safe_search_bing,
-		safe_search_duckduckgo, safe_search_youtube, engine_group_id) values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-		g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.EngineGroupID).Scan(&g.ID)
+		safe_search_duckduckgo, safe_search_youtube, engine_group_id, category_keys) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+		g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.EngineGroupID, nonNilStrings(g.CategoryKeys)).Scan(&g.ID)
 	if err != nil {
 		return PolicyGroup{}, policyError(err)
 	}
@@ -111,9 +113,9 @@ func UpdatePolicyGroup(ctx context.Context, tx pgx.Tx, g PolicyGroup) (PolicyGro
 	ss := normalSafeSearch(g.SafeSearch)
 	var rev int64
 	err := tx.QueryRow(ctx, `update policy_groups set name = $2, description = $3, safe_search_google = $4,
-		safe_search_bing = $5, safe_search_duckduckgo = $6, safe_search_youtube = $7, engine_group_id = $9, revision = revision + 1,
-		updated_at = now() where id = $1 and revision = $8 returning revision`,
-		g.ID, g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.Revision, g.EngineGroupID).Scan(&rev)
+		safe_search_bing = $5, safe_search_duckduckgo = $6, safe_search_youtube = $7, engine_group_id = $9, category_keys = $10,
+		revision = revision + 1, updated_at = now() where id = $1 and revision = $8 returning revision`,
+		g.ID, g.Name, g.Description, ss.Google, ss.Bing, ss.DuckDuckGo, ss.YouTube, g.Revision, g.EngineGroupID, nonNilStrings(g.CategoryKeys)).Scan(&rev)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PolicyGroup{}, missingOrStale(ctx, tx, "policy_groups", g.ID)
 	}
@@ -163,6 +165,14 @@ func UpdateGlobalSafeSearch(ctx context.Context, tx pgx.Tx, s GlobalSafeSearch) 
 	return s, err
 }
 
+// nonNilStrings stores a nil slice as an empty text[] (the column is NOT NULL).
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func normalSafeSearch(s SafeSearch) SafeSearch {
 	if s.YouTube == "" {
 		s.YouTube = "off"
@@ -177,9 +187,10 @@ func insertGroupChildren(ctx context.Context, tx pgx.Tx, g PolicyGroup) error {
 		}
 	}
 	for _, id := range g.FilterListIDs {
-		// Only block lists: an allow-kind list would silently never reach the group's blocklists.
+		// Only custom block lists: an allow-kind list would silently never reach the group's blocklists,
+		// and catalog-managed lists are selected through category_keys.
 		tag, err := tx.Exec(ctx, `insert into policy_group_filter_lists(group_id, filter_list_id)
-			select $1, id from filter_lists where id = $2 and kind = 'block'`, g.ID, id)
+			select $1, id from filter_lists where id = $2 and kind = 'block' and not managed_by_catalog`, g.ID, id)
 		if err != nil {
 			return policyError(err)
 		}

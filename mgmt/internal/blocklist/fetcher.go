@@ -40,11 +40,20 @@ type Fetcher struct {
 	build snapshot.BuildConfig
 	hc    *http.Client
 	slots chan struct{}
+	// mirror, when set, serves every catalog-managed source at <mirror>/<source key>.
+	mirror string
 }
 
 // NewFetcher returns a fetcher that publishes through st with build and downloads with hc.
 func NewFetcher(st *store.Store, build snapshot.BuildConfig, hc *http.Client) *Fetcher {
 	return &Fetcher{st: st, build: build, hc: hc, slots: make(chan struct{}, maxConcurrentRefreshes)}
+}
+
+// WithCatalogMirror makes catalog-managed sources download from <base>/<source key> instead of their
+// catalog URL (air-gapped installs and tests). It cannot add or change sources. Empty keeps the URLs.
+func (f *Fetcher) WithCatalogMirror(base string) *Fetcher {
+	f.mirror = strings.TrimSuffix(base, "/")
+	return f
 }
 
 // Run refreshes every enabled or group-selected list whose refresh interval has elapsed, every 30 s, and deletes
@@ -77,8 +86,14 @@ func (f *Fetcher) RefreshNow(ctx context.Context, p auth.Principal, id string) e
 }
 
 func (f *Fetcher) refreshDue(ctx context.Context) {
-	rows, err := f.st.Pool.Query(ctx, `select id::text from filter_lists where (enabled or id in (select filter_list_id from policy_group_filter_lists)) and (last_attempt_at is null
-		or last_attempt_at < now() - refresh_interval_seconds * interval '1 second') order by last_attempt_at nulls first`)
+	// A catalog source is due only while its category is enabled globally or selected by a policy group,
+	// so disabled categories download nothing.
+	rows, err := f.st.Pool.Query(ctx, `select id::text from filter_lists
+		where ((enabled and (not managed_by_catalog or category_key in (select key from filter_categories where enabled)
+				or category_key in (select unnest(category_keys) from policy_groups)))
+			or id in (select filter_list_id from policy_group_filter_lists))
+		and (last_attempt_at is null or last_attempt_at < now() - refresh_interval_seconds * interval '1 second')
+		order by last_attempt_at nulls first`)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("select due filter lists", "err", err)
@@ -117,12 +132,17 @@ func (f *Fetcher) refresh(ctx context.Context, id string, actor auth.Actor, wait
 	}
 	defer unlock()
 
-	var url string
+	var url, sourceKey, member string
 	var currentSHA *string
-	if err := f.st.Pool.QueryRow(ctx, "select url, current_blob_sha256 from filter_lists where id = $1", id).Scan(&url, &currentSHA); err != nil {
+	var managed bool
+	if err := f.st.Pool.QueryRow(ctx, `select url, current_blob_sha256, managed_by_catalog, coalesce(source_key, ''), archive_member
+		from filter_lists where id = $1`, id).Scan(&url, &currentSHA, &managed, &sourceKey, &member); err != nil {
 		return store.MapError(err)
 	}
-	text, stats, err := f.download(ctx, url)
+	if managed && f.mirror != "" {
+		url = f.mirror + "/" + sourceKey
+	}
+	text, stats, err := f.download(ctx, url, member)
 	if err != nil {
 		msg := err.Error()
 		if len(msg) > maxErrorBytes {
@@ -187,8 +207,9 @@ func lockList(ctx context.Context, conn *pgxpool.Conn, key string, wait bool) (f
 	}, nil
 }
 
-// download fetches url and returns the normalised list text and the parse statistics.
-func (f *Fetcher) download(ctx context.Context, url string) ([]byte, ParseStats, error) {
+// download fetches url and returns the normalised list text and the parse statistics. A non-empty
+// member names the one member of a .tar.gz archive to parse.
+func (f *Fetcher) download(ctx context.Context, url, member string) ([]byte, ParseStats, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -203,6 +224,17 @@ func (f *Fetcher) download(ctx context.Context, url string) ([]byte, ParseStats,
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, ParseStats{}, fmt.Errorf("http status %d", resp.StatusCode)
+	}
+	if member != "" {
+		archive := &io.LimitedReader{R: resp.Body, N: MaxListBytes + 1}
+		domains, stats, err := ReadArchiveMember(archive, member)
+		if archive.N == 0 {
+			return nil, ParseStats{}, errors.New("archive exceeds 256 MiB")
+		}
+		if err != nil {
+			return nil, ParseStats{}, err
+		}
+		return Normalize(domains), stats, nil
 	}
 	body := &io.LimitedReader{R: resp.Body, N: MaxListBytes + 1}
 	domains, stats, err := Parse(body)

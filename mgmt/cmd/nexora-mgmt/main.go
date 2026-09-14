@@ -31,6 +31,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/api"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/blocklist"
+	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
@@ -307,7 +308,14 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	go (&rollout.Controller{Store: st, Tick: cfg.RolloutTick}).Run(ctx)
 	go snapshot.RunNTAExpiry(ctx, st, build)
 
-	fetcher := blocklist.NewFetcher(st, build, &http.Client{})
+	cat, err := catalog.Load()
+	if err != nil {
+		return fmt.Errorf("filter catalog: %w", err)
+	}
+	if _, err := catalog.Sync(ctx, st, build, cat, catalog.Raw()); err != nil {
+		return fmt.Errorf("filter catalog sync: %w", err)
+	}
+	fetcher := blocklist.NewFetcher(st, build, &http.Client{}).WithCatalogMirror(cfg.CatalogMirror)
 	go fetcher.Run(ctx)
 
 	zones := &zone.Service{Store: st, Build: build, Signer: &dnssec.Store{Box: box}, Now: time.Now}
@@ -347,7 +355,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
-			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC,
+			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

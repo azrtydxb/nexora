@@ -37,6 +37,7 @@ func TestLoadValidation(t *testing.T) {
 		"engine cert ttl":     func(m map[string]string) { m["NEXORA_ENGINE_CERT_TTL"] = "10s" },
 		"engine cert ttl nan": func(m map[string]string) { m["NEXORA_ENGINE_CERT_TTL"] = "ninety days" },
 		"pkcs11 module only":  func(m map[string]string) { m["NEXORA_PKCS11_MODULE"] = "/usr/lib/softhsm/libsofthsm2.so" },
+		"catalog mirror":      func(m map[string]string) { m["NEXORA_CATALOG_MIRROR"] = "ftp://mirror.test/lists" },
 		"pkcs11 no pin file": func(m map[string]string) {
 			m["NEXORA_PKCS11_MODULE"], m["NEXORA_PKCS11_TOKEN_LABEL"] = "/usr/lib/softhsm/libsofthsm2.so", "nexora"
 		},
@@ -58,5 +59,18 @@ func TestLoadValidation(t *testing.T) {
 		"NEXORA_PKCS11_MODULE": "/m.so", "NEXORA_PKCS11_TOKEN_LABEL": "nexora", "NEXORA_PKCS11_PIN_FILE": "/pin"}))
 	if err != nil || c.PKCS11Module != "/m.so" || c.PKCS11TokenLabel != "nexora" || c.PKCS11PinFile != "/pin" {
 		t.Fatalf("pkcs11 settings: %+v %v", c, err)
+	}
+}
+
+func TestLoadCatalogMirror(t *testing.T) {
+	c, err := config.Load(env(map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k",
+		"NEXORA_CATALOG_MIRROR": "http://mirror.test/lists"}))
+	if err != nil || c.CatalogMirror != "http://mirror.test/lists" {
+		t.Fatalf("catalog mirror: %q %v", c.CatalogMirror, err)
+	}
+	_, err = config.Load(env(map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k",
+		"NEXORA_CATALOG_MIRROR": "mirror.test"}))
+	if err == nil || err.Error() != "NEXORA_CATALOG_MIRROR must be an http(s) URL" {
+		t.Fatalf("bad mirror -> %v", err)
 	}
 }

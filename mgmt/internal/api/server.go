@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
@@ -54,6 +55,7 @@ type Deps struct {
 	Zones             *zone.Service         // hosted zones and records
 	TSIGKeys          *tsigkey.Service      // TSIG keys of hosted zones
 	ZoneDNSSEC        *dnssec.Service       // DNSSEC signing settings, keys and rollovers of hosted zones
+	Catalog           *catalog.Catalog      // the embedded filter category catalog; nil serves an empty catalog
 }
 
 type handlers struct{ d Deps }
@@ -63,6 +65,9 @@ var _ StrictServerInterface = (*handlers)(nil)
 // NewHandler routes /api/v1 to the API, /metrics to d.Metrics (when set) and everything else to
 // the embedded GUI.
 func NewHandler(d Deps) http.Handler {
+	if d.Catalog == nil {
+		d.Catalog = &catalog.Catalog{}
+	}
 	h := &handlers{d: d}
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.Recoverer)
@@ -169,9 +174,13 @@ func invalid(format string, args ...any) error {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeErrorBody(w, status, Error{Code: code, Message: message})
+}
+
+func writeErrorBody(w http.ResponseWriter, status int, body Error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(Error{Code: code, Message: message})
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // writeZoneValidation answers 422 with the validation code and its per-line details.
@@ -201,7 +210,18 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 	var zve *zone.ValidationError
 	switch {
 	case errors.As(err, &aerr):
-		writeError(w, aerr.status, aerr.code, aerr.msg)
+		body := Error{Code: aerr.code, Message: aerr.msg}
+		if len(aerr.details) > 0 {
+			details := make([]struct {
+				Line    int    `json:"line"`
+				Message string `json:"message"`
+			}, len(aerr.details))
+			for i, d := range aerr.details {
+				details[i].Message = d
+			}
+			body.Details = &details
+		}
+		writeErrorBody(w, aerr.status, body)
 	case errors.As(err, &verr):
 		writeError(w, http.StatusBadRequest, "invalid_request", verr.msg)
 	case errors.Is(err, auth.ErrWeakPassword):

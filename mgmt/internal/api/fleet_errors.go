@@ -6,6 +6,7 @@ import "fmt"
 type apiError struct {
 	status    int
 	code, msg string
+	details   []string // optional Error.details messages (line 0)
 }
 
 func (e apiError) Error() string { return e.msg }

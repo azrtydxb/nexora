@@ -387,13 +387,15 @@ func (h *handlers) UpdateAllowlist(ctx context.Context, req UpdateAllowlistReque
 const filterListColumns = `id::text, name, kind, url, refresh_interval_seconds, enabled, current_blob_sha256, entry_count,
 	invalid_line_count, last_success_at, last_attempt_at, last_error,
 	(last_error <> '' or last_success_at is null or
-		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second') as stale, revision, engine_group_id`
+		last_success_at < now() - 2 * refresh_interval_seconds * interval '1 second') as stale, revision, engine_group_id,
+	category_key, managed_by_catalog`
 
 func scanFilterList(row pgx.Row) (FilterList, error) {
 	var f FilterList
 	var id, kind string
 	err := row.Scan(&id, &f.Name, &kind, &f.Url, &f.RefreshIntervalSeconds, &f.Enabled, &f.CurrentBlobSha256, &f.EntryCount,
-		&f.InvalidLineCount, &f.LastSuccessAt, &f.LastAttemptAt, &f.LastError, &f.Stale, &f.Revision, &f.EngineGroupId)
+		&f.InvalidLineCount, &f.LastSuccessAt, &f.LastAttemptAt, &f.LastError, &f.Stale, &f.Revision, &f.EngineGroupId,
+		&f.CategoryKey, &f.ManagedByCatalog)
 	if err != nil {
 		return f, store.MapError(err)
 	}
@@ -406,6 +408,9 @@ func validateFilterList(in FilterListInput) (string, string, error) {
 	if len(name) < 1 || len(name) > 64 {
 		return "", "", invalid("name must be 1-64 characters")
 	}
+	if strings.HasPrefix(name, "catalog:") {
+		return "", "", invalid("name must not start with catalog:")
+	}
 	if !in.Kind.Valid() {
 		return "", "", invalid("kind must be block or allow")
 	}
@@ -417,6 +422,14 @@ func validateFilterList(in FilterListInput) (string, string, error) {
 		return "", "", invalid("refresh_interval_seconds must be at least 300")
 	}
 	return name, rawURL, nil
+}
+
+// catalogManaged refuses editing or deleting a list that mirrors a filter category catalog source.
+func catalogManaged(f FilterList) error {
+	if f.ManagedByCatalog {
+		return coded(http.StatusUnprocessableEntity, "catalog_managed", "filter list %s is managed by the filter category catalog", f.Id)
+	}
+	return nil
 }
 
 func (h *handlers) getFilterList(ctx context.Context, id uuid.UUID) (FilterList, error) {
@@ -488,6 +501,9 @@ func (h *handlers) UpdateFilterList(ctx context.Context, req UpdateFilterListReq
 		if err != nil {
 			return auth.Change{}, err
 		}
+		if err := catalogManaged(before); err != nil {
+			return auth.Change{}, err
+		}
 		if err := checkRevision(before.Revision, rev); err != nil {
 			return auth.Change{}, err
 		}
@@ -513,6 +529,9 @@ func (h *handlers) DeleteFilterList(ctx context.Context, req DeleteFilterListReq
 	err := h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 		before, err := scanFilterList(tx.QueryRow(ctx, "select "+filterListColumns+" from filter_lists where id = $1 for update", req.Id))
 		if err != nil {
+			return auth.Change{}, err
+		}
+		if err := catalogManaged(before); err != nil {
 			return auth.Change{}, err
 		}
 		if err := checkRevision(before.Revision, req.Params.Revision); err != nil {

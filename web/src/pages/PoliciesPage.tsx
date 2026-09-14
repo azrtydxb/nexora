@@ -436,8 +436,11 @@ function PolicyGroupDialog({
   const update = useUpdatePolicyGroup();
   const fresh = usePolicyGroup(group?.id ?? "");
   const save = group ? update : create;
-  // Only block lists can be assigned; allow lists feed the allowlist, not a group.
-  const blockLists = (lists ?? []).filter((l) => l.kind === "block");
+  // Only custom block lists can be assigned; allow lists feed the allowlist, not a group, and
+  // catalog-managed lists are selected through category_keys.
+  const blockLists = (lists ?? []).filter(
+    (l) => l.kind === "block" && !l.managed_by_catalog,
+  );
   const conflict =
     save.error instanceof ApiError && save.error.code === "conflict";
 
@@ -451,6 +454,9 @@ function PolicyGroupDialog({
       allowlist: lines(form.allowlist),
       safe_search: form.safeSearch,
       engine_group_id: form.engineGroupId,
+      // Kept unchanged until the dialog gains a category picker.
+      category_keys: group?.category_keys ?? [],
+      acknowledge_license: false,
     };
     const done = { onSuccess: onClose };
     if (group) {

@@ -1,0 +1,476 @@
+# Nexora filter category catalog. Read-only for operators: changes ship with Nexora releases.
+# format: domains (one name per line), hosts (sink address and name), wildcard ("*." prefix).
+version: 1
+categories:
+  - key: malware
+    name: Malware and threat intelligence
+    description: Domains that spread malware, run command-and-control servers, ransomware or cryptojacking.
+    sources:
+      - key: hagezi-tif
+        name: HaGeZi Threat Intelligence Feeds
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: urlhaus
+        name: abuse.ch URLhaus host file
+        url: https://urlhaus.abuse.ch/downloads/hostfile/
+        format: hosts
+        license: abuse.ch Terms of Use
+        license_url: https://abuse.ch/terms-of-use/
+        attribution: URLhaus by abuse.ch
+        commercial_use: false
+        notice: abuse.ch data is free for non-commercial use; commercial or for-profit use may require a paid subscription (abuse.ch Terms of Use, section 4).
+        default_enabled: true
+        refresh_interval_seconds: 21600
+      - key: blp-ransomware
+        name: Block List Project Ransomware
+        url: https://blocklistproject.github.io/Lists/alt-version/ransomware-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-malware
+        name: Block List Project Malware
+        url: https://blocklistproject.github.io/Lists/alt-version/malware-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400
+      - key: ut1-malware
+        name: UT1 malware
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/malware/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: phishing
+    name: Phishing and fraud
+    description: Credential phishing, scams, fraud and fake shops.
+    sources:
+      - key: blp-phishing
+        name: Block List Project Phishing
+        url: https://blocklistproject.github.io/Lists/alt-version/phishing-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-fraud
+        name: Block List Project Fraud
+        url: https://blocklistproject.github.io/Lists/alt-version/fraud-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-scam
+        name: Block List Project Scam
+        url: https://blocklistproject.github.io/Lists/alt-version/scam-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: hagezi-fake
+        name: HaGeZi Fake
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/fake-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: ut1-phishing
+        name: UT1 phishing
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/phishing/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: ads-tracking
+    name: Ads and tracking
+    description: Advertising, tracking, telemetry and analytics domains.
+    sources:
+      - key: hagezi-pro
+        name: HaGeZi Multi PRO
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: oisd-big
+        name: OISD big
+        url: https://big.oisd.nl/domainswild
+        format: wildcard
+        license: GPL-3.0
+        license_url: https://github.com/sjhgvr/oisd/blob/main/LICENSE
+        attribution: oisd by Stephan van Ruth (oisd.nl)
+        commercial_use: false
+        notice: OISD lists are not free for commercial use. Enable them only on non-commercial networks, or after getting permission from the OISD maintainer (oisd.nl).
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-ads
+        name: Block List Project Ads
+        url: https://blocklistproject.github.io/Lists/alt-version/ads-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-tracking
+        name: Block List Project Tracking
+        url: https://blocklistproject.github.io/Lists/alt-version/tracking-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: adult
+    name: Adult content
+    description: Pornography and other adult content.
+    sources:
+      - key: hagezi-nsfw
+        name: HaGeZi NSFW
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: oisd-nsfw
+        name: OISD NSFW
+        url: https://nsfw.oisd.nl/domainswild
+        format: wildcard
+        license: GPL-3.0
+        license_url: https://github.com/sjhgvr/oisd/blob/main/LICENSE
+        attribution: oisd by Stephan van Ruth (oisd.nl)
+        commercial_use: false
+        notice: OISD lists are not free for commercial use. Enable them only on non-commercial networks, or after getting permission from the OISD maintainer (oisd.nl).
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-porn
+        name: Block List Project Porn
+        url: https://blocklistproject.github.io/Lists/alt-version/porn-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: stevenblack-porn
+        name: StevenBlack porn extension
+        url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts
+        format: hosts
+        license: MIT
+        license_url: https://github.com/StevenBlack/hosts/blob/master/license.txt
+        attribution: StevenBlack/hosts extensions (github.com/StevenBlack/hosts)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-adult
+        name: UT1 adult
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/adult/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400
+  - key: gambling
+    name: Gambling
+    description: Online casinos, betting and lotteries.
+    sources:
+      - key: hagezi-gambling
+        name: HaGeZi Gambling
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/gambling-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: blp-gambling
+        name: Block List Project Gambling
+        url: https://blocklistproject.github.io/Lists/alt-version/gambling-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: stevenblack-gambling
+        name: StevenBlack gambling extension
+        url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling-only/hosts
+        format: hosts
+        license: MIT
+        license_url: https://github.com/StevenBlack/hosts/blob/master/license.txt
+        attribution: StevenBlack/hosts extensions (github.com/StevenBlack/hosts)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-gambling
+        name: UT1 gambling
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/gambling/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: social
+    name: Social networks
+    description: Social networks and their content delivery domains.
+    sources:
+      - key: hagezi-social
+        name: HaGeZi Social Networks
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/social-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: stevenblack-social
+        name: StevenBlack social extension
+        url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social-only/hosts
+        format: hosts
+        license: MIT
+        license_url: https://github.com/StevenBlack/hosts/blob/master/license.txt
+        attribution: StevenBlack/hosts extensions (github.com/StevenBlack/hosts)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-social-networks
+        name: UT1 social networks
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/social_networks/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-facebook
+        name: Block List Project Facebook
+        url: https://blocklistproject.github.io/Lists/alt-version/facebook-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400
+      - key: blp-tiktok
+        name: Block List Project TikTok
+        url: https://blocklistproject.github.io/Lists/alt-version/tiktok-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400
+      - key: blp-twitter
+        name: Block List Project Twitter
+        url: https://blocklistproject.github.io/Lists/alt-version/twitter-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400
+  - key: crypto-mining
+    name: Crypto mining
+    description: Browser crypto miners and cryptojacking.
+    sources:
+      - key: blp-crypto
+        name: Block List Project Crypto
+        url: https://blocklistproject.github.io/Lists/alt-version/crypto-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-cryptojacking
+        name: UT1 cryptojacking
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/cryptojacking/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: piracy
+    name: Piracy
+    description: Warez, illegal streaming and file sharing sites.
+    sources:
+      - key: hagezi-anti-piracy
+        name: HaGeZi Anti-Piracy
+        url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/anti.piracy-onlydomains.txt
+        format: domains
+        license: GPL-3.0
+        license_url: https://github.com/hagezi/dns-blocklists/blob/main/LICENSE
+        attribution: HaGeZi DNS Blocklists (github.com/hagezi/dns-blocklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 43200
+      - key: blp-piracy
+        name: Block List Project Piracy
+        url: https://blocklistproject.github.io/Lists/alt-version/piracy-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-warez
+        name: UT1 warez
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/warez/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: drugs
+    name: Drugs
+    description: Sites selling or promoting illegal drugs.
+    sources:
+      - key: blp-drugs
+        name: Block List Project Drugs
+        url: https://blocklistproject.github.io/Lists/alt-version/drugs-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-drogue
+        name: UT1 drugs
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/drogue/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: fake-news
+    name: Fake news
+    description: Sites known for publishing fabricated news.
+    sources:
+      - key: stevenblack-fakenews
+        name: StevenBlack fake news extension
+        url: https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-only/hosts
+        format: hosts
+        license: MIT
+        license_url: https://github.com/StevenBlack/hosts/blob/master/license.txt
+        attribution: StevenBlack/hosts extensions (github.com/StevenBlack/hosts)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: ut1-fakenews
+        name: UT1 fake news
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/fakenews/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: dating
+    name: Dating
+    description: Online dating services.
+    sources:
+      - key: ut1-dating
+        name: UT1 dating
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/dating/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+  - key: games
+    name: Online games
+    description: Online gaming platforms and browser games.
+    sources:
+      - key: ut1-games
+        name: UT1 games
+        url: https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+        format: domains
+        archive_member: blacklists/games/domains
+        license: CC-BY-SA-4.0
+        license_url: https://creativecommons.org/licenses/by-sa/4.0/
+        attribution: Blacklists UT1, Université Toulouse Capitole (dsi.ut-capitole.fr/blacklists)
+        commercial_use: true
+        default_enabled: true
+        refresh_interval_seconds: 86400
+      - key: blp-fortnite
+        name: Block List Project Fortnite
+        url: https://blocklistproject.github.io/Lists/alt-version/fortnite-nl.txt
+        format: domains
+        license: Unlicense
+        license_url: https://github.com/blocklistproject/Lists/blob/master/LICENSE
+        attribution: The Block List Project (github.com/blocklistproject/Lists)
+        commercial_use: true
+        default_enabled: false
+        refresh_interval_seconds: 86400

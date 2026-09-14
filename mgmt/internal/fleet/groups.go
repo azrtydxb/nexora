@@ -58,6 +58,7 @@ type EngineGroup struct {
 	AckTimeoutSeconds, HealthWindowSeconds        int
 	MaxServfailRatio                              float64
 	MinHealthQueries                              int
+	FilterIndexMaxBytes                           int64 // 0 = engine default
 	RolloutsPaused                                bool
 	StableVersion                                 *uint64
 	Revision                                      int64
@@ -68,7 +69,7 @@ type EngineGroup struct {
 const engineGroupColumns = `g.id, g.name, g.description, g.upstream_mode, g.otlp_endpoint, g.rollout_strategy,
 	array(select host(c) || '/' || masklen(c) from unnest(g.extra_acl_cidrs) with ordinality as u(c, n) order by n),
 	g.canary_count, g.canary_percent, g.ack_timeout_seconds, g.health_window_seconds, g.max_servfail_ratio,
-	g.min_health_queries, g.rollouts_paused, g.stable_version, g.revision,
+	g.min_health_queries, g.filter_index_max_bytes, g.rollouts_paused, g.stable_version, g.revision,
 	(select count(*) from engines e where e.engine_group_id = g.id and e.deleted_at is null), g.created_at, g.updated_at`
 
 func scanEngineGroup(row pgx.Row) (EngineGroup, error) {
@@ -76,7 +77,7 @@ func scanEngineGroup(row pgx.Row) (EngineGroup, error) {
 	var stable *int64
 	err := row.Scan(&g.ID, &g.Name, &g.Description, &g.UpstreamMode, &g.OTLPEndpoint, &g.RolloutStrategy, &g.ExtraACLCIDRs,
 		&g.CanaryCount, &g.CanaryPercent, &g.AckTimeoutSeconds, &g.HealthWindowSeconds, &g.MaxServfailRatio,
-		&g.MinHealthQueries, &g.RolloutsPaused, &stable, &g.Revision, &g.EngineCount, &g.CreatedAt, &g.UpdatedAt)
+		&g.MinHealthQueries, &g.FilterIndexMaxBytes, &g.RolloutsPaused, &stable, &g.Revision, &g.EngineCount, &g.CreatedAt, &g.UpdatedAt)
 	if stable != nil {
 		v := uint64(*stable)
 		g.StableVersion = &v
@@ -104,10 +105,11 @@ func GetEngineGroup(ctx context.Context, q store.PolicyQuerier, id uuid.UUID) (E
 func CreateEngineGroup(ctx context.Context, tx pgx.Tx, g EngineGroup) (EngineGroup, error) {
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `insert into engine_groups (name, description, upstream_mode, extra_acl_cidrs, otlp_endpoint,
-		rollout_strategy, canary_count, canary_percent, ack_timeout_seconds, health_window_seconds, max_servfail_ratio, min_health_queries)
-		values ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9, $10, $11, $12) returning id`,
+		rollout_strategy, canary_count, canary_percent, ack_timeout_seconds, health_window_seconds, max_servfail_ratio, min_health_queries,
+		filter_index_max_bytes)
+		values ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
 		g.Name, g.Description, g.UpstreamMode, nonNil(g.ExtraACLCIDRs), g.OTLPEndpoint, g.RolloutStrategy, g.CanaryCount, g.CanaryPercent,
-		g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries).Scan(&id)
+		g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, g.FilterIndexMaxBytes).Scan(&id)
 	if err != nil {
 		return EngineGroup{}, groupError(err)
 	}
@@ -118,10 +120,10 @@ func CreateEngineGroup(ctx context.Context, tx pgx.Tx, g EngineGroup) (EngineGro
 func UpdateEngineGroup(ctx context.Context, tx pgx.Tx, g EngineGroup, revision int64) (EngineGroup, error) {
 	tag, err := tx.Exec(ctx, `update engine_groups set name = $2, description = $3, upstream_mode = $4, extra_acl_cidrs = $5::cidr[],
 		otlp_endpoint = $6, rollout_strategy = $7, canary_count = $8, canary_percent = $9, ack_timeout_seconds = $10,
-		health_window_seconds = $11, max_servfail_ratio = $12, min_health_queries = $13,
+		health_window_seconds = $11, max_servfail_ratio = $12, min_health_queries = $13, filter_index_max_bytes = $15,
 		revision = revision + 1, updated_at = now() where id = $1 and revision = $14`,
 		g.ID, g.Name, g.Description, g.UpstreamMode, nonNil(g.ExtraACLCIDRs), g.OTLPEndpoint, g.RolloutStrategy, g.CanaryCount,
-		g.CanaryPercent, g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, revision)
+		g.CanaryPercent, g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, revision, g.FilterIndexMaxBytes)
 	if err != nil {
 		return EngineGroup{}, groupError(err)
 	}

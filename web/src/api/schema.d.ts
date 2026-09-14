@@ -260,6 +260,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/filter-categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listFilterCategories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/filter-categories/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateFilterCategory"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/allowlist": {
         parameters: {
             query?: never;
@@ -1172,7 +1204,7 @@ export interface components {
         Error: {
             code: string;
             message: string;
-            /** @description Per-line problems of submitted zone data. */
+            /** @description Per-line problems of submitted zone data; for license_acknowledgement_required one entry per source (line 0, message "<source key>: <notice>"). */
             details?: {
                 line: number;
                 message: string;
@@ -1304,6 +1336,10 @@ export interface components {
              * @description engine group; null applies to every group
              */
             engine_group_id: string | null;
+            /** @description filter category of a catalog-managed list; null for custom lists */
+            category_key: string | null;
+            /** @description mirrors a filter category catalog source; read-only (toggle it through /filter-categories) */
+            managed_by_catalog: boolean;
             /** Format: uuid */
             id: string;
             name: string;
@@ -1339,6 +1375,51 @@ export interface components {
             enabled: boolean;
             /** Format: int64 */
             revision?: number;
+        };
+        FilterCategorySource: {
+            key: string;
+            name: string;
+            url: string;
+            /** @enum {string} */
+            format: "domains" | "hosts" | "wildcard";
+            /** @description member of a .tar.gz archive; empty for plain lists */
+            archive_member: string;
+            license: string;
+            license_url: string;
+            attribution: string;
+            /** @description false: enabling needs acknowledge_license */
+            commercial_use: boolean;
+            notice: string;
+            enabled: boolean;
+            /** Format: uuid */
+            list_id: string;
+            entry_count: number;
+            /** Format: date-time */
+            last_success_at: string | null;
+            last_error: string;
+            stale: boolean;
+        };
+        FilterCategory: {
+            key: string;
+            name: string;
+            description: string;
+            enabled: boolean;
+            /** @description an enabled source failed its last refresh or is older than two intervals */
+            stale: boolean;
+            /** Format: int64 */
+            revision: number;
+            sources: components["schemas"]["FilterCategorySource"][];
+        };
+        FilterCategoryUpdate: {
+            enabled: boolean;
+            /** Format: int64 */
+            revision: number;
+            /** @default false */
+            acknowledge_license: boolean;
+            sources?: {
+                key: string;
+                enabled: boolean;
+            }[];
         };
         Allowlist: {
             domains: string[];
@@ -1539,6 +1620,16 @@ export interface components {
             filter_list_ids: string[];
             /** @default [] */
             allowlist: string[];
+            /**
+             * @description filter categories whose enabled catalog sources this group blocks
+             * @default []
+             */
+            category_keys: string[];
+            /**
+             * @description required when a newly selected category has enabled sources that are not free for commercial use
+             * @default false
+             */
+            acknowledge_license: boolean;
             safe_search?: components["schemas"]["SafeSearch"];
         };
         PolicyGroupUpdate: components["schemas"]["PolicyGroupInput"] & {
@@ -1558,6 +1649,7 @@ export interface components {
             cidrs: string[];
             filter_list_ids: string[];
             allowlist: string[];
+            category_keys: string[];
             safe_search: components["schemas"]["SafeSearch"];
             /** Format: int64 */
             revision: number;
@@ -2120,6 +2212,11 @@ export interface components {
             health_window_seconds?: number;
             max_servfail_ratio?: number;
             min_health_queries?: number;
+            /**
+             * Format: int64
+             * @description filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216
+             */
+            filter_index_max_bytes?: number;
         };
         EngineGroupUpdate: components["schemas"]["EngineGroupInput"] & {
             /** Format: int64 */
@@ -2143,6 +2240,8 @@ export interface components {
             max_servfail_ratio: number;
             min_health_queries: number;
             rollouts_paused: boolean;
+            /** Format: int64 */
+            filter_index_max_bytes: number;
             /** Format: int64 */
             stable_version?: number | null;
             engine_count: number;
@@ -2798,6 +2897,7 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     refreshFilterList: {
@@ -2821,6 +2921,56 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+        };
+    };
+    listFilterCategories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the catalog in catalog order, with enabled state and fetch status per source */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilterCategory"][];
+                };
+            };
+        };
+    };
+    updateFilterCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilterCategoryUpdate"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilterCategory"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     getAllowlist: {

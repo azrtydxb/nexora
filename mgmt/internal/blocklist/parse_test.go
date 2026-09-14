@@ -1,6 +1,7 @@
 package blocklist_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -57,5 +58,12 @@ func TestNormalizeAndCompressAreDeterministic(t *testing.T) {
 	out, err := dec.DecodeAll(d1, nil)
 	if err != nil || string(out) != string(text) {
 		t.Fatalf("round trip: %q %v", out, err)
+	}
+}
+
+func TestParseStripsWildcardPrefix(t *testing.T) {
+	domains, stats, err := blocklist.Parse(strings.NewReader("# oisd\n*.ads.oisd.test\n*.Tracker.OISD.test\n*.\n"))
+	if err != nil || stats.Entries != 2 || stats.Invalid != 1 || !slices.Equal(domains, []string{"ads.oisd.test", "tracker.oisd.test"}) {
+		t.Fatalf("wildcard: %v %+v %v", domains, stats, err)
 	}
 }

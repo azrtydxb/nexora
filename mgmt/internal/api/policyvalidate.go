@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -140,6 +141,16 @@ func validatePolicyGroup(in PolicyGroupInput) (store.PolicyGroup, error) {
 			if !domains[d] {
 				domains[d] = true
 				g.Allowlist = append(g.Allowlist, d)
+			}
+		}
+	}
+	if in.CategoryKeys != nil {
+		if len(*in.CategoryKeys) > 64 {
+			return g, failed("category_keys must list at most 64 categories")
+		}
+		for _, k := range *in.CategoryKeys {
+			if !slices.Contains(g.CategoryKeys, k) {
+				g.CategoryKeys = append(g.CategoryKeys, k)
 			}
 		}
 	}

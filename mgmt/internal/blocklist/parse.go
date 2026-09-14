@@ -77,7 +77,13 @@ func Parse(r io.Reader) ([]string, ParseStats, error) {
 				add(name)
 			}
 		case len(fields) == 1:
-			add(fields[0])
+			// Wildcard lists (OISD domainswild) prefix each entry with "*."; an entry already covers
+			// every subdomain. A bare "*." stays invalid.
+			name := fields[0]
+			if rest, ok := strings.CutPrefix(name, "*."); ok && rest != "" {
+				name = rest
+			}
+			add(name)
 		default:
 			stats.Invalid++
 		}
