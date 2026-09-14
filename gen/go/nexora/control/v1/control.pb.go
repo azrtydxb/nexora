@@ -2889,8 +2889,10 @@ type RecursionConfig struct {
 	MaxUpstreamQueries uint32                 `protobuf:"varint,4,opt,name=max_upstream_queries,json=maxUpstreamQueries,proto3" json:"max_upstream_queries,omitempty"` // 0 -> 100; valid 1..=1000
 	MaxDelegationDepth uint32                 `protobuf:"varint,5,opt,name=max_delegation_depth,json=maxDelegationDepth,proto3" json:"max_delegation_depth,omitempty"` // 0 -> 32; valid 1..=64
 	AuthorityPort      uint32                 `protobuf:"varint,6,opt,name=authority_port,json=authorityPort,proto3" json:"authority_port,omitempty"`                  // 0 -> 53; port used for every authoritative server
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// M7: recursor cache memory in bytes; 0 -> 67108864 (64 MiB); otherwise 4194304..=17179869184.
+	CacheMaxBytes uint64 `protobuf:"varint,800,opt,name=cache_max_bytes,json=cacheMaxBytes,proto3" json:"cache_max_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RecursionConfig) Reset() {
@@ -2961,6 +2963,13 @@ func (x *RecursionConfig) GetMaxDelegationDepth() uint32 {
 func (x *RecursionConfig) GetAuthorityPort() uint32 {
 	if x != nil {
 		return x.AuthorityPort
+	}
+	return 0
+}
+
+func (x *RecursionConfig) GetCacheMaxBytes() uint64 {
+	if x != nil {
+		return x.CacheMaxBytes
 	}
 	return 0
 }
@@ -5288,7 +5297,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"<\n" +
 	"\bRootHint\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\taddresses\x18\x02 \x03(\tR\taddresses\"\xb0\x02\n" +
+	"\taddresses\x18\x02 \x03(\tR\taddresses\"\xd9\x02\n" +
 	"\x0fRecursionConfig\x12:\n" +
 	"\n" +
 	"root_hints\x18\x01 \x03(\v2\x1b.nexora.control.v1.RootHintR\trootHints\x12-\n" +
@@ -5296,7 +5305,8 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x0faggressive_nsec\x18\x03 \x01(\bR\x0eaggressiveNsec\x120\n" +
 	"\x14max_upstream_queries\x18\x04 \x01(\rR\x12maxUpstreamQueries\x120\n" +
 	"\x14max_delegation_depth\x18\x05 \x01(\rR\x12maxDelegationDepth\x12%\n" +
-	"\x0eauthority_port\x18\x06 \x01(\rR\rauthorityPort\"_\n" +
+	"\x0eauthority_port\x18\x06 \x01(\rR\rauthorityPort\x12'\n" +
+	"\x0fcache_max_bytes\x18\xa0\x06 \x01(\x04R\rcacheMaxBytes\"_\n" +
 	"\vForwardZone\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1a\n" +

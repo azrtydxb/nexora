@@ -206,6 +206,7 @@ mod tests {
                 max_upstream_queries: 100,
                 max_delegation_depth: 32,
                 authority_port: 5353,
+                cache_max_bytes: 0,
             }),
             forward_zones: vec![ForwardZone {
                 domain: "corp.example.".into(),

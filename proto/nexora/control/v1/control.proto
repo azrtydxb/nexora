@@ -310,6 +310,8 @@ message RecursionConfig {
   uint32 max_upstream_queries = 4;  // 0 -> 100; valid 1..=1000
   uint32 max_delegation_depth = 5;  // 0 -> 32; valid 1..=64
   uint32 authority_port = 6;        // 0 -> 53; port used for every authoritative server
+  // M7: recursor cache memory in bytes; 0 -> 67108864 (64 MiB); otherwise 4194304..=17179869184.
+  uint64 cache_max_bytes = 800;
 }
 
 message ForwardZone {

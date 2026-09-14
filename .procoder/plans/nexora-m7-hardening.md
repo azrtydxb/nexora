@@ -161,7 +161,7 @@ Interfaces: produces the names every later task uses:
 
 ## Task 2: Contract field RecursionConfig.cache_max_bytes
 
-Files: `proto/nexora/control/v1/control.proto`, `gen/go/nexora/control/v1/control.pb.go` (regenerated)
+Files: `proto/nexora/control/v1/control.proto`, `gen/go/nexora/control/v1/control.pb.go` (regenerated), `engine/src/snapshot_m3.rs` and `engine/src/recursor/dispatch_tests.rs` (test struct literals gain `cache_max_bytes: 0`)
 Interfaces: `RecursionConfig.cache_max_bytes` (uint64, field 800). Rust: `proto::RecursionConfig { cache_max_bytes: u64, .. }`. Go: `controlv1.RecursionConfig.CacheMaxBytes uint64`.
 
 - [ ] Run `rg -n "cache_max_bytes" proto/nexora/control/v1/control.proto` and expect no match.
@@ -170,7 +170,7 @@ Interfaces: `RecursionConfig.cache_max_bytes` (uint64, field 800). Rust: `proto:
     // M7: recursor cache memory in bytes; 0 -> 67108864 (64 MiB); otherwise 4194304..=17179869184.
     uint64 cache_max_bytes = 800;
   ```
-- [ ] Run `make generate` on the laptop (buf, protoc, Go) and expect `gen/go/nexora/control/v1/control.pb.go` to contain `CacheMaxBytes`.
+- [ ] Regenerate the Go code with the `protoc` command of `make proto` (the repository has no `make generate`; the other two `make proto` steps regenerate the OpenAPI clients and are Task 12's). Run it in the dev pod, whose protoc 3.21.12 and protoc-gen-go v1.36.12 produced the committed files (the laptop's newer protoc would rewrite the version headers), and copy `control.pb.go`/`control_grpc.pb.go` back to the laptop. Expect `gen/go/nexora/control/v1/control.pb.go` to contain `CacheMaxBytes`.
 - [ ] Run `scripts/dev-exec.sh 'cargo build --locked -p nexora-engine && go build ./... && cargo test --locked -p nexora-engine --test proto_roundtrip'` and expect success. The Rust struct gains the field through `build.rs`. Existing struct literals use `..Default::default()`; fix any that do not by adding `cache_max_bytes: 0`.
 
 ## Task 3: BADVERS for EDNS versions other than 0 (#21)
