@@ -45,8 +45,20 @@ func TestObservabilityMetricsTraces(t *testing.T) {
 	name := harness.UniqueName("obs")
 	harness.MustQuery(t, eng.DNS, name, dns.TypeA, harness.QueryOpts{})
 	harness.MustQuery(t, eng.DNS, name, dns.TypeA, harness.QueryOpts{})
+
+	// A custom block list and one blocked query feed the filter index and per-category metrics.
+	lists := env.StartHTTPFixture()
+	lists.SetList(t, "obs-block", "blocked.obs.test\n")
+	var fl map[string]any
+	api.Must("POST", "/filter-lists", map[string]any{"name": "obs-block", "kind": "block", "url": lists.URL("obs-block"), "refresh_interval_seconds": 3600, "enabled": true}, &fl, 201)
+	api.Must("POST", "/filter-lists/"+fl["id"].(string)+"/refresh", nil, nil, 200)
+	waitLatestApplied(t, api, "engine-obs")
+	harness.MustQuery(t, eng.DNS, "x.blocked.obs.test.", dns.TypeA, harness.QueryOpts{})
+
 	body := scrape(t, "http://"+eng.Metrics+"/metrics")
-	for _, m := range []string{"nexora_queries_total{", "nexora_query_duration_seconds_bucket{", "nexora_cache_hits_total", "nexora_cache_misses_total", `nexora_upstream_up{upstream="fixture"} 1`} {
+	for _, m := range []string{"nexora_queries_total{", "nexora_query_duration_seconds_bucket{", "nexora_cache_hits_total", "nexora_cache_misses_total", `nexora_upstream_up{upstream="fixture"} 1`,
+		`nexora_filter_blocked_total{category="custom"} 1`, "nexora_filter_index_entries 1", "nexora_filter_index_bytes ", "nexora_filter_index_max_bytes ",
+		"nexora_filter_index_build_seconds ", `nexora_filter_index_decision_seconds{kind="blocked",cpu="`} {
 		if !strings.Contains(body, m) {
 			t.Errorf("engine /metrics missing %s", m)
 		}

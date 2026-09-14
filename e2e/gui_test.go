@@ -69,6 +69,13 @@ func TestGUICoverage(t *testing.T) {
 	if st := admin.RefreshSource("malware", "hagezi-tif"); st.EntryCount != 1 || st.LastError != "" {
 		t.Fatalf("hagezi-tif from the fixture mirror: %+v", st)
 	}
+	// A query blocked by the malware category, for the query log's category column and filter.
+	waitLatestApplied(t, admin, "gui-engine", "gui-engine-2")
+	blocked := strings.TrimSuffix(harness.UniqueName("cat"), ".example.") + ".malware.gui.test."
+	harness.EventuallyTrue(t, 20*time.Second, func() bool {
+		return firstA(harness.MustQuery(t, eng.DNS, blocked, dns.TypeA, harness.QueryOpts{})) == "0.0.0.0"
+	}, blocked+" blocked by the malware category")
+	vars["NEXORA_E2E_CATEGORY_QUERY_NAME"] = strings.TrimSuffix(blocked, ".")
 	time.Sleep(12 * time.Second) // one engine Stats interval so the dashboard has samples
 
 	specs, _ := filepath.Glob(filepath.Join(harness.RepoRoot(t), "web/e2e/screens/[012][0-9]-*.spec.ts"))

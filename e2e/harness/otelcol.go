@@ -30,6 +30,14 @@ var otelcolTemplate = template.Must(template.New("otelcol").Parse(`receivers:
       grpc: { endpoint: "{{.GRPC}}" }
 processors:
   batch: { timeout: 200ms }
+{{- if .OpenSearchURL}}
+  transform/querylog:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["nexora.filter.result"], attributes["nexora.filter"]) where attributes["nexora.filter"] != nil
+          - delete_key(attributes, "nexora.filter")
+{{- end}}
 exporters:
   debug: { verbosity: basic }
 {{- if .DebugFile}}
@@ -39,7 +47,7 @@ exporters:
   opensearch:
     http:
       { endpoint: "{{.OpenSearchURL}}", tls: { insecure_skip_verify: true } }
-    logs_index: "nexora-querylog"
+    logs_index: "nexora-querylog-v2"
     logs_index_time_format: "yyyy.MM.dd"
 {{- end}}
 {{- if .JaegerOTLP}}
@@ -54,8 +62,16 @@ service:
       {
         receivers: [otlp],
         processors: [batch],
-        exporters: [debug{{if .DebugFile}}, file{{end}}{{if .OpenSearchURL}}, opensearch{{end}}],
+        exporters: [debug{{if .DebugFile}}, file{{end}}],
       }
+{{- if .OpenSearchURL}}
+    logs/opensearch:
+      {
+        receivers: [otlp],
+        processors: [batch, transform/querylog],
+        exporters: [opensearch],
+      }
+{{- end}}
     traces:
       {
         receivers: [otlp],

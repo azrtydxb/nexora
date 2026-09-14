@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct) in the dev pod against
-# the live deployment. The edge-b engines are restarted first, so TestKwFullProduct proves that
-# engine identities survive pod restarts (hostPath state).
-#   scripts/kw-acceptance.sh [go test -run pattern]   # default 'TestKwSmoke|TestKwFullProduct'
+# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct, TestKwFilterCategories)
+# in the dev pod against the live deployment. The edge-b engines are restarted first, so
+# TestKwFullProduct proves that engine identities survive pod restarts (hostPath state).
+# TestKwFilterCategories writes per-engine filter index memory and decision time to
+# /work/kw-filter-categories.json in the toolbox pod.
+#   scripts/kw-acceptance.sh [go test -run pattern]   # default 'TestKwSmoke|TestKwFullProduct|TestKwFilterCategories'
 set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
-run="${1:-TestKwSmoke|TestKwFullProduct}"
+run="${1:-TestKwSmoke|TestKwFullProduct|TestKwFilterCategories}"
 k() { kubectl --context "$ctx" -n nexora "$@"; }
 pod() { kubectl --context "$ctx" -n nexora-dev exec -i deploy/toolbox -c toolbox -- sh -c "$1"; }
 k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-ca.crt'
@@ -27,5 +29,5 @@ exec "$(dirname "$0")/dev-exec.sh" env \
 	NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
 	NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES="$engines" \
 	NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
-	NEXORA_KW_PROMETHEUS_URL=http://kps-prometheus.monitoring.svc:9090 \
-	go test -count=1 -v -timeout 45m -run "$run" ./e2e/
+	NEXORA_KW_PROMETHEUS_URL=http://kps-prometheus.monitoring.svc:9090 NEXORA_KW_FILTER_REPORT=/work/kw-filter-categories.json \
+	go test -count=1 -v -timeout 75m -run "$run" ./e2e/

@@ -3,7 +3,8 @@
 # the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone, the M4
 # authoritative demo (TSIG key, signed primary nexora-demo.kw., secondary bind-demo.kw.), the M5
 # engine group edge-b and the join tokens of both engine groups (Secrets nexora-join-token and
-# nexora-join-token-edge-b). Idempotent; run twice by scripts/kw-deploy.sh (before and after the engines).
+# nexora-join-token-edge-b), and the catalog filter categories malware, phishing, ads-tracking and
+# crypto-mining. Idempotent; run twice by scripts/kw-deploy.sh (before and after the engines).
 #
 # The admin credentials live only in the Secret nexora-admin (keys username, password), created
 # here with a random password on the first run. Read the password with:
@@ -164,6 +165,28 @@ if [ -z "$(zone_json bind-demo.kw.)" ]; then
 		call -d @- "$api/api/v1/zones" >/dev/null
 	echo "secondary zone bind-demo.kw. created"
 fi
+
+# Filter categories from the real catalog (off after install). The lab is non-commercial, so the
+# license notices of OISD and URLhaus are acknowledged (recorded in the audit log). Newly enabled
+# categories fetch their sources now; a failing source is reported and the others still apply.
+# NEXORA_KW_CATEGORIES overrides the selection (space-separated catalog keys, empty for none).
+categories="${NEXORA_KW_CATEGORIES-malware phishing ads-tracking crypto-mining}"
+for key in $categories; do
+	cat_json=$(call "$api/api/v1/filter-categories" | jq -c --arg k "$key" '.[] | select(.key==$k)')
+	[ -n "$cat_json" ] || {
+		echo "filter category $key is not in the catalog" >&2
+		exit 1
+	}
+	[ "$(jq -r .enabled <<<"$cat_json")" = true ] && continue
+	jq -n --argjson r "$(jq .revision <<<"$cat_json")" '{enabled:true, revision:$r, acknowledge_license:true}' |
+		call -X PUT -d @- "$api/api/v1/filter-categories/$key" >/dev/null
+	echo "filter category $key enabled"
+	call "$api/api/v1/filter-categories" | jq -r --arg k "$key" '.[] | select(.key==$k) | .sources[] | select(.enabled) | .key+" "+.list_id' |
+		while read -r src id; do
+			err=$(call -X POST "$api/api/v1/filter-lists/$id/refresh" | jq -r .last_error)
+			[ -z "$err" ] || echo "filter category $key: source $src did not refresh: $err" >&2
+		done
+done
 
 if ! k get secret nexora-join-token >/dev/null 2>&1; then
 	call -d '{"name":"kw-engines","ttl_seconds":31536000}' "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token"
