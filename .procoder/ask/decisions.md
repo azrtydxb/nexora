@@ -23,3 +23,11 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Different range: user provides another block
 
 **Answer (2026-09-14):** Apply now — user confirmed UniFi DHCP excludes 192.168.10.139-154.
+
+## Zero-downtime kw deploys (issue #53)
+
+- Rolling fix, pass = a client using both .136 and .139 never fails
+- Stricter: zero lost queries per IP
+- Change the design
+
+**Answer (2026-09-14):** Stricter — zero lost queries on each DNS address during a redeploy.
