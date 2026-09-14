@@ -1,6 +1,6 @@
 //! Length-prefixed (RFC 7766 framing) pipelined DNS over any byte stream: plain TCP and DoT.
 
-use crate::server::{Answerer, ClientInfo};
+use crate::server::{Answerer, ClientInfo, buffers};
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -23,7 +23,9 @@ where
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(MAX_PIPELINED);
     let writer = tokio::task::spawn_local(async move {
         while let Some(frame) = rx.recv().await {
-            if !matches!(timeout(idle, wr.write_all(&frame)).await, Ok(Ok(()))) {
+            let written = matches!(timeout(idle, wr.write_all(&frame)).await, Ok(Ok(())));
+            buffers::give(frame);
+            if !written {
                 break;
             }
             if rx.is_empty() && !matches!(timeout(idle, wr.flush()).await, Ok(Ok(()))) {
@@ -45,9 +47,8 @@ where
         if n == 0 {
             break;
         }
-        // debt: one query buffer, one 64 KiB answer buffer and one frame per stream
-        // query; pool them if stream transports show up in the perf gate.
-        let mut msg = vec![0u8; n];
+        let mut msg = buffers::take();
+        msg.resize(n, 0);
         if !matches!(
             timeout(BODY_TIMEOUT, rd.read_exact(&mut msg)).await,
             Ok(Ok(_))
@@ -65,14 +66,17 @@ where
         tokio::task::spawn_local(async move {
             let mut messages = Vec::new();
             answerer.answer_frames(client, &msg, &mut messages).await;
+            buffers::give(msg);
             // A transfer's messages are queued in order; the permit is held until the last.
             for out in messages {
                 if out.is_empty() || out.len() > 65535 {
                     continue;
                 }
-                let mut frame = Vec::with_capacity(out.len() + 2);
+                let mut frame = buffers::take();
                 frame.extend_from_slice(&(out.len() as u16).to_be_bytes());
                 frame.extend_from_slice(&out);
+                buffers::give(out);
+                // A frame still queued when the stream closes is dropped, not returned.
                 if tx.send(frame).await.is_err() {
                     break;
                 }

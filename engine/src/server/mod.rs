@@ -2,6 +2,7 @@
 //! inline by the listeners, miss resolution in `spawn_local` tasks, and the
 //! per-core worker threads.
 
+pub mod buffers;
 pub mod doh;
 pub mod doq;
 pub mod dot;
@@ -215,9 +216,11 @@ impl Answerer for WorkerAnswerer {
 
     async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>) {
         let rt = self.0.shared.runtime.load_full();
-        let mut out = vec![0u8; 65535];
+        let mut out = buffers::take();
+        out.resize(65535, 0);
         match handle_packet(&self.0, &rt, query, client.addr, client.transport, &mut out) {
             FastOutcome::Slow(job) => {
+                buffers::give(out);
                 frames.extend(auth_dispatch::run_slow(self.0.clone(), rt, job).await);
             }
             outcome => {

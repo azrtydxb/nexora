@@ -7,23 +7,28 @@ struct Counting;
 thread_local! {
     static ARMED: Cell<bool> = const { Cell::new(false) };
     static ALLOCS: Cell<u64> = const { Cell::new(0) };
+    /// Armed allocations of at least 60,000 octets (stream buffers).
+    static BIG: Cell<usize> = const { Cell::new(0) };
 }
-fn record() {
+fn record(size: usize) {
     // try_with: the allocator runs during thread teardown, after TLS is destroyed.
     if ARMED.try_with(Cell::get).unwrap_or(false) {
         let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
+        if size >= 60_000 {
+            let _ = BIG.try_with(|c| c.set(c.get() + 1));
+        }
     }
 }
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        record();
+        record(l.size());
         unsafe { System.alloc(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        record();
+        record(n);
         unsafe { System.realloc(p, l, n) }
     }
 }
@@ -403,5 +408,218 @@ fn measure_auth(image: &[u8], names: &[(&str, hickory_proto::rr::RecordType)], d
         ALLOCS.with(Cell::get),
         0,
         "authoritative answer path allocated (DO={dnssec_ok})"
+    );
+}
+
+/// A runtime answering `hot.example. A` from its cache for clients in 127.0.0.0/8, and the query.
+fn stream_setup() -> (std::sync::Arc<nexora_engine::server::Shared>, Vec<u8>) {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RData, Record, RecordType, rdata::A};
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+    use nexora_engine::cache::CacheKey;
+    use nexora_engine::proto::*;
+    use nexora_engine::server::Shared;
+    use nexora_engine::snapshot::{ApplyOutcome, DirBlobs, apply};
+    use nexora_engine::wire::parse_query;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let shared = Shared::new(1);
+    let snap = ConfigSnapshot {
+        version: 1,
+        cache: Some(CacheConfig {
+            max_bytes: 8 << 20,
+            max_ttl: 86400,
+            negative_max_ttl: 3600,
+            ..Default::default()
+        }),
+        acl_allow_cidrs: vec!["127.0.0.0/8".into()],
+        filter: Some(FilterConfig::default()),
+        telemetry: Some(TelemetryConfig::default()),
+        resolver: Some(ResolverConfig::default()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        apply(
+            &shared.runtime,
+            snap,
+            &DirBlobs {
+                dir: tmp.path().into()
+            },
+            None
+        ),
+        ApplyOutcome::Applied { .. }
+    ));
+    let mut m = Message::new(1, MessageType::Query, OpCode::Query);
+    m.metadata.recursion_desired = true;
+    m.add_query(Query::query(
+        Name::from_ascii("hot.example.").unwrap(),
+        RecordType::A,
+    ));
+    let query = m.to_bytes().unwrap();
+    let mut r = Message::from_bytes(&query).unwrap();
+    r.metadata.message_type = MessageType::Response;
+    r.add_answer(Record::from_rdata(
+        Name::from_ascii("hot.example.").unwrap(),
+        300,
+        RData::A(A::new(192, 0, 2, 1)),
+    ));
+    let upstream = r.to_bytes().unwrap();
+    let rt = shared.runtime.load();
+    let v = parse_query(&query).unwrap();
+    let (policy, _) = rt.policy.select("127.0.0.1".parse().unwrap());
+    rt.cache.insert(
+        CacheKey::in_partition(&v, policy.cache_partition()),
+        &upstream,
+        &v,
+        nexora_engine::clock::now_secs(),
+    );
+    drop(rt);
+    (shared, query)
+}
+
+/// Writes one length-prefixed query and reads its reply (a cache hit with one answer).
+async fn stream_roundtrip<S: tokio::io::AsyncRead + tokio::io::AsyncWrite>(
+    wr: &mut tokio::io::WriteHalf<S>,
+    rd: &mut tokio::io::ReadHalf<S>,
+    frame: &[u8],
+    reply: &mut [u8],
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    wr.write_all(frame).await.unwrap();
+    let n = rd.read_u16().await.unwrap() as usize;
+    rd.read_exact(&mut reply[..n]).await.unwrap();
+    assert_eq!(u16::from_be_bytes([reply[6], reply[7]]), 1, "one answer");
+}
+
+#[test]
+fn stream_answers_reuse_pooled_buffers() {
+    use nexora_engine::edns::Transport;
+    use nexora_engine::server::stream::serve_dns_stream;
+    use nexora_engine::server::{ClientInfo, WorkerAnswerer, WorkerCtx};
+
+    let (shared, query) = stream_setup();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    tokio::task::LocalSet::new().block_on(&rt, async {
+        let (client_io, server_io) = tokio::io::duplex(1 << 20);
+        let ctx = std::rc::Rc::new(WorkerCtx::new(0, shared.clone()));
+        let client = ClientInfo {
+            addr: "127.0.0.1:5555".parse().unwrap(),
+            transport: Transport::Tcp,
+        };
+        tokio::task::spawn_local(serve_dns_stream(
+            std::rc::Rc::new(WorkerAnswerer(ctx)),
+            server_io,
+            client,
+            std::time::Duration::from_secs(30),
+        ));
+        let (mut rd, mut wr) = tokio::io::split(client_io);
+        let mut frame = (query.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(&query);
+        let mut reply = vec![0u8; 4096];
+        for _ in 0..64 {
+            stream_roundtrip(&mut wr, &mut rd, &frame, &mut reply).await;
+        }
+        BIG.with(|c| c.set(0));
+        ARMED.with(|a| a.set(true));
+        for _ in 0..1000 {
+            stream_roundtrip(&mut wr, &mut rd, &frame, &mut reply).await;
+        }
+        ARMED.with(|a| a.set(false));
+    });
+    assert_eq!(
+        BIG.with(Cell::get),
+        0,
+        "a stream query allocated a 64 KiB buffer"
+    );
+}
+
+/// One DoQ query on its own bidirectional stream; the reply is read into `reply`.
+async fn doq_roundtrip(conn: &quinn::Connection, frame: &[u8], reply: &mut [u8]) {
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    send.write_all(frame).await.unwrap();
+    send.finish().unwrap();
+    let mut n = 0;
+    while let Some(k) = recv.read(&mut reply[n..]).await.unwrap() {
+        n += k;
+    }
+    assert_eq!(u16::from_be_bytes([reply[0], reply[1]]) as usize, n - 2);
+    assert_eq!(u16::from_be_bytes([reply[8], reply[9]]), 1, "one answer");
+}
+
+#[test]
+fn doq_answers_reuse_pooled_buffers() {
+    use nexora_engine::server::tls::{CertStore, provider, quic_server_config};
+    use nexora_engine::server::{WorkerAnswerer, WorkerCtx, doq};
+    use std::sync::Arc;
+
+    let (shared, mut query) = stream_setup();
+    query[..2].copy_from_slice(&[0, 0]); // DoQ requires message ID 0
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    tokio::task::LocalSet::new().block_on(&rt, async {
+        let ck = rcgen::generate_simple_self_signed(vec!["dns.test".to_string()]).unwrap();
+        let store = Arc::new(CertStore::new());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        store
+            .install_pem(
+                ck.cert.pem().as_bytes(),
+                ck.signing_key.serialize_pem().as_bytes(),
+                now,
+            )
+            .unwrap();
+        let server = doq::bind_doq(
+            "127.0.0.1:0".parse().unwrap(),
+            quic_server_config(store.clone()),
+            doq::endpoint_config(&[7u8; 64]),
+        )
+        .unwrap();
+        let addr = server.local_addr().unwrap();
+        let ctx = std::rc::Rc::new(WorkerCtx::new(0, shared.clone()));
+        tokio::task::spawn_local(doq::run_doq(
+            server,
+            std::rc::Rc::new(WorkerAnswerer(ctx)),
+            store,
+        ));
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(ck.cert.der().clone()).unwrap();
+        let mut tls = rustls::ClientConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        tls.alpn_protocols = vec![b"doq".to_vec()];
+        let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap();
+        let mut client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(quinn::ClientConfig::new(Arc::new(crypto)));
+        let conn = client.connect(addr, "dns.test").unwrap().await.unwrap();
+
+        let mut frame = (query.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(&query);
+        let mut reply = vec![0u8; 4096];
+        for _ in 0..32 {
+            doq_roundtrip(&conn, &frame, &mut reply).await;
+        }
+        BIG.with(|c| c.set(0));
+        ARMED.with(|a| a.set(true));
+        for _ in 0..200 {
+            doq_roundtrip(&conn, &frame, &mut reply).await;
+        }
+        ARMED.with(|a| a.set(false));
+        conn.close(0u32.into(), b"");
+        client.wait_idle().await;
+    });
+    assert_eq!(
+        BIG.with(Cell::get),
+        0,
+        "a DoQ query allocated a 64 KiB buffer"
     );
 }
