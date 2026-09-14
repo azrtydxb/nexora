@@ -141,19 +141,18 @@ impl Runtime {
             0 => lists::default_max_bytes(std::path::Path::new(lists::CGROUP_MEMORY_MAX)),
             n => n,
         };
-        let (filter_index, filter_calibration) =
-            match previous.filter(|p| p.filter_key == lists.key) {
-                Some(p) => (p.filter_index.clone(), p.filter_calibration.clone()),
-                None => {
-                    let index = Arc::new(lists.build_index(
-                        blobs,
-                        filter_max_bytes,
-                        lists::build_threads(),
-                    )?);
-                    let calibration = calibrate::measure(&index);
-                    (index, calibration)
-                }
-            };
+        let (filter_index, filter_calibration) = match previous
+            .filter(|p| p.filter_key == lists.key)
+        {
+            Some(p) => (p.filter_index.clone(), p.filter_calibration.clone()),
+            None => {
+                let index =
+                    Arc::new(lists.build_index(blobs, filter_max_bytes, lists::build_threads())?);
+                let calibration = calibrate::measure(&index);
+                lists::release_freed_memory();
+                (index, calibration)
+            }
+        };
         let block = BlockReply {
             mode,
             ttl: f.block_ttl,

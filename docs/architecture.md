@@ -650,5 +650,5 @@ selected by node label `nexora.io/engine-group`: `nexora-engine` (group
 with label `release: kps`. `deploy/kw/bootstrap.sh` configures the API (admin,
 upstreams, block list, RPZ, engine group `edge-b`, join token secrets
 `nexora-join-token` and `nexora-join-token-edge-b`). Acceptance:
-`scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`)
-and `TestKwFullProduct`.
+`scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`),
+`TestKwFullProduct` and `TestKwFilterCategories`.

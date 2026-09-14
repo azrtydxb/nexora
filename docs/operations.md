@@ -788,6 +788,41 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
   perfgate and writes `bin/perf.json`. Compare runs on the same machine only;
   a loaded shared machine is too noisy for small differences.
 
+## Filter categories
+
+- **Catalog**: the category catalog (`mgmt/internal/catalog/catalog.yaml`) is
+  embedded in `nexora-mgmt`, read-only, and ships with releases; every
+  instance syncs it into the database at start. Categories are off after
+  install. Enable them under Filtering, Categories in the GUI or with
+  `PUT /api/v1/filter-categories/{key}`; each source can be toggled.
+- **Licenses**: every source lists its license and attribution in the catalog
+  and the GUI. Sources with `commercial_use: false` (for example OISD and
+  URLhaus) are only enabled with `acknowledge_license: true` (the GUI shows
+  the license notice first); the acknowledgement is stored on the list and
+  recorded in the audit log (`acknowledged_licenses`). Otherwise the request
+  fails with 422 `license_acknowledgement_required`.
+- **Mirror**: `NEXORA_CATALOG_MIRROR` fetches every catalog source from
+  `<mirror>/<source key>` instead of the upstream URL (air-gapped installs,
+  tests).
+- **Memory cap**: an engine builds one filter index of every list its
+  snapshot references. The cap is the engine group's `filter_index_max_bytes`
+  when non-zero (at least 16 MiB), else 50% of the container's cgroup memory
+  limit (`/sys/fs/cgroup/memory.max`), else 512 MiB. A snapshot whose index
+  exceeds the cap is rejected (the engine keeps serving the previous version
+  and reports the apply error). The cap bounds the finished index, not the
+  build: a rebuild briefly needs about five times the new index (texts, name
+  records, deduplication) on top of the previous index, which keeps serving
+  until the new one is live. Set an explicit engine memory limit of at least
+  eight times the expected index; the default catalog selection needs about
+  76 MB of index and every catalog category about 112 MB (kw: 1 GiB limit,
+  peak 830 MiB). Watch
+  `nexora_filter_index_bytes` against `nexora_filter_index_max_bytes`, and
+  `filter_index` in `GET /api/v1/engines/{id}/stats`.
+- **Staleness**: `nexora_mgmt_filter_category_stale{category}` is 1 when an
+  enabled category has an enabled source whose last refresh failed or is
+  older than two refresh intervals; the GUI marks the category stale. Blocking
+  continues with the last good copy of the list.
+
 ## Filter index performance
 
 Measured with `engine/examples/filter_bench.rs` on kw (node `worker-23`, RK3588; decisions pinned
@@ -817,6 +852,26 @@ scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example f
   --rounds 9 --v1 --json /tmp/filter-bench-kw.json /work/lists/clean-*.txt'
 ```
 
+On the kw engines themselves, `TestKwFilterCategories` (every catalog category enabled, real
+sources; 2026-09-14, `ce26a9e` plus the uncommitted Task 20 fixes, image `sha-ce26a9e-fix2`; 1 GiB
+engine memory limit, 2 build threads) reported through `GET /api/v1/engines/{id}/stats`
+(`filter_index`; decisions uncached, so "blocked" is a cold blocked name):
+
+| node             | CPU        | names     | index bytes | cap     | build  | blocked ns | clean ns |
+| ---------------- | ---------- | --------- | ----------- | ------- | ------ | ---------- | -------- |
+| edge-b-worker-24 | cortex-a76 | 5,134,849 | 117,781,571 | 512 MiB | 1.81 s | 159        | 79       |
+| edge-b-worker-25 | cortex-a76 | 5,134,849 | 117,779,779 | 512 MiB | 1.75 s | 217        | 76       |
+| master-11        | cortex-a76 | 5,134,849 | 117,780,931 | 512 MiB | 1.71 s | 176        | 78       |
+| master-12        | cortex-a76 | 5,134,849 | 117,781,443 | 512 MiB | 1.79 s | 199        | 75       |
+| master-13        | cortex-a76 | 5,134,849 | 117,773,251 | 512 MiB | 1.75 s | 158        | 77       |
+| worker-21        | cortex-a76 | 5,134,849 | 117,779,011 | 512 MiB | 1.76 s | 187        | 80       |
+| worker-22        | cortex-a76 | 5,134,849 | 117,777,859 | 512 MiB | 1.74 s | 163        | 76       |
+| worker-23        | cortex-a76 | 5,134,849 | 117,778,243 | 512 MiB | 1.75 s | 171        | 82       |
+
+Engine memory on kw (`kubectl top pod`): 28 MiB without categories; 111–116 MiB with the default
+selection (3,446,913 names, 76 MiB index); cgroup `memory.peak` 697–826 MiB over the whole
+`TestKwFilterCategories` run (repeated rebuilds up to 5.1M names), no OOM events.
+
 `scripts/filter-corpus.sh <dir>` downloads the default catalog selection
 (`bench/filter/corpus-5m.tsv`) as one normalised list per source for the same command.
 
@@ -835,8 +890,8 @@ helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-k
 ```
 
 `scripts/kw-acceptance.sh` restarts the `edge-b` engines and runs
-`TestKwSmoke`, `TestKwSmokeM4` and `TestKwFullProduct` from the dev pod against
-the live release. The admin password is in the secret `nexora-admin`
+`TestKwSmoke`, `TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories`
+from the dev pod against the live release. The admin password is in the secret `nexora-admin`
 (`kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d`).
 
 | Component                                           | Address                                                                                            |

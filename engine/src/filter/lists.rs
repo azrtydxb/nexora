@@ -1,7 +1,7 @@
 //! Every filter list of a snapshot with its identity, the index key, category counter slots and the
 //! index memory cap.
 
-use super::index::{FilterIndex, IndexOptions, ListInput, ListKind, MAX_LISTS};
+use super::index::{FilterIndex, IndexOptions, ListInput, ListKind, MAX_LISTS, TextArena};
 use crate::proto::{BlobRef, ConfigSnapshot, FilterListRef};
 use crate::snapshot::{BlobSource, SnapshotError};
 use sha2::{Digest, Sha256};
@@ -192,32 +192,74 @@ impl SnapshotLists {
         max_bytes: u64,
         threads: usize,
     ) -> Result<FilterIndex, SnapshotError> {
-        let texts = self
+        // Blobs whose frame declares its content size (mgmt writes them so) decode straight into
+        // the build arena, so the build holds one copy of every text.
+        enum Loaded<'a> {
+            Frame(&'a BlobRef, Vec<u8>, usize),
+            Text(std::borrow::Cow<'a, [u8]>),
+        }
+        let zstd_error = |r: &BlobRef, reason: String| SnapshotError::Blob {
+            sha256: r.sha256.clone(),
+            reason: format!("zstd: {reason}"),
+        };
+        let loaded = self
             .lists
             .iter()
             .map(|l| match &l.source {
                 ListSource::Blob(r) => {
-                    super::decode_blob(&blobs.read(r)?).map_err(|e| SnapshotError::Blob {
-                        sha256: r.sha256.clone(),
-                        reason: format!("zstd: {e}"),
+                    let data = blobs.read(r)?;
+                    Ok(match super::blob_content_size(&data) {
+                        Some(n) => Loaded::Frame(r, data, n),
+                        None => Loaded::Text(
+                            super::decode_blob(&data)
+                                .map_err(|e| zstd_error(r, e.to_string()))?
+                                .into(),
+                        ),
                     })
                 }
-                ListSource::Inline(text) => Ok(text.clone()),
+                ListSource::Inline(text) => Ok(Loaded::Text(text.as_slice().into())),
             })
             .collect::<Result<Vec<_>, SnapshotError>>()?;
+        let total = loaded
+            .iter()
+            .map(|t| match t {
+                Loaded::Frame(_, _, n) => *n,
+                Loaded::Text(t) => t.len(),
+            })
+            .sum();
+        let mut arena = TextArena::new(total, loaded.len());
+        let mut ranges = Vec::with_capacity(loaded.len());
+        for t in loaded {
+            ranges.push(match t {
+                Loaded::Frame(r, data, n) => {
+                    match zstd::bulk::decompress_to_buffer(&data, &mut arena.spare()[..n]) {
+                        Ok(got) if got == n => arena.commit(n),
+                        Ok(got) => {
+                            return Err(zstd_error(
+                                r,
+                                format!("frame declares {n} bytes, holds {got}"),
+                            ));
+                        }
+                        Err(e) => return Err(zstd_error(r, e.to_string())),
+                    }
+                }
+                Loaded::Text(text) => arena.push(&text),
+            });
+        }
         let inputs: Vec<ListInput<'_>> = self
             .lists
             .iter()
-            .zip(&texts)
-            .map(|(l, text)| ListInput {
+            .zip(ranges)
+            .map(|(l, range)| ListInput {
                 id: &l.id,
                 category: &l.category,
                 category_slot: category_slot(&l.category),
                 kind: l.kind,
-                text,
+                text: arena.text(range),
             })
             .collect();
-        FilterIndex::build(
+        FilterIndex::build_in(
+            &arena,
             &inputs,
             &IndexOptions {
                 threads,
@@ -260,6 +302,18 @@ pub fn default_max_bytes(memory_max: &Path) -> u64 {
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .map_or(DEFAULT_MAX_BYTES, |limit| limit / 2)
+}
+
+/// Returns the heap pages a build freed to the kernel. glibc keeps freed medium allocations in its
+/// per-thread arenas, where the next build's large (mmap) buffers cannot reuse them, so without this
+/// every build after the first adds that retained memory to its peak (kw: engines at a 1 GiB limit
+/// were OOM-killed while categories were toggled). Off the query path; queries do not allocate.
+pub fn release_freed_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim only releases free heap memory; it has no preconditions.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// Index build threads: the CPUs this process may use (std honours the cgroup CPU quota), at
@@ -369,9 +423,10 @@ mod tests {
         assert_eq!(l.groups[0].block, vec![format!("blob:{}", "d".repeat(64))]);
         let allow = l.groups[0].allow.clone().unwrap();
         assert!(allow.starts_with("group-allow:") && allow.len() == "group-allow:".len() + 64);
-        assert!(l.lists.iter().any(
-            |x| x.id == allow && matches!(&x.source, ListSource::Inline(t) if t == b"ok.example\n")
-        ));
+        assert!(
+            l.lists.iter().any(|x| x.id == allow
+                && matches!(&x.source, ListSource::Inline(t) if t == b"ok.example\n"))
+        );
         assert_eq!(
             l.lists
                 .iter()
@@ -380,6 +435,92 @@ mod tests {
                 .category,
             "ads-tracking"
         );
+    }
+
+    struct MapBlobs(HashMap<String, Vec<u8>>);
+    impl BlobSource for MapBlobs {
+        fn read(&self, r: &BlobRef) -> Result<Vec<u8>, SnapshotError> {
+            self.0.get(&r.sha256).cloned().ok_or(SnapshotError::Blob {
+                sha256: r.sha256.clone(),
+                reason: "missing".into(),
+            })
+        }
+    }
+
+    /// Catches: a frame decoded straight into the build arena at its declared content size (how
+    /// mgmt's zstd EncodeAll writes blobs) losing or shifting text, a frame without a content size
+    /// (streaming encoders) no longer decoding, inline allowlists dropped from the arena, and a
+    /// frame whose content size lies being accepted.
+    #[test]
+    fn build_index_decodes_sized_and_unsized_frames_into_one_arena() {
+        let sized_text = b"sized-one.test\nsized-two.test\n";
+        let sized = zstd::bulk::compress(sized_text, 3).unwrap();
+        assert_eq!(
+            zstd::zstd_safe::get_frame_content_size(&sized).unwrap(),
+            Some(sized_text.len() as u64),
+            "fixture: bulk frames declare their content size"
+        );
+        let unsized_frame = zstd::encode_all(&b"unsized.test\n"[..], 3).unwrap();
+        assert_eq!(
+            zstd::zstd_safe::get_frame_content_size(&unsized_frame).unwrap(),
+            None
+        );
+        let snap = ConfigSnapshot {
+            filter: Some(FilterConfig {
+                blocklist_refs: vec![
+                    list_ref("sized", "malware", 1, 'a'),
+                    list_ref("unsized", "phishing", 2, 'b'),
+                ],
+                ..Default::default()
+            }),
+            policy_groups: vec![PolicyGroup {
+                id: "g1".into(),
+                allowlist: vec!["sized-two.test".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let lists = SnapshotLists::collect(&snap).unwrap();
+        let blobs = MapBlobs(HashMap::from([
+            ("a".repeat(64), sized.clone()),
+            ("b".repeat(64), unsized_frame),
+        ]));
+        let index = std::sync::Arc::new(lists.build_index(&blobs, 16 << 20, 1).unwrap());
+        assert_eq!(
+            index.entries(),
+            3,
+            "sized-two.test is in a block list and the allowlist"
+        );
+        let block = lists.indexes(&index, &lists.global_block);
+        let view = index.view(&block, &[]);
+        for name in ["sized-one.test", "sized-two.test", "unsized.test"] {
+            let wire = crate::filter::domain_to_wire(name.as_bytes()).unwrap();
+            assert!(
+                matches!(view.decide(&wire), super::super::FilterDecision::Blocked(_)),
+                "{name} not blocked"
+            );
+        }
+        let wire = crate::filter::domain_to_wire(b"other.test").unwrap();
+        assert_eq!(view.decide(&wire), super::super::FilterDecision::None);
+
+        // A declared content size larger than the frame's data is refused, not zero-padded.
+        let mut lying = sized;
+        // Magic (4 bytes), then the frame header descriptor: single segment, one-byte content
+        // size, no dictionary id, so the content size is byte 5.
+        assert_eq!(
+            lying[4] & 0xE3,
+            0x20,
+            "fixture: single-segment frame, one-byte size"
+        );
+        lying[5] += 8;
+        let blobs = MapBlobs(HashMap::from([
+            ("a".repeat(64), lying),
+            (
+                "b".repeat(64),
+                zstd::encode_all(&b"unsized.test\n"[..], 3).unwrap(),
+            ),
+        ]));
+        assert!(lists.build_index(&blobs, 16 << 20, 1).is_err());
     }
 
     #[test]

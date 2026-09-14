@@ -171,6 +171,37 @@ func TestEnrollConnectPushAckReject(t *testing.T) {
 	harness.Eventually(t, 3*time.Second, func() error { return expectEngine(f, id, "rejected_reason", "invalid snapshot: nope") })
 }
 
+// TestSupersededStreamEndingKeepsEngineConnected: a restarted engine pod opens a new stream to the
+// same instance before the server notices that the old one is gone (kw: worker-21 stayed
+// "disconnected" while serving). The old stream's cleanup must not clear the new stream's connection.
+func TestSupersededStreamEndingKeepsEngineConnected(t *testing.T) {
+	f := setup(t, 1)
+	client, id := f.enroll(t, f.addr[0])
+	oldCtx, endOld := context.WithCancel(f.ctx)
+	old, err := client.Connect(oldCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Hello{Hello: &controlv1.Hello{EngineId: id, NodeName: "e1"}}})
+	recvSnapshot(t, old)
+	current, err := client.Connect(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = current.Send(&controlv1.EngineMessage{Msg: &controlv1.EngineMessage_Hello{Hello: &controlv1.Hello{EngineId: id, NodeName: "e1"}}})
+	recvSnapshot(t, current)
+
+	endOld()
+	time.Sleep(time.Second) // the old stream's handler returns and runs its cleanup
+	var connected bool
+	if err := f.st.Pool.QueryRow(f.ctx, "select connected_instance is not null from engines where id = $1", id).Scan(&connected); err != nil {
+		t.Fatal(err)
+	}
+	if !connected {
+		t.Fatal("ending the superseded stream cleared the current stream's connected_instance")
+	}
+}
+
 func TestVersionAheadIsFlaggedNotDowngraded(t *testing.T) {
 	f := setup(t, 1)
 	client, id := f.enroll(t, f.addr[0])

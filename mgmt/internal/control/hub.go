@@ -50,6 +50,9 @@ type Hub struct {
 
 	mu   sync.Mutex
 	subs map[*subscriber]struct{}
+	// latest is each engine's most recently registered stream on this instance: a restarted engine
+	// can reconnect before the server notices that its previous stream is gone.
+	latest map[string]*subscriber
 }
 
 // subscriber is one connected engine stream. out holds at most one pending message; a newer
@@ -205,7 +208,7 @@ func (s *subscriber) observe(version uint64) {
 
 // NewHub creates the hub for one management plane instance.
 func NewHub(st *store.Store, instanceID string) *Hub {
-	return &Hub{st: st, instanceID: instanceID, subs: map[*subscriber]struct{}{}}
+	return &Hub{st: st, instanceID: instanceID, subs: map[*subscriber]struct{}{}, latest: map[string]*subscriber{}}
 }
 
 // Connected is the number of engine streams on this instance.
@@ -219,12 +222,19 @@ func (h *Hub) register(s *subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.subs[s] = struct{}{}
+	h.latest[s.engineID] = s
 }
 
-func (h *Hub) unregister(s *subscriber) {
+// unregister removes s and reports whether it was its engine's latest stream on this instance.
+func (h *Hub) unregister(s *subscriber) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.subs, s)
+	if h.latest[s.engineID] != s {
+		return false
+	}
+	delete(h.latest, s.engineID)
+	return true
 }
 
 // Run listens for new versions until ctx ends, reconnecting after 1 s on connection loss.

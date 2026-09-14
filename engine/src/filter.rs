@@ -64,6 +64,15 @@ impl BlockReply {
     }
 }
 
+/// The content size a blob's zstd frame declares, when it declares one of at most 512 MiB.
+pub fn blob_content_size(zstd_bytes: &[u8]) -> Option<usize> {
+    zstd::zstd_safe::get_frame_content_size(zstd_bytes)
+        .ok()
+        .flatten()
+        .filter(|&n| n <= MAX_BLOB_BYTES)
+        .map(|n| n as usize)
+}
+
 /// Decompresses a blob, refusing output larger than 512 MiB.
 pub fn decode_blob(zstd_bytes: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -208,7 +217,11 @@ impl EffectivePolicy {
     }
 
     #[inline(always)]
-    fn verdict(&self, wire_name: &[u8], decide: impl FnOnce(&[u8]) -> FilterDecision) -> Verdict<'_> {
+    fn verdict(
+        &self,
+        wire_name: &[u8],
+        decide: impl FnOnce(&[u8]) -> FilterDecision,
+    ) -> Verdict<'_> {
         if let Some(r) = self.rewrites.lookup(wire_name) {
             return Verdict::Rewrite(r);
         }
@@ -739,10 +752,7 @@ mod policy_tests {
             size: 1,
             name: "x".into(),
         });
-        assert_eq!(
-            table(&s).err().unwrap(),
-            "blob nope: missing"
-        );
+        assert_eq!(table(&s).err().unwrap(), "blob nope: missing");
         let mut s = snapshot();
         s.rewrite_sets[0]
             .rules

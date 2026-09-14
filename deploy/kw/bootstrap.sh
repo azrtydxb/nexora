@@ -25,7 +25,10 @@ for _ in $(seq 60); do
 	[ -s "$tmp/ingress-ca.crt" ] && break
 	sleep 2
 done
-curl() { command curl --cacert "$tmp/ingress-ca.crt" "$@"; }
+# Right after a mgmt rollout the ingress still routes some requests to terminating pods (502/503
+# after health already answered): curl retries those. Every bootstrap step checks existing state
+# first, so a retried request that did reach a backend is harmless on the next run.
+curl() { command curl --cacert "$tmp/ingress-ca.crt" --retry 10 --retry-delay 2 "$@"; }
 
 if ! k get secret nexora-admin >/dev/null 2>&1; then
 	k create secret generic nexora-admin --from-literal=username=admin \

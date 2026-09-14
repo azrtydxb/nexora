@@ -4757,6 +4757,8 @@ As built (deviations from the code below): `filter_bench` gained the Zipf decisi
 Files: `deploy/kw/otelcol.yaml` (OpenSearch pipeline transform and `nexora-querylog-v2`), `deploy/kw/values-kw.yaml` (explicit engine memory limit behind the 512 MiB cap), `deploy/kw/README.md` (Filter categories section), `scripts/kw-acceptance.sh` (runs the test, report path), `e2e/kw_filter_categories_test.go` (`TestKwFilterCategories`), `docs/architecture.md` (kw acceptance line), `docs/operations.md` (catalog, OISD notice, memory cap, recorded kw numbers)
 Interfaces: consumes `loadKwEnv`, `kwLogin`, `kwWaitApplied`, `kwEnv.dnsAddr`, `kwEnv.engines` (kw tests), `harness.CategoryView`, `(*harness.API).SetFilterCategory`, `RefreshCategory`, `FilterCategory` (Task 15), `GET /engines` and `GET /engines/{id}/stats` `filter_index` (Task 13); environment `NEXORA_KW_FILTER_REPORT` (JSON report path).
 
+As built (kw, 2026-09-14, image `sha-ce26a9e-fix2` built from `ce26a9e` plus the uncommitted changes below): the decision-time budget in `TestKwFilterCategories` follows the spec revision (cold blocked < 300 ns, clean < 150 ns, build < 2 s scaled), since calibration decides uncached names; the test code below is updated. Fixes found on kw: (1) `mgmt/internal/control`: a restarted engine that reconnected to the same mgmt instance before its old stream ended was shown `disconnected` forever (the old stream's cleanup cleared `connected_instance`) and lost DNS TLS pushes (`DNSTLSFanout.Unregister` removed the new registration); the hub now tracks each engine's latest stream and `Unregister(engineID, ch)` removes only its own registration (`TestSupersededStreamEndingKeepsEngineConnected`, `dnstls_test.go`). (2) `engine/src/filter`: engines at the 1 GiB limit were OOM-killed while every category was toggled (rebuild peaks above 1 GiB): blobs whose zstd frame declares its content size now decode straight into the build's `TextArena` (`FilterIndex::build_in`, no second copy of the texts) and `lists::release_freed_memory()` (`malloc_trim`) runs after each build; peak `memory.peak` 697-826 MiB, no OOM. (3) `scripts/kw-deploy.sh` stamps the collector config hash into its pod template (a ConfigMap change alone did not restart it); `deploy/kw/bootstrap.sh` retries 502/503 from the ingress right after a mgmt rollout.
+
 - [ ] Write `e2e/kw_filter_categories_test.go`:
   ```go
   package e2e
@@ -4928,11 +4930,13 @@ Interfaces: consumes `loadKwEnv`, `kwLogin`, `kwWaitApplied`, `kwEnv.dnsAddr`, `
   			if float64(fi.Bytes) >= 120e6*scale {
   				t.Errorf("%s: filter index %d bytes for %d names, budget %.0f", node, fi.Bytes, fi.Entries, 120e6*scale)
   			}
-  			if fi.BuildSeconds >= 1.5*scale {
-  				t.Errorf("%s: build %.2f s, budget %.2f s", node, fi.BuildSeconds, 1.5*scale)
+  			// Spec budgets (revision of 2026-09-14): build < 2 s, clean < 150 ns, cold blocked < 300 ns
+  			// (calibration decides uncached names, so blocked names pay the cold block read).
+  			if fi.BuildSeconds >= 2*scale {
+  				t.Errorf("%s: build %.2f s, budget %.2f s", node, fi.BuildSeconds, 2*scale)
   			}
-  			if fi.CPU == "cortex-a76" && (fi.DecisionNSBlocked >= 150 || fi.DecisionNSClean >= 150) {
-  				t.Errorf("%s: %.0f ns blocked / %.0f ns clean on a Cortex-A76, budget 150 ns", node, fi.DecisionNSBlocked, fi.DecisionNSClean)
+  			if fi.CPU == "cortex-a76" && (fi.DecisionNSBlocked >= 300 || fi.DecisionNSClean >= 150) {
+  				t.Errorf("%s: %.0f ns blocked / %.0f ns clean on a Cortex-A76, budget 300 ns blocked, 150 ns clean", node, fi.DecisionNSBlocked, fi.DecisionNSClean)
   			}
   		}
   		if path := os.Getenv("NEXORA_KW_FILTER_REPORT"); path != "" {

@@ -115,6 +115,20 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	if err := fleet.SupersedeOlderCertificates(ctx, s.st.Pool, uuid.MustParse(id), serial); err != nil {
 		return grpcError(err)
 	}
+	// Registered before connected_instance is set: a superseded stream of this engine on this
+	// instance that ends in between then leaves the connection to this stream.
+	sub := newSubscriber(id, hello.AppliedVersion)
+	s.hub.register(sub)
+	defer func() {
+		if !s.hub.unregister(sub) {
+			return
+		}
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := s.st.Pool.Exec(dctx, "update engines set connected_instance = null where id = $1 and connected_instance = $2", id, s.instanceID); err != nil {
+			slog.Warn("clear engine connection", "engine", id, "err", err)
+		}
+	}()
 	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "insert into instances(id) values ($1) on conflict do nothing", s.instanceID); err != nil {
 			return err
@@ -135,18 +149,8 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		return err
 	}
 
-	sub := newSubscriber(id, hello.AppliedVersion)
-	s.hub.register(sub)
-	defer func() {
-		s.hub.unregister(sub)
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if _, err := s.st.Pool.Exec(dctx, "update engines set connected_instance = null where id = $1 and connected_instance = $2", id, s.instanceID); err != nil {
-			slog.Warn("clear engine connection", "engine", id, "err", err)
-		}
-	}()
 	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
-	defer s.dnsTLS.Unregister(id)
+	defer s.dnsTLS.Unregister(id, tlsCh)
 	// A revocation notified between authenticate and register reached no subscriber: check again.
 	if err := s.checkCertificate(ctx, id, serial); err != nil {
 		return err

@@ -34,8 +34,8 @@ kubectl --context kw -n nexora get secret nexora-db-app -o jsonpath='{.data.uri}
 cluster CA (verifies the ingress; the pod does not trust it) and the admin password into the dev pod
 (`/work/kw-ca.crt`, `/work/kw-cluster-ca.crt`, `/work/kw-admin-password`), restarts the `edge-b`
 engines (so `TestKwFullProduct` proves identities survive restarts), and runs `TestKwSmoke`,
-`TestKwSmokeM4` and `TestKwFullProduct` (default pattern `TestKwSmoke|TestKwFullProduct`) in the dev
-pod with the whole environment set.
+`TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories` (default pattern
+`TestKwSmoke|TestKwFullProduct|TestKwFilterCategories`) in the dev pod with the whole environment set.
 
 `TestKwSmokeM4` creates a primary zone `smoke-<unix time>.nexora-smoke.test.`, checks the
 authoritative answer (AA), an AXFR over the TCP LoadBalancer and online signing (RRSIG after
@@ -67,7 +67,7 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
 | `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                                                                                                                                                              |
 | `values-kw.yaml`    | Helm release `nexora` (`deploy/helm/nexora`): `nexora-mgmt` (2 replicas), DaemonSets `nexora-engine` and `nexora-engine-edge-b`, DNS LoadBalancers, gRPC LoadBalancer, TLS Ingress, ServiceMonitor and PrometheusRule |
 | `bind-primary.yaml` | `nexora-bind`: BIND primary of the secondary zone `bind-demo.kw.` (ClusterIP 10.43.200.53:5353)                                                                                                                       |
-| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, engine group `edge-b`, join tokens, pruning of pre-M5 engines                                                                    |
+| `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, filter categories, engine group `edge-b`, join tokens, pruning of pre-M5 engines                                                 |
 
 ## Addresses
 
@@ -165,6 +165,40 @@ printf 'server 192.168.10.136\nzone nexora-demo.kw.\nupdate add test.nexora-demo
   nsupdate -y "hmac-sha256:nexora-demo-xfr.:$(cat /work/kw-demo-tsig)"
 dig @192.168.10.136 www.bind-demo.kw. A                 # aa, 192.0.2.53
 ```
+
+## Filter categories
+
+Categories are off after install. `bootstrap.sh` enables the categories in `NEXORA_KW_CATEGORIES`
+(default `malware phishing ads-tracking crypto-mining`; empty for none; an unknown key fails the
+bootstrap) with `acknowledge_license: true`, since kw is a non-commercial lab and OISD and URLhaus
+are not free for commercial use. It refreshes the enabled sources of a category it newly enabled and
+reports a failing source without failing. The engines have an explicit 1 GiB memory limit
+(`values-kw.yaml`), so their filter index cap is 512 MiB; with every category (5.1M names, 112 MiB
+index) a rebuild peaks at about 830 MiB (see `docs/operations.md`, Filter categories).
+
+`TestKwFilterCategories` enables every catalog category with the real sources (acknowledging the
+license notices), refreshes them, waits until all engines applied the version, checks that each
+category blocks names taken from one of its sources on `192.168.10.136`, reads `filter_index` from
+`GET /engines/{id}/stats` for every engine (at least 1M names, memory, build time and decision time
+budgets) and writes that report to `/work/kw-filter-categories.json` in the dev pod. It restores the
+previous enabled state of every category afterwards.
+
+The collector (`otelcol.yaml`) renames `nexora.filter` to `nexora.filter.result` and writes
+`nexora-querylog-v2-YYYY.MM.DD`; mgmt reads `nexora-querylog-*`, so older `nexora-querylog-YYYY.MM.DD`
+indices stay readable (without categories) until they are deleted. `kw-deploy.sh` stamps the
+collector config hash into its pod template, so a changed collector config is live before the engines
+roll.
+
+Manual checks (laptop):
+
+```sh
+dig @192.168.10.136 <name from an enabled source> A    # 0.0.0.0 (e.g. doubleclick.net, ads-tracking)
+kdig @192.168.10.137 +https <name> A                   # 0.0.0.0 over DoH (any RFC 8484 client)
+kubectl --context kw -n nexora top pod -l app.kubernetes.io/name=nexora-engine
+kubectl --context kw -n nexora exec <engine pod> -c engine -- cat /sys/fs/cgroup/memory.peak
+```
+
+The GUI query log (Query log, filter `blocked`) shows the category of each blocked name.
 
 ## Resolution settings
 

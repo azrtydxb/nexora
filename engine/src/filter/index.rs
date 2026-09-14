@@ -65,6 +65,56 @@ pub enum ListKind {
     Allow,
 }
 
+/// Decompressed list texts for a build in one zeroed huge-page mapping: the build reads the texts
+/// at random, and on huge pages those reads (and their prefetches) do not miss the TLB. Each text is
+/// followed by 8 zero bytes. Decoding blobs straight into it keeps a single copy of every text.
+pub struct TextArena {
+    bytes: AlignedBytes,
+    used: usize,
+}
+
+impl TextArena {
+    /// Room for `texts` texts of `text_bytes` in total.
+    pub fn new(text_bytes: usize, texts: usize) -> TextArena {
+        TextArena {
+            bytes: AlignedBytes::zeroed((text_bytes + 8 * texts).max(1)),
+            used: 0,
+        }
+    }
+
+    /// The unused room after the texts so far.
+    pub fn spare(&mut self) -> &mut [u8] {
+        &mut self.bytes.as_mut_slice()[self.used..]
+    }
+
+    /// Takes the first `len` bytes of [`TextArena::spare`] as the next text; panics without room
+    /// for it and its padding.
+    pub fn commit(&mut self, len: usize) -> std::ops::Range<usize> {
+        assert!(
+            self.used + len + 8 <= self.bytes.len(),
+            "text arena overflow"
+        );
+        let range = self.used..self.used + len;
+        self.used += len + 8;
+        range
+    }
+
+    pub fn push(&mut self, text: &[u8]) -> std::ops::Range<usize> {
+        self.spare()[..text.len()].copy_from_slice(text);
+        self.commit(text.len())
+    }
+
+    pub fn text(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.bytes.as_slice()[range]
+    }
+
+    fn holds(&self, text: &[u8]) -> bool {
+        let base = self.bytes.as_slice().as_ptr() as usize;
+        let at = text.as_ptr() as usize;
+        at >= base && at + text.len() + 8 <= base + self.used
+    }
+}
+
 /// One decompressed list: one domain per line.
 pub struct ListInput<'a> {
     pub id: &'a str,
@@ -877,7 +927,11 @@ impl BlockWriter<'_, '_> {
                 // octets, which fit the block because placement counted their sizes, and its own
                 // fingerprint slot; all inside the table.
                 unsafe {
-                    std::ptr::copy_nonoverlapping(entry.as_ptr(), dst.at(base + usize::from(c.0)), n);
+                    std::ptr::copy_nonoverlapping(
+                        entry.as_ptr(),
+                        dst.at(base + usize::from(c.0)),
+                        n,
+                    );
                     dst.at(base + HEADER + usize::from(c.1))
                         .write(entry_fingerprint(u.key, u.len + 1));
                 }
@@ -891,29 +945,37 @@ impl BlockWriter<'_, '_> {
 impl FilterIndex {
     /// Builds the index; never allocates blocks for an index above `opts.max_bytes`.
     pub fn build(lists: &[ListInput<'_>], opts: &IndexOptions) -> Result<FilterIndex, IndexError> {
+        let mut arena = TextArena::new(lists.iter().map(|l| l.text.len()).sum(), lists.len());
+        let ranges: Vec<_> = lists.iter().map(|l| arena.push(l.text)).collect();
+        let local: Vec<ListInput<'_>> = lists
+            .iter()
+            .zip(ranges)
+            .map(|(l, r)| ListInput {
+                text: arena.text(r),
+                ..*l
+            })
+            .collect();
+        Self::build_in(&arena, &local, opts)
+    }
+
+    /// [`FilterIndex::build`] over texts already in `arena` (no copy of the texts); panics when a
+    /// text is not one of the arena's.
+    pub fn build_in(
+        arena: &TextArena,
+        lists: &[ListInput<'_>],
+        opts: &IndexOptions,
+    ) -> Result<FilterIndex, IndexError> {
         let started = Instant::now();
         if lists.len() > MAX_LISTS {
             return Err(IndexError::TooManyLists(lists.len()));
         }
-        // The build reads list texts at random; on huge pages those reads (and their prefetches)
-        // do not miss the TLB.
-        let total: usize = lists.iter().map(|l| l.text.len() + 8).sum();
-        let mut arena = AlignedBytes::zeroed(total.max(1));
-        let mut at = 0;
         for l in lists {
-            arena.as_mut_slice()[at..at + l.text.len()].copy_from_slice(l.text);
-            at += l.text.len() + 8;
+            assert!(
+                arena.holds(l.text),
+                "list {} is not in the text arena",
+                l.id
+            );
         }
-        let mut at = 0;
-        let local: Vec<ListInput<'_>> = lists
-            .iter()
-            .map(|l| {
-                let text = &arena.as_slice()[at..at + l.text.len()];
-                at += l.text.len() + 8;
-                ListInput { text, ..*l }
-            })
-            .collect();
-        let lists = &local[..];
         let (parts, invalid) = scan_lists(lists, opts);
         let (mut records, bucket_sizes) = scatter(parts, opts.threads);
 
@@ -1243,7 +1305,9 @@ impl FilterIndex {
             let mut ids = self.view_ids.lock();
             let next = ids.len();
             let key: Box<[u64]> = block_mask.iter().chain(&allow_mask).copied().collect();
-            let id = *ids.entry(key).or_insert(next.min(usize::from(u16::MAX)) as u16);
+            let id = *ids
+                .entry(key)
+                .or_insert(next.min(usize::from(u16::MAX)) as u16);
             // Generation 0 (the empty index), generations past 48 bits and views past 65,535
             // distinct masks are decided without the cache.
             if self.generation == 0 || self.generation >> 48 != 0 || id == u16::MAX {
@@ -1776,7 +1840,11 @@ mod tests {
                     );
                     let wire = domain_to_wire(q.as_bytes()).unwrap();
                     let decided = view.decide(&wire);
-                    assert_eq!(cache.decide(&view, &wire), decided, "cached {q} (round {round})");
+                    assert_eq!(
+                        cache.decide(&view, &wire),
+                        decided,
+                        "cached {q} (round {round})"
+                    );
                     match (oracle.decide(&wire), decided) {
                         (Decision::None, FilterDecision::None)
                         | (Decision::Allowed, FilterDecision::Allowed) => {}

@@ -36,11 +36,14 @@ func (f *DNSTLSFanout) Register(engineID, helloFingerprint string) <-chan *contr
 	return e.ch
 }
 
-// Unregister removes an engine; its channel receives nothing more.
-func (f *DNSTLSFanout) Unregister(engineID string) {
+// Unregister removes the registration that returned ch; its channel receives nothing more. A newer
+// registration of the same engine (a reconnect before the old stream ended) stays.
+func (f *DNSTLSFanout) Unregister(engineID string, ch <-chan *controlv1.TlsMaterial) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.engines, engineID)
+	if e, ok := f.engines[engineID]; ok && e.ch == ch {
+		delete(f.engines, engineID)
+	}
 }
 
 // Set replaces the current material and queues it to every engine holding another certificate.

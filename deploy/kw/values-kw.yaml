@@ -35,6 +35,11 @@ engine:
   initImage: 192.168.10.131/library/busybox:1.37
   ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
   stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
+  # Explicit memory limit: the engine caps its filter index at 50% of the cgroup limit (512 MiB here);
+  # the default category selection needs about 110 MB, every catalog category about 150 MB.
+  resources:
+    requests: { cpu: 250m, memory: 384Mi }
+    limits: { cpu: "2", memory: 1Gi }
   # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
   # node must run a default-group engine.
   tolerations:

@@ -167,11 +167,13 @@ func TestKwFilterCategories(t *testing.T) {
 			if float64(fi.Bytes) >= 120e6*scale {
 				t.Errorf("%s: filter index %d bytes for %d names, budget %.0f", node, fi.Bytes, fi.Entries, 120e6*scale)
 			}
-			if fi.BuildSeconds >= 1.5*scale {
-				t.Errorf("%s: build %.2f s, budget %.2f s", node, fi.BuildSeconds, 1.5*scale)
+			// Spec budgets (revision of 2026-09-14): build < 2 s, clean < 150 ns, cold blocked < 300 ns
+			// (calibration decides uncached names, so blocked names pay the cold block read).
+			if fi.BuildSeconds >= 2*scale {
+				t.Errorf("%s: build %.2f s, budget %.2f s", node, fi.BuildSeconds, 2*scale)
 			}
-			if fi.CPU == "cortex-a76" && (fi.DecisionNSBlocked >= 150 || fi.DecisionNSClean >= 150) {
-				t.Errorf("%s: %.0f ns blocked / %.0f ns clean on a Cortex-A76, budget 150 ns", node, fi.DecisionNSBlocked, fi.DecisionNSClean)
+			if fi.CPU == "cortex-a76" && (fi.DecisionNSBlocked >= 300 || fi.DecisionNSClean >= 150) {
+				t.Errorf("%s: %.0f ns blocked / %.0f ns clean on a Cortex-A76, budget 300 ns blocked, 150 ns clean", node, fi.DecisionNSBlocked, fi.DecisionNSClean)
 			}
 		}
 		if path := os.Getenv("NEXORA_KW_FILTER_REPORT"); path != "" {

@@ -43,6 +43,11 @@ fi
 
 kubectl --context "$ctx" apply -f "$kw/namespace.yaml"
 k apply -f "$kw/opensearch.yaml" -f "$kw/cnpg-cluster.yaml" -f "$kw/otelcol.yaml" -f "$kw/blocklist.yaml"
+# A changed collector ConfigMap does not restart the pod: stamp its hash into the pod template, so the
+# collector (e.g. the nexora-querylog-v2 rename) is live before any engine of the new release sends records.
+otel_sha=$(shasum -a 256 "$kw/otelcol.yaml" | cut -c1-16)
+k patch deployment nexora-otelcol -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"nexora.io/config-sha\":\"$otel_sha\"}}}}}"
+k rollout status deployment/nexora-otelcol --timeout=5m
 k wait --for=condition=Ready cluster/nexora-db --timeout=15m
 
 # The CA key only ever exists in a temporary directory and in the Secret.

@@ -50,9 +50,15 @@ func TestDNSTLSFanoutPushesOnlyWhenFingerprintDiffers(t *testing.T) {
 			t.Fatalf("engine %s received a superseded certificate", name)
 		}
 	}
-	f.Unregister("engine-a")
+	// engine b reconnects before its old stream ends: ending the old stream keeps the new registration
+	b2 := f.Register("engine-b", "cc")
+	f.Unregister("engine-b", b)
+	f.Unregister("engine-a", a)
 	f.Set(&pki.DNSTLSMaterial{FingerprintSHA256: "dd"})
 	if pending(a) != nil {
 		t.Fatal("unregistered engine must receive nothing")
+	}
+	if m := pending(b2); m == nil || m.FingerprintSha256 != "dd" {
+		t.Fatalf("reconnected engine b got %v, want dd", m)
 	}
 }
