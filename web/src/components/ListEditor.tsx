@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 
 import { ErrorAlert, MessageRow, SavedNote } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +38,7 @@ export function ListEditor({
   normalize,
   validate,
   onSave,
+  help,
 }: {
   prefix: string;
   inputTestId?: string;
@@ -54,6 +56,8 @@ export function ListEditor({
   normalize: (v: string) => string;
   validate: (v: string) => string | null;
   onSave: (items: string[]) => Promise<unknown>;
+  /** Help catalogue id: an info icon beside the input. */
+  help?: string;
 }) {
   const [draft, setDraft] = useState<string[] | null>(null);
   const [input, setInput] = useState("");
@@ -103,19 +107,22 @@ export function ListEditor({
             <Label htmlFor={inputTestId} className="sr-only">
               {inputLabel}
             </Label>
-            <Input
-              id={inputTestId}
-              data-testid={inputTestId}
-              className="font-mono"
-              placeholder={placeholder}
-              value={input}
-              aria-invalid={inputError !== ""}
-              aria-describedby={inputError ? errorId : undefined}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setInputError("");
-              }}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                id={inputTestId}
+                data-testid={inputTestId}
+                className="font-mono"
+                placeholder={placeholder}
+                value={input}
+                aria-invalid={inputError !== ""}
+                aria-describedby={inputError ? errorId : undefined}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  setInputError("");
+                }}
+              />
+              {help && <HelpTip id={help} label={inputLabel} />}
+            </div>
             {inputError && (
               <p id={errorId} className="text-destructive text-xs">
                 {inputError}

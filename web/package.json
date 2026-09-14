@@ -2,12 +2,14 @@
   "name": "nexora-web",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=26" },
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --noEmit",
-    "lint": "eslint . && node scripts/check-permissions.mjs",
+    "lint": "eslint . && node scripts/check-permissions.mjs && node scripts/check-help.mjs",
     "gen:api": "openapi-typescript ../mgmt/api/openapi.yaml -o src/api/schema.d.ts",
     "e2e": "playwright test"
   },
@@ -26,6 +28,7 @@
     "openapi-fetch": "~0.17.0",
     "react": "~19.3.0",
     "react-dom": "~19.3.0",
+    "react-markdown": "^10.1.0",
     "react-router": "^7.18.2",
     "recharts": "~3.10.0",
     "tailwind-merge": "^3.3.1"
