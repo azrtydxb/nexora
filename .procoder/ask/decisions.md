@@ -87,3 +87,11 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Code and tests only for now; no kw changes and no deploy yet
 
 **Answer (2026-09-14):** Upgrade kube-vip v0.8.7 -> v1.2.3 one control-plane node at a time (API VIP and LB IPs checked after each) and lower the engine CPU request 2 -> 500m (limit 4), then deploy with a live zero-loss check.
+
+## Publish today's work to GitHub
+
+- Push main (c2476ce, 96962cc, 031a15f) and close #53 with the measured results
+- Push main only; leave #53 open
+- Keep local for now
+
+**Answer (2026-09-14):** Push main and close #53 with the measured results.
