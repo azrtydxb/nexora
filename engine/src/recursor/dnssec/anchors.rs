@@ -2,7 +2,9 @@
 //! rollover state persisted in `state_dir/trust-anchors.json`.
 
 use super::validator::{Fetcher, TrustPoints, ds_from_text};
-use super::verify::{DsMatch, match_ds, revoked_key_signs, rrsig, verify_rrset};
+use super::verify::{
+    DsMatch, VerifiedSig, match_ds, revoked_key_signs, revoked_key_verifies, rrsig, verify_rrset,
+};
 use crate::proto;
 use crate::recursor::metrics::RecursorMetrics;
 use crate::snapshot_m3::parse_ds;
@@ -296,6 +298,19 @@ impl TrustAnchorStore {
         self.points.load_full()
     }
 
+    /// Zones whose trusted keys were revoked and that have no trust point left, so validation below
+    /// them is silently insecure. A new trust anchor for the zone (or removing it) clears the entry.
+    pub fn lost_trust_points(&self) -> Vec<Name> {
+        let f = self.file.lock();
+        let points = self.trust_points();
+        f.zones
+            .iter()
+            .filter(|(_, z)| z.keys.iter().any(|k| k.state == KeyState::Revoked))
+            .filter_map(|(zone, _)| Name::from_ascii(zone).ok())
+            .filter(|name| !points.zones.iter().any(|(z, _)| z == name))
+            .collect()
+    }
+
     pub fn rfc5011_enabled(&self) -> bool {
         self.rfc5011.load(Ordering::Relaxed)
     }
@@ -409,8 +424,8 @@ impl TrustAnchorStore {
 /// One RFC 5011 refresh of `zone`: fetch its DNSKEY RRset, authenticate it with the current
 /// trust points, detect self-signed revocations and record the observation.
 ///
-/// debt: a revocation is only accepted when the RRset also verifies with another trusted key
-/// (the normal rollover order). Revisit if a zone must be able to revoke its only trusted key.
+/// A trusted key's self-signed revocation is accepted even when it is the zone's only trusted key;
+/// the zone then has no trust point (RFC 5011 §5).
 pub async fn refresh_zone(
     store: &TrustAnchorStore,
     zone: &Name,
@@ -458,8 +473,47 @@ pub async fn refresh_zone(
     };
     authorised.extend(keys.iter().filter(|k| tp.keys.contains(k)).cloned());
     let now_unix = now.max(0) as u64;
-    let Ok(v) = verify_rrset(&records, &sigs, &authorised, zone, now_unix) else {
-        return fail("DNSKEY RRset not validated by a trusted key");
+    let v = match verify_rrset(&records, &sigs, &authorised, zone, now_unix) {
+        Ok(v) => v,
+        Err(_) => {
+            // RFC 5011 §2.1: a trusted key may revoke itself even when no other trusted key signs
+            // the set. Only the revocation is recorded; nothing else in the RRset is trusted.
+            let revocations: Vec<(DNSKEY, VerifiedSig)> = keys
+                .iter()
+                .filter(|k| k.revoke() && k.secure_entry_point())
+                .filter_map(|k| {
+                    let cleared = DNSKEY::with_flags(k.flags() & !0x0080, k.public_key().clone());
+                    let trusted = tp.keys.contains(&cleared)
+                        || matches!(
+                            match_ds(zone, std::slice::from_ref(&cleared), &tp.ds),
+                            DsMatch::Matched(_)
+                        );
+                    if !trusted {
+                        return None;
+                    }
+                    revoked_key_verifies(&records, &sigs, k, zone, now_unix).map(|v| (cleared, v))
+                })
+                .collect();
+            let Some(&(_, v)) = revocations.first() else {
+                return fail("DNSKEY RRset not validated by a trusted key");
+            };
+            let observed: Vec<DNSKEY> = revocations.iter().map(|(k, _)| k.clone()).collect();
+            let revoked: Vec<u16> = observed
+                .iter()
+                .filter_map(|k| k.calculate_key_tag().ok())
+                .collect();
+            let obs = Observation {
+                dnskeys: &observed,
+                validated_by_trusted: true,
+                revoked_self_signed: &revoked,
+                orig_ttl: v.original_ttl,
+                sig_expiration: i64::from(v.expiration),
+            };
+            if let Err(e) = store.record_observation(zone, &obs, now) {
+                fail(&format!("persisting trust anchor state: {e}"));
+            }
+            return;
+        }
     };
     let mut observed = Vec::with_capacity(keys.len());
     let mut revoked = Vec::new();

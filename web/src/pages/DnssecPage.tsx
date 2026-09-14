@@ -71,6 +71,7 @@ export function DnssecPage() {
         title="DNSSEC"
         description="Validation of signed answers for recursion and validating forward zones, the trust anchors it starts from, and domains exempted from it."
       />
+      <TrustPointLostAlert />
       <RefreshWarning />
       <section aria-label="Validation settings" className="mb-10">
         <h2 className="mb-3 text-sm font-semibold">Validation settings</h2>
@@ -88,6 +89,50 @@ export function DnssecPage() {
       <NegativeTrustAnchorsSection />
       <EnginesSection />
     </>
+  );
+}
+
+/**
+ * The red banner naming each zone whose trusted keys were all revoked (RFC 5011 §5): the engine
+ * dropped its trust point, so validation below it is insecure until a trust anchor is added. The
+ * same condition raises the engine's `nexora_dnssec_trust_point_lost{zone}` gauge.
+ */
+function TrustPointLostAlert() {
+  const status = useDnssecStatus();
+  const lost = new Map<string, string[]>();
+  for (const e of status.data?.engines ?? []) {
+    const zones = new Set(e.trust_anchors.map((a) => a.zone));
+    for (const zone of zones) {
+      const keys = e.trust_anchors.filter((a) => a.zone === zone);
+      const revoked = keys.some((a) => a.state === "revoked");
+      const trusted = keys.some(
+        (a) =>
+          a.state === "configured" ||
+          a.state === "valid" ||
+          a.state === "missing",
+      );
+      if (revoked && !trusted)
+        lost.set(zone, [...(lost.get(zone) ?? []), e.engine_name]);
+    }
+  }
+  if (lost.size === 0) return null;
+  return (
+    <Alert
+      variant="destructive"
+      className="mb-6"
+      data-testid="dnssec-trust-point-lost"
+    >
+      <TriangleAlert className="h-4 w-4" />
+      <AlertDescription>
+        {[...lost].map(([zone, engines]) => (
+          <p key={zone}>
+            <span className="font-semibold">Trust point lost for {zone}</span>{" "}
+            on {engines.join(", ")}: its trusted keys were revoked, so answers
+            below it are no longer validated. Add a trust anchor for {zone}.
+          </p>
+        ))}
+      </AlertDescription>
+    </Alert>
   );
 }
 

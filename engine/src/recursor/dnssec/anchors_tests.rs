@@ -242,3 +242,65 @@ async fn refresh_authenticates_rollover_and_self_signed_revocation() {
     let status = s.status();
     assert!(status[0].last_error.contains("network error"), "{status:?}");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_accepts_revocation_of_the_only_trusted_key() {
+    let mut only = TestKey::generate(".", true);
+    let newcomer = TestKey::generate(".", true);
+    let (_d, s) = store_with(&only);
+    let metrics = RecursorMetrics::default();
+    let root = Name::root();
+    let tag = only.dnskey.calculate_key_tag().unwrap();
+    let only_ds = ds_text(&only);
+    let f = Dnskeys(RefCell::new(Some(signed_rrset(&[&only], &[&only], T0))));
+    refresh_zone(&s, &root, &f, &metrics, T0).await;
+    assert_eq!(state_of(&s, tag), Some(KeyState::Valid));
+
+    // The only trusted key revokes itself; a new key appears, signed by nothing trusted.
+    only.set_revoked();
+    let now = T0 + DAY;
+    *f.0.borrow_mut() = Some(signed_rrset(&[&only, &newcomer], &[&only], now));
+    refresh_zone(&s, &root, &f, &metrics, now).await;
+    assert_eq!(
+        state_of(&s, tag),
+        Some(KeyState::Revoked),
+        "{:?}",
+        s.status()
+    );
+    assert_eq!(
+        s.trust_points().zones.len(),
+        0,
+        "no trusted key is left for the root"
+    );
+    assert_eq!(s.lost_trust_points(), vec![root.clone()]);
+    assert_eq!(
+        state_of(&s, newcomer.dnskey.calculate_key_tag().unwrap()),
+        None,
+        "a key vouched for only by a revoked key is not added"
+    );
+    assert_eq!(
+        metrics
+            .trust_anchor_refresh_failures
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+
+    // An operator adds the newcomer as a trust anchor: the root has a trust point again.
+    s.merge_config(
+        &[
+            proto::TrustAnchor {
+                zone: ".".into(),
+                ds: only_ds,
+            },
+            proto::TrustAnchor {
+                zone: ".".into(),
+                ds: ds_text(&newcomer),
+            },
+        ],
+        true,
+        now,
+    )
+    .unwrap();
+    assert_eq!(state_of(&s, tag), Some(KeyState::Revoked));
+    assert!(s.lost_trust_points().is_empty());
+}

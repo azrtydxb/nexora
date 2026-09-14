@@ -100,6 +100,30 @@ pub fn verify_rrset(
     verify_inner(rrset, rrsigs, keys, zone, now_unix, false)
 }
 
+/// The signature with which `key`, which carries the REVOKE flag, signs `rrset` itself
+/// (RFC 5011 §2.1).
+pub fn revoked_key_verifies(
+    rrset: &[Record],
+    rrsigs: &[Record],
+    key: &DNSKEY,
+    zone: &Name,
+    now_unix: u64,
+) -> Option<VerifiedSig> {
+    key.revoke()
+        .then(|| {
+            verify_inner(
+                rrset,
+                rrsigs,
+                std::slice::from_ref(key),
+                zone,
+                now_unix,
+                true,
+            )
+            .ok()
+        })
+        .flatten()
+}
+
 /// Whether `key`, which carries the REVOKE flag, signs `rrset` itself (RFC 5011 §2.1).
 pub fn revoked_key_signs(
     rrset: &[Record],
@@ -108,16 +132,7 @@ pub fn revoked_key_signs(
     zone: &Name,
     now_unix: u64,
 ) -> bool {
-    key.revoke()
-        && verify_inner(
-            rrset,
-            rrsigs,
-            std::slice::from_ref(key),
-            zone,
-            now_unix,
-            true,
-        )
-        .is_ok()
+    revoked_key_verifies(rrset, rrsigs, key, zone, now_unix).is_some()
 }
 
 fn verify_inner(
