@@ -711,7 +711,7 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
   }
   ```
   and `#[cfg(test)] KEYS_BUILT.with(|c| c.set(c.get() + 1));` as the first statement of `record_key`.
-- [ ] Add to `transfer_tests.rs`:
+- [x] Add to `transfer_tests.rs`:
   ```rust
   #[test]
   fn ixfr_builds_keys_only_for_records_at_deleted_owners() {
@@ -728,8 +728,8 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
       assert!(built <= 2, "built {built} record keys for a one-record deletion");
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib ixfr_builds_keys_only'`. Expect FAIL `built 100001 record keys for a one-record deletion`.
-- [ ] In `apply_ixfr`, build the owner set next to `deletions`, then filter by it before building a key:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib ixfr_builds_keys_only'`. Expect FAIL `built 100001 record keys for a one-record deletion`.
+- [x] In `apply_ixfr`, build the owner set next to `deletions`, then filter by it before building a key:
   ```rust
   // hickory's Name hashes and compares case-insensitively.
   let deleted_owners: FxHashSet<&Name> = body[del_start..i].iter().map(|r| &r.name).collect();
@@ -741,7 +741,7 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
   });
   ```
   Delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::rpz && cargo test --locked -p nexora-engine --test rpz_pipeline'` and expect all to pass.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::rpz && cargo test --locked -p nexora-engine --test rpz_pipeline'` and expect all to pass.
 
 ## Task 9: Query-log labels by config version and concurrent exports (#23, #24)
 
@@ -1324,29 +1324,27 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/control -run "TestGetBlob"'`. Expect `TestGetBlobDoesNotHoldWholeBlob` to FAIL with `heap 6x MiB while a 64 MiB blob is mid-stream`; `TestGetBlobChunkBoundaries` passes today and guards the rewrite.
+- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/control -run "TestGetBlob"'`. Expect `TestGetBlobDoesNotHoldWholeBlob` to FAIL with `heap NNN MiB while a 64 MiB blob is mid-stream` (199 MiB measured before the rewrite); `TestGetBlobChunkBoundaries` passes today and guards the rewrite.
 - [ ] Rewrite the body of `GetBlob` after authentication and the `sha256RE` check (delete the `debt:` comment):
   ```go
   // Blobs are content-addressed and never change, so chunks read by separate statements belong to
   // one value; a blob collected mid-stream ends the stream with NotFound (the engine checks size
   // and SHA-256 and retries).
   var size int64
-  err := s.st.Pool.QueryRow(ctx, "select octet_length(data) from blobs where sha256 = $1", req.Sha256).Scan(&size)
-  if errors.Is(err, pgx.ErrNoRows) {
-  	return status.Error(codes.NotFound, "blob not found")
-  }
-  if err != nil {
-  	return status.Errorf(codes.Internal, "blob: %v", err)
+  if err := s.st.Pool.QueryRow(ctx, "select octet_length(data) from blobs where sha256 = $1", req.Sha256).Scan(&size); err != nil {
+  	if errors.Is(store.MapError(err), store.ErrNotFound) {
+  		return status.Error(codes.NotFound, "blob not found")
+  	}
+  	return grpcError(err)
   }
   for off := int64(0); off < size; off += BlobChunkSize {
   	var chunk []byte
-  	err := s.st.Pool.QueryRow(ctx, "select substring(data from $2 for $3) from blobs where sha256 = $1",
-  		req.Sha256, off+1, BlobChunkSize).Scan(&chunk)
-  	if errors.Is(err, pgx.ErrNoRows) {
-  		return status.Error(codes.NotFound, "blob removed while streaming")
-  	}
-  	if err != nil {
-  		return status.Errorf(codes.Internal, "blob: %v", err)
+  	if err := s.st.Pool.QueryRow(ctx, "select substring(data from $2 for $3) from blobs where sha256 = $1",
+  		req.Sha256, off+1, BlobChunkSize).Scan(&chunk); err != nil {
+  		if errors.Is(store.MapError(err), store.ErrNotFound) {
+  			return status.Error(codes.NotFound, "blob removed while streaming")
+  		}
+  		return grpcError(err)
   	}
   	if err := stream.Send(&controlv1.BlobChunk{Data: chunk}); err != nil {
   		return err
@@ -1354,7 +1352,7 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   }
   return nil
   ```
-  Keep the error messages the existing code uses for NotFound, if they differ.
+  Errors keep the existing mapping (`store.MapError` for NotFound, `grpcError` for Unavailable/Canceled/Internal) and the existing `blob not found` message.
 - [ ] Create `mgmt/migrations/00801_blobs_storage_external.sql`:
   ```sql
   -- +goose Up
@@ -1898,14 +1896,14 @@ Interfaces:
 Files: `e2e/fixtures/authhier/spec.go`, `e2e/fixtures/authhier/server.go`, `e2e/fixtures/authhier/authhier_test.go`, `e2e/dnssec_test.go`
 Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `DefaultSpec` gains `*.w.good.test.`, `*.w.n3.test.` and the zone `wild.test.` on 127.0.53.12.
 
-- [ ] In `spec.go`:
+- [x] In `spec.go`:
   - add the field `OmitWildcardProof bool \`json:"omit_wildcard_proof"\``with the comment`serves synthesised wildcard answers without the next-closer denial`;
   - add to `good.test.` the records `*.w.good.test. 300 IN A 192.0.2.60` and `*.w.good.test. 300 IN TXT "wild"`;
   - add to `n3.test.` the record `*.w.n3.test. 300 IN A 192.0.2.61`;
   - add to `test.` the records `wild.test. 300 IN NS ns.wild.test.` and `ns.wild.test. 300 IN A 127.0.53.12`;
   - add the zone `{Origin: "wild.test.", ServerIP: "127.0.53.12", Signed: true, NSEC3Iterations: nsec, OmitWildcardProof: true, Records: ["wild.test. 300 IN SOA ns.wild.test. hostmaster.wild.test. 1 3600 600 86400 300", "wild.test. 300 IN NS ns.wild.test.", "ns.wild.test. 300 IN A 127.0.53.12", "*.w.wild.test. 300 IN A 192.0.2.62"]}`;
   - extend the `DefaultSpec` doc table.
-- [ ] Add to `authhier_test.go` `TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof`:
+- [x] Add to `authhier_test.go` `TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof`:
   - start the default hierarchy as the other tests there do;
   - query `x.w.good.test. A` with DO at 127.0.53.3;
   - assert one A `192.0.2.60` owned by `x.w.good.test.`;
@@ -1913,7 +1911,7 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
   - assert an NSEC in the authority section whose owner sorts before `x.w.good.test.` and whose next name sorts after it;
   - query `x.w.good.test. AAAA` and assert NOERROR, no answer, SOA and NSEC in the authority section;
   - query `x.w.wild.test. A` at 127.0.53.12 and assert the answer carries no NSEC in the authority section.
-- [ ] Add three subtests to `TestDNSSECValidation` in `e2e/dnssec_test.go`:
+- [x] Add three subtests to `TestDNSSECValidation` in `e2e/dnssec_test.go`:
   ```go
   t.Run("wildcard answer validates with AD", func(t *testing.T) {
   	m := query(t, addr, "x.w.good.test", dns.TypeA, qopt{DO: true})
@@ -1948,8 +1946,8 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
   })
   ```
   If the engine reports another EDE for a missing wildcard proof, check `validator_tests.rs` `wildcard_expansion_needs_a_next_closer_proof` (EDE 12) and use the code it asserts.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier -run TestWildcardAnswer'`. Expect FAIL: the query for `x.w.good.test.` returns NXDOMAIN.
-- [ ] In `server.go` `authoritative`, before the NXDOMAIN branch, add RFC 1034 §4.3.3 synthesis:
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier -run TestWildcardAnswer'`. Expect FAIL: the query for `x.w.good.test.` returns NXDOMAIN.
+- [x] In `server.go` `authoritative`, before the NXDOMAIN branch, add RFC 1034 §4.3.3 synthesis:
   1. Factor the closest-encloser walk (`ce`) and the `nextCloser` computation into `func (z *zone) closestEncloser(name string) (ce, nextCloser string)`.
   2. If `!z.exists[name]` and `z.exists["*."+ce]`:
      - With a set `{"*."+ce, qtype}` (or a CNAME): copy each RR and its RRSIGs with `Hdr.Name` set to `name`, leaving `RRSIG.Labels` unchanged, into `m.Answer`.
@@ -1957,14 +1955,14 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
      - When `secure && !z.spec.OmitWildcardProof`, add the next-closer proof for answers: NSEC `z.addDenial(m, z.cover(name))`; NSEC3 `z.addDenial(m, z.cover(nextCloser))`.
      - Return.
   3. Delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier/... && make e2e-build && go test -count=1 ./e2e -run "TestDNSSECValidation|TestRecursionRootHints|TestSpoofedReplyRejected"'` and expect every test to pass. `TestDelvValidatesTheHierarchyIndependently` also validates the new records.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier/... && make e2e-build && go test -count=1 ./e2e -run "TestDNSSECValidation|TestRecursionRootHints|TestSpoofedReplyRejected"'` and expect every test to pass. `TestDelvValidatesTheHierarchyIndependently` also validates the new records.
 
 ## Task 19: Collector restart waits for its port (#10)
 
 Files: `e2e/harness/otelcol.go`, `e2e/harness/harness_test.go`
 Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the same port for up to 10 s.
 
-- [ ] Add to `harness_test.go`:
+- [x] Add to `harness_test.go`:
   ```go
   func TestHarnessOtelcolRestartWaitsForPortHolder(t *testing.T) {
   	env := harness.New(t)
@@ -1987,8 +1985,8 @@ Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the 
   	c.Close()
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run TestHarnessOtelcolRestartWaitsForPortHolder'`. Expect FAIL `otelcol-contrib exited: ... address already in use`.
-- [ ] Replace `Restart` (delete the `debt:` comment):
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run TestHarnessOtelcolRestartWaitsForPortHolder'`. Expect FAIL `otelcol-contrib exited: ... address already in use`.
+- [x] Replace `Restart` (delete the `debt:` comment):
   ```go
   // Restart stops the collector if running and starts it again on the same port and config: the
   // exporters point at that port. A port another process holds is retried for 10 s.
@@ -2002,7 +2000,7 @@ Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the 
   }
   ```
   `start(e, false)` still fails the test with the collector's log, which names the address in use. Prefix that `Fatalf` message with `otelcol %s:` and `o.OTLPGRPC`.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run Otelcol && make e2e-build && go test -count=1 ./e2e -run TestOTelSinkDownNoBackpressure'` and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run Otelcol && make e2e-build && go test -count=1 ./e2e -run TestOTelSinkDownNoBackpressure'` and expect PASS.
 
 ## Task 20: The Compose example on novanas (#5)
 

@@ -132,6 +132,81 @@ func TestNegativeAnswersCarryDenialProofs(t *testing.T) {
 	}
 }
 
+// TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof checks RFC 1034 section 4.3.3
+// synthesis: the expanded answer keeps the wildcard's signature (labels below the owner's count)
+// and carries the NSEC covering the next closer name, NODATA below the wildcard is proven, and a
+// zone with OmitWildcardProof leaves the proof out.
+func TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof(t *testing.T) {
+	_, ready := start(t)
+	r := ask(t, "127.0.53.3", ready.Port, "x.w.good.test.", dns.TypeA, true, "udp")
+	if r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("x.w.good.test. A rcode = %s, want NOERROR", dns.RcodeToString[r.Rcode])
+	}
+	var as []dns.RR
+	var sig *dns.RRSIG
+	for _, rr := range r.Answer {
+		switch v := rr.(type) {
+		case *dns.A:
+			as = append(as, v)
+		case *dns.RRSIG:
+			sig = v
+		}
+	}
+	if len(as) != 1 || as[0].Header().Name != "x.w.good.test." || as[0].(*dns.A).A.String() != "192.0.2.60" {
+		t.Fatalf("synthesised answer = %v, want one A 192.0.2.60 owned by x.w.good.test.", as)
+	}
+	if sig == nil || sig.Hdr.Name != "x.w.good.test." || sig.Labels != 3 {
+		t.Fatalf("expanded RRSIG = %v, want owner x.w.good.test. with labels 3", sig)
+	}
+	var zsk *dns.DNSKEY
+	for _, k := range keysOf(ask(t, "127.0.53.3", ready.Port, "good.test.", dns.TypeDNSKEY, true, "udp")) {
+		if k.Flags == 256 && k.KeyTag() == sig.KeyTag {
+			zsk = k
+		}
+	}
+	if zsk == nil {
+		t.Fatal("no good.test. ZSK matches the wildcard signature")
+	}
+	// Verify checks that the RRset and RRSIG owners agree, so both go back to the wildcard owner.
+	wildcard, wildSig := dns.Copy(as[0]), dns.Copy(sig).(*dns.RRSIG)
+	wildcard.Header().Name, wildSig.Hdr.Name = "*.w.good.test.", "*.w.good.test."
+	if err := wildSig.Verify(zsk, []dns.RR{wildcard}); err != nil {
+		t.Fatalf("wildcard signature does not verify: %v", err)
+	}
+	var proof bool
+	for _, rr := range r.Ns {
+		if n, ok := rr.(*dns.NSEC); ok && canonicalLess(n.Hdr.Name, "x.w.good.test.") && canonicalLess("x.w.good.test.", n.NextDomain) {
+			proof = true
+		}
+	}
+	if !proof {
+		t.Fatalf("no NSEC covering the next closer name x.w.good.test. in %v", r.Ns)
+	}
+
+	nodata := ask(t, "127.0.53.3", ready.Port, "x.w.good.test.", dns.TypeAAAA, true, "udp")
+	if nodata.Rcode != dns.RcodeSuccess || len(nodata.Answer) != 0 || countType(nodata.Ns, dns.TypeSOA) != 1 || countType(nodata.Ns, dns.TypeNSEC) == 0 {
+		t.Fatalf("wildcard NODATA: %v", nodata)
+	}
+
+	// The wildcard owner itself is an exact match, and no name below an existing name is synthesised.
+	if own := ask(t, "127.0.53.3", ready.Port, "*.w.good.test.", dns.TypeTXT, true, "udp"); countType(own.Answer, dns.TypeTXT) != 1 || own.Answer[0].Header().Name != "*.w.good.test." {
+		t.Fatalf("wildcard owner TXT: %v", own)
+	}
+	if below := ask(t, "127.0.53.3", ready.Port, "x.www.good.test.", dns.TypeA, true, "udp"); below.Rcode != dns.RcodeNameError {
+		t.Fatalf("x.www.good.test. rcode = %s, want NXDOMAIN", dns.RcodeToString[below.Rcode])
+	}
+
+	n3 := ask(t, "127.0.53.8", ready.Port, "x.w.n3.test.", dns.TypeA, true, "udp")
+	if countType(n3.Answer, dns.TypeA) != 1 || countType(n3.Ns, dns.TypeNSEC3) == 0 {
+		t.Fatalf("NSEC3 wildcard answer lacks the answer or the next-closer NSEC3: %v", n3)
+	}
+
+	bare := ask(t, "127.0.53.12", ready.Port, "x.w.wild.test.", dns.TypeA, true, "udp")
+	if countType(bare.Answer, dns.TypeA) != 1 || countType(bare.Ns, dns.TypeNSEC) != 0 {
+		t.Fatalf("wild.test. must answer without the next-closer NSEC: %v", bare)
+	}
+}
+
 func countType(rrs []dns.RR, t uint16) int {
 	n := 0
 	for _, rr := range rrs {
@@ -227,7 +302,8 @@ func TestLameDelegationHasUnreachableLameAndWorkingServers(t *testing.T) {
 
 // TestDelvValidatesTheHierarchyIndependently checks the signing with BIND's delv (no engine):
 // through the forwarder endpoint, under the per-run root DS, good.test. validates, bad.test.
-// fails, the NSEC3 denial of n3.test. validates and plain.test. is provably insecure.
+// fails, the NSEC3 denial of n3.test. validates, plain.test. is provably insecure, wildcard answers
+// and wildcard NODATA validate and wild.test.'s wildcard answer without its next-closer proof fails.
 func TestDelvValidatesTheHierarchyIndependently(t *testing.T) {
 	delv, err := exec.LookPath("delv")
 	if err != nil {
@@ -252,6 +328,10 @@ func TestDelvValidatesTheHierarchyIndependently(t *testing.T) {
 		{"www.glueless.test.", "A", "; unsigned answer"},
 		{"www.lame.test.", "A", "; unsigned answer"},
 		{"www.bad.test.", "A", "resolution failed"},
+		{"x.w.good.test.", "A", "; fully validated"},
+		{"x.w.good.test.", "AAAA", "; negative response, fully validated"},
+		{"x.w.n3.test.", "A", "; fully validated"},
+		{"x.w.wild.test.", "A", "resolution failed"},
 	} {
 		// delv is resolved from $PATH and every argument is built by this test.
 		out, _ := exec.Command(delv, "@"+host, "-p", port, "-a", anchors, "+root=.", c.name, c.qtype).CombinedOutput() // nosemgrep: dangerous-exec-command
