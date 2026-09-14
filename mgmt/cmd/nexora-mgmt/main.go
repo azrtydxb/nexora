@@ -311,6 +311,8 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	hub := control.NewHub(st, instanceID)
 	hub.RPZTsig = control.NewRPZTsig(st, box)
 	hub.TSIGKeys = control.NewTSIGKeys(st, box)
+	logs := control.NewLogBroker(st)
+	hub.SetLogBroker(logs)
 	go func() { _ = hub.Run(ctx) }()
 	go (&rollout.Controller{Store: st, Tick: cfg.RolloutTick}).Run(ctx)
 	go snapshot.RunNTAExpiry(ctx, st, build)
@@ -363,6 +365,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
 			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
+			EngineLogs: logs,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -388,6 +391,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		return scheduler.Notify(ctx, ev.Zone, ev.Source)
 	}
 	controlServer.OnUpdate = (&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).Apply
+	controlServer.SetLogBroker(logs)
 	controlv1.RegisterEngineControlServer(srv, controlServer)
 	if builtinLog != nil {
 		builtinLog.Authenticate = controlServer.Authenticate

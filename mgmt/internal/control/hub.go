@@ -29,7 +29,7 @@ const (
 )
 
 // Notification channels the hub listens on. Rollout carries an engine group id; the others an
-// engine id.
+// engine id. The hub also listens on the engine log channels (logs.go).
 const (
 	ChannelRollout       = "nexora_rollout"
 	ChannelEngineUpdated = "nexora_engine_updated"
@@ -47,6 +47,8 @@ type Hub struct {
 	RPZTsig *RPZTsig
 	// TSIGKeys, when set, supplies the hosted-zone TSIG keys (KeyMaterial) pushed with every broadcast.
 	TSIGKeys *TSIGKeys
+
+	logs *LogBroker // set before Run (SetLogBroker); nil: replies stored by other instances are not read
 
 	mu   sync.Mutex
 	subs map[*subscriber]struct{}
@@ -75,6 +77,8 @@ type subscriber struct {
 	results chan *controlv1.ServerMessage
 	// updateSlots bounds the updates of this engine being applied at once.
 	updateSlots chan struct{}
+	// logs carries LogRequest messages; a request that does not fit is dropped and its reader times out.
+	logs chan *controlv1.LogRequest
 
 	mu                sync.Mutex
 	engineGroupID     uuid.UUID // from the last target loaded
@@ -83,9 +87,11 @@ type subscriber struct {
 	keyMaterialDigest string    // digest of the last KeyMaterial queued ("" = none)
 	updateTokens      float64
 	updateRefilled    time.Time
+	logRequests       map[string]time.Time // ids of log requests sent and not yet answered
 }
 
 const (
+	logsQueue          = 4
 	resultsQueue       = 64
 	maxInflightUpdates = 16
 	updateRate         = 50.0 // per second, per engine
@@ -97,7 +103,7 @@ func newSubscriber(engineID string, applied uint64) *subscriber {
 		control: make(chan *controlv1.ServerMessage, 4), revoked: make(chan struct{}),
 		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1),
 		results: make(chan *controlv1.ServerMessage, resultsQueue), updateSlots: make(chan struct{}, maxInflightUpdates),
-		updateTokens: updateBurst}
+		updateTokens: updateBurst, logs: make(chan *controlv1.LogRequest, logsQueue), logRequests: map[string]time.Time{}}
 }
 
 // allowUpdate takes one token from the engine's update bucket (updateRate per second, updateBurst deep).
@@ -261,7 +267,7 @@ func (h *Hub) listen(ctx context.Context) error {
 		return store.MapError(err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	for _, ch := range []string{ChannelRollout, ChannelEngineUpdated, ChannelEngineRevoked, ChannelEngineRotate} {
+	for _, ch := range []string{ChannelRollout, ChannelEngineUpdated, ChannelEngineRevoked, ChannelEngineRotate, ChannelEngineLogs, ChannelEngineLogsDone} {
 		if _, err := conn.Exec(ctx, "listen "+ch); err != nil {
 			return store.MapError(err)
 		}
@@ -303,6 +309,16 @@ func (h *Hub) listen(ctx context.Context) error {
 func (h *Hub) handle(ctx context.Context, batch []*pgconn.Notification) {
 	groups, engines := map[uuid.UUID]bool{}, map[uuid.UUID]bool{}
 	for _, n := range batch {
+		switch n.Channel {
+		case ChannelEngineLogs:
+			h.offerLogNote(n.Payload)
+			continue
+		case ChannelEngineLogsDone:
+			if h.logs != nil {
+				h.logs.Done(n.Payload)
+			}
+			continue
+		}
 		id, err := uuid.Parse(n.Payload)
 		if err != nil {
 			slog.Warn("notification payload is not a uuid", "channel", n.Channel)

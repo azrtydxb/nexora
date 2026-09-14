@@ -52,6 +52,7 @@ type Server struct {
 	hub        *Hub
 	instanceID string
 	dnsTLS     *DNSTLSFanout
+	logs       *LogBroker // set before serving (SetLogBroker)
 }
 
 // NewServer creates the EngineControl server of one instance.
@@ -221,6 +222,10 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				if err := stream.Send(msg); err != nil {
 					return
 				}
+			case r := <-sub.logs:
+				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_LogRequest{LogRequest: r}}); err != nil {
+					return
+				}
 			case m := <-tlsCh:
 				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}); err != nil {
 					return
@@ -289,6 +294,11 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			s.update(ctx, sub, m.UpdateRequest)
 		case *controlv1.EngineMessage_CertRequest:
 			err = s.renew(ctx, sub, m.CertRequest)
+		case *controlv1.EngineMessage_LogBatch:
+			// Only a reply to a request sent on this stream is handed on.
+			if s.logs != nil && sub.takeLogRequest(m.LogBatch.RequestId) {
+				s.logs.Deliver(ctx, m.LogBatch)
+			}
 		case *controlv1.EngineMessage_TlsMaterialResult:
 			res := m.TlsMaterialResult
 			s.dnsTLS.Result(sub.engineID, res)
