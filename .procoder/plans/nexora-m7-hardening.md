@@ -753,13 +753,13 @@ Interfaces:
 - `Runtime.labels: Arc<[Arc<RecordLabels>]>`, newest first
 - `telemetry::otlp::MAX_INFLIGHT: usize = 4`
 
-- [ ] Extend `Sink` in `telemetry_export.rs` with `upstreams: Arc<parking_lot::Mutex<Vec<String>>>`, `delay: Duration`, `active: Arc<AtomicUsize>` and `peak: Arc<AtomicUsize>`. In `LogsService::export`:
+- [x] Extend `Sink` in `telemetry_export.rs` with `upstreams: Arc<parking_lot::Mutex<Vec<String>>>`, `delay: Duration`, `active: Arc<AtomicUsize>` and `peak: Arc<AtomicUsize>`. In `LogsService::export`:
   - increment `active` and raise `peak` to it;
   - `tokio::time::sleep(self.delay).await`;
   - push every `nexora.upstream` attribute string into `upstreams`;
   - decrement `active`.
   - Existing tests keep `Sink::default()` (delay zero).
-- [ ] Add the two tests:
+- [x] Add the two tests:
   ```rust
   fn serve(sink: Sink) -> (tokio::runtime::Runtime, std::net::SocketAddr) {
       let rt = tokio::runtime::Runtime::new().unwrap();
@@ -813,10 +813,10 @@ Interfaces:
       assert!(sink.peak.load(Ordering::SeqCst) > 1, "exports never overlapped");
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export'`. Expect both new tests to FAIL:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export'`. Expect both new tests to FAIL:
   - `upstream_label_uses_the_runtime_that_answered` with `left: ["other"]`;
   - `slow_collector_does_not_drop_with_concurrent_exports` with a non-zero drop count (one export at a time clears about 2.5 batches/s against 10/s arriving).
-- [ ] In `runtime.rs`:
+- [x] In `runtime.rs`:
   - add `LABEL_HISTORY`, `RecordLabels` and the field `labels`;
   - `Runtime::initial()` gets `labels: Arc::from([])`;
   - in `build_with`, after the upstreams and policy are built:
@@ -824,15 +824,15 @@ Interfaces:
   let current = Arc::new(RecordLabels {
       version: s.version,
       upstreams: upstreams.specs.iter().map(|u| u.name.clone()).collect(),
-      groups: (0..policy.group_count()).map(|i| policy.group(i as u16).map_or(String::new(), |g| g.group_id().to_owned())).collect(),
+      groups: (0..=u16::MAX).map_while(|i| policy.group(i)).map(|g| g.group_id().to_owned()).collect(),
   });
   let labels: Arc<[Arc<RecordLabels>]> = std::iter::once(current)
       .chain(previous.into_iter().flat_map(|p| p.labels.iter().filter(|l| l.version != s.version).cloned()))
       .take(LABEL_HISTORY)
       .collect();
   ```
-  Use the names the committed `PolicyTable` has for its group count and lookup (`rt.policy.group(r.policy_group)` is what `otlp.rs` calls today).
-- [ ] In `otlp.rs`, replace `upstream_name` (and the policy-group lookup in `drain`) with:
+  The committed `PolicyTable` has no group count, so the groups are enumerated with `group(i)` until it returns `None` (`engine/src/filter.rs` is not this task's file).
+- [x] In `otlp.rs`, replace `upstream_name` (and the policy-group lookup in `drain`) with:
   ```rust
   /// The labels of the runtime that answered `r`: empty when that version is no longer kept.
   fn labels<'a>(rt: &'a Runtime, r: &QueryRecord) -> (&'a str, &'a str) {
@@ -844,13 +844,17 @@ Interfaces:
       })
   }
   ```
-- [ ] Still in `otlp.rs`, add `pub const MAX_INFLIGHT: usize = 4;`.
+- [x] Still in `otlp.rs`, add `pub const MAX_INFLIGHT: usize = 4;`.
   - Change `export_batch` to return the export future (`impl Future<Output = ()> + 'static`) instead of spawning.
   - In `run`, replace `inflight: Option<JoinHandle<()>>` with `let mut inflight = tokio::task::JoinSet::new();` and the select arm `Some(_) = inflight.join_next(), if !inflight.is_empty() => {}`.
   - After `ex.drain()`:
   ```rust
   // Drain again at once while a full batch waits, and keep up to MAX_INFLIGHT exports running.
-  while ex.shared.querylog.len() >= BATCH_MAX && ex.queue.len() < MAX_QUEUED_BATCHES {
+  // Bounded, so records that never form a batch (logs off) cannot starve the loop.
+  for _ in 0..MAX_QUEUED_BATCHES {
+      if ex.shared.querylog.len() < BATCH_MAX || ex.queue.len() >= MAX_QUEUED_BATCHES {
+          break;
+      }
       ex.drain();
   }
   while inflight.len() < MAX_INFLIGHT && let Some(batch) = ex.queue.pop_front() {
@@ -858,7 +862,7 @@ Interfaces:
   }
   ```
   Delete both `debt:` comments.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect all to pass.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect all to pass.
 
 ## Task 10: Recursor memory budget, atomic infra updates, uncapped NSEC cache (#16, #17, #18)
 

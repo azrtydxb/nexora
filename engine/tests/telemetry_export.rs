@@ -50,6 +50,13 @@ fn record(rcode: u8) -> QueryRecord {
 struct Sink {
     logs: Arc<AtomicUsize>,
     spans: Arc<AtomicUsize>,
+    /// Every `nexora.upstream` attribute of the exported log records, in arrival order.
+    upstreams: Arc<parking_lot::Mutex<Vec<String>>>,
+    /// How long each log export takes to answer.
+    delay: Duration,
+    /// Log exports in progress, and the most that ever overlapped.
+    active: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
 }
 #[tonic::async_trait]
 impl LogsService for Sink {
@@ -57,14 +64,29 @@ impl LogsService for Sink {
         &self,
         req: tonic::Request<ExportLogsServiceRequest>,
     ) -> Result<tonic::Response<ExportLogsServiceResponse>, tonic::Status> {
-        let n: usize = req
-            .into_inner()
-            .resource_logs
-            .iter()
-            .flat_map(|r| &r.scope_logs)
-            .map(|s| s.log_records.len())
-            .sum();
-        self.logs.fetch_add(n, Ordering::SeqCst);
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        tokio::time::sleep(self.delay).await;
+        let req = req.into_inner();
+        let records = || {
+            req.resource_logs
+                .iter()
+                .flat_map(|r| &r.scope_logs)
+                .flat_map(|s| &s.log_records)
+        };
+        self.upstreams.lock().extend(
+            records()
+                .flat_map(|r| &r.attributes)
+                .filter(|kv| kv.key == "nexora.upstream")
+                .filter_map(|kv| match kv.value.as_ref()?.value.as_ref()? {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(v) => {
+                        Some(v.clone())
+                    }
+                    _ => None,
+                }),
+        );
+        self.logs.fetch_add(records().count(), Ordering::SeqCst);
+        self.active.fetch_sub(1, Ordering::SeqCst);
         Ok(tonic::Response::new(ExportLogsServiceResponse::default()))
     }
 }
@@ -124,6 +146,119 @@ fn shared_with_endpoint(endpoint: &str) -> Arc<Shared> {
         None,
     );
     shared
+}
+
+/// Applies the snapshot of [`shared_with_endpoint`] (keeping its telemetry) at `version`, with one
+/// upstream per name in that order.
+fn apply_reordered(shared: &Shared, version: u64, names: &[&str]) {
+    let tmp = tempfile::tempdir().unwrap();
+    let current = shared.runtime.load_full();
+    let snap = ConfigSnapshot {
+        version,
+        cache: Some(CacheConfig {
+            max_bytes: 2 << 20,
+            max_ttl: 86400,
+            negative_max_ttl: 60,
+            ..Default::default()
+        }),
+        upstreams: names
+            .iter()
+            .map(|name| Upstream {
+                id: format!("u-{name}"),
+                name: (*name).into(),
+                protocol: UpstreamProtocol::Udp as i32,
+                address: "127.0.0.1:9".into(),
+                timeout_ms: 100,
+                ..Default::default()
+            })
+            .collect(),
+        resolver: Some(ResolverConfig::default()),
+        filter: Some(FilterConfig::default()),
+        telemetry: Some(TelemetryConfig {
+            otlp_endpoint: current.telemetry.otlp_endpoint.clone(),
+            trace_sample_one_in: 0,
+            trace_slow_threshold_us: 0,
+            querylog_to_management: false,
+        }),
+        ..Default::default()
+    };
+    let outcome = apply(
+        &shared.runtime,
+        snap,
+        &DirBlobs {
+            dir: tmp.path().into(),
+        },
+        None,
+    );
+    assert_eq!(shared.runtime.load().version, version, "{outcome:?}");
+}
+
+fn serve(sink: Sink) -> (tokio::runtime::Runtime, std::net::SocketAddr) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let listener = rt
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    rt.spawn(
+        tonic::transport::Server::builder()
+            .add_service(LogsServiceServer::new(sink.clone()))
+            .add_service(TraceServiceServer::new(sink))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+    );
+    (rt, addr)
+}
+
+#[test]
+fn upstream_label_uses_the_runtime_that_answered() {
+    let sink = Sink::default();
+    let (_rt, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    // Version 2 reorders the upstreams before the version-1 record is drained.
+    push(&shared.querylog, &shared.metrics, record(0)); // upstream 0, config_version 1
+    apply_reordered(&shared, 2, &["other", "fixture"]);
+    let _t = spawn_telemetry_thread(shared.clone());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while sink.upstreams.lock().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(*sink.upstreams.lock(), vec!["fixture".to_string()]);
+}
+
+#[test]
+fn slow_collector_does_not_drop_with_concurrent_exports() {
+    // 10 batches/s arrive. A 250 ms collector clears 4/s with one export at a time (the queue of 8
+    // overflows within a few seconds) but 16/s with four concurrent exports, which leaves headroom
+    // for a loaded CI host.
+    let sink = Sink {
+        delay: Duration::from_millis(250),
+        ..Sink::default()
+    };
+    let (_rt, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    let _t = spawn_telemetry_thread(shared.clone());
+    for _ in 0..20 {
+        for _ in 0..1000 {
+            push(&shared.querylog, &shared.metrics, record(0));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while sink.logs.load(Ordering::SeqCst) + (shared.metrics.dropped(Signal::Logs) as usize)
+        < 20_000
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        shared.metrics.dropped(Signal::Logs),
+        0,
+        "logs dropped behind a 250 ms collector"
+    );
+    assert_eq!(sink.logs.load(Ordering::SeqCst), 20_000);
+    assert!(
+        sink.peak.load(Ordering::SeqCst) > 1,
+        "exports never overlapped"
+    );
 }
 
 #[test]

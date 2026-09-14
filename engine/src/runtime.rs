@@ -18,6 +18,20 @@ use std::time::Duration;
 
 const INITIAL_CACHE_BYTES: u64 = 16 << 20;
 
+/// How many configuration versions keep their record labels: records are drained within
+/// 100 ms, so only a burst of more reloads than this in that window loses a label.
+pub const LABEL_HISTORY: usize = 8;
+
+/// The names a query record's indexes refer to under one configuration version.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RecordLabels {
+    pub version: u64,
+    /// Upstream names by index in the `UpstreamSet`.
+    pub upstreams: Vec<String>,
+    /// Policy group ids by index in the `PolicyTable`.
+    pub groups: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TelemetrySettings {
     pub otlp_endpoint: String,
@@ -55,6 +69,8 @@ pub struct Runtime {
     pub auth_loads: LoadCounts,
     /// Lowercase wire origin and serial of zones that are new or changed serial in this runtime.
     pub auth_changed: Vec<(Box<[u8]>, u32)>,
+    /// Record labels of this version and up to [`LABEL_HISTORY`] - 1 earlier ones, newest first.
+    pub labels: Arc<[Arc<RecordLabels>]>,
 }
 
 impl Runtime {
@@ -90,6 +106,7 @@ impl Runtime {
             auth: Arc::new(AuthSet::empty()),
             auth_loads: LoadCounts::default(),
             auth_changed: Vec::new(),
+            labels: Arc::from([]),
         }
     }
 
@@ -179,6 +196,22 @@ impl Runtime {
         ));
         let policy = PolicyTable::build(s, &lists, &filter_index, global, block)
             .map_err(SnapshotError::Invalid)?;
+        let current = Arc::new(RecordLabels {
+            version: s.version,
+            upstreams: upstreams.specs.iter().map(|u| u.name.clone()).collect(),
+            groups: (0..=u16::MAX)
+                .map_while(|i| policy.group(i))
+                .map(|g| g.group_id().to_owned())
+                .collect(),
+        });
+        let labels: Arc<[Arc<RecordLabels>]> = std::iter::once(current)
+            .chain(
+                previous
+                    .into_iter()
+                    .flat_map(|p| p.labels.iter().filter(|l| l.version != s.version).cloned()),
+            )
+            .take(LABEL_HISTORY)
+            .collect();
         let filter_memory_bytes = filter_index.memory_bytes() + policy.views_memory_bytes();
         if filter_memory_bytes > filter_max_bytes {
             return Err(SnapshotError::Invalid(
@@ -233,6 +266,7 @@ impl Runtime {
             auth: Arc::new(loaded.set),
             auth_loads: loaded.counts,
             auth_changed: loaded.changed,
+            labels,
         })
     }
 }
