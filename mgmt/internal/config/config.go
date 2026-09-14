@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ type Config struct {
 	CatalogMirror string
 	// RepositoryURL, when set, is the https source repository the GUI links the build commit to.
 	RepositoryURL string
+	// TrustedProxies are the reverse proxy networks whose X-Forwarded-For names the client
+	// (NEXORA_TRUSTED_PROXY_CIDRS, comma separated).
+	TrustedProxies []netip.Prefix
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -147,6 +151,16 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.RepositoryURL != "" && !strings.HasPrefix(c.RepositoryURL, "https://") {
 		return Config{}, fmt.Errorf("NEXORA_REPOSITORY_URL must be an https URL")
+	}
+	for _, v := range strings.Split(getenv("NEXORA_TRUSTED_PROXY_CIDRS"), ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("NEXORA_TRUSTED_PROXY_CIDRS: %w", err)
+		}
+		c.TrustedProxies = append(c.TrustedProxies, p.Masked())
 	}
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {

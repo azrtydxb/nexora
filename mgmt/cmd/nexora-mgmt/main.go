@@ -269,6 +269,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 	api.RepositoryURL = cfg.RepositoryURL
+	api.TrustedProxies = cfg.TrustedProxies
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err

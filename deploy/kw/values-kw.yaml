@@ -6,6 +6,10 @@ mgmt:
   replicas: 2
   publicURL: https://nexora.kw.local
   secureCookies: true
+  # ingress-nginx runs on the pod network: believe its X-Forwarded-For so the login throttle keys on
+  # the real client address.
+  extraEnv:
+    - { name: NEXORA_TRUSTED_PROXY_CIDRS, value: "10.42.0.0/16" }
   grpcServerNames: [nexora-mgmt-grpc.nexora.svc]
   otlpEndpoint: http://nexora-otelcol.nexora.svc.cluster.local:4317
   ca: { existingSecret: nexora-ca }
