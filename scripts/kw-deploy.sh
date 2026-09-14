@@ -78,12 +78,27 @@ k apply -f "$kw/bind-primary.yaml"
 k rollout status deployment/nexora-bind --timeout=5m
 
 # The DNS serving certificate for DoT/DoH/DoQ; its key only exists in the temporary directory and the Secret.
+# Reissued when an address is missing from its SANs (e.g. after adding a DNS address).
+# The addresses come from the chart: every engine group Service (main and extraServices) with a
+# loadBalancerIP, so adding a DNS address (up to four client addresses are planned) only touches values-kw.yaml.
+dns_ips=$(helm --kube-context "$ctx" template nexora "$root/deploy/helm/nexora" -n "$ns" -f "$kw/values-kw.yaml" \
+	--api-versions monitoring.coreos.com/v1 --api-versions postgresql.cnpg.io/v1 |
+	awk '/^kind: Service$/ {svc = 1} /^---/ {svc = 0; eng = 0} svc && /nexora.io\/engine-group:/ {eng = 1} svc && eng && /loadBalancerIP:/ {print $2; eng = 0}' |
+	sort -u | paste -sd, -)
+[ -n "$dns_ips" ] || { echo "no engine group loadBalancerIP found in the chart" >&2; exit 1; }
+dns_names="dns.nexora.kw.local,$dns_ips"
+if k get secret nexora-dns-tls >/dev/null 2>&1; then
+	sans=$(k get secret nexora-dns-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -ext subjectAltName 2>/dev/null)
+	for n in ${dns_names//,/ }; do
+		grep -q -- "$n" <<<"$sans" || { k delete secret nexora-dns-tls >/dev/null && break; }
+	done
+fi
 if ! k get secret nexora-dns-tls >/dev/null 2>&1; then
 	(umask 077 && mkdir -p "$tmp/ca-in" &&
 		k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d >"$tmp/ca-in/ca.crt" &&
 		k get secret nexora-ca -o jsonpath='{.data.ca\.key}' | base64 -d >"$tmp/ca-in/ca.key")
 	(cd "$root" && go run ./mgmt/cmd/nexora-mgmt ca issue-dns --ca-cert "$tmp/ca-in/ca.crt" --ca-key "$tmp/ca-in/ca.key" \
-		--names dns.nexora.kw.local,192.168.10.136,192.168.10.137 --days 90 --out "$tmp/dnstls")
+		--names "$dns_names" --days 90 --out "$tmp/dnstls")
 	k create secret tls nexora-dns-tls --cert="$tmp/dnstls/tls.crt" --key="$tmp/dnstls/tls.key"
 	rm -rf "$tmp/ca-in" "$tmp/dnstls"
 fi

@@ -179,6 +179,21 @@
                   "loadBalancerIP": { "type": "string" },
                   "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                 }
+              },
+              "extraServices": {
+                "type": "array",
+                "description": "Additional Services (addresses) for the same engine group, e.g. a second DNS server IP.",
+                "items": {
+                  "type": "object",
+                  "required": ["name"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+                    "loadBalancerIP": { "type": "string" },
+                    "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
+                  },
+                  "additionalProperties": false
+                }
               }
             }
           }

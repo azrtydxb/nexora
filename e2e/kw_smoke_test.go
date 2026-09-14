@@ -39,7 +39,9 @@ type kwEnv struct {
 	// engineAddr is one default-group engine pod (ip:53). Checks that depend on a single engine's
 	// cache use it: inside the cluster the DNS LoadBalancer IP spreads queries over all engines,
 	// each with its own cache (externalTrafficPolicy: Local only applies to external clients).
-	engineAddr         string
+	engineAddr string
+	// secondDNSAddr is the second client-facing DNS address of the default group (ip:53).
+	secondDNSAddr      string
 	engines            int
 	dnsRoots, apiRoots *x509.CertPool
 	password           string
@@ -51,6 +53,7 @@ func loadKwEnv(t *testing.T) kwEnv {
 		dnsAddr: os.Getenv("NEXORA_KW_DNS_ADDR"), apiURL: strings.TrimSuffix(os.Getenv("NEXORA_KW_API_URL"), "/"),
 		encAddr: os.Getenv("NEXORA_KW_ENCRYPTED_ADDR"), tlsName: os.Getenv("NEXORA_KW_DNS_TLS_NAME"),
 		mgmtLBIP: os.Getenv("NEXORA_KW_MGMT_LB_IP"), engineAddr: os.Getenv("NEXORA_KW_ENGINE_ADDR"),
+		secondDNSAddr: os.Getenv("NEXORA_KW_DNS_ADDR_2"),
 	}
 	if e.dnsAddr == "" || e.apiURL == "" {
 		t.Skip("NEXORA_KW_DNS_ADDR and NEXORA_KW_API_URL are not set")
@@ -134,6 +137,20 @@ func TestKwSmoke(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(page), `id="root"`) {
 		t.Fatalf("GUI not served: %d", resp.StatusCode)
 	}
+
+	t.Run("second-dns-address", func(t *testing.T) {
+		if env.secondDNSAddr == "" {
+			t.Skip("NEXORA_KW_DNS_ADDR_2 is not set")
+		}
+		for _, network := range []string{"udp", "tcp"} {
+			m := new(dns.Msg)
+			m.SetQuestion("example.com.", dns.TypeA)
+			r, _, err := (&dns.Client{Net: network, Timeout: 3 * time.Second}).Exchange(m, env.secondDNSAddr)
+			if err != nil || r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
+				t.Fatalf("%s query via %s: %v %v", network, env.secondDNSAddr, r, err)
+			}
+		}
+	})
 
 	t.Run("http-redirects-to-https", func(t *testing.T) {
 		plain := "http://" + strings.TrimPrefix(env.apiURL, "https://") + "/api/v1/health"

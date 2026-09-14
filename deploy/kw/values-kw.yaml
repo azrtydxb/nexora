@@ -78,6 +78,15 @@ engine:
           loadBalancerIP: 192.168.10.136,
           externalTrafficPolicy: Local,
         }
+      # Second DNS server address for LAN clients (DHCP hands out .136 and .139). With kube-vip
+      # per-service election each address can be announced from a different control-plane node.
+      extraServices:
+        - {
+            name: nexora-dns-2,
+            type: LoadBalancer,
+            loadBalancerIP: 192.168.10.139,
+            externalTrafficPolicy: Local,
+          }
     - name: edge-b
       workloadName: nexora-engine-edge-b
       nodeNamePrefix: edge-b-

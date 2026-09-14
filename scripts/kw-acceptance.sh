@@ -24,7 +24,7 @@ edge_ips=$(k get pods -l nexora.io/engine-group=edge-b --field-selector=status.p
 	-o jsonpath='{range .items[*]}{.status.podIP}{","}{end}')
 
 exec "$(dirname "$0")/dev-exec.sh" env \
-	NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_ENGINE_ADDR="${engine_ip}:53" NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53 \
+	NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_DNS_ADDR_2=192.168.10.139:53 NEXORA_KW_ENGINE_ADDR="${engine_ip}:53" NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53 \
 	NEXORA_KW_EDGE_B_ENGINE_IPS="${edge_ips%,}" NEXORA_KW_API_URL=https://nexora.kw.local \
 	NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
 	NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES="$engines" \

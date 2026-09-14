@@ -174,6 +174,12 @@ func TestHelmTemplate(t *testing.T) {
 			t.Errorf("%s ports = %v, want dns-udp, dns-tcp, dot, doq, doh", g.service, svc.path("spec", "ports"))
 		}
 	}
+	// The second DNS server address serves the same default group and keeps client addresses.
+	second := find(t, kw, "Service", "nexora-dns-2")
+	if second.path("spec", "loadBalancerIP") != "192.168.10.139" || second.path("spec", "externalTrafficPolicy") != "Local" ||
+		second.path("spec", "selector", "nexora.io/engine-group") != "default" || len(second.path("spec", "ports").([]any)) != 5 {
+		t.Errorf("nexora-dns-2 = %v", second["spec"])
+	}
 	find(t, kw, "Service", "nexora-engine-metrics")
 	if has(kw, "Cluster") {
 		t.Error("kw uses its existing CNPG cluster (external database mode)")

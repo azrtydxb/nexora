@@ -78,12 +78,31 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
   `192.168.10.135:9443` outside (both in the server certificate).
 - DNS, engine group `default` (DaemonSet `nexora-engine`, every node without the label below), on
   `192.168.10.136`: 53 UDP/TCP, DoT 853/TCP, DoQ 853/UDP, DoH `https://192.168.10.136/dns-query`
-  (443/TCP). The serving certificate names `dns.nexora.kw.local`, `192.168.10.136` and `192.168.10.137` and is issued
+  (443/TCP), and on the second address `192.168.10.139` (Service `nexora-dns-2`, same group and ports) —
+  hand out both `192.168.10.136` and `192.168.10.139` as DNS servers to LAN clients. The serving
+  certificate names `dns.nexora.kw.local`, `192.168.10.136`, `192.168.10.137` and `192.168.10.139` and is issued
   by the Nexora CA (`nexora-ca`), e.g.
   `kdig @192.168.10.136 +tls-ca=/work/kw-ca.crt +tls-hostname=dns.nexora.kw.local example.com`
   (`+https`, `+quic` likewise).
-- The `default` DNS Service uses `externalTrafficPolicy: Local` and its engines run on every node
+- The `default` DNS Services use `externalTrafficPolicy: Local` and their engines run on every node
   kube-vip may announce from, so engines (per-client policy, query log) see the real client address.
+- kube-vip (DaemonSet `kube-system/kube-vip-ds`, applied by hand, not by this repository) runs with
+  per-service election (`svc_election=true`) and `vip_nodename` from `spec.nodeName`, so each
+  LoadBalancer IP is announced by one control-plane node and `Local` services match the Kubernetes node
+  names of their endpoints (without `vip_nodename` kube-vip uses the OS hostname, e.g. `km02`, never
+  matches `master-12`, and leaves `Local` services pending). The kube-vip pool (`kube-system/kubevip`,
+  `range-global`) is `192.168.10.120-137,139-154` (`.138` is another device; UniFi DHCP excludes
+  139–154). Election is first come, first served: check that `.136` and `.139` sit on different nodes
+  (`kubectl -n nexora get lease kubevip-nexora-dns kubevip-nexora-dns-2`); if not, delete the lease
+  `kubevip-nexora-dns-2` until it moves.
+- More client DNS addresses (up to four are planned): add entries to the `default` group's
+  `extraServices` in `values-kw.yaml` with free pool addresses (`192.168.10.140`–`154`) and run
+  `scripts/kw-deploy.sh`; the DNS serving certificate's SANs are derived from the chart and reissued
+  when an address is missing. kube-vip only runs on the three control-plane nodes, so with four addresses
+  at least two share a node — spread them with the lease check above.
+- Moving a home network over: point DHCP clients at `.136` and `.139`, but keep the gateway's own
+  upstream DNS and the kw nodes' resolver (`192.168.10.1`) independent of Nexora, or the cluster ends up
+  depending on its own DNS. Every `scripts/kw-deploy.sh` run currently interrupts DNS (issue #53).
 - DNS, engine group `edge-b` (DaemonSet `nexora-engine-edge-b`, nodes `worker-24` and `worker-25`
   labelled `nexora.io/engine-group=edge-b`, engine names `edge-b-<node>`), on `192.168.10.137` with the
   same ports and `externalTrafficPolicy: Cluster`: engines there see node addresses.

@@ -1,6 +1,6 @@
 # What a human decided
 
-Written 2026-09-14 07:03 UTC. procoder reads this
+Written 2026-09-14 16:05 UTC. procoder reads this
 file to avoid asking a question twice; edit an answer here to change what
 it believes. Reword the question and it will be asked again.
 
@@ -36,3 +36,16 @@ Question: Static egress IP for Nexora engines on kw (UniFi DNS interception bypa
 - kube-vip egress annotation on the DNS Service (only works for the engine on the VIP node; not viable for a DaemonSet)
 
 Answer: None of the options — the user disabled the UniFi DNS content filter (the redirect source) instead; kw nodes now use 192.168.10.1 as resolver and kw runs recursive mode (issue #1, 2026-09-14).
+
+## [decision] decisions.md
+
+Key: 716c6aaeda1d
+Question: Enlarge kube-vip pool and add second Nexora DNS IP
+
+- Apply now: pool 192.168.10.120-137,139-154 (skip .138), kube-vip per-service election on, second default-group DNS IP 192.168.10.139 on a different node than .136 (user confirms UniFi DHCP excludes 139-154)
+- Wait: user first checks UniFi DHCP range/fixed IPs and the .138 device
+- Different range: user provides another block
+
+**Answer (2026-09-14):** Apply now — user confirmed UniFi DHCP excludes 192.168.10.139-154.
+
+Answer: Apply now — user confirmed UniFi DHCP excludes 192.168.10.139-154 (2026-09-14); applied: pool 120-137,139-154, svc_election=true, vip_nodename=spec.nodeName, nexora-dns-2 on 192.168.10.139.
