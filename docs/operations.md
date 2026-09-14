@@ -788,6 +788,33 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
   perfgate and writes `bin/perf.json`. Compare runs on the same machine only;
   a loaded shared machine is too noisy for small differences.
 
+## Filter index performance
+
+Measured with `engine/examples/filter_bench.rs` on kw (node `worker-23`, RK3588; decisions on
+Cortex-A76 cores 4–5, CPU part `0xd0b`; build with 2 threads) against the 5.1M-name corpus in the
+dev pod (`/work/lists/clean-*.txt`: HaGeZi pro and TIF, Blocklist Project malware and porn, OISD
+nsfw). The v1 row is `FilterSet` on the same samples in the same run. Targets: < 150 ns per
+decision, < 120 MB, < 1.5 s build.
+
+| date       | commit                   | unique names | index bytes     | bytes per name | build (2 threads) | blocked ns | clean ns | stash entries |
+| ---------- | ------------------------ | ------------ | --------------- | -------------- | ----------------- | ---------- | -------- | ------------- |
+| 2026-09-14 | uncommitted on `2644b27` | 5,136,759    | 118,199,700     | 23.0           | 1.87 s            | 284        | 107      | 14,236        |
+| 2026-09-14 | v1 `FilterSet`, same run | 5,136,759    | 323,956,736 RSS | 63.1           | 2.65 s            | 388        | 264      | —             |
+| spec       | v1 baseline (5.1M)       | 5.1M         | 309 MB          | 63             | 2.8 s             | 400        | 285      | —             |
+
+Blocked decisions miss the 150 ns target: the same binary decides a blocked name in 137 ns when
+the index is in cache, and every blocked sample needs one uncached block, which costs this node
+~140 ns more (a dependent DRAM read measures ~110 ns). Build misses 1.5 s.
+
+```
+scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example filter_bench &&
+  taskset -c 4,5 "${CARGO_TARGET_DIR:-target}/release/examples/filter_bench" --threads 2 --rounds 9 \
+  --json /tmp/filter-bench-kw.json /work/lists/clean-*.txt'
+```
+
+`scripts/filter-corpus.sh <dir>` downloads the default catalog selection
+(`bench/filter/corpus-5m.tsv`) as one normalised list per source for the same command.
+
 ## kw deployment
 
 kw is the project's lab cluster (arm64 k3s). The procedure, secrets and manual

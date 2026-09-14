@@ -16,7 +16,10 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/clock.rs                          coarse monotonic seconds clock
   src/cache.rs                          wire-format response cache
   src/acl.rs                            client CIDR allow list
-  src/filter.rs                         blocklist/allowlist matcher, per-client policy (M2)
+  src/filter.rs                         block replies, rewrites, per-client policy (M2) on filter views
+  src/filter/{names,prefetch,storage}.rs suffix hashing and 7-bit wire packing, cache prefetch, huge-page bytes
+  src/filter/{index,lists,calibrate}.rs shared filter index and views, snapshot list collection, decision timing
+  src/filter/synth.rs                   deterministic synthetic lists for tests and filter_bench
   src/upstream/{mod,udp,tcp,dot,doh}.rs forwarding transports + health
   src/inflight.rs                       cross-worker request coalescing
   src/runtime.rs                        applied-config state (ArcSwap<Runtime>)
@@ -48,6 +51,7 @@ mgmt/                                   Go management plane (module root is repo
   internal/auth                         users, sessions, tokens, RBAC, OIDC, audit
   internal/api                          oapi-codegen strict server + handlers
   internal/blocklist                    list fetcher/parser
+  internal/catalog                      embedded filter category catalog (catalog.yaml) and its sync into filter_lists
   internal/querylog                     query-log backends (builtin OTLP receiver, OpenSearch)
   internal/stats                        engine stats samples
   internal/rollout                      (M5) staged rollout state machine, creation, controller
@@ -204,10 +208,40 @@ host concerns and are not part of the snapshot.
 - Blocklist content is fetched and normalised by the management plane and
   delivered as blobs: zstd-compressed UTF-8, one lowercase ASCII (punycode)
   domain per line, no trailing dot, sorted, unique. Identified by SHA-256 hex
-  of the compressed bytes.
-- An entry blocks the domain and all subdomains. Allowlist beats blocklist.
-- Matching walks label suffixes of the query name against an
-  `FxHashSet<Box<[u8]>>` of lowercase wire names (borrowed lookup, no alloc).
+  of the compressed bytes. `FilterListRef` carries each blob with its
+  `list_id`, `category` (catalog key, empty for custom lists) and `position`
+  (catalog order, then custom lists by name).
+- An entry blocks the domain and all subdomains. Allowlist beats blocklist. A
+  client in a policy group gets only the group's lists.
+- One `filter::index::FilterIndex` per runtime holds every block and allow list
+  of the snapshot (global, groups, categories, inline group allowlists as
+  `group-allow:<sha256>` lists), names deduplicated, each with a list-set id (a
+  deduplicated bitset over the snapshot's lists). Layout: 128-byte blocks
+  (entry count, 8 overflow tag bits, one fingerprint octet per entry, then the
+  entries: symbol count with a marker bit, LEB128 set id, the name's wire form
+  (length octets included, no root) packed 7 bits per octet), a long-name arena
+  for names above 64 symbols, and a stash table for the few names neither
+  candidate holds after one cuckoo relocation step. Fill 0.88; about 23 bytes
+  per name.
+- Placement key: a name is keyed by the seeded 64-bit suffix hash of its last
+  two labels (single-label names by their own hash), so all levels of a query
+  name live in the two candidate blocks of one key. A two-label suffix with
+  more than 4 names is heavy: its deeper names are keyed by their own hash and
+  the suffix gets a marker entry; heavy keys are also kept in a small in-cache
+  table. An entry's fingerprint is the key's fingerprint xor its symbol count.
+  Entries are placed largest first into the less-used candidate.
+- Lookup finds the label starts, hashes the one- and two-label suffixes (every
+  level only under a heavy suffix), prefetches their blocks as soon as each
+  hash is known, matches the fingerprints of every level against both blocks,
+  and confirms a candidate by comparing the query's own octets (7 bits each,
+  high bit rejected) with the stored entry. It never allocates. `FilterView`
+  (per global or group policy) maps a set id to allow/block, the first matching
+  list in position order (attribution) and category slot bits.
+- The index is built on the control runtime with up to four threads, swapped in
+  with the runtime, and reused when every list id, kind and content hash is
+  unchanged. Cap: `ConfigSnapshot.filter_index_max_bytes` when non-zero, else
+  50% of `/sys/fs/cgroup/memory.max`, else 512 MiB; a snapshot whose index and
+  views exceed it is rejected and the previous runtime stays.
 - Answers whose CNAME chain reaches a blocked name are blocked.
 - Block response: `null_ip` (A 0.0.0.0 / AAAA :: , other types NODATA),
   `nxdomain`, or `refused`; TTL `block_ttl`.
@@ -238,7 +272,12 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `nexora_queries_total{transport,rcode}`, `nexora_query_duration_seconds`
   (histogram, buckets 50µs..2s), `nexora_cache_hits_total`,
   `nexora_cache_misses_total`, `nexora_cache_stale_served_total`,
-  `nexora_cache_entries`, `nexora_cache_bytes`, `nexora_filter_blocked_total`,
+  `nexora_cache_entries`, `nexora_cache_bytes`,
+  `nexora_filter_blocked_total{category}` (`custom` for lists without a
+  category; a name in several categories counts in each),
+  `nexora_filter_index_entries`, `nexora_filter_index_bytes`,
+  `nexora_filter_index_max_bytes`, `nexora_filter_index_build_seconds`,
+  `nexora_filter_index_decision_seconds{kind="blocked|clean",cpu}`,
   `nexora_upstream_up{upstream}`, `nexora_upstream_rtt_seconds{upstream}`,
   `nexora_upstream_queries_total{upstream}`,
   `nexora_upstream_failures_total{upstream}`,
@@ -262,7 +301,9 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `client.address`, `dns.question.name`, `dns.question.type`,
   `dns.response.code`, `nexora.cache` (`hit|miss|stale`), `nexora.filter`
   (`none|blocked|allowed|rewritten`), `nexora.policy.group` (policy group id,
-  empty for global clients), `nexora.upstream`, `nexora.duration_us`,
+  empty for global clients), `nexora.filter.list_id` and
+  `nexora.filter.category` (blocked queries only: the first list, in position
+  order, of the longest blocked suffix), `nexora.upstream`, `nexora.duration_us`,
   `nexora.transport`, `nexora.engine.id`. Resource `service.name=nexora-engine`.
 - Traces: a query becomes a trace when `trace_sample_one_in` selects it, or
   its duration exceeds `trace_slow_threshold_us`, or its rcode is SERVFAIL.
@@ -307,6 +348,12 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   `ServerMessage.renew_certificate` (501) carry certificate renewal and
   rotation; M5 adds no `ConfigSnapshot` or `Stats` field (fleet health is
   derived from the M1 `Stats` samples).
+- Filter categories: fields added to existing messages use 600-699:
+  `FilterConfig.blocklist_refs` (600), `FilterConfig.allowlist_refs` (601),
+  `PolicyGroup.blocklist_refs` (600), `ConfigSnapshot.filter_index_max_bytes`
+  (600), `Stats.filter_index` (600); new messages `FilterListRef` and
+  `FilterIndexStats`. Management keeps filling the M1 `blocklists`/`allowlists`
+  blob fields for older engines; engines prefer the refs.
 
 ## Management plane
 
@@ -340,6 +387,16 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   connected to it.
 - Blocklist fetches take `pg_try_advisory_lock(hashtext('filter_list:'||id))`
   so only one instance fetches each list.
+- The filter category catalog is `mgmt/internal/catalog/catalog.yaml`, embedded
+  and read-only. At start every instance syncs it under
+  `pg_advisory_xact_lock(hashtext('nexora:catalog'))` into `filter_categories`
+  (enabled flag, default false) and one `filter_lists` row per source
+  (`managed_by_catalog`, `category_key`, `source_key`, `archive_member`,
+  `catalog_position`, `license_acknowledged_at`). Sources with
+  `commercial_use: false` need `acknowledge_license: true` in the request that
+  enables them. `NEXORA_CATALOG_MIRROR` (base URL) fetches every catalog source
+  from `<mirror>/<source key>`. UT1 sources name a member of a `.tar.gz`
+  archive; only that member is parsed.
 - M4 online DNSSEC signing (`internal/dnssec`): primary zones with signing
   enabled are signed inside the zone rebuild transaction (KSK/ZSK, algorithm
   13 default or 8, NSEC or NSEC3 with zero iterations and empty salt);
@@ -369,6 +426,11 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   single-instance deployments. OpenSearch deployments send engine OTLP to an
   OpenTelemetry Collector whose `opensearch` exporter writes
   `nexora-querylog-YYYY.MM.DD`; the adapter queries `attributes.*` fields.
+  The collector's OpenSearch pipeline runs `transform/querylog` (copies
+  `nexora.filter` to `nexora.filter.result` and deletes `nexora.filter`,
+  because OpenSearch cannot map `nexora.filter` as both a value and the parent
+  of `nexora.filter.category`) and writes `nexora-querylog-v2-YYYY.MM.DD`; the
+  adapter matches the `filter` parameter on either field.
 
 ## GUI
 

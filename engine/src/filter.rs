@@ -1,5 +1,13 @@
 //! Blocklist/allowlist matching on wire-format name suffixes, and block replies.
 
+pub mod index;
+pub mod names;
+#[cfg(test)]
+mod oracle;
+pub mod prefetch;
+pub mod storage;
+pub mod synth;
+
 use crate::edns::ReplyOpt;
 use crate::proto::{ConfigSnapshot, RewriteSet, RewriteType};
 use crate::snapshot::{BlobSource, SnapshotError};
@@ -13,8 +21,7 @@ use std::sync::Arc;
 
 const TYPE_A: u16 = 1;
 const TYPE_AAAA: u16 = 28;
-const MAX_TEXT_LEN: usize = 253;
-const MAX_LABEL_LEN: usize = 63;
+use names::MAX_TEXT_LEN;
 /// Largest decompressed blob accepted; bounds memory against a zstd bomb.
 const MAX_BLOB_BYTES: u64 = 512 << 20;
 
@@ -168,14 +175,7 @@ pub fn domain_to_wire(domain: &[u8]) -> Option<Box<[u8]>> {
     }
     let mut out = Vec::with_capacity(domain.len() + 2);
     for label in domain.split(|&b| b == b'.') {
-        let valid = !label.is_empty()
-            && label.len() <= MAX_LABEL_LEN
-            && label[0] != b'-'
-            && label[label.len() - 1] != b'-'
-            && label
-                .iter()
-                .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_');
-        if !valid {
+        if !names::valid_label(label) {
             return None;
         }
         out.push(label.len() as u8);
