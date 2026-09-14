@@ -92,6 +92,12 @@ function param(v: string): string | undefined {
   return t === "" || t === any ? undefined : t;
 }
 
+/** A single-select filter as its repeated query parameter; multi-select arrives with M6 Task 19. */
+function listParam<T extends string>(v: string): T[] | undefined {
+  const t = param(v);
+  return t === undefined ? undefined : [t as T];
+}
+
 export function QueryLogPage() {
   const [form, setForm] = useState<Filters>(emptyFilters);
   const [applied, setApplied] = useState<Filters>(emptyFilters);
@@ -111,11 +117,11 @@ export function QueryLogPage() {
             query: {
               name: param(applied.name),
               client: param(applied.client),
-              qtype: param(applied.qtype),
-              rcode: param(applied.rcode),
-              cache: param(applied.cache),
-              filter: param(applied.filter),
-              category: param(applied.category),
+              qtype: listParam(applied.qtype),
+              rcode: listParam(applied.rcode),
+              cache: listParam(applied.cache),
+              filter: listParam(applied.filter),
+              category: listParam(applied.category),
               limit: pageSize,
               cursor,
             },

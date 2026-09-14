@@ -20,6 +20,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup": {
         parameters: {
             query?: never;
@@ -76,8 +92,24 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getCurrentUser"];
-        put?: never;
+        put: operations["updateCurrentUser"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["changeOwnPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -140,6 +172,54 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getDashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDashboardSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/top": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDashboardTop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDashboardHealth"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1165,6 +1245,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/engines/{id}/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEngineMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/engines/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEngineLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/engines/{id}/revoke": {
         parameters: {
             query?: never;
@@ -1249,6 +1361,41 @@ export interface components {
             revision: number;
             /** Format: date-time */
             created_at: string;
+            display_name: string;
+            /** Format: date-time */
+            last_login_at: string | null;
+            preferences: components["schemas"]["UserPreferences"];
+        };
+        UserPreferences: {
+            /** @enum {string} */
+            theme: "system" | "light" | "dark";
+            /** @description IANA name; empty uses the browser */
+            time_zone: string;
+            clock_24h: boolean;
+            querylog_live: boolean;
+        };
+        CurrentUserUpdate: {
+            /** Format: int64 */
+            revision: number;
+            email?: string;
+            display_name?: string;
+            preferences?: components["schemas"]["UserPreferences"];
+        };
+        PasswordChange: {
+            current_password: string;
+            new_password: string;
+            /** @default true */
+            revoke_other_sessions: boolean;
+        };
+        VersionInfo: {
+            version: string;
+            commit: string;
+            build_date: string;
+            repository_url: string;
+            engines: {
+                version: string;
+                count: number;
+            }[];
         };
         UserCreate: {
             username: string;
@@ -1309,7 +1456,9 @@ export interface components {
         };
         ResolverSettings: {
             /** @enum {string} */
-            strategy: "ordered" | "fastest";
+            strategy: "ordered" | "fastest" | "parallel";
+            /** @description parallel strategy: upstreams queried at once; 0 = every candidate, engines cap at 8 */
+            parallel_max?: number;
             /** Format: int64 */
             cache_max_bytes: number;
             cache_min_ttl: number;
@@ -1327,6 +1476,8 @@ export interface components {
         };
         AccessControl: {
             allow_cidrs: string[];
+            /** @description Clients allowed to query hosted zones that set no allow_query_cidrs; omitted on update keeps the current value. */
+            authoritative_allow_cidrs?: string[];
             /** Format: int64 */
             revision: number;
         };
@@ -1560,7 +1711,7 @@ export interface components {
             qtype: string;
             rcode: string;
             /** @enum {string} */
-            cache: "hit" | "miss" | "stale" | "none";
+            cache: "hit" | "miss" | "stale" | "none" | "auth";
             /** @enum {string} */
             filter: "none" | "blocked" | "allowed" | "rewritten";
             upstream: string;
@@ -1570,6 +1721,17 @@ export interface components {
             duration_us: number;
             list_id: string;
             category: string;
+            /** @enum {string} */
+            source: "" | "blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl";
+            list_name: string;
+            rule: string;
+            policy_group_id: string;
+            policy_group_name: string;
+            rpz_zone_id: string;
+            rpz_zone_name: string;
+            rpz_action: string;
+            rewrite_answer: string;
+            upstreams_raced: number;
         };
         QueryLogPage: {
             backend: string;
@@ -1939,6 +2101,8 @@ export interface components {
         ZoneUpdatePolicy: {
             /** @description TSIG keys allowed to send dynamic updates; empty refuses updates. */
             tsig_key_ids: string[];
+            /** @description Sources allowed to send updates; empty allows any source. TSIG is always required. */
+            allow_cidrs?: string[];
         };
         ZoneSOA: {
             mname: string;
@@ -1983,6 +2147,8 @@ export interface components {
             last_trigger: string;
         };
         Zone: {
+            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+            allow_query_cidrs: string[];
             /**
              * Format: uuid
              * @description engine group; null applies to every group
@@ -2036,6 +2202,8 @@ export interface components {
             transfer?: components["schemas"]["ZoneTransfer"];
             notify?: components["schemas"]["ZoneEndpoint"][];
             update?: components["schemas"]["ZoneUpdatePolicy"];
+            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+            allow_query_cidrs?: string[];
         };
         ZoneUpdate: {
             /** Format: int64 */
@@ -2047,6 +2215,8 @@ export interface components {
             transfer?: components["schemas"]["ZoneTransfer"];
             notify?: components["schemas"]["ZoneEndpoint"][];
             update?: components["schemas"]["ZoneUpdatePolicy"];
+            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+            allow_query_cidrs?: string[];
         };
         RecordInput: {
             /** @description Absolute owner name inside the zone. */
@@ -2334,6 +2504,184 @@ export interface components {
                 cpu: string;
             } | null;
         };
+        DashboardSeries: {
+            /** @enum {string} */
+            range: "15m" | "1h" | "6h" | "24h" | "7d";
+            step_seconds: number;
+            points: {
+                /** Format: date-time */
+                at: string;
+                qps: number;
+                qps_by_transport: {
+                    [key: string]: number;
+                };
+                qps_by_rcode: {
+                    [key: string]: number;
+                };
+                p50_ms: number;
+                p95_ms: number;
+                p99_ms: number;
+                miss_p50_ms: number;
+                miss_p95_ms: number;
+                miss_p99_ms: number;
+                cache_hit_ratio: number;
+                cache_miss_ratio: number;
+                cache_stale_ratio: number;
+                blocked_qps: number;
+                rewritten_qps: number;
+                blocked_by_category: {
+                    [key: string]: number;
+                };
+                answers_by_route: {
+                    [key: string]: number;
+                };
+                recursion_upstream_qps: number;
+                recursion_timeouts_qps: number;
+                lame_marked: number;
+                resolution_failures_qps: number;
+                dnssec_secure_qps: number;
+                dnssec_insecure_qps: number;
+                dnssec_bogus_qps: number;
+            }[];
+            engines: {
+                /** Format: uuid */
+                engine_id: string;
+                node_name: string;
+                /** Format: int64 */
+                cache_entries: number;
+                /** Format: int64 */
+                cache_bytes: number;
+                /** Format: int64 */
+                filter_index_bytes: number;
+            }[];
+        };
+        DashboardTop: {
+            /** @enum {string} */
+            range: "15m" | "1h" | "6h" | "24h" | "7d";
+            /** @description false when the query log backend cannot aggregate; the lists are then empty */
+            available: boolean;
+            domains: {
+                key: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+            blocked_domains: {
+                key: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+            clients: {
+                key: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+            categories: {
+                key: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+        };
+        DashboardHealth: {
+            engines: {
+                /** Format: uuid */
+                id: string;
+                node_name: string;
+                engine_group_name: string;
+                status: string;
+                qps: number;
+                p99_ms: number;
+                cache_hit_ratio: number;
+                /** Format: int64 */
+                filter_index_bytes: number;
+                /** Format: int64 */
+                applied_version: number;
+                /** Format: int64 */
+                target_version: number;
+            }[];
+            groups: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                engines: number;
+                connected: number;
+            }[];
+            alerts: {
+                /** @enum {string} */
+                kind: "engine_disconnected" | "category_stale" | "upstream_down" | "certificate_expiring" | "trust_anchor_refresh_failed" | "export_dropped";
+                /** @enum {string} */
+                severity: "warning" | "critical";
+                subject: string;
+                message: string;
+            }[];
+        };
+        EngineMetrics: {
+            /** @enum {string} */
+            window: "5m" | "1h" | "24h";
+            samples: {
+                /** Format: date-time */
+                at: string;
+                qps: number;
+                p50_ms: number;
+                p99_ms: number;
+                cache_hit_ratio: number;
+                servfail_ratio: number;
+                nxdomain_ratio: number;
+                refused_ratio: number;
+                blocked_qps: number;
+                cpu_cores: number;
+                /** Format: int64 */
+                resident_bytes: number;
+                /** Format: int64 */
+                memory_limit_bytes: number;
+                connections: {
+                    [key: string]: number;
+                };
+            }[];
+            upstreams: {
+                name: string;
+                samples: {
+                    /** Format: date-time */
+                    at: string;
+                    rtt_ms: number;
+                    failures_per_second: number;
+                    race_wins_per_second: number;
+                }[];
+            }[];
+            /** Format: date-time */
+            started_at: string | null;
+            restarts: number;
+            filter_index: {
+                /** Format: date-time */
+                at: string;
+                /** Format: int64 */
+                entries: number;
+                /** Format: int64 */
+                bytes: number;
+                /** Format: int64 */
+                max_bytes: number;
+                build_seconds: number;
+                decision_ns_blocked: number;
+                decision_ns_clean: number;
+                cpu: string;
+            } | null;
+        };
+        EngineLogs: {
+            /** Format: uuid */
+            engine_id: string;
+            lines: {
+                /** Format: int64 */
+                seq: number;
+                /** Format: date-time */
+                time: string;
+                /** @enum {string} */
+                level: "error" | "warn" | "info" | "debug";
+                message: string;
+            }[];
+            /** Format: int64 */
+            last_seq: number;
+            /** Format: int64 */
+            oldest_seq: number;
+        };
         FleetSummary: {
             engines_total: number;
             engines_by_status: {
@@ -2401,6 +2749,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+        };
+    };
+    getVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionInfo"];
                 };
             };
         };
@@ -2515,6 +2883,60 @@ export interface operations {
             401: components["responses"]["Error"];
         };
     };
+    updateCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CurrentUserUpdate"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    changeOwnPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description password changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+        };
+    };
     listAuthProviders: {
         parameters: {
             query?: never;
@@ -2594,6 +3016,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Dashboard"];
+                };
+            };
+        };
+    };
+    getDashboardSeries: {
+        parameters: {
+            query: {
+                range: "15m" | "1h" | "6h" | "24h" | "7d";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardSeries"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    getDashboardTop: {
+        parameters: {
+            query: {
+                range: "15m" | "1h" | "6h" | "24h" | "7d";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardTop"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    getDashboardHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardHealth"];
                 };
             };
         };
@@ -3413,12 +3902,17 @@ export interface operations {
                 from?: string;
                 to?: string;
                 client?: string;
+                /** @description Case-insensitive substring of the query name; a trailing dot is ignored. */
                 name?: string;
-                qtype?: string;
-                rcode?: string;
-                cache?: string;
-                filter?: string;
-                category?: string;
+                qtype?: string[];
+                rcode?: string[];
+                cache?: ("hit" | "miss" | "stale" | "none" | "auth")[];
+                filter?: ("none" | "blocked" | "allowed" | "rewritten")[];
+                category?: string[];
+                source?: ("blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl")[];
+                list_id?: string[];
+                policy_group?: string[];
+                engine_id?: string[];
                 limit?: number;
                 cursor?: string;
             };
@@ -3437,6 +3931,7 @@ export interface operations {
                     "application/json": components["schemas"]["QueryLogPage"];
                 };
             };
+            400: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
@@ -5048,6 +5543,66 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    getEngineMetrics: {
+        parameters: {
+            query?: {
+                window?: "5m" | "1h" | "24h";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineMetrics"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getEngineLogs: {
+        parameters: {
+            query?: {
+                /** @description Only lines with a larger sequence number. */
+                after?: number;
+                /** @description Minimum level. */
+                level?: "error" | "warn" | "info" | "debug";
+                /** @description Case-insensitive substring of the message. */
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineLogs"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            501: components["responses"]["Error"];
+            504: components["responses"]["Error"];
         };
     };
     revokeEngine: {

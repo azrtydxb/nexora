@@ -86,7 +86,19 @@ components:
     User:
       type: object
       required:
-        [id, username, email, role, source, disabled, revision, created_at]
+        [
+          id,
+          username,
+          email,
+          role,
+          source,
+          disabled,
+          revision,
+          created_at,
+          display_name,
+          last_login_at,
+          preferences,
+        ]
       properties:
         id: { type: string, format: uuid }
         username: { type: string }
@@ -96,6 +108,53 @@ components:
         disabled: { type: boolean }
         revision: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
+        display_name: { type: string }
+        last_login_at: { type: [string, "null"], format: date-time }
+        preferences: { $ref: "#/components/schemas/UserPreferences" }
+    UserPreferences:
+      type: object
+      required: [theme, time_zone, clock_24h, querylog_live]
+      properties:
+        theme: { type: string, enum: [system, light, dark] }
+        time_zone:
+          {
+            type: string,
+            maxLength: 64,
+            description: "IANA name; empty uses the browser",
+          }
+        clock_24h: { type: boolean }
+        querylog_live: { type: boolean }
+    CurrentUserUpdate:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer, format: int64 }
+        email: { type: string }
+        display_name: { type: string, maxLength: 64 }
+        preferences: { $ref: "#/components/schemas/UserPreferences" }
+    PasswordChange:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, minLength: 12 }
+        revoke_other_sessions: { type: boolean, default: true }
+    VersionInfo:
+      type: object
+      required: [version, commit, build_date, repository_url, engines]
+      properties:
+        version: { type: string }
+        commit: { type: string }
+        build_date: { type: string }
+        repository_url: { type: string }
+        engines:
+          type: array
+          items:
+            type: object
+            required: [version, count]
+            properties:
+              version: { type: string }
+              count: { type: integer }
     UserCreate:
       type: object
       required: [username, email, password, role]
@@ -191,7 +250,14 @@ components:
           revision,
         ]
       properties:
-        strategy: { type: string, enum: [ordered, fastest] }
+        strategy: { type: string, enum: [ordered, fastest, parallel] }
+        parallel_max:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 8,
+            description: "parallel strategy: upstreams queried at once; 0 = every candidate, engines cap at 8",
+          }
         cache_max_bytes: { type: integer, format: int64, minimum: 1048576 }
         cache_min_ttl: { type: integer, minimum: 0 }
         cache_max_ttl: { type: integer, minimum: 0 }
@@ -209,6 +275,12 @@ components:
       properties:
         {
           allow_cidrs: { type: array, items: { type: string } },
+          authoritative_allow_cidrs:
+            {
+              type: array,
+              items: { type: string },
+              description: "Clients allowed to query hosted zones that set no allow_query_cidrs; omitted on update keeps the current value.",
+            },
           revision: { type: integer, format: int64 },
         }
     FilterList:
@@ -551,6 +623,16 @@ components:
           duration_us,
           list_id,
           category,
+          source,
+          list_name,
+          rule,
+          policy_group_id,
+          policy_group_name,
+          rpz_zone_id,
+          rpz_zone_name,
+          rpz_action,
+          rewrite_answer,
+          upstreams_raced,
         ]
       properties:
         time: { type: string, format: date-time }
@@ -558,7 +640,7 @@ components:
         name: { type: string }
         qtype: { type: string }
         rcode: { type: string }
-        cache: { type: string, enum: [hit, miss, stale, none] }
+        cache: { type: string, enum: [hit, miss, stale, none, auth] }
         filter: { type: string, enum: [none, blocked, allowed, rewritten] }
         upstream: { type: string }
         transport: { type: string }
@@ -566,6 +648,20 @@ components:
         duration_us: { type: integer, format: int64 }
         list_id: { type: string }
         category: { type: string }
+        source:
+          {
+            type: string,
+            enum: ["", blocklist, category, allowlist, rpz, rewrite, acl],
+          }
+        list_name: { type: string }
+        rule: { type: string }
+        policy_group_id: { type: string }
+        policy_group_name: { type: string }
+        rpz_zone_id: { type: string }
+        rpz_zone_name: { type: string }
+        rpz_action: { type: string }
+        rewrite_answer: { type: string }
+        upstreams_raced: { type: integer }
     QueryLogPage:
       type: object
       required: [backend, records, next_cursor]
@@ -1145,6 +1241,12 @@ components:
             items: { type: string, format: uuid },
             description: "TSIG keys allowed to send dynamic updates; empty refuses updates.",
           }
+        allow_cidrs:
+          {
+            type: array,
+            items: { type: string },
+            description: "Sources allowed to send updates; empty allows any source. TSIG is always required.",
+          }
     ZoneSOA:
       type: object
       required: [mname, rname, refresh, retry, expire, minimum, ttl]
@@ -1210,8 +1312,15 @@ components:
           created_at,
           updated_at,
           engine_group_id,
+          allow_query_cidrs,
         ]
       properties:
+        allow_query_cidrs:
+          {
+            type: array,
+            items: { type: string },
+            description: "Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.",
+          }
         engine_group_id:
           {
             type: [string, "null"],
@@ -1279,6 +1388,12 @@ components:
         notify:
           { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
+        allow_query_cidrs:
+          {
+            type: array,
+            items: { type: string },
+            description: "Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.",
+          }
     ZoneUpdate:
       type: object
       required: [revision]
@@ -1293,6 +1408,12 @@ components:
         notify:
           { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
         update: { $ref: "#/components/schemas/ZoneUpdatePolicy" }
+        allow_query_cidrs:
+          {
+            type: array,
+            items: { type: string },
+            description: "Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.",
+          }
     RecordInput:
       type: object
       required: [name, type, ttl, data]
@@ -1771,6 +1892,294 @@ components:
             decision_ns_blocked: { type: number }
             decision_ns_clean: { type: number }
             cpu: { type: string }
+    DashboardSeries:
+      type: object
+      required: [range, step_seconds, points, engines]
+      properties:
+        range: { type: string, enum: [15m, 1h, 6h, 24h, 7d] }
+        step_seconds: { type: integer }
+        points:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                at,
+                qps,
+                qps_by_transport,
+                qps_by_rcode,
+                p50_ms,
+                p95_ms,
+                p99_ms,
+                miss_p50_ms,
+                miss_p95_ms,
+                miss_p99_ms,
+                cache_hit_ratio,
+                cache_miss_ratio,
+                cache_stale_ratio,
+                blocked_qps,
+                rewritten_qps,
+                blocked_by_category,
+                answers_by_route,
+                recursion_upstream_qps,
+                recursion_timeouts_qps,
+                lame_marked,
+                resolution_failures_qps,
+                dnssec_secure_qps,
+                dnssec_insecure_qps,
+                dnssec_bogus_qps,
+              ]
+            properties:
+              at: { type: string, format: date-time }
+              qps: { type: number }
+              qps_by_transport:
+                { type: object, additionalProperties: { type: number } }
+              qps_by_rcode:
+                { type: object, additionalProperties: { type: number } }
+              p50_ms: { type: number }
+              p95_ms: { type: number }
+              p99_ms: { type: number }
+              miss_p50_ms: { type: number }
+              miss_p95_ms: { type: number }
+              miss_p99_ms: { type: number }
+              cache_hit_ratio: { type: number }
+              cache_miss_ratio: { type: number }
+              cache_stale_ratio: { type: number }
+              blocked_qps: { type: number }
+              rewritten_qps: { type: number }
+              blocked_by_category:
+                { type: object, additionalProperties: { type: number } }
+              answers_by_route:
+                { type: object, additionalProperties: { type: number } }
+              recursion_upstream_qps: { type: number }
+              recursion_timeouts_qps: { type: number }
+              lame_marked: { type: number }
+              resolution_failures_qps: { type: number }
+              dnssec_secure_qps: { type: number }
+              dnssec_insecure_qps: { type: number }
+              dnssec_bogus_qps: { type: number }
+        engines:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                engine_id,
+                node_name,
+                cache_entries,
+                cache_bytes,
+                filter_index_bytes,
+              ]
+            properties:
+              engine_id: { type: string, format: uuid }
+              node_name: { type: string }
+              cache_entries: { type: integer, format: int64 }
+              cache_bytes: { type: integer, format: int64 }
+              filter_index_bytes: { type: integer, format: int64 }
+    DashboardTop:
+      type: object
+      required:
+        [range, available, domains, blocked_domains, clients, categories]
+      properties:
+        range: { type: string, enum: [15m, 1h, 6h, 24h, 7d] }
+        available:
+          {
+            type: boolean,
+            description: "false when the query log backend cannot aggregate; the lists are then empty",
+          }
+        domains:
+          type: array
+          items:
+            type: object
+            required: [key, count]
+            properties:
+              key: { type: string }
+              count: { type: integer, format: int64 }
+        blocked_domains:
+          type: array
+          items:
+            type: object
+            required: [key, count]
+            properties:
+              key: { type: string }
+              count: { type: integer, format: int64 }
+        clients:
+          type: array
+          items:
+            type: object
+            required: [key, count]
+            properties:
+              key: { type: string }
+              count: { type: integer, format: int64 }
+        categories:
+          type: array
+          items:
+            type: object
+            required: [key, count]
+            properties:
+              key: { type: string }
+              count: { type: integer, format: int64 }
+    DashboardHealth:
+      type: object
+      required: [engines, groups, alerts]
+      properties:
+        engines:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                id,
+                node_name,
+                engine_group_name,
+                status,
+                qps,
+                p99_ms,
+                cache_hit_ratio,
+                filter_index_bytes,
+                applied_version,
+                target_version,
+              ]
+            properties:
+              id: { type: string, format: uuid }
+              node_name: { type: string }
+              engine_group_name: { type: string }
+              status: { type: string }
+              qps: { type: number }
+              p99_ms: { type: number }
+              cache_hit_ratio: { type: number }
+              filter_index_bytes: { type: integer, format: int64 }
+              applied_version: { type: integer, format: int64 }
+              target_version: { type: integer, format: int64 }
+        groups:
+          type: array
+          items:
+            type: object
+            required: [id, name, engines, connected]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              engines: { type: integer }
+              connected: { type: integer }
+        alerts:
+          type: array
+          items:
+            type: object
+            required: [kind, severity, subject, message]
+            properties:
+              kind:
+                type: string
+                enum:
+                  [
+                    engine_disconnected,
+                    category_stale,
+                    upstream_down,
+                    certificate_expiring,
+                    trust_anchor_refresh_failed,
+                    export_dropped,
+                  ]
+              severity: { type: string, enum: [warning, critical] }
+              subject: { type: string }
+              message: { type: string }
+    EngineMetrics:
+      type: object
+      required: [window, samples, upstreams, started_at, restarts, filter_index]
+      properties:
+        window: { type: string, enum: [5m, 1h, 24h] }
+        samples:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                at,
+                qps,
+                p50_ms,
+                p99_ms,
+                cache_hit_ratio,
+                servfail_ratio,
+                nxdomain_ratio,
+                refused_ratio,
+                blocked_qps,
+                cpu_cores,
+                resident_bytes,
+                memory_limit_bytes,
+                connections,
+              ]
+            properties:
+              at: { type: string, format: date-time }
+              qps: { type: number }
+              p50_ms: { type: number }
+              p99_ms: { type: number }
+              cache_hit_ratio: { type: number }
+              servfail_ratio: { type: number }
+              nxdomain_ratio: { type: number }
+              refused_ratio: { type: number }
+              blocked_qps: { type: number }
+              cpu_cores: { type: number }
+              resident_bytes: { type: integer, format: int64 }
+              memory_limit_bytes: { type: integer, format: int64 }
+              connections:
+                { type: object, additionalProperties: { type: number } }
+        upstreams:
+          type: array
+          items:
+            type: object
+            required: [name, samples]
+            properties:
+              name: { type: string }
+              samples:
+                type: array
+                items:
+                  type: object
+                  required:
+                    [at, rtt_ms, failures_per_second, race_wins_per_second]
+                  properties:
+                    at: { type: string, format: date-time }
+                    rtt_ms: { type: number }
+                    failures_per_second: { type: number }
+                    race_wins_per_second: { type: number }
+        started_at: { type: [string, "null"], format: date-time }
+        restarts: { type: integer }
+        filter_index:
+          type: [object, "null"]
+          required:
+            [
+              at,
+              entries,
+              bytes,
+              max_bytes,
+              build_seconds,
+              decision_ns_blocked,
+              decision_ns_clean,
+              cpu,
+            ]
+          properties:
+            at: { type: string, format: date-time }
+            entries: { type: integer, format: int64 }
+            bytes: { type: integer, format: int64 }
+            max_bytes: { type: integer, format: int64 }
+            build_seconds: { type: number }
+            decision_ns_blocked: { type: number }
+            decision_ns_clean: { type: number }
+            cpu: { type: string }
+    EngineLogs:
+      type: object
+      required: [engine_id, lines, last_seq, oldest_seq]
+      properties:
+        engine_id: { type: string, format: uuid }
+        lines:
+          type: array
+          items:
+            type: object
+            required: [seq, time, level, message]
+            properties:
+              seq: { type: integer, format: int64 }
+              time: { type: string, format: date-time }
+              level: { type: string, enum: [error, warn, info, debug] }
+              message: { type: string }
+        last_seq: { type: integer, format: int64 }
+        oldest_seq: { type: integer, format: int64 }
     FleetSummary:
       type: object
       required:
@@ -1830,6 +2239,19 @@ paths:
               },
           },
       }
+  /version:
+    get:
+      operationId: getVersion
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/VersionInfo" } },
+              },
+          }
   /setup:
     get:
       {
@@ -1921,6 +2343,49 @@ paths:
             "401": { $ref: "#/components/responses/Error" },
           },
       }
+    put:
+      operationId: updateCurrentUser
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CurrentUserUpdate" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/User" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /auth/me/password:
+    post:
+      operationId: changeOwnPassword
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PasswordChange" } },
+            },
+        }
+      responses:
+        "204": { description: password changed }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /auth/providers:
     get:
       {
@@ -1983,6 +2448,66 @@ paths:
               },
           },
       }
+  /dashboard/series:
+    get:
+      operationId: getDashboardSeries
+      parameters:
+        - {
+            name: range,
+            in: query,
+            required: true,
+            schema: { type: string, enum: [15m, 1h, 6h, 24h, 7d] },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/DashboardSeries" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+  /dashboard/top:
+    get:
+      operationId: getDashboardTop
+      parameters:
+        - {
+            name: range,
+            in: query,
+            required: true,
+            schema: { type: string, enum: [15m, 1h, 6h, 24h, 7d] },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 10 },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/DashboardTop" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+  /dashboard/health:
+    get:
+      operationId: getDashboardHealth
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/DashboardHealth" } },
+              },
+          }
   /upstreams:
     get:
       {
@@ -2721,12 +3246,104 @@ paths:
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - { name: client, in: query, schema: { type: string } }
-        - { name: name, in: query, schema: { type: string } }
-        - { name: qtype, in: query, schema: { type: string } }
-        - { name: rcode, in: query, schema: { type: string } }
-        - { name: cache, in: query, schema: { type: string } }
-        - { name: filter, in: query, schema: { type: string } }
-        - { name: category, in: query, schema: { type: string } }
+        - {
+            name: name,
+            in: query,
+            description: "Case-insensitive substring of the query name; a trailing dot is ignored.",
+            schema: { type: string },
+          }
+        - {
+            name: qtype,
+            in: query,
+            style: form,
+            explode: true,
+            schema: { type: array, maxItems: 32, items: { type: string } },
+          }
+        - {
+            name: rcode,
+            in: query,
+            style: form,
+            explode: true,
+            schema: { type: array, maxItems: 32, items: { type: string } },
+          }
+        - {
+            name: cache,
+            in: query,
+            style: form,
+            explode: true,
+            schema:
+              {
+                type: array,
+                maxItems: 32,
+                items: { type: string, enum: [hit, miss, stale, none, auth] },
+              },
+          }
+        - {
+            name: filter,
+            in: query,
+            style: form,
+            explode: true,
+            schema:
+              {
+                type: array,
+                maxItems: 32,
+                items:
+                  { type: string, enum: [none, blocked, allowed, rewritten] },
+              },
+          }
+        - {
+            name: category,
+            in: query,
+            style: form,
+            explode: true,
+            schema: { type: array, maxItems: 32, items: { type: string } },
+          }
+        - {
+            name: source,
+            in: query,
+            style: form,
+            explode: true,
+            schema:
+              {
+                type: array,
+                maxItems: 32,
+                items:
+                  {
+                    type: string,
+                    enum: [blocklist, category, allowlist, rpz, rewrite, acl],
+                  },
+              },
+          }
+        - {
+            name: list_id,
+            in: query,
+            style: form,
+            explode: true,
+            schema: { type: array, maxItems: 32, items: { type: string } },
+          }
+        - {
+            name: policy_group,
+            in: query,
+            style: form,
+            explode: true,
+            schema:
+              {
+                type: array,
+                maxItems: 32,
+                items:
+                  {
+                    type: string,
+                    description: "A policy group UUID or global",
+                  },
+              },
+          }
+        - {
+            name: engine_id,
+            in: query,
+            style: form,
+            explode: true,
+            schema: { type: array, maxItems: 32, items: { type: string } },
+          }
         - {
             name: limit,
             in: query,
@@ -2744,6 +3361,7 @@ paths:
                     { schema: { $ref: "#/components/schemas/QueryLogPage" } },
                 },
             },
+          "400": { $ref: "#/components/responses/Error" },
           "503": { $ref: "#/components/responses/Error" },
         }
   /policy-groups:
@@ -3838,6 +4456,70 @@ paths:
           }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /engines/{id}/metrics:
+    get:
+      operationId: getEngineMetrics
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - {
+            name: window,
+            in: query,
+            schema: { type: string, enum: [5m, 1h, 24h] },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineMetrics" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /engines/{id}/logs:
+    get:
+      operationId: getEngineLogs
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - {
+            name: after,
+            in: query,
+            description: "Only lines with a larger sequence number.",
+            schema: { type: integer, format: int64, minimum: 0 },
+          }
+        - {
+            name: level,
+            in: query,
+            description: "Minimum level.",
+            schema: { type: string, enum: [error, warn, info, debug] },
+          }
+        - {
+            name: q,
+            in: query,
+            description: "Case-insensitive substring of the message.",
+            schema: { type: string, maxLength: 128 },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 },
+          }
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EngineLogs" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+        "504": { $ref: "#/components/responses/Error" }
   /engines/{id}/revoke:
     post:
       operationId: revokeEngine

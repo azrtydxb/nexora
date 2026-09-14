@@ -443,6 +443,8 @@ Files:
 - `mgmt/internal/auth/permissions.go`, `web/src/auth/permissions.ts`: roles.
 - `mgmt/internal/api/server.go`: `Deps.EngineLogs`.
 - `mgmt/internal/api/handlers_admin.go`: `SearchQueryLog` compiles against the array parameters.
+- `web/src/pages/QueryLogPage.tsx`: sends each single-select filter as a one-element array
+  (`listParam`) so the page type-checks against the array parameters until Task 19.
 - Created with 501 stubs, owned by later tasks: `mgmt/internal/api/dashboard_m6.go` (Task 18),
   `mgmt/internal/api/engine_metrics.go` (Task 10), `mgmt/internal/api/engine_logs.go` (Task 14),
   `mgmt/internal/api/account.go` (Task 7), `mgmt/internal/api/version.go` (Task 8).
@@ -582,7 +584,9 @@ Interfaces (OpenAPI component and operation names are the Go and TS names after 
     (line 1906) and `/health` (line 1806).
   - Error responses use `$ref: "#/components/responses/Error"`.
 - [ ] Regenerate on the laptop: `cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml`
-      and `cd web && pnpm run gen:api`.
+      and `cd web && pnpm run gen:api`. The committed `gen.go` is from oapi-codegen v2.8.0; an older
+      binary on PATH rejects `type: [string, "null"]`, so run
+      `go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml`.
 - [ ] Add the eight operation ids with their roles to `mgmt/internal/auth/permissions.go` (the viewer
       block near line 48 and the operator block near line 91) and to `web/src/auth/permissions.ts`.
 - [ ] In `mgmt/internal/api/server.go` add the field to `Deps`:
@@ -603,19 +607,22 @@ Interfaces (OpenAPI component and operation names are the Go and TS names after 
   The other files hold, with the generated request and response object names:
   - `dashboard_m6.go`: `GetDashboardSeries`, `GetDashboardTop`, `GetDashboardHealth`.
   - `engine_metrics.go`: `GetEngineMetrics`.
-  - `engine_logs.go`: `GetEngineLogs`, plus the `EngineLogReader` interface and the three sentinel
-    errors.
+  - `engine_logs.go`: `GetEngineLogs`, plus the `EngineLogReader` interface, the three sentinel
+    errors and `engineLogsError(err) error`, which maps them to 409 `engine_disconnected`, 504
+    `engine_timeout` and 501 `engine_unsupported`. The stub answers `engine_unsupported` when
+    `Deps.EngineLogs` is nil and `not_implemented` otherwise.
   - `account.go`: `UpdateCurrentUser`, `ChangeOwnPassword`.
 - [ ] In `mgmt/internal/api/handlers_admin.go` `SearchQueryLog`, keep the current single-value
       behaviour until Task 5. Map each new array parameter with
-      `first := func(v *[]string) string { if v == nil || len(*v) == 0 { return "" }; return strings.TrimSpace((*v)[0]) }`,
+      the generic `firstParam[T ~string](v *[]T) string` (the `cache`, `filter` and `source` items are
+      generated enum types), which returns the trimmed first value or `""`,
       and fill the new record fields with empty values.
 - [ ] Create `web/src/lib/preferences.ts`:
   ```ts
-  import type { components } from "@/api/schema";
+  import type { Schemas } from "@/api/client";
   import { useCurrentUser } from "@/auth/AuthProvider";
 
-  export type Preferences = components["schemas"]["UserPreferences"];
+  export type Preferences = Schemas["UserPreferences"];
 
   export const defaultPreferences: Preferences = {
     theme: "system",

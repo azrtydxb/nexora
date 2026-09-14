@@ -56,6 +56,7 @@ type Deps struct {
 	TSIGKeys          *tsigkey.Service      // TSIG keys of hosted zones
 	ZoneDNSSEC        *dnssec.Service       // DNSSEC signing settings, keys and rollovers of hosted zones
 	Catalog           *catalog.Catalog      // the embedded filter category catalog; nil serves an empty catalog
+	EngineLogs        EngineLogReader       // nil: getEngineLogs answers 501 engine_unsupported
 }
 
 type handlers struct{ d Deps }

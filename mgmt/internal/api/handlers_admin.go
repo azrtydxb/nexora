@@ -263,8 +263,9 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	if err != nil {
 		return nil, err
 	}
-	q := querylog.Query{Client: deref(p.Client), Name: deref(p.Name), QType: deref(p.Qtype), RCode: deref(p.Rcode),
-		Cache: deref(p.Cache), Filter: deref(p.Filter), Category: deref(p.Category), Limit: limit, Cursor: deref(p.Cursor)}
+	// Single-value filtering until the querylog backends take the lists (M6 Task 5).
+	q := querylog.Query{Client: deref(p.Client), Name: deref(p.Name), QType: firstParam(p.Qtype), RCode: firstParam(p.Rcode),
+		Cache: firstParam(p.Cache), Filter: firstParam(p.Filter), Category: firstParam(p.Category), Limit: limit, Cursor: deref(p.Cursor)}
 	if p.From != nil {
 		q.From = *p.From
 	}
@@ -282,4 +283,12 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 			Transport: r.Transport, EngineId: r.EngineID, DurationUs: r.DurationUS, ListId: r.ListID, Category: r.Category}
 	}
 	return SearchQueryLog200JSONResponse(out), nil
+}
+
+// firstParam is the first value of a repeated query parameter, trimmed; "" when absent.
+func firstParam[T ~string](v *[]T) string {
+	if v == nil || len(*v) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string((*v)[0]))
 }

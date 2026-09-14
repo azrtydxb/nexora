@@ -45,6 +45,108 @@ func (e AuditEventActorType) Valid() bool {
 	}
 }
 
+// Defines values for DashboardHealthAlertsKind.
+const (
+	CategoryStale            DashboardHealthAlertsKind = "category_stale"
+	CertificateExpiring      DashboardHealthAlertsKind = "certificate_expiring"
+	EngineDisconnected       DashboardHealthAlertsKind = "engine_disconnected"
+	ExportDropped            DashboardHealthAlertsKind = "export_dropped"
+	TrustAnchorRefreshFailed DashboardHealthAlertsKind = "trust_anchor_refresh_failed"
+	UpstreamDown             DashboardHealthAlertsKind = "upstream_down"
+)
+
+// Valid indicates whether the value is a known member of the DashboardHealthAlertsKind enum.
+func (e DashboardHealthAlertsKind) Valid() bool {
+	switch e {
+	case CategoryStale:
+		return true
+	case CertificateExpiring:
+		return true
+	case EngineDisconnected:
+		return true
+	case ExportDropped:
+		return true
+	case TrustAnchorRefreshFailed:
+		return true
+	case UpstreamDown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DashboardHealthAlertsSeverity.
+const (
+	Critical DashboardHealthAlertsSeverity = "critical"
+	Warning  DashboardHealthAlertsSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the DashboardHealthAlertsSeverity enum.
+func (e DashboardHealthAlertsSeverity) Valid() bool {
+	switch e {
+	case Critical:
+		return true
+	case Warning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DashboardSeriesRange.
+const (
+	DashboardSeriesRangeN15m DashboardSeriesRange = "15m"
+	DashboardSeriesRangeN1h  DashboardSeriesRange = "1h"
+	DashboardSeriesRangeN24h DashboardSeriesRange = "24h"
+	DashboardSeriesRangeN6h  DashboardSeriesRange = "6h"
+	DashboardSeriesRangeN7d  DashboardSeriesRange = "7d"
+)
+
+// Valid indicates whether the value is a known member of the DashboardSeriesRange enum.
+func (e DashboardSeriesRange) Valid() bool {
+	switch e {
+	case DashboardSeriesRangeN15m:
+		return true
+	case DashboardSeriesRangeN1h:
+		return true
+	case DashboardSeriesRangeN24h:
+		return true
+	case DashboardSeriesRangeN6h:
+		return true
+	case DashboardSeriesRangeN7d:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DashboardTopRange.
+const (
+	DashboardTopRangeN15m DashboardTopRange = "15m"
+	DashboardTopRangeN1h  DashboardTopRange = "1h"
+	DashboardTopRangeN24h DashboardTopRange = "24h"
+	DashboardTopRangeN6h  DashboardTopRange = "6h"
+	DashboardTopRangeN7d  DashboardTopRange = "7d"
+)
+
+// Valid indicates whether the value is a known member of the DashboardTopRange enum.
+func (e DashboardTopRange) Valid() bool {
+	switch e {
+	case DashboardTopRangeN15m:
+		return true
+	case DashboardTopRangeN1h:
+		return true
+	case DashboardTopRangeN24h:
+		return true
+	case DashboardTopRangeN6h:
+		return true
+	case DashboardTopRangeN7d:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DnssecStatusEnginesTrustAnchorsState.
 const (
 	DnssecStatusEnginesTrustAnchorsStateAddPend    DnssecStatusEnginesTrustAnchorsState = "add_pend"
@@ -204,6 +306,51 @@ func (e EngineGroupUpdateUpstreamMode) Valid() bool {
 	case EngineGroupUpdateUpstreamModeInherit:
 		return true
 	case EngineGroupUpdateUpstreamModeOverride:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineLogsLinesLevel.
+const (
+	EngineLogsLinesLevelDebug EngineLogsLinesLevel = "debug"
+	EngineLogsLinesLevelError EngineLogsLinesLevel = "error"
+	EngineLogsLinesLevelInfo  EngineLogsLinesLevel = "info"
+	EngineLogsLinesLevelWarn  EngineLogsLinesLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the EngineLogsLinesLevel enum.
+func (e EngineLogsLinesLevel) Valid() bool {
+	switch e {
+	case EngineLogsLinesLevelDebug:
+		return true
+	case EngineLogsLinesLevelError:
+		return true
+	case EngineLogsLinesLevelInfo:
+		return true
+	case EngineLogsLinesLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EngineMetricsWindow.
+const (
+	EngineMetricsWindowN1h  EngineMetricsWindow = "1h"
+	EngineMetricsWindowN24h EngineMetricsWindow = "24h"
+	EngineMetricsWindowN5m  EngineMetricsWindow = "5m"
+)
+
+// Valid indicates whether the value is a known member of the EngineMetricsWindow enum.
+func (e EngineMetricsWindow) Valid() bool {
+	switch e {
+	case EngineMetricsWindowN1h:
+		return true
+	case EngineMetricsWindowN24h:
+		return true
+	case EngineMetricsWindowN5m:
 		return true
 	default:
 		return false
@@ -389,6 +536,7 @@ func (e JoinTokenState) Valid() bool {
 
 // Defines values for QueryLogRecordCache.
 const (
+	QueryLogRecordCacheAuth  QueryLogRecordCache = "auth"
 	QueryLogRecordCacheHit   QueryLogRecordCache = "hit"
 	QueryLogRecordCacheMiss  QueryLogRecordCache = "miss"
 	QueryLogRecordCacheNone  QueryLogRecordCache = "none"
@@ -398,6 +546,8 @@ const (
 // Valid indicates whether the value is a known member of the QueryLogRecordCache enum.
 func (e QueryLogRecordCache) Valid() bool {
 	switch e {
+	case QueryLogRecordCacheAuth:
+		return true
 	case QueryLogRecordCacheHit:
 		return true
 	case QueryLogRecordCacheMiss:
@@ -429,6 +579,39 @@ func (e QueryLogRecordFilter) Valid() bool {
 	case QueryLogRecordFilterNone:
 		return true
 	case QueryLogRecordFilterRewritten:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for QueryLogRecordSource.
+const (
+	QueryLogRecordSourceAcl       QueryLogRecordSource = "acl"
+	QueryLogRecordSourceAllowlist QueryLogRecordSource = "allowlist"
+	QueryLogRecordSourceBlocklist QueryLogRecordSource = "blocklist"
+	QueryLogRecordSourceCategory  QueryLogRecordSource = "category"
+	QueryLogRecordSourceEmpty     QueryLogRecordSource = ""
+	QueryLogRecordSourceRewrite   QueryLogRecordSource = "rewrite"
+	QueryLogRecordSourceRpz       QueryLogRecordSource = "rpz"
+)
+
+// Valid indicates whether the value is a known member of the QueryLogRecordSource enum.
+func (e QueryLogRecordSource) Valid() bool {
+	switch e {
+	case QueryLogRecordSourceAcl:
+		return true
+	case QueryLogRecordSourceAllowlist:
+		return true
+	case QueryLogRecordSourceBlocklist:
+		return true
+	case QueryLogRecordSourceCategory:
+		return true
+	case QueryLogRecordSourceEmpty:
+		return true
+	case QueryLogRecordSourceRewrite:
+		return true
+	case QueryLogRecordSourceRpz:
 		return true
 	default:
 		return false
@@ -602,8 +785,9 @@ func (e ResolverSettingsBlockMode) Valid() bool {
 
 // Defines values for ResolverSettingsStrategy.
 const (
-	Fastest ResolverSettingsStrategy = "fastest"
-	Ordered ResolverSettingsStrategy = "ordered"
+	Fastest  ResolverSettingsStrategy = "fastest"
+	Ordered  ResolverSettingsStrategy = "ordered"
+	Parallel ResolverSettingsStrategy = "parallel"
 )
 
 // Valid indicates whether the value is a known member of the ResolverSettingsStrategy enum.
@@ -612,6 +796,8 @@ func (e ResolverSettingsStrategy) Valid() bool {
 	case Fastest:
 		return true
 	case Ordered:
+		return true
+	case Parallel:
 		return true
 	default:
 		return false
@@ -1110,6 +1296,27 @@ func (e UserSource) Valid() bool {
 	}
 }
 
+// Defines values for UserPreferencesTheme.
+const (
+	UserPreferencesThemeDark   UserPreferencesTheme = "dark"
+	UserPreferencesThemeLight  UserPreferencesTheme = "light"
+	UserPreferencesThemeSystem UserPreferencesTheme = "system"
+)
+
+// Valid indicates whether the value is a known member of the UserPreferencesTheme enum.
+func (e UserPreferencesTheme) Valid() bool {
+	switch e {
+	case UserPreferencesThemeDark:
+		return true
+	case UserPreferencesThemeLight:
+		return true
+	case UserPreferencesThemeSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ZoneKind.
 const (
 	ZoneKindPrimary   ZoneKind = "primary"
@@ -1335,6 +1542,105 @@ func (e ZoneKeyRolloverRole) Valid() bool {
 	}
 }
 
+// Defines values for GetDashboardSeriesParamsRange.
+const (
+	GetDashboardSeriesParamsRangeN15m GetDashboardSeriesParamsRange = "15m"
+	GetDashboardSeriesParamsRangeN1h  GetDashboardSeriesParamsRange = "1h"
+	GetDashboardSeriesParamsRangeN24h GetDashboardSeriesParamsRange = "24h"
+	GetDashboardSeriesParamsRangeN6h  GetDashboardSeriesParamsRange = "6h"
+	GetDashboardSeriesParamsRangeN7d  GetDashboardSeriesParamsRange = "7d"
+)
+
+// Valid indicates whether the value is a known member of the GetDashboardSeriesParamsRange enum.
+func (e GetDashboardSeriesParamsRange) Valid() bool {
+	switch e {
+	case GetDashboardSeriesParamsRangeN15m:
+		return true
+	case GetDashboardSeriesParamsRangeN1h:
+		return true
+	case GetDashboardSeriesParamsRangeN24h:
+		return true
+	case GetDashboardSeriesParamsRangeN6h:
+		return true
+	case GetDashboardSeriesParamsRangeN7d:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetDashboardTopParamsRange.
+const (
+	GetDashboardTopParamsRangeN15m GetDashboardTopParamsRange = "15m"
+	GetDashboardTopParamsRangeN1h  GetDashboardTopParamsRange = "1h"
+	GetDashboardTopParamsRangeN24h GetDashboardTopParamsRange = "24h"
+	GetDashboardTopParamsRangeN6h  GetDashboardTopParamsRange = "6h"
+	GetDashboardTopParamsRangeN7d  GetDashboardTopParamsRange = "7d"
+)
+
+// Valid indicates whether the value is a known member of the GetDashboardTopParamsRange enum.
+func (e GetDashboardTopParamsRange) Valid() bool {
+	switch e {
+	case GetDashboardTopParamsRangeN15m:
+		return true
+	case GetDashboardTopParamsRangeN1h:
+		return true
+	case GetDashboardTopParamsRangeN24h:
+		return true
+	case GetDashboardTopParamsRangeN6h:
+		return true
+	case GetDashboardTopParamsRangeN7d:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetEngineLogsParamsLevel.
+const (
+	GetEngineLogsParamsLevelDebug GetEngineLogsParamsLevel = "debug"
+	GetEngineLogsParamsLevelError GetEngineLogsParamsLevel = "error"
+	GetEngineLogsParamsLevelInfo  GetEngineLogsParamsLevel = "info"
+	GetEngineLogsParamsLevelWarn  GetEngineLogsParamsLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the GetEngineLogsParamsLevel enum.
+func (e GetEngineLogsParamsLevel) Valid() bool {
+	switch e {
+	case GetEngineLogsParamsLevelDebug:
+		return true
+	case GetEngineLogsParamsLevelError:
+		return true
+	case GetEngineLogsParamsLevelInfo:
+		return true
+	case GetEngineLogsParamsLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetEngineMetricsParamsWindow.
+const (
+	GetEngineMetricsParamsWindowN1h  GetEngineMetricsParamsWindow = "1h"
+	GetEngineMetricsParamsWindowN24h GetEngineMetricsParamsWindow = "24h"
+	GetEngineMetricsParamsWindowN5m  GetEngineMetricsParamsWindow = "5m"
+)
+
+// Valid indicates whether the value is a known member of the GetEngineMetricsParamsWindow enum.
+func (e GetEngineMetricsParamsWindow) Valid() bool {
+	switch e {
+	case GetEngineMetricsParamsWindowN1h:
+		return true
+	case GetEngineMetricsParamsWindowN24h:
+		return true
+	case GetEngineMetricsParamsWindowN5m:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetEngineStatsParamsWindow.
 const (
 	GetEngineStatsParamsWindowN1h  GetEngineStatsParamsWindow = "1h"
@@ -1356,10 +1662,94 @@ func (e GetEngineStatsParamsWindow) Valid() bool {
 	}
 }
 
+// Defines values for SearchQueryLogParamsCache.
+const (
+	SearchQueryLogParamsCacheAuth  SearchQueryLogParamsCache = "auth"
+	SearchQueryLogParamsCacheHit   SearchQueryLogParamsCache = "hit"
+	SearchQueryLogParamsCacheMiss  SearchQueryLogParamsCache = "miss"
+	SearchQueryLogParamsCacheNone  SearchQueryLogParamsCache = "none"
+	SearchQueryLogParamsCacheStale SearchQueryLogParamsCache = "stale"
+)
+
+// Valid indicates whether the value is a known member of the SearchQueryLogParamsCache enum.
+func (e SearchQueryLogParamsCache) Valid() bool {
+	switch e {
+	case SearchQueryLogParamsCacheAuth:
+		return true
+	case SearchQueryLogParamsCacheHit:
+		return true
+	case SearchQueryLogParamsCacheMiss:
+		return true
+	case SearchQueryLogParamsCacheNone:
+		return true
+	case SearchQueryLogParamsCacheStale:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchQueryLogParamsFilter.
+const (
+	SearchQueryLogParamsFilterAllowed   SearchQueryLogParamsFilter = "allowed"
+	SearchQueryLogParamsFilterBlocked   SearchQueryLogParamsFilter = "blocked"
+	SearchQueryLogParamsFilterNone      SearchQueryLogParamsFilter = "none"
+	SearchQueryLogParamsFilterRewritten SearchQueryLogParamsFilter = "rewritten"
+)
+
+// Valid indicates whether the value is a known member of the SearchQueryLogParamsFilter enum.
+func (e SearchQueryLogParamsFilter) Valid() bool {
+	switch e {
+	case SearchQueryLogParamsFilterAllowed:
+		return true
+	case SearchQueryLogParamsFilterBlocked:
+		return true
+	case SearchQueryLogParamsFilterNone:
+		return true
+	case SearchQueryLogParamsFilterRewritten:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchQueryLogParamsSource.
+const (
+	SearchQueryLogParamsSourceAcl       SearchQueryLogParamsSource = "acl"
+	SearchQueryLogParamsSourceAllowlist SearchQueryLogParamsSource = "allowlist"
+	SearchQueryLogParamsSourceBlocklist SearchQueryLogParamsSource = "blocklist"
+	SearchQueryLogParamsSourceCategory  SearchQueryLogParamsSource = "category"
+	SearchQueryLogParamsSourceRewrite   SearchQueryLogParamsSource = "rewrite"
+	SearchQueryLogParamsSourceRpz       SearchQueryLogParamsSource = "rpz"
+)
+
+// Valid indicates whether the value is a known member of the SearchQueryLogParamsSource enum.
+func (e SearchQueryLogParamsSource) Valid() bool {
+	switch e {
+	case SearchQueryLogParamsSourceAcl:
+		return true
+	case SearchQueryLogParamsSourceAllowlist:
+		return true
+	case SearchQueryLogParamsSourceBlocklist:
+		return true
+	case SearchQueryLogParamsSourceCategory:
+		return true
+	case SearchQueryLogParamsSourceRewrite:
+		return true
+	case SearchQueryLogParamsSourceRpz:
+		return true
+	default:
+		return false
+	}
+}
+
 // AccessControl defines model for AccessControl.
 type AccessControl struct {
 	AllowCidrs []string `json:"allow_cidrs"`
-	Revision   int64    `json:"revision"`
+
+	// AuthoritativeAllowCidrs Clients allowed to query hosted zones that set no allow_query_cidrs; omitted on update keeps the current value.
+	AuthoritativeAllowCidrs *[]string `json:"authoritative_allow_cidrs,omitempty"`
+	Revision                int64     `json:"revision"`
 }
 
 // Allowlist defines model for Allowlist.
@@ -1425,6 +1815,14 @@ type ConfigVersion struct {
 	Version   int64     `json:"version"`
 }
 
+// CurrentUserUpdate defines model for CurrentUserUpdate.
+type CurrentUserUpdate struct {
+	DisplayName *string          `json:"display_name,omitempty"`
+	Email       *string          `json:"email,omitempty"`
+	Preferences *UserPreferences `json:"preferences,omitempty"`
+	Revision    int64            `json:"revision"`
+}
+
 // Dashboard defines model for Dashboard.
 type Dashboard struct {
 	BlockedTotal     int64   `json:"blocked_total"`
@@ -1444,6 +1842,108 @@ type Dashboard struct {
 		UpEngines    int     `json:"up_engines"`
 	} `json:"upstreams"`
 }
+
+// DashboardHealth defines model for DashboardHealth.
+type DashboardHealth struct {
+	Alerts []struct {
+		Kind     DashboardHealthAlertsKind     `json:"kind"`
+		Message  string                        `json:"message"`
+		Severity DashboardHealthAlertsSeverity `json:"severity"`
+		Subject  string                        `json:"subject"`
+	} `json:"alerts"`
+	Engines []struct {
+		AppliedVersion   int64              `json:"applied_version"`
+		CacheHitRatio    float32            `json:"cache_hit_ratio"`
+		EngineGroupName  string             `json:"engine_group_name"`
+		FilterIndexBytes int64              `json:"filter_index_bytes"`
+		Id               openapi_types.UUID `json:"id"`
+		NodeName         string             `json:"node_name"`
+		P99Ms            float32            `json:"p99_ms"`
+		Qps              float32            `json:"qps"`
+		Status           string             `json:"status"`
+		TargetVersion    int64              `json:"target_version"`
+	} `json:"engines"`
+	Groups []struct {
+		Connected int                `json:"connected"`
+		Engines   int                `json:"engines"`
+		Id        openapi_types.UUID `json:"id"`
+		Name      string             `json:"name"`
+	} `json:"groups"`
+}
+
+// DashboardHealthAlertsKind defines model for DashboardHealth.Alerts.Kind.
+type DashboardHealthAlertsKind string
+
+// DashboardHealthAlertsSeverity defines model for DashboardHealth.Alerts.Severity.
+type DashboardHealthAlertsSeverity string
+
+// DashboardSeries defines model for DashboardSeries.
+type DashboardSeries struct {
+	Engines []struct {
+		CacheBytes       int64              `json:"cache_bytes"`
+		CacheEntries     int64              `json:"cache_entries"`
+		EngineId         openapi_types.UUID `json:"engine_id"`
+		FilterIndexBytes int64              `json:"filter_index_bytes"`
+		NodeName         string             `json:"node_name"`
+	} `json:"engines"`
+	Points []struct {
+		AnswersByRoute        map[string]float32 `json:"answers_by_route"`
+		At                    time.Time          `json:"at"`
+		BlockedByCategory     map[string]float32 `json:"blocked_by_category"`
+		BlockedQps            float32            `json:"blocked_qps"`
+		CacheHitRatio         float32            `json:"cache_hit_ratio"`
+		CacheMissRatio        float32            `json:"cache_miss_ratio"`
+		CacheStaleRatio       float32            `json:"cache_stale_ratio"`
+		DnssecBogusQps        float32            `json:"dnssec_bogus_qps"`
+		DnssecInsecureQps     float32            `json:"dnssec_insecure_qps"`
+		DnssecSecureQps       float32            `json:"dnssec_secure_qps"`
+		LameMarked            float32            `json:"lame_marked"`
+		MissP50Ms             float32            `json:"miss_p50_ms"`
+		MissP95Ms             float32            `json:"miss_p95_ms"`
+		MissP99Ms             float32            `json:"miss_p99_ms"`
+		P50Ms                 float32            `json:"p50_ms"`
+		P95Ms                 float32            `json:"p95_ms"`
+		P99Ms                 float32            `json:"p99_ms"`
+		Qps                   float32            `json:"qps"`
+		QpsByRcode            map[string]float32 `json:"qps_by_rcode"`
+		QpsByTransport        map[string]float32 `json:"qps_by_transport"`
+		RecursionTimeoutsQps  float32            `json:"recursion_timeouts_qps"`
+		RecursionUpstreamQps  float32            `json:"recursion_upstream_qps"`
+		ResolutionFailuresQps float32            `json:"resolution_failures_qps"`
+		RewrittenQps          float32            `json:"rewritten_qps"`
+	} `json:"points"`
+	Range       DashboardSeriesRange `json:"range"`
+	StepSeconds int                  `json:"step_seconds"`
+}
+
+// DashboardSeriesRange defines model for DashboardSeries.Range.
+type DashboardSeriesRange string
+
+// DashboardTop defines model for DashboardTop.
+type DashboardTop struct {
+	// Available false when the query log backend cannot aggregate; the lists are then empty
+	Available      bool `json:"available"`
+	BlockedDomains []struct {
+		Count int64  `json:"count"`
+		Key   string `json:"key"`
+	} `json:"blocked_domains"`
+	Categories []struct {
+		Count int64  `json:"count"`
+		Key   string `json:"key"`
+	} `json:"categories"`
+	Clients []struct {
+		Count int64  `json:"count"`
+		Key   string `json:"key"`
+	} `json:"clients"`
+	Domains []struct {
+		Count int64  `json:"count"`
+		Key   string `json:"key"`
+	} `json:"domains"`
+	Range DashboardTopRange `json:"range"`
+}
+
+// DashboardTopRange defines model for DashboardTop.Range.
+type DashboardTopRange string
 
 // DnsTlsStatus defines model for DnsTlsStatus.
 type DnsTlsStatus struct {
@@ -1611,6 +2111,66 @@ type EngineGroupUpdateRolloutStrategy string
 
 // EngineGroupUpdateUpstreamMode defines model for EngineGroupUpdate.UpstreamMode.
 type EngineGroupUpdateUpstreamMode string
+
+// EngineLogs defines model for EngineLogs.
+type EngineLogs struct {
+	EngineId openapi_types.UUID `json:"engine_id"`
+	LastSeq  int64              `json:"last_seq"`
+	Lines    []struct {
+		Level   EngineLogsLinesLevel `json:"level"`
+		Message string               `json:"message"`
+		Seq     int64                `json:"seq"`
+		Time    time.Time            `json:"time"`
+	} `json:"lines"`
+	OldestSeq int64 `json:"oldest_seq"`
+}
+
+// EngineLogsLinesLevel defines model for EngineLogs.Lines.Level.
+type EngineLogsLinesLevel string
+
+// EngineMetrics defines model for EngineMetrics.
+type EngineMetrics struct {
+	FilterIndex *struct {
+		At                time.Time `json:"at"`
+		BuildSeconds      float32   `json:"build_seconds"`
+		Bytes             int64     `json:"bytes"`
+		Cpu               string    `json:"cpu"`
+		DecisionNsBlocked float32   `json:"decision_ns_blocked"`
+		DecisionNsClean   float32   `json:"decision_ns_clean"`
+		Entries           int64     `json:"entries"`
+		MaxBytes          int64     `json:"max_bytes"`
+	} `json:"filter_index"`
+	Restarts int `json:"restarts"`
+	Samples  []struct {
+		At               time.Time          `json:"at"`
+		BlockedQps       float32            `json:"blocked_qps"`
+		CacheHitRatio    float32            `json:"cache_hit_ratio"`
+		Connections      map[string]float32 `json:"connections"`
+		CpuCores         float32            `json:"cpu_cores"`
+		MemoryLimitBytes int64              `json:"memory_limit_bytes"`
+		NxdomainRatio    float32            `json:"nxdomain_ratio"`
+		P50Ms            float32            `json:"p50_ms"`
+		P99Ms            float32            `json:"p99_ms"`
+		Qps              float32            `json:"qps"`
+		RefusedRatio     float32            `json:"refused_ratio"`
+		ResidentBytes    int64              `json:"resident_bytes"`
+		ServfailRatio    float32            `json:"servfail_ratio"`
+	} `json:"samples"`
+	StartedAt *time.Time `json:"started_at"`
+	Upstreams []struct {
+		Name    string `json:"name"`
+		Samples []struct {
+			At                time.Time `json:"at"`
+			FailuresPerSecond float32   `json:"failures_per_second"`
+			RaceWinsPerSecond float32   `json:"race_wins_per_second"`
+			RttMs             float32   `json:"rtt_ms"`
+		} `json:"samples"`
+	} `json:"upstreams"`
+	Window EngineMetricsWindow `json:"window"`
+}
+
+// EngineMetricsWindow defines model for EngineMetrics.Window.
+type EngineMetricsWindow string
 
 // EngineStats defines model for EngineStats.
 type EngineStats struct {
@@ -1890,6 +2450,13 @@ type NegativeTrustAnchorInput struct {
 	Reason    *string   `json:"reason,omitempty"`
 }
 
+// PasswordChange defines model for PasswordChange.
+type PasswordChange struct {
+	CurrentPassword     string `json:"current_password"`
+	NewPassword         string `json:"new_password"`
+	RevokeOtherSessions *bool  `json:"revoke_other_sessions,omitempty"`
+}
+
 // PolicyGroup defines model for PolicyGroup.
 type PolicyGroup struct {
 	Allowlist    []string  `json:"allowlist"`
@@ -1954,19 +2521,29 @@ type QueryLogPage struct {
 
 // QueryLogRecord defines model for QueryLogRecord.
 type QueryLogRecord struct {
-	Cache      QueryLogRecordCache  `json:"cache"`
-	Category   string               `json:"category"`
-	Client     string               `json:"client"`
-	DurationUs int64                `json:"duration_us"`
-	EngineId   string               `json:"engine_id"`
-	Filter     QueryLogRecordFilter `json:"filter"`
-	ListId     string               `json:"list_id"`
-	Name       string               `json:"name"`
-	Qtype      string               `json:"qtype"`
-	Rcode      string               `json:"rcode"`
-	Time       time.Time            `json:"time"`
-	Transport  string               `json:"transport"`
-	Upstream   string               `json:"upstream"`
+	Cache           QueryLogRecordCache  `json:"cache"`
+	Category        string               `json:"category"`
+	Client          string               `json:"client"`
+	DurationUs      int64                `json:"duration_us"`
+	EngineId        string               `json:"engine_id"`
+	Filter          QueryLogRecordFilter `json:"filter"`
+	ListId          string               `json:"list_id"`
+	ListName        string               `json:"list_name"`
+	Name            string               `json:"name"`
+	PolicyGroupId   string               `json:"policy_group_id"`
+	PolicyGroupName string               `json:"policy_group_name"`
+	Qtype           string               `json:"qtype"`
+	Rcode           string               `json:"rcode"`
+	RewriteAnswer   string               `json:"rewrite_answer"`
+	RpzAction       string               `json:"rpz_action"`
+	RpzZoneId       string               `json:"rpz_zone_id"`
+	RpzZoneName     string               `json:"rpz_zone_name"`
+	Rule            string               `json:"rule"`
+	Source          QueryLogRecordSource `json:"source"`
+	Time            time.Time            `json:"time"`
+	Transport       string               `json:"transport"`
+	Upstream        string               `json:"upstream"`
+	UpstreamsRaced  int                  `json:"upstreams_raced"`
 }
 
 // QueryLogRecordCache defines model for QueryLogRecord.Cache.
@@ -1974,6 +2551,9 @@ type QueryLogRecordCache string
 
 // QueryLogRecordFilter defines model for QueryLogRecord.Filter.
 type QueryLogRecordFilter string
+
+// QueryLogRecordSource defines model for QueryLogRecord.Source.
+type QueryLogRecordSource string
 
 // Record defines model for Record.
 type Record struct {
@@ -2034,18 +2614,21 @@ type ResolutionSettingsMode string
 
 // ResolverSettings defines model for ResolverSettings.
 type ResolverSettings struct {
-	BlockMode            ResolverSettingsBlockMode `json:"block_mode"`
-	BlockTtl             int                       `json:"block_ttl"`
-	CacheMaxBytes        int64                     `json:"cache_max_bytes"`
-	CacheMaxTtl          int                       `json:"cache_max_ttl"`
-	CacheMinTtl          int                       `json:"cache_min_ttl"`
-	CacheNegativeMaxTtl  int                       `json:"cache_negative_max_ttl"`
-	CacheStaleWindow     int                       `json:"cache_stale_window"`
-	OtlpEndpoint         string                    `json:"otlp_endpoint"`
-	Revision             int64                     `json:"revision"`
-	Strategy             ResolverSettingsStrategy  `json:"strategy"`
-	TraceSampleOneIn     int                       `json:"trace_sample_one_in"`
-	TraceSlowThresholdUs int                       `json:"trace_slow_threshold_us"`
+	BlockMode           ResolverSettingsBlockMode `json:"block_mode"`
+	BlockTtl            int                       `json:"block_ttl"`
+	CacheMaxBytes       int64                     `json:"cache_max_bytes"`
+	CacheMaxTtl         int                       `json:"cache_max_ttl"`
+	CacheMinTtl         int                       `json:"cache_min_ttl"`
+	CacheNegativeMaxTtl int                       `json:"cache_negative_max_ttl"`
+	CacheStaleWindow    int                       `json:"cache_stale_window"`
+	OtlpEndpoint        string                    `json:"otlp_endpoint"`
+
+	// ParallelMax parallel strategy: upstreams queried at once; 0 = every candidate, engines cap at 8
+	ParallelMax          *int                     `json:"parallel_max,omitempty"`
+	Revision             int64                    `json:"revision"`
+	Strategy             ResolverSettingsStrategy `json:"strategy"`
+	TraceSampleOneIn     int                      `json:"trace_sample_one_in"`
+	TraceSlowThresholdUs int                      `json:"trace_slow_threshold_us"`
 }
 
 // ResolverSettingsBlockMode defines model for ResolverSettings.BlockMode.
@@ -2403,14 +2986,17 @@ type UpstreamInputProtocol string
 
 // User defines model for User.
 type User struct {
-	CreatedAt time.Time          `json:"created_at"`
-	Disabled  bool               `json:"disabled"`
-	Email     string             `json:"email"`
-	Id        openapi_types.UUID `json:"id"`
-	Revision  int64              `json:"revision"`
-	Role      Role               `json:"role"`
-	Source    UserSource         `json:"source"`
-	Username  string             `json:"username"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Disabled    bool               `json:"disabled"`
+	DisplayName string             `json:"display_name"`
+	Email       string             `json:"email"`
+	Id          openapi_types.UUID `json:"id"`
+	LastLoginAt *time.Time         `json:"last_login_at"`
+	Preferences UserPreferences    `json:"preferences"`
+	Revision    int64              `json:"revision"`
+	Role        Role               `json:"role"`
+	Source      UserSource         `json:"source"`
+	Username    string             `json:"username"`
 }
 
 // UserSource defines model for User.Source.
@@ -2424,6 +3010,19 @@ type UserCreate struct {
 	Username string `json:"username"`
 }
 
+// UserPreferences defines model for UserPreferences.
+type UserPreferences struct {
+	Clock24h     bool                 `json:"clock_24h"`
+	QuerylogLive bool                 `json:"querylog_live"`
+	Theme        UserPreferencesTheme `json:"theme"`
+
+	// TimeZone IANA name; empty uses the browser
+	TimeZone string `json:"time_zone"`
+}
+
+// UserPreferencesTheme defines model for UserPreferences.Theme.
+type UserPreferencesTheme string
+
 // UserUpdate defines model for UserUpdate.
 type UserUpdate struct {
 	Disabled bool    `json:"disabled"`
@@ -2433,11 +3032,25 @@ type UserUpdate struct {
 	Role     Role    `json:"role"`
 }
 
+// VersionInfo defines model for VersionInfo.
+type VersionInfo struct {
+	BuildDate string `json:"build_date"`
+	Commit    string `json:"commit"`
+	Engines   []struct {
+		Count   int    `json:"count"`
+		Version string `json:"version"`
+	} `json:"engines"`
+	RepositoryUrl string `json:"repository_url"`
+	Version       string `json:"version"`
+}
+
 // Zone defines model for Zone.
 type Zone struct {
-	CreatedAt     time.Time `json:"created_at"`
-	DefaultTtl    int64     `json:"default_ttl"`
-	DnssecEnabled bool      `json:"dnssec_enabled"`
+	// AllowQueryCidrs Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.
+	AllowQueryCidrs []string  `json:"allow_query_cidrs"`
+	CreatedAt       time.Time `json:"created_at"`
+	DefaultTtl      int64     `json:"default_ttl"`
+	DnssecEnabled   bool      `json:"dnssec_enabled"`
 
 	// EngineGroupId engine group; null applies to every group
 	EngineGroupId *openapi_types.UUID `json:"engine_group_id"`
@@ -2462,6 +3075,9 @@ type ZoneKind string
 
 // ZoneCreate defines model for ZoneCreate.
 type ZoneCreate struct {
+	// AllowQueryCidrs Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.
+	AllowQueryCidrs *[]string `json:"allow_query_cidrs,omitempty"`
+
 	// DefaultTtl Default 3600 when omitted.
 	DefaultTtl *int64 `json:"default_ttl,omitempty"`
 
@@ -2652,10 +3268,12 @@ type ZoneTransfer struct {
 
 // ZoneUpdate defines model for ZoneUpdate.
 type ZoneUpdate struct {
-	DefaultTtl *int64          `json:"default_ttl,omitempty"`
-	Notify     *[]ZoneEndpoint `json:"notify,omitempty"`
-	Primaries  *[]ZoneEndpoint `json:"primaries,omitempty"`
-	Revision   int64           `json:"revision"`
+	// AllowQueryCidrs Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.
+	AllowQueryCidrs *[]string       `json:"allow_query_cidrs,omitempty"`
+	DefaultTtl      *int64          `json:"default_ttl,omitempty"`
+	Notify          *[]ZoneEndpoint `json:"notify,omitempty"`
+	Primaries       *[]ZoneEndpoint `json:"primaries,omitempty"`
+	Revision        int64           `json:"revision"`
 
 	// Soa Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update.
 	Soa      *ZoneSOAInput     `json:"soa,omitempty"`
@@ -2665,6 +3283,9 @@ type ZoneUpdate struct {
 
 // ZoneUpdatePolicy defines model for ZoneUpdatePolicy.
 type ZoneUpdatePolicy struct {
+	// AllowCidrs Sources allowed to send updates; empty allows any source. TSIG is always required.
+	AllowCidrs *[]string `json:"allow_cidrs,omitempty"`
+
 	// TsigKeyIds TSIG keys allowed to send dynamic updates; empty refuses updates.
 	TsigKeyIds []openapi_types.UUID `json:"tsig_key_ids"`
 }
@@ -2697,6 +3318,23 @@ type ListConfigVersionsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetDashboardSeriesParams defines parameters for GetDashboardSeries.
+type GetDashboardSeriesParams struct {
+	Range GetDashboardSeriesParamsRange `form:"range" json:"range"`
+}
+
+// GetDashboardSeriesParamsRange defines parameters for GetDashboardSeries.
+type GetDashboardSeriesParamsRange string
+
+// GetDashboardTopParams defines parameters for GetDashboardTop.
+type GetDashboardTopParams struct {
+	Range GetDashboardTopParamsRange `form:"range" json:"range"`
+	Limit *int                       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetDashboardTopParamsRange defines parameters for GetDashboardTop.
+type GetDashboardTopParamsRange string
+
 // DeleteEngineGroupParams defines parameters for DeleteEngineGroup.
 type DeleteEngineGroupParams struct {
 	Revision Revision `form:"revision" json:"revision"`
@@ -2706,6 +3344,30 @@ type DeleteEngineGroupParams struct {
 type RollbackEngineGroupJSONBody struct {
 	ToVersion int64 `json:"to_version"`
 }
+
+// GetEngineLogsParams defines parameters for GetEngineLogs.
+type GetEngineLogsParams struct {
+	// After Only lines with a larger sequence number.
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
+
+	// Level Minimum level.
+	Level *GetEngineLogsParamsLevel `form:"level,omitempty" json:"level,omitempty"`
+
+	// Q Case-insensitive substring of the message.
+	Q     *string `form:"q,omitempty" json:"q,omitempty"`
+	Limit *int    `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetEngineLogsParamsLevel defines parameters for GetEngineLogs.
+type GetEngineLogsParamsLevel string
+
+// GetEngineMetricsParams defines parameters for GetEngineMetrics.
+type GetEngineMetricsParams struct {
+	Window *GetEngineMetricsParamsWindow `form:"window,omitempty" json:"window,omitempty"`
+}
+
+// GetEngineMetricsParamsWindow defines parameters for GetEngineMetrics.
+type GetEngineMetricsParamsWindow string
 
 // GetEngineStatsParams defines parameters for GetEngineStats.
 type GetEngineStatsParams struct {
@@ -2732,18 +3394,33 @@ type DeletePolicyGroupParams struct {
 
 // SearchQueryLogParams defines parameters for SearchQueryLog.
 type SearchQueryLogParams struct {
-	From     *time.Time `form:"from,omitempty" json:"from,omitempty"`
-	To       *time.Time `form:"to,omitempty" json:"to,omitempty"`
-	Client   *string    `form:"client,omitempty" json:"client,omitempty"`
-	Name     *string    `form:"name,omitempty" json:"name,omitempty"`
-	Qtype    *string    `form:"qtype,omitempty" json:"qtype,omitempty"`
-	Rcode    *string    `form:"rcode,omitempty" json:"rcode,omitempty"`
-	Cache    *string    `form:"cache,omitempty" json:"cache,omitempty"`
-	Filter   *string    `form:"filter,omitempty" json:"filter,omitempty"`
-	Category *string    `form:"category,omitempty" json:"category,omitempty"`
-	Limit    *int       `form:"limit,omitempty" json:"limit,omitempty"`
-	Cursor   *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
+	From   *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To     *time.Time `form:"to,omitempty" json:"to,omitempty"`
+	Client *string    `form:"client,omitempty" json:"client,omitempty"`
+
+	// Name Case-insensitive substring of the query name; a trailing dot is ignored.
+	Name        *string                       `form:"name,omitempty" json:"name,omitempty"`
+	Qtype       *[]string                     `form:"qtype,omitempty" json:"qtype,omitempty"`
+	Rcode       *[]string                     `form:"rcode,omitempty" json:"rcode,omitempty"`
+	Cache       *[]SearchQueryLogParamsCache  `form:"cache,omitempty" json:"cache,omitempty"`
+	Filter      *[]SearchQueryLogParamsFilter `form:"filter,omitempty" json:"filter,omitempty"`
+	Category    *[]string                     `form:"category,omitempty" json:"category,omitempty"`
+	Source      *[]SearchQueryLogParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	ListId      *[]string                     `form:"list_id,omitempty" json:"list_id,omitempty"`
+	PolicyGroup *[]string                     `form:"policy_group,omitempty" json:"policy_group,omitempty"`
+	EngineId    *[]string                     `form:"engine_id,omitempty" json:"engine_id,omitempty"`
+	Limit       *int                          `form:"limit,omitempty" json:"limit,omitempty"`
+	Cursor      *string                       `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// SearchQueryLogParamsCache defines parameters for SearchQueryLog.
+type SearchQueryLogParamsCache string
+
+// SearchQueryLogParamsFilter defines parameters for SearchQueryLog.
+type SearchQueryLogParamsFilter string
+
+// SearchQueryLogParamsSource defines parameters for SearchQueryLog.
+type SearchQueryLogParamsSource string
 
 // ListRewritesParams defines parameters for ListRewrites.
 type ListRewritesParams struct {
@@ -2812,6 +3489,12 @@ type CreateApiTokenJSONRequestBody = ApiTokenCreate
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
+type UpdateCurrentUserJSONRequestBody = CurrentUserUpdate
+
+// ChangeOwnPasswordJSONRequestBody defines body for ChangeOwnPassword for application/json ContentType.
+type ChangeOwnPasswordJSONRequestBody = PasswordChange
 
 // CreateNegativeTrustAnchorJSONRequestBody defines body for CreateNegativeTrustAnchor for application/json ContentType.
 type CreateNegativeTrustAnchorJSONRequestBody = NegativeTrustAnchorInput
@@ -2963,6 +3646,12 @@ type ServerInterface interface {
 	// (GET /auth/me)
 	GetCurrentUser(w http.ResponseWriter, r *http.Request)
 
+	// (PUT /auth/me)
+	UpdateCurrentUser(w http.ResponseWriter, r *http.Request)
+
+	// (POST /auth/me/password)
+	ChangeOwnPassword(w http.ResponseWriter, r *http.Request)
+
 	// (GET /auth/oidc/callback)
 	OidcCallback(w http.ResponseWriter, r *http.Request, params OidcCallbackParams)
 
@@ -2977,6 +3666,15 @@ type ServerInterface interface {
 
 	// (GET /dashboard)
 	GetDashboard(w http.ResponseWriter, r *http.Request)
+
+	// (GET /dashboard/health)
+	GetDashboardHealth(w http.ResponseWriter, r *http.Request)
+
+	// (GET /dashboard/series)
+	GetDashboardSeries(w http.ResponseWriter, r *http.Request, params GetDashboardSeriesParams)
+
+	// (GET /dashboard/top)
+	GetDashboardTop(w http.ResponseWriter, r *http.Request, params GetDashboardTopParams)
 
 	// (GET /dnssec/negative-trust-anchors)
 	ListNegativeTrustAnchors(w http.ResponseWriter, r *http.Request)
@@ -3037,6 +3735,12 @@ type ServerInterface interface {
 
 	// (PATCH /engines/{id})
 	UpdateEngine(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /engines/{id}/logs)
+	GetEngineLogs(w http.ResponseWriter, r *http.Request, id Id, params GetEngineLogsParams)
+
+	// (GET /engines/{id}/metrics)
+	GetEngineMetrics(w http.ResponseWriter, r *http.Request, id Id, params GetEngineMetricsParams)
 
 	// (POST /engines/{id}/revoke)
 	RevokeEngine(w http.ResponseWriter, r *http.Request, id Id)
@@ -3218,6 +3922,9 @@ type ServerInterface interface {
 	// (PUT /users/{id})
 	UpdateUser(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (GET /version)
+	GetVersion(w http.ResponseWriter, r *http.Request)
+
 	// (GET /zones)
 	ListZones(w http.ResponseWriter, r *http.Request)
 
@@ -3326,6 +4033,16 @@ func (_ Unimplemented) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (PUT /auth/me)
+func (_ Unimplemented) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /auth/me/password)
+func (_ Unimplemented) ChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /auth/oidc/callback)
 func (_ Unimplemented) OidcCallback(w http.ResponseWriter, r *http.Request, params OidcCallbackParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -3348,6 +4065,21 @@ func (_ Unimplemented) ListConfigVersions(w http.ResponseWriter, r *http.Request
 
 // (GET /dashboard)
 func (_ Unimplemented) GetDashboard(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dashboard/health)
+func (_ Unimplemented) GetDashboardHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dashboard/series)
+func (_ Unimplemented) GetDashboardSeries(w http.ResponseWriter, r *http.Request, params GetDashboardSeriesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /dashboard/top)
+func (_ Unimplemented) GetDashboardTop(w http.ResponseWriter, r *http.Request, params GetDashboardTopParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3448,6 +4180,16 @@ func (_ Unimplemented) GetEngine(w http.ResponseWriter, r *http.Request, id Id) 
 
 // (PATCH /engines/{id})
 func (_ Unimplemented) UpdateEngine(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /engines/{id}/logs)
+func (_ Unimplemented) GetEngineLogs(w http.ResponseWriter, r *http.Request, id Id, params GetEngineLogsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /engines/{id}/metrics)
+func (_ Unimplemented) GetEngineMetrics(w http.ResponseWriter, r *http.Request, id Id, params GetEngineMetricsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3751,6 +4493,11 @@ func (_ Unimplemented) UpdateUser(w http.ResponseWriter, r *http.Request, id Id)
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /version)
+func (_ Unimplemented) GetVersion(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /zones)
 func (_ Unimplemented) ListZones(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -4038,6 +4785,34 @@ func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateCurrentUser operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCurrentUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ChangeOwnPassword operation middleware
+func (siw *ServerInterfaceWrapper) ChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChangeOwnPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // OidcCallback operation middleware
 func (siw *ServerInterfaceWrapper) OidcCallback(w http.ResponseWriter, r *http.Request) {
 
@@ -4169,6 +4944,99 @@ func (siw *ServerInterfaceWrapper) GetDashboard(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDashboard(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDashboardHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetDashboardHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDashboardHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDashboardSeries operation middleware
+func (siw *ServerInterfaceWrapper) GetDashboardSeries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDashboardSeriesParams
+
+	// ------------- Required query parameter "range" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "range", r.URL.Query(), &params.Range, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "range"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "range", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDashboardSeries(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDashboardTop operation middleware
+func (siw *ServerInterfaceWrapper) GetDashboardTop(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDashboardTopParams
+
+	// ------------- Required query parameter "range" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "range", r.URL.Query(), &params.Range, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "range"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "range", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDashboardTop(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4585,6 +5453,129 @@ func (siw *ServerInterfaceWrapper) UpdateEngine(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateEngine(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEngineLogs operation middleware
+func (siw *ServerInterfaceWrapper) GetEngineLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEngineLogsParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "level" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "level", r.URL.Query(), &params.Level, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "level"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "level", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEngineLogs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEngineMetrics operation middleware
+func (siw *ServerInterfaceWrapper) GetEngineMetrics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEngineMetricsParams
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "window", r.URL.Query(), &params.Window, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "window"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEngineMetrics(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5239,7 +6230,7 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 
 	// ------------- Optional query parameter "qtype" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "qtype", r.URL.Query(), &params.Qtype, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "qtype", r.URL.Query(), &params.Qtype, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -5252,7 +6243,7 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 
 	// ------------- Optional query parameter "rcode" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "rcode", r.URL.Query(), &params.Rcode, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "rcode", r.URL.Query(), &params.Rcode, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -5265,7 +6256,7 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 
 	// ------------- Optional query parameter "cache" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "cache", r.URL.Query(), &params.Cache, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cache", r.URL.Query(), &params.Cache, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -5278,7 +6269,7 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 
 	// ------------- Optional query parameter "filter" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -5291,13 +6282,65 @@ func (siw *ServerInterfaceWrapper) SearchQueryLog(w http.ResponseWriter, r *http
 
 	// ------------- Optional query parameter "category" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "category", r.URL.Query(), &params.Category, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "category", r.URL.Query(), &params.Category, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "category"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "category", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "source" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "source", r.URL.Query(), &params.Source, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "list_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "list_id", r.URL.Query(), &params.ListId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "list_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "list_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "policy_group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "policy_group", r.URL.Query(), &params.PolicyGroup, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "policy_group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "policy_group", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "engine_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "engine_id", r.URL.Query(), &params.EngineId, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "engine_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "engine_id", Err: err})
 		}
 		return
 	}
@@ -6115,6 +7158,20 @@ func (siw *ServerInterfaceWrapper) UpdateUser(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetVersion operation middleware
+func (siw *ServerInterfaceWrapper) GetVersion(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVersion(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListZones operation middleware
 func (siw *ServerInterfaceWrapper) ListZones(w http.ResponseWriter, r *http.Request) {
 
@@ -6729,6 +7786,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/health", wrapper.GetHealth)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/version", wrapper.GetVersion)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/setup", wrapper.GetSetupStatus)
 	})
 	r.Group(func(r chi.Router) {
@@ -6744,6 +7804,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/auth/me", wrapper.GetCurrentUser)
 	})
 	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/auth/me", wrapper.UpdateCurrentUser)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/me/password", wrapper.ChangeOwnPassword)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/auth/providers", wrapper.ListAuthProviders)
 	})
 	r.Group(func(r chi.Router) {
@@ -6754,6 +7820,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/dashboard", wrapper.GetDashboard)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dashboard/series", wrapper.GetDashboardSeries)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dashboard/top", wrapper.GetDashboardTop)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/dashboard/health", wrapper.GetDashboardHealth)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/upstreams", wrapper.ListUpstreams)
@@ -7054,6 +8129,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/engines/{id}/stats", wrapper.GetEngineStats)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/engines/{id}/metrics", wrapper.GetEngineMetrics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/engines/{id}/logs", wrapper.GetEngineLogs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/engines/{id}/revoke", wrapper.RevokeEngine)
@@ -7418,6 +8499,156 @@ func (response GetCurrentUser401JSONResponse) VisitGetCurrentUserResponse(w http
 	return err
 }
 
+type UpdateCurrentUserRequestObject struct {
+	Body *UpdateCurrentUserJSONRequestBody
+}
+
+type UpdateCurrentUserResponseObject interface {
+	VisitUpdateCurrentUserResponse(w http.ResponseWriter) error
+}
+
+type UpdateCurrentUser200JSONResponse User
+
+func (response UpdateCurrentUser200JSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateCurrentUser400JSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser401JSONResponse Error
+
+func (response UpdateCurrentUser401JSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser409JSONResponse Error
+
+func (response UpdateCurrentUser409JSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangeOwnPasswordRequestObject struct {
+	Body *ChangeOwnPasswordJSONRequestBody
+}
+
+type ChangeOwnPasswordResponseObject interface {
+	VisitChangeOwnPasswordResponse(w http.ResponseWriter) error
+}
+
+type ChangeOwnPassword204Response struct {
+}
+
+func (response ChangeOwnPassword204Response) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ChangeOwnPassword400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ChangeOwnPassword400JSONResponse) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangeOwnPassword401JSONResponse Error
+
+func (response ChangeOwnPassword401JSONResponse) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangeOwnPassword403JSONResponse Error
+
+func (response ChangeOwnPassword403JSONResponse) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangeOwnPassword409JSONResponse Error
+
+func (response ChangeOwnPassword409JSONResponse) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangeOwnPassword429JSONResponse Error
+
+func (response ChangeOwnPassword429JSONResponse) VisitChangeOwnPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type OidcCallbackRequestObject struct {
 	Params OidcCallbackParams
 }
@@ -7538,6 +8769,99 @@ func (response GetDashboard200JSONResponse) VisitGetDashboardResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDashboardHealthRequestObject struct {
+}
+
+type GetDashboardHealthResponseObject interface {
+	VisitGetDashboardHealthResponse(w http.ResponseWriter) error
+}
+
+type GetDashboardHealth200JSONResponse DashboardHealth
+
+func (response GetDashboardHealth200JSONResponse) VisitGetDashboardHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDashboardSeriesRequestObject struct {
+	Params GetDashboardSeriesParams
+}
+
+type GetDashboardSeriesResponseObject interface {
+	VisitGetDashboardSeriesResponse(w http.ResponseWriter) error
+}
+
+type GetDashboardSeries200JSONResponse DashboardSeries
+
+func (response GetDashboardSeries200JSONResponse) VisitGetDashboardSeriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDashboardSeries400JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetDashboardSeries400JSONResponse) VisitGetDashboardSeriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDashboardTopRequestObject struct {
+	Params GetDashboardTopParams
+}
+
+type GetDashboardTopResponseObject interface {
+	VisitGetDashboardTopResponse(w http.ResponseWriter) error
+}
+
+type GetDashboardTop200JSONResponse DashboardTop
+
+func (response GetDashboardTop200JSONResponse) VisitGetDashboardTopResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDashboardTop400JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetDashboardTop400JSONResponse) VisitGetDashboardTopResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -8330,6 +9654,136 @@ func (response UpdateEngine422JSONResponse) VisitUpdateEngineResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineLogsRequestObject struct {
+	Id     Id `json:"id"`
+	Params GetEngineLogsParams
+}
+
+type GetEngineLogsResponseObject interface {
+	VisitGetEngineLogsResponse(w http.ResponseWriter) error
+}
+
+type GetEngineLogs200JSONResponse EngineLogs
+
+func (response GetEngineLogs200JSONResponse) VisitGetEngineLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineLogs404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetEngineLogs404JSONResponse) VisitGetEngineLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineLogs409JSONResponse Error
+
+func (response GetEngineLogs409JSONResponse) VisitGetEngineLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineLogs501JSONResponse Error
+
+func (response GetEngineLogs501JSONResponse) VisitGetEngineLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(501)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineLogs504JSONResponse Error
+
+func (response GetEngineLogs504JSONResponse) VisitGetEngineLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(504)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineMetricsRequestObject struct {
+	Id     Id `json:"id"`
+	Params GetEngineMetricsParams
+}
+
+type GetEngineMetricsResponseObject interface {
+	VisitGetEngineMetricsResponse(w http.ResponseWriter) error
+}
+
+type GetEngineMetrics200JSONResponse EngineMetrics
+
+func (response GetEngineMetrics200JSONResponse) VisitGetEngineMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineMetrics400JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetEngineMetrics400JSONResponse) VisitGetEngineMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEngineMetrics404JSONResponse Error
+
+func (response GetEngineMetrics404JSONResponse) VisitGetEngineMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -9485,7 +10939,21 @@ func (response SearchQueryLog200JSONResponse) VisitSearchQueryLogResponse(w http
 	return err
 }
 
-type SearchQueryLog503JSONResponse struct{ ErrorJSONResponse }
+type SearchQueryLog400JSONResponse struct{ ErrorJSONResponse }
+
+func (response SearchQueryLog400JSONResponse) VisitSearchQueryLogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchQueryLog503JSONResponse Error
 
 func (response SearchQueryLog503JSONResponse) VisitSearchQueryLogResponse(w http.ResponseWriter) error {
 
@@ -10976,6 +12444,27 @@ func (response UpdateUser409JSONResponse) VisitUpdateUserResponse(w http.Respons
 	return err
 }
 
+type GetVersionRequestObject struct {
+}
+
+type GetVersionResponseObject interface {
+	VisitGetVersionResponse(w http.ResponseWriter) error
+}
+
+type GetVersion200JSONResponse VersionInfo
+
+func (response GetVersion200JSONResponse) VisitGetVersionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListZonesRequestObject struct {
 }
 
@@ -11999,6 +13488,12 @@ type StrictServerInterface interface {
 	// (GET /auth/me)
 	GetCurrentUser(ctx context.Context, request GetCurrentUserRequestObject) (GetCurrentUserResponseObject, error)
 
+	// (PUT /auth/me)
+	UpdateCurrentUser(ctx context.Context, request UpdateCurrentUserRequestObject) (UpdateCurrentUserResponseObject, error)
+
+	// (POST /auth/me/password)
+	ChangeOwnPassword(ctx context.Context, request ChangeOwnPasswordRequestObject) (ChangeOwnPasswordResponseObject, error)
+
 	// (GET /auth/oidc/callback)
 	OidcCallback(ctx context.Context, request OidcCallbackRequestObject) (OidcCallbackResponseObject, error)
 
@@ -12013,6 +13508,15 @@ type StrictServerInterface interface {
 
 	// (GET /dashboard)
 	GetDashboard(ctx context.Context, request GetDashboardRequestObject) (GetDashboardResponseObject, error)
+
+	// (GET /dashboard/health)
+	GetDashboardHealth(ctx context.Context, request GetDashboardHealthRequestObject) (GetDashboardHealthResponseObject, error)
+
+	// (GET /dashboard/series)
+	GetDashboardSeries(ctx context.Context, request GetDashboardSeriesRequestObject) (GetDashboardSeriesResponseObject, error)
+
+	// (GET /dashboard/top)
+	GetDashboardTop(ctx context.Context, request GetDashboardTopRequestObject) (GetDashboardTopResponseObject, error)
 
 	// (GET /dnssec/negative-trust-anchors)
 	ListNegativeTrustAnchors(ctx context.Context, request ListNegativeTrustAnchorsRequestObject) (ListNegativeTrustAnchorsResponseObject, error)
@@ -12073,6 +13577,12 @@ type StrictServerInterface interface {
 
 	// (PATCH /engines/{id})
 	UpdateEngine(ctx context.Context, request UpdateEngineRequestObject) (UpdateEngineResponseObject, error)
+
+	// (GET /engines/{id}/logs)
+	GetEngineLogs(ctx context.Context, request GetEngineLogsRequestObject) (GetEngineLogsResponseObject, error)
+
+	// (GET /engines/{id}/metrics)
+	GetEngineMetrics(ctx context.Context, request GetEngineMetricsRequestObject) (GetEngineMetricsResponseObject, error)
 
 	// (POST /engines/{id}/revoke)
 	RevokeEngine(ctx context.Context, request RevokeEngineRequestObject) (RevokeEngineResponseObject, error)
@@ -12253,6 +13763,9 @@ type StrictServerInterface interface {
 
 	// (PUT /users/{id})
 	UpdateUser(ctx context.Context, request UpdateUserRequestObject) (UpdateUserResponseObject, error)
+
+	// (GET /version)
+	GetVersion(ctx context.Context, request GetVersionRequestObject) (GetVersionResponseObject, error)
 
 	// (GET /zones)
 	ListZones(ctx context.Context, request ListZonesRequestObject) (ListZonesResponseObject, error)
@@ -12638,6 +14151,68 @@ func (sh *strictHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// UpdateCurrentUser operation middleware
+func (sh *strictHandler) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+	var request UpdateCurrentUserRequestObject
+
+	var body UpdateCurrentUserJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateCurrentUser(ctx, request.(UpdateCurrentUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateCurrentUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateCurrentUserResponseObject); ok {
+		if err := validResponse.VisitUpdateCurrentUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ChangeOwnPassword operation middleware
+func (sh *strictHandler) ChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	var request ChangeOwnPasswordRequestObject
+
+	var body ChangeOwnPasswordJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ChangeOwnPassword(ctx, request.(ChangeOwnPasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ChangeOwnPassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ChangeOwnPasswordResponseObject); ok {
+		if err := validResponse.VisitChangeOwnPasswordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // OidcCallback operation middleware
 func (sh *strictHandler) OidcCallback(w http.ResponseWriter, r *http.Request, params OidcCallbackParams) {
 	var request OidcCallbackRequestObject
@@ -12757,6 +14332,82 @@ func (sh *strictHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetDashboardResponseObject); ok {
 		if err := validResponse.VisitGetDashboardResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDashboardHealth operation middleware
+func (sh *strictHandler) GetDashboardHealth(w http.ResponseWriter, r *http.Request) {
+	var request GetDashboardHealthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDashboardHealth(ctx, request.(GetDashboardHealthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDashboardHealth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDashboardHealthResponseObject); ok {
+		if err := validResponse.VisitGetDashboardHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDashboardSeries operation middleware
+func (sh *strictHandler) GetDashboardSeries(w http.ResponseWriter, r *http.Request, params GetDashboardSeriesParams) {
+	var request GetDashboardSeriesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDashboardSeries(ctx, request.(GetDashboardSeriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDashboardSeries")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDashboardSeriesResponseObject); ok {
+		if err := validResponse.VisitGetDashboardSeriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDashboardTop operation middleware
+func (sh *strictHandler) GetDashboardTop(w http.ResponseWriter, r *http.Request, params GetDashboardTopParams) {
+	var request GetDashboardTopRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDashboardTop(ctx, request.(GetDashboardTopRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDashboardTop")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDashboardTopResponseObject); ok {
+		if err := validResponse.VisitGetDashboardTopResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -13307,6 +14958,60 @@ func (sh *strictHandler) UpdateEngine(w http.ResponseWriter, r *http.Request, id
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateEngineResponseObject); ok {
 		if err := validResponse.VisitUpdateEngineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEngineLogs operation middleware
+func (sh *strictHandler) GetEngineLogs(w http.ResponseWriter, r *http.Request, id Id, params GetEngineLogsParams) {
+	var request GetEngineLogsRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEngineLogs(ctx, request.(GetEngineLogsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEngineLogs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEngineLogsResponseObject); ok {
+		if err := validResponse.VisitGetEngineLogsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEngineMetrics operation middleware
+func (sh *strictHandler) GetEngineMetrics(w http.ResponseWriter, r *http.Request, id Id, params GetEngineMetricsParams) {
+	var request GetEngineMetricsRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEngineMetrics(ctx, request.(GetEngineMetricsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEngineMetrics")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEngineMetricsResponseObject); ok {
+		if err := validResponse.VisitGetEngineMetricsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -14984,6 +16689,30 @@ func (sh *strictHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id I
 	}
 }
 
+// GetVersion operation middleware
+func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
+	var request GetVersionRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVersion(ctx, request.(GetVersionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVersion")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVersionResponseObject); ok {
+		if err := validResponse.VisitGetVersionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListZones operation middleware
 func (sh *strictHandler) ListZones(w http.ResponseWriter, r *http.Request) {
 	var request ListZonesRequestObject
@@ -15462,195 +17191,227 @@ func (sh *strictHandler) RefreshZone(w http.ResponseWriter, r *http.Request, zon
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7H1pc922kuhfQfHdV2O/olZLSmLX1JQiKYnHvrZHR0ndSa6GFyJxzkFEEgwASj52+b+/wkISJAEuZ5WT",
-	"+ZBYErE0Gt2NRm/47IUkyUiKUs68l5+9DFKYII6o/O11JP6PU++ll0E+93wvhQnyXno48nyPoj9yTFHk",
-	"veQ0R77HwjlKoOgxJTSB3Hvp5blsyReZ6MU4xenM+/LF967RA2aYpOX4f+SILqoJaPF90DQ45Wcn1Tw4",
-	"5WiGqPdFzEQRy0jKkFzQFaWEih9CknKUcvEjzLIYh5Bjkh78zhRI1Rx/o2jqvfT+z0GFpwP1lR2o0eQs",
-	"EWIhxRmXS/KQ/lAAK+c+D0PE2AVJOSWxxDUlGaIcK9BgHJPHIMSRQj3mKJE/NHBXLhJSChfeF79C1SCM",
-	"mPj8rTapMdJt2ZHc/Y5CLqY5F01jzHgb9IgkEKdbBLuYsA/kDN+Qe5S2IQ4pghxFAeS16SPI0R7HCWrT",
-	"rO+hjxmmiPX3+a3o5HtpHsfe7RdfMEw/X/heDBkPcoai5WZRzGNBfkbRFH+0fqLogdwvOyElMerjkmvR",
-	"5ovv5QzRYBAeGrstmxS99SLLJWkYfHNLu2jhQjZrU8RKu+vE+3D8NNasFyn79y8nsoiTDAe8IP6u6YuR",
-	"JI8WHbo3pBq76GIFMY8wv3rQUrYBXcg167dQBkNOCjpxfHSiW31Wf/7soTRPBLiCdDy/BjVbMI4SA2xj",
-	"jBEiISTpFM+CB0R7JNlvpSgzqCbC06lERhRhgQ4YfzCQpA67FlZx1DFNJTB9j0M6Q9yFSP21QNUABoTc",
-	"qyHY2KnavvjF5tYnMQHSS7cTDZ9/oOQBR1oFqdNNTEIYGwDfERIjKGmX4Ci0fWmsRY2gm9sguJB7+ku1",
-	"paufHEWfu4V1L1ieJJDav/WTlvOQLLrWRGMNmGpqGyIuIZvfEUgtwuUuJqE4MzjhMB4Em++FMJyjYI55",
-	"QIWuZaw2zZM71QalM5wiFoQkTVGo5Vp7qKJZOX27yR8Zs84g1EyM2CjImexS024a0mwELdgBawpY7qmW",
-	"tn1pKlJ5xjhFMOmC0H1AcR4kdlRJFAUa13Ys51nXd/uRZvRpzlGC07/sxtj1bfUbBKpw2SbBJiXZCNDE",
-	"b0kKVnZJ2U3MJhzy3LIBofhxKq4ZFt0jSpmUnSM16ClOZ4hmFKc8YHN4fHpm7YazAEYRRYyNnSAlPIBT",
-	"juhw8hZd7tCUUDS8D8sVEnvPoaKhb2Cssb4aBOYKrOi6rc5nUgxdHs/qcM8pimzHSkkrXXJB3Cy7uwcD",
-	"LwaouLi2vgykgpREyK045Vk08lRrbE21GnMqK3R+iZdiWbX5R/O+sU9+jc+qLXLwK0PhBHGO05ll80bd",
-	"T32PTsPTw6Mj+14/wBiLBQZTQh8hjRRN1G0Gv+g2AKbsEVEGppQkgM8RmMXkDsaglEPgmR4GJCRCz0Ge",
-	"AU5kS0oIB5zmjAOYhnNCXwE0naKQ4wcESBovwCPmc6DB0UqaC9q6gu7Sp2pjWdZZYabnsq73wyE/BzCb",
-	"XGWQohmUP0g0BAoNjuPrjsxyNnB/R7Krau3kN5xGiCOa4FQfCAMgwClDYU6HNqcoI3SspjpqhhaGXTsT",
-	"zwjFfJ7Yd2FO4iiIyGMa5CnH8RLX73u0CDic2YeXJhW3+JSfKZpSxOYBy6WNbgkQGIe8dumsSSUYRUGG",
-	"0qhgEc/3EsyYGkMbYKyX0U8kHXA/k60qNPgGxgvIHAttY7+GsNGy2DwGTB6ok2NJZwZRF9zY5A2/h7Gb",
-	"ZLgkyPaOV/Kb82APxtzO1NkUUCL2IxAQIMaXtbsZx1wwVEvrG4chimvXqZqdo3Ufa6syM0rybKSEVH2c",
-	"clK3MvBsaUJJHI+Uc4PNsXcoZm4bjVuHrmhIshNDKF1up7v1tkwgplO+UfS73LmAIshI2t1mSUPWWFVp",
-	"FYszKxWEUtLmlKKUCwmC5jiNvGpBnu/BOYLK4sTMS12X0NWGqnHMrVsHar5+vamlKTdIvU7YJgv6LfHT",
-	"3uUmZTThK/HYZl4ba5ac4JuOuQaerNLELVV/FMPb1Lj7QBAByQXXhCSNHMqbPhYEjkguKYmk6P3Ue/lb",
-	"r7lddvjiGzaPOPa+SHkIU0gXQUjylNun1S0yREPkbLOEjbB2GXBLwg7I0EdOYQDDeBkn4hTHHNFAnL0f",
-	"gwR+DO4WHA3VjecIxnwePOI0Io/duzZQ8AoIGKIPU4jjDnthgtNAT64tQPZZnfKT8DgLUBplBKfc5R4b",
-	"JdsUdQWMU8jRbGEKKhjHAeQBSUPkFYRkFUB6EBZkUPgC7Ycu4/AuRsuK7PEX/soQFohrp7kwnM4Rxdzz",
-	"PfKAKMURsizLKv+UcDFpvzlNm66bu2ZBeoORW1zrW8WMi5Ct5GglvvbWNRjXyWg1wVqz1/eYRgxh+jrN",
-	"cu5WVqYwZsgfJm4T+BEnYnNfnB0eyqWqX099t0gsRVPZ+tAfJEDLyY5qc1l7N8RkAj++RemMz0Xn4xOr",
-	"136EVEzgx9fq4/Hp2RghWQNLtwOyHUhQQugChDADZAr4HDMgT9Z/Y0BfPV6BQ/Dv+hcQoSnMYw6enR7+",
-	"X9UBgVB2KEaKcYK5D1DMEDg9OgZ/x98/9wHhc0QfMUMAchAjyDg4Ovvmm2+Oj4TFrSUaurHsFOguuji2",
-	"DmOX4tV2W8Hok+7dkBeSPoOcI5p6L73/+Q3ufTrc++72mf5h7/bzoX929KX4+/P/+JtN2rWOBoPWTo+O",
-	"3WJ7Ndm/ViErsdEjNX6W8kVHIA3Qn1oCRyhSK5hOGyB32AhvS8CFldBiaDL5czUv3V2O48iiyVTEOUY/",
-	"CrPcKm4iFMq1BikLtMfKOpfZLpTnv60VSjnFg2Eap+PZ/JPFfAUuzDGbGLSv1bYyha1OxwyDSRavzSE7",
-	"xC+dffedy0vqcjT3aq8ul6/NTdnSPTRAQ9zDSoibkuQ08XzvaO753vHJvF+I6AEqvLsFiiFLhqsgy1iP",
-	"+g0zhrQ+e2G/YZgdXhxbFrUhOeZXYagNJ7EW+RZBwSGOLZrGB0T3YqE2ZJTcxShhQmVg+V2COUcREIZh",
-	"EEEOX4EpoSDGIUoZCmB4n5LHGEUzlKCUBwXcQDRHKacLkCEKGMlpiMAzOcGhDxLEGJwh8E/vn/nh4YtQ",
-	"f79HC/k7egnU31PCcYjU3/7pPd/3fBefxrhm3jbFk5qr3/Yth6jaD+GIwWOH6gLSNfYP8si5EOc9oYv2",
-	"Cvuv9eIW57ji3SN7UJA7mmPcZVVtYF2Qdh399cVOZG8bghmHMWqt3oMp0MstSEvINBQBzBkQZlKg3ROA",
-	"UIAZIHGEKOBzmAL+SIAAnD5AaYXqMa4JxDlulwXCCyhrF68CIf07rRffPnloOBdmqQRJKd/Cgfq74FII",
-	"9jmk+7NPQPd5BVCS8YXk1CyGOAUxZpx51hhFTvFd7qSqkCQJoiGGsQgmtlxQhBx+qXYDpzOQIhQxYIiF",
-	"QIsKq3+4k2al+OgyUxV0WZ1HVTT3nKgFP+I4CiG1m2ddXDHE0af9XsuZngucWEdX34Kcxo7vjA893Jzs",
-	"rQSr9VPJcu0dsYPUxTGiR7lRfpOmK0TUl10nyxYRluCbPFigpU437c2q7W6x2n4uXUofsbGB5CB5MS87",
-	"jeSLNYjmUTrV6GPFShDFODZUV8aSs5NeH2ux4Z1qkdq8t9Yck1BvaaCht1pcikZKvoaQw5jM9hKYwhmK",
-	"pDh9BQQ7Sxkb5oyTpCFkrU5S5WAS15a7VoiVrUOPgGypu/W1qAbKSKTBVQ4fJsJ80AOiC/XR8x2yxA5T",
-	"j1weKJxwKiMYgrjHG3GP08gU8vLOJ0MTYvJoleuSwyHn4hRcUkBv+gTQlBTcLQJNXJYTHgsAGICgSZS6",
-	"i1Z+XgGKYLQno7KecTKbxQhgDvicknw2Bweq957ujRF7bj2MO3RBFepRqE01M15hQ3txeOjw0I4SVnZ9",
-	"T6p0ekMLVU/cQsSf9TaYOt4x+FgqgAXQ1iUPOtBM/8K98gqrQ8qJF/Ncqp9GFpq3Hkg1XbLtV62JMCsx",
-	"dQvF0r4/QtbvSNqM5/6Cjs17+4m0AZcGfn+nRK6pzjAszznP2H+8PDjwBtlhx9OhlRxihPikyhhx21IG",
-	"BEuu2Xk+KGtjpdOnK9HuK/C7dsioKgeiFqbS9mw2gRxi8dCDC1FTxc/0hDQZm9Maf0ACzhzGMh5FQzsg",
-	"P8SVi1EB3R7Vb1C8lWNULPKvxBrJt1xmhLqydgVqbFviDmSgkUKvCOgeGtCk8eJ7ZkZGOUjn+dizdY7D",
-	"z75/dYTj7GVGKHfEmeg7zNGZPGyK37q23Diijk9P/SdDAiM2q3uferZirMewtYtb9Rj+KLMnJnCKJkhY",
-	"MobDbfTZKsQ/SZ+3xZYMObyDrOYVJkKrylP4AHEsziXrudaOmZTdIjSjMHIEQbpDbhuLKWVzCV7V2UZI",
-	"/0lwusaqDD25tRsMTR5aMGA3YcfCF5szs7U1DqzLlbBakG6NTJW+6RVYi+RPc5iz/mjc+iKcPGXqUrUU",
-	"51owlbFpeuTRAbBqbZ2U7awx8WQ9nSa1mOFYh7UonyN/TGwl57E9dOjo9MVZfeCzQ39g9rA56IA9sOSu",
-	"/05wOqwyRjnWiNIYxuhdtTHekhlOr1UOSBvEDDL2SKi9ckPOEHXgvAFL2dKvRrQB805n1tzQnPFzmUez",
-	"FdncpURvTrg68yA69VndqyFBXIJmIJYdOu0YTbOGp4bam8rgwWnOc4oATCMRGZgQxsGLQxDBBQNFLsAw",
-	"/FaIK10hnuebMJ4eHrb6uRRPA3Ibtj6QGIcLV46AWYpq+KXNtL+NvO8tEVG/wSSAbV8sdFyddtbV8dDL",
-	"b028rGzpGWmbhlMUsFLzH6zvr54S745wL+LYm3j1Dcpukmt9JYPCxYfdsQ1Oc92xhzlE65RYxhQ9zlEK",
-	"IEjRY7wADMXStFU5ReaQNaJCmHAHcAApAinhYEoRUv660p8MckdkQk0wlPD9dusPivk+UupOr9ioDdzl",
-	"hxRs9zgnDJUrrLuAmBEODqSJnHnDQG17XAfJKHOtxyd9Bo+6MBoj9J+SpLKTwZAMpK5UAFuc+fnerzqk",
-	"vPoRBPsq3vz4izXKfEnxZFeOFQX0MPlY601LPmzVFvJfOaKLt2T2QQfs1Se+g+E9Su16coo+8iDMKXMm",
-	"xoaERsOD3wpIrmW/3rTyArRqojpItl1qTGGJgQjntWv1HHNdSsDwQaYktZuBQiNKsf0xxsiRAhflMuw4",
-	"DZYrlmGpWBPrbPViHakqYFDFhUtBjhT2HinmvHaPsoZVDdcg/nBUvfM96ozAlSf+YD2OU5gyaXN++dmd",
-	"4tF/B9Hj670ptQm1gAJcHTBe6hNGCp1nguLXqjOYm2rGYZVEYiNQF2EK0591qVtW9jgfWtNtROFDjXSN",
-	"czGFsnX2RTMpZLnueBpj9UPx+vL85hzgFGQUMZRyuUNALWe/fuyenZ6+OO1AZX3g8ztG4pwjQB5TRIFo",
-	"BHDKcITkHVHEiTfGt983XQgujTvHRyffnHz74uzkm74cs2aVznPP987Pz8U/F+r/787/fuX53mXx78Tz",
-	"vZ9ubj6If9++v/B87+//8Hzv3fmHm2vxr/i7+nFy/Yv4/+SnHz6If3+5+N7zvZu3EzHszT9uBiZO2fbc",
-	"vdH2E6o8WgadMa6zxXGatTWgJv3KSfsPHjVvpRnYaXUE9fUS0poY+y9Dd72yRvI3Jqm7oBmczShiTNbS",
-	"YSi0RzfAnM8JxXwRFMdXiWK9593WYGFIjlAsbV0kDSKU8Xl9lJMhQ5RZkGbip2mX7h2kkT2pC5IpdSyn",
-	"AgtWheIPsQOBHBszZw20JcoCEB7MsS6yP0wWEMJ/wml/ASOdJm+B3G/tuQO7jn1rkUNtIUNI8gFRN0FK",
-	"da+V5yokWYAzz/fSj4b5ddoIdjFyNeUwWkL05Z6LzLru1MeKrg5Pvj395qx7nDHT4nRM87Le1chp5DUg",
-	"qLL+uvusvQCGLQCL0Agpp98UMo4Yt+4jpzBEgUoyDEiKApz2w687iVcM+JwiJsuZ5b2J4i0ftlE4ok4i",
-	"zd1rbr5zu6z74ZtEb5Juu6iFDR3u9fYyo7hFoTU9hLAb206/23SFuKg130DGqR1S0bAXAxhfpeUBxvnQ",
-	"q43h865rHmqQQgNZm61Zk6EzkHnndFWfT86QIJgyXYN11Lj2m9ilPNJEHPz/2y+Pt6H3rtKWKUOaS4Xo",
-	"27OT/sopSxFgSUw9EHaqsWqQDnoYa5KskdFWzZHXJK4h8QGjR0Q93xPzQy5zAWCUYLu16roKt24a9mRN",
-	"nNI+s6KL7auKo5riFLP5spFGokjysjWwRDBxV1nEgcts5jqEc5jO9OMtsTADix9Rlt/FmM2tdJHNIZOK",
-	"Al26IGhGidT0hxQhr+VA/N4Rse8M726aKWU7s653Oa6N68vosAGZBhPZ1qFXDg7sX+EVjXZAmDNErJil",
-	"TPQw1MqiCm+b0+t02BW8Vu6xVZQqfF3KShEjRKmR0DG64vZyVXDVNllv1cPqzA5V6borpxoMU9DTI8Rc",
-	"8ZWFkhslRG/9ZWqtDqyar3HUV/WzXEN76jWWQb6tqGvSjOvMUBopjJUgPyCKpwv1RyEB9Wci7jFqISqJ",
-	"Q38WlK5kJMszRBlyBSSX9pBlczg6nd3DIur09lQTWjkx+2TPNdmdTxwFhrez40QcyFniLlxWEu+q9unm",
-	"PulUDspKZvY2DDcMcMbQGcX1R5NsS18q6b71fphAYOFJmyLaE2LvEJbrfT9gjvlQX+yIpOhlHgCs6Grg",
-	"S0rDn126x1mGorE5yD2ZL+4K9Ro402FfgKAR3sDW4KIUTWHDGZ4FllcRbAiWbUVl/zotOJsyFFLEA4b4",
-	"4CLUavklu9X5oOK0JiytdbQhsIuKNvs3hFS9Jo+rUHWH7P0BxzZbV/Xmq3GdfXF0cvrN8ber+qjaj9Jw",
-	"5bPvtsspeJ+WQcQh3p3mhs60gF7ThuUoKATvDD+gVCleRWK+4RNIifaMieB2Pqe5aEmJWCsPs4Cksf0y",
-	"YJwc1jxBHxSSXj6Z04mqFU6MthAoes8TGO6VjyUVv50eHXu+mPjWX7u4aONCJHKdnfjg6Gzv7ARIU/gr",
-	"wDgREZ0MQRHLmKcRouDd1T/eX58Hb67eBD+8fnv1CpAEc0BSoIyDgg7vEcpkmEHZX87pXIbvSfPOe4F8",
-	"+QymQw2ri6lhkqaDCd/TCFkSH1a0xrQkbqfS6HLBr4Uld8lpa9PRnhrbLEvDQw/GzuOjntXa8K4KcKzX",
-	"6CgP78V/M2L/PiNk5iomtiA5z+/qKajTqacc7lTZOAQqQt4f7KDn8RWoNbiqiazLRjzPnNlTKNEWkDY9",
-	"GnlVZmERWzFnV77XmASsIg+s7OFr4HoSsuT6XC+hVRP0qnflz7ZJ1p7tFbFVrKisLKhY0BWGKTQt68u/",
-	"jyVnlE0llOVkvTlbA3K1mimYx9Zw+ALOcW6UCmQrcAzP3tiKoZ2Dm8nrH0Vd1n1wI45dKaxERU0pk1TJ",
-	"KZEPRhHPaSrrvobIF4e2wse+53c94dZlT9RAnZftl3RHjHTbOqId79FCxjr6QIQT0xAyBJ6h/dk++Dil",
-	"ewJBz/dtw66i+Zt3KvNuZHeidmzs+fBD7sW3J40jz8YselxXdvJKe+y0VLgUzO+lgikK9R2d7e9XOiZR",
-	"pYt9AAGFaUSSgnz1Wwg//f38ApCcZzkHDH9CgqxnKJVnT7Q/tBJTtdaODTBSiIcZ03U/izG9Bwvq8yvA",
-	"5uQxVQ91yuxNzABFLCMpQ/1L03PYDbg/GzHnVuupPSkABuabThlKHIm8c2fh06dYnWzVmJA+yyThJCSx",
-	"ybZ5pJVlmVMsXzAmc4cPYZw6rN9uSer3gdN6iOSpPSIgZvJ5DkSDYfpMzVxUrLI0h3vtESvSqEFqJaya",
-	"BcpSMHSYAaig8+5yQX8lYl+usJ5J4t1xJesjd0cCaWlLsL1js2OOaDNDjcwrMi7xaSVahtalgxf3dzsF",
-	"Om9Gm6keRnW0TI8DGtn1/5iE0hxPcBS6KsPQEYLLcguTABrXAcP8MVxdE7vn0qnWcxcdg8elyoO0bqV6",
-	"TtdynZkiS5LfKGRsigZdkWAtcilXaUOP3fW7FC+rYL9geFJbJJ9QD75ilasZS1X5npSNzBXg01kyf7oY",
-	"nHQhdu+qiMG2eO4UPBixtY041kVdoMEo5Nk3/aToo01Kox2xBA6a5v2598VwegzoclO0LWOdh/RS0kfl",
-	"pa+9Usd98YJw5YAs/MImQyqsGKstSa1ciUktLd5cNZJa4MF16DQERyP+WH0EogSXqs2hb9z71mcCx+fX",
-	"PZGK02Mlh8OCJF9QEm0GpceKhkp/tL3VpCCSQ7KX1TONYgaYoY/g3QSoJ5X3O6uAtEKXNiji6isoBYl1",
-	"DRrjNeBXAUSLnWGmFy2AdEh4qy7LdXGZkI/rmBvxCrD6qgCH9yorevL+XFudMK1WtwMR11FN3CUbLqW4",
-	"6THyaV751j96cevQJ6qaNyY6lVWZPqAIXL6bvLn6b3B9zRC3Zq6PI+bIMtvlBOjIEPBs8tP53vHp2fPC",
-	"HJiiRyReGZD1JcGbyRtfCBEdbC3oUzTKIEXpSK7qe0ElMGqP1MG9R/civSO7D9nRUfGok5S0KZEWacYJ",
-	"Fe+oYQZCkk7xLKdW06WcZ5ymobZd2SDbgkIcQK10S5UWKv55YXfiSuQFEQsaBR2tpoAMlhmkMVx0N//E",
-	"7oMYTxHHCQpEQbo2Lg91+k0C0xzG4NfJGyBrfwsJK+2k+/0G+erINc3xFTLq29m1ChcybEvRm6cdTgUn",
-	"dbOr9uZYSvXDpRMDLGFm5h4YVFxQxD0S0biKfK0UEbGgDOGvb9ebyRv2UtA6nyNqsN6/MXA5kbJX2rQF",
-	"E2AGdPCwYJZHqHmBJooVGpVhqjhjhhylYKYxnK32uIAgAw5nDtoWIiW0vz6kZaBqIlc3xSiOwDMVRWP3",
-	"MWkZNfJSSFFCHpalBYo4pkt3bqQ+3bN7RfjOeNha83K58vF1XQ1YA+SV6xr4bry+iJv8XGxeQQhVykVJ",
-	"rr5RlMnYzsZW+HWOq2Gthv9uXnaZSGr8aFfNj16AZ1cXl5Nz8EGeda9ACNOUcKAyi8DjHMcIMDxLBffg",
-	"sn6ewTfOI335Y62ATgmGoqyfDHGon2T6afJ7dG8ycq9UqZ1O9qnlIWUOuvzhVdWjODz5dkDoVNfJNnIs",
-	"t8lbUA8oPu8PM3dbD1HjmfbTnsTQDqtX2m3lujKqBji9LINfYigjsMYleDfAL2Z2wfw6KcqaOEODGw7a",
-	"1+8uQQIZR1S854Vegb+9fnfx9ufLKxlB8bcfr95dXZ/fXMlylbpKxT7QsUngjkTiWpvABbhDIM+Ebnp2",
-	"Il7sX3vYgWmv1ovpRsI1YnlsQYVWtQMsW7lSA4uAlj6F1BXT0prFBewbtLjWGp8F1saZ9EmeSffWM6mJ",
-	"L5d9W07K7i/Zh/LEas3bR6cdjyp2GXSEBa01lyqUPPRV94LTh7Xuezxu4DgUcboY2rarXvwyhJ/o63Dh",
-	"yyhAL8AqSk0bpV3UXB27UHqP68LgvX5Wm1DwCVECOE4QNQwG2vDGwDMNBDg6FAcCkJBIk5sPFDTg6Pjw",
-	"O/m7Bkp/5TyWPz2vorGkoCljqPVjlEAm1bPKOdqO2eognCXMel2UtcxwS5HeEhO5aXOZwUYT7+hJOqnb",
-	"SbINC79DiLhcQkOL7S/75mYR57z8BKu92yxG4BTPZoi6S8WuAGRjz5prbq+hPWXjYYHqmZRailltJS5i",
-	"uDGsk5a6+UFZJ7ou3C5kkVEGZCMUCVWlzIMpakQW1iyl6LCyARtnW1uTrmesxoULp6O6x7e6hGz403ka",
-	"B3v9ijosu7aLd6ZKtHq3aMKgSpvJW4dU1xiEoTQC0SKFCQ71OcyaPKL/XOOQ1XKIaoC216q8xDnFfDER",
-	"qNPpIAhStTMSn/IIUH8qB5hznsmdR6ygEyyWHhJyj1HhIn0pZBehMCiaVdBmWFqev8hnoqcquwTzWHx7",
-	"J/sA9eZtIhSY8w+vjZoZL72j/cP9QzE9yVAKM+y99F7sH+0fSqsrn8tFHEApQvfEDYeqkLOZCqtVWQKY",
-	"pK8j76X447lseaEb+l4RRyvHOT48bNz6pAcylCMc/K5rNyjC6yPL+kRy8XXKIffqr1lugVRRRxtYeX/8",
-	"nkSLTcJZEZXMUNolkrQDXOz/yeGha7gSvoMreSLK1t8Nbi3nPag9EuEkn7LRJrFSTrIk2dSA3ADJ1OHb",
-	"Irl0IWabpJLhPWnhZE5aEVCeZ/hGtVoRJ4PO+WI2yznhJiLCLLCr+2U53oaISA+vo1UGUdLRhmaPbDjS",
-	"gTivtC27yMEI0TIU9mJpCjv4jKMvSu+IEUft3VKPJBq7lUEKE8QRZc7wiKrJwetIxkU0MH1iC7xWjzHK",
-	"9ZyMXU8eYd7NLKLF1QNSJYQba5D6hqhKvKjUjRgnmHu+seFlGcSjWhnE0z7b+xffPsMdmhKqa4JUs/Qb",
-	"om63wu4lvoYzvNoJPj+IyUxV0bULAPV5M3xfe+Jwy+eHDKi3YCcmsxmKAE5F1A9nqiiBUmOB1nIl1R8N",
-	"p/pK2RYvDNUwX5R6dKFefB/CkBpq0dzc2wQ5+WyG+IWyE0pM7ADT5H40JquViYj/gxDq6omuRYpWF0Wj",
-	"QZKkcAPXCdHk+Zb53j6Qfndl+DhNSfHi8NgmeCNMUcgBToXxZY7Ajz+/Bo+Yzy2EKgh4bcQqES7rTzqx",
-	"Lb++x1H4VsuMAfhW+cUBJ976cKMxgyOUcswXIKPkAUfKjnB6+GJ1XBQD9qh8OZ9/KFtuUhWuTeSS+JbF",
-	"KIf8nr5gd6/mQrb9pWi66rF8Ou5U3soxWlviuJM0gmx+RyCNnDicIX5ZNtogMVSTdAMsI1AOipL0e5zm",
-	"jO9BWcegmxAsj9Ru51JjmXjIJhXdgFwi0EsE+sEBcLcAqojNvuQRLiPEftOx+KpubsfFyAbTZnQl59vA",
-	"W74tWXehjXV9mdrf8BXcsmG91N17i1J/d21tnyp2KXsXKz9ZaS1LXeAMBDDjYRWnVJJNyydYNima6jNZ",
-	"qOZHWUJfBIxPri6E/xpHciJQLMTNpG4TmGWB62dP29q2d5npx6zya+yYH6t8tB5iVO02jzA1jwVdbyFH",
-	"jBeESFFGqCwvolKPVHrSfu96hx+qWz9MRx6iN66zUyY/ieiTy8lSB+jmD85dH5hfw0G5zPm4rXNx9YUu",
-	"fYoqPt+TmYbd/HslW/6oGm6Df40J12XkN4fcDCsaM+yEFWtIc1r5t+E1qlHWQIar7894kvZ7W10X0RHD",
-	"vAAKrGjDDP3Fd2oLq2LkdoMaRg+tkfuxaOtx9K4FFxtleR1otWXVeOA+jGP3ky0LB9EyT9AeVW9sMLfP",
-	"QDU0Fn1ddFkPgxyvbWPKZ2Xam6ICo7VZElRpYTvCPam8DA6k6xY75EEYRbJ4FIw/GBFrUxgz1Az65qTz",
-	"OZ5u72ijeG05kiXGbACbb4Wait0BmnvACuf8yVLkNER33KbaOM62rdcwSkvZXOjBkkpHvxrxRDWINSoP",
-	"kIfzNgJM9eHpaQ67VBqevr7geyfHx8uJpEKvEIE8XeqE+P7VMYgCO3oFMGdAVftkMv0yjAnbpiJRqhBc",
-	"5IgYtUO7lAle8uOF0eGp6W8d2Ce6tosWCztAOOOQdxqaFfQT2WzJy7TN412+4V3hsEg8PU083zuae753",
-	"fGIrdLoFVlHL3YFUUzs0xTFHdE9Q84wUeStOtegH2fqiarwN/ag26WKIniQTLiGHMZmJ2kbFj9JE7qvI",
-	"HJ0lDwRRKmP5FPFwDpQ7BGSIAl1e1DRfKmwJ0ri1Y+/g8z1aSI2swyzQWJA9bEMkT1Q0rApeuAOXMsg5",
-	"oqLf//wG9z7div8d7n23d/v50H9x9OVvnoO0168i1Be3G1WhSTFrDUZ/InpDL1EKfh3CzW9lu+0x8luZ",
-	"H7Ae87gx4iapWUywE+O4ibEd2caXUWdNChx4Ra3t5F/Fjj4Wt+7r8orou924MH7bkS61Vpv7OjDxROTI",
-	"tvbg6z8M7VLnwKhJ4bpKywZfLfdo+AHkHCWZzIa6I5Gs0id0YIEKAKdclwLQrZa8KMQI8QOWJ8XTgE5R",
-	"JBpOdLtNYsacp9NYOiX0EdJoT9aJ7daIVMtfybZsv8aEQ3Qi3VxXvO0Jl6VIFkMWPfsifkwwNiQAqxl2",
-	"o0mZiN5VxM/SKn5tK1skPVTFqm3yODE3UnvaelxRk9aXkeFdSsU2+WNHd+ZuBlklVvXkybPTHMGYz7tO",
-	"tZ9Uiw1ugJ7BqSPrLKkNzxWhGYURiuzJSb8TnA7JrP9PgtMtptaX063LrlANuBluL8ffTXZ9Y/qNp9eP",
-	"VuUNOhuYX2/u2FNMsFcvRA8JW1V1jrYYtmpMOIR/zuMYhLLoGFCLUq9+1NRR9fKGKXJlU4xYrypqQrMZ",
-	"5jNm2IkqWsN3nyq6hdPQ2JoWpQ5ULeubNijFuCx763ZqLFPJwa2MvpJ3YLmsf2OAIvmosvJAa2Of8gxh",
-	"vj21tcYVLtWjyREb0j96yPKmQN4qSXR1KdDr9cLRMPpwFPHt1um3Kmh2o9P3bGldp39yWnpDLkkJsheT",
-	"mfP0ZAjScP5fot1bMhsmiKaUJPbyMZ3vkNkH42RtQ6kT1luiyIX8Z4l+f8h2S3SkuqzG6I4hDOdLdVSW",
-	"3uWmLJ3uo/sOLmh0dLhsRaMwp4zQUWU31ikvCtb5AGeo9yI6Qvk17tsdV+zrstU2Ep8ts7mTn6sFgIRE",
-	"Kl6EissxcydCN01S7pPIsfD1H0iuNW/vRBqG9a0nRrcMQvIPD4juDcnWv9aNt0a25lzLlaC0grwhgmtB",
-	"u2Vy68HWFutSFpeOzvv/ddGopb/U4f4XjON/gWf6DHrug3/NpLD6ly8eOoC1yznA8pUh25HDQpKhjZ44",
-	"g4wQetVDDBAFgkyDg1yFL+0OPhAD+Oqlhf2VrMR6I/pMFgXsm+IhOfpOTBXlrjwBM4WxHSYvDbRQVHv0",
-	"NK0T23SVmWS92zv4VjhnN3fvDtZ54vfuJqMZ+a3uQ8uZ0Wrjr+Zb02MIyu+uETkqM3HCFWEMvvBV70s8",
-	"jep4ZYZl/6mpX9wtEninmDI+Vuf5UiOIUvI69WIN3VOLqdJwXSIOcbyuoESJmezTgCCj6+zT9gKM9GSD",
-	"9KoPv+rAIpwW2qNUsZRdPEN0T78Br5IkGtfd7FO/oqSB2ZC4V6PvRlEq0Px1hBaNrrla3+UarR9IGnGm",
-	"vFAkv9eIfmN7/16CMmjvLarYNdI3itF71YOhgSpqyR1/stgsLRmcx4QhFTYl8d3seaPfyFrFrVXKvjWH",
-	"nW1FXu5IPXbvyNMMNVujwJSx6eJVWpW5tz6aiQmMNGJ/wPGG6UbO8JSoRqweRdI2r6uUPjEiGkIWZsrC",
-	"UpTRlefglLSWyu26AgrQXcu3BEFKHvd3gCcGp2hPeXi77hzKYTOBUzRRbTdIja25LGQpvgIFNpgSqiOn",
-	"pIqdkjKgwhki4T4brAtdP7Pb17g9jh+C4/qB8d0aYg0Kr89BlLI9HveVx72J2VbK41bzWLBw+W4CGKIP",
-	"OJ0Bo6gF0GLxbgH4HAvCYxymofJhGnc6GIYok1/q9FigosJMnnWhYyIabB4b5jQDX1dw3k1JkgmVWA65",
-	"ITaSY496Vedo42+9lBG+nW/qbND72gov5wzP9sRjnd11mRmevRGNtlKTWU02qB5z+dRoIxJWlZwQVc4Y",
-	"CiniDcuJshj1FmXWgGyoILMafTfh6LXJow4bigrhJGm8AAUwgM8hByGkFKOCiAWON25uWfI+UGx2jdxl",
-	"1ZDXgwo8l1Tw57IRGDwwpBbK6xWdUgL7eaaLUHUKm5/LVtuQNsVs68pjKcfbjNQoht+JybXC1VdUGaMk",
-	"uoE2QWMD/0rFpTvuPSth5PbJ8MHhVvjgT1LZIWd977r9zNCWHulQ2vSaxHPxyuMGSJIhuhttrue6sY04",
-	"O0kvQyWs2oP/la5Kui6LjdvNkfFuHBQuMn6CIlURfX/gwfaiDoaGHPxEmMi7a5UzaeePDrskb9BbJobe",
-	"jUD9SmuWmDdd7eAQ/wy65v4p/eAVCbtsp5t2g2/SBz7mBq/oYOW40q7a6RuWBLs5k/4SxVncckO/jNbl",
-	"fRAYUu8IbpqP9Cx2R4x4oLBwnPjSJuyDy4lIGSM0YuptvneTN1f/zcQDhvzrZD+lRTa9xqKsMgPPZiiV",
-	"W5POAARvJm/kmiH4dfLmuS/xIJ51zqk89kGEmepG0ljGF+JZitPZPnifYC4UhAKX4B6hTOALUxCql/JV",
-	"ngcT6S0uOWAQxGakgZpgdzLBTYtaMryq3PdYuPT3BIa/aoGxFgO8Vbyo+OYHbXHYGjdprbYRPcAh5Uzx",
-	"Dcgo2tPvLoECRpXqJfgrIvldrDYW8pyisona+wTilEOcIgoKfycDmINnqnc5nqoWKdmTJoK23rD7S/a8",
-	"zV5MgCYboMW17r1BFjNn2fIzRt0cVkAFJEL+l6d6eOogYnvV42E7Z7ALRehMuREFo2RQnioFjMqneDkR",
-	"5zRMAQzls/WCZR7nhMkvmIEMpRFOZ6/AxeXk4EId7bKyjHD8RhQ+pur8SwGJRUC96C8FcUIeUKSZzpj9",
-	"cgJubt62ma7Jl5tkODH+h3KnntSppndtG8y2dh0WfcwI5U4dVn2uRXB2opijj/wgiyFOX4FwDilD/N9z",
-	"Pt37to7rJkM4r4AAiuPm+9fvLkECmSBLEagqKHGOYKQPxQs1/94lZhlhWA3xuYM/W9N/PYquZQtxUmzh",
-	"toVXnVZw0qKVzciC12rBO5ABauZrxPJYz9+4b8i339W9SopYIUQn78/BFKM4EhI2i2FYhL8hTcx/8muy",
-	"vmb22oKvdbtBOZvLlhVatqrQgFI44+v0HI+t07PRNESJfletnfep0AZmSCgehd3AsJCTR6HKS4pfZOip",
-	"n4P+jiVl5R1QSN9YwrkYfEeVGuS61uwm+Aql3sFn9cNgP0NJEX8Cb8PXwqi+deBi4zZYcGJLImBXJSdc",
-	"MuCv4iBwZ09t23CHQpJGkC4K33YaL/bBjTTEpXCGEmljiGGKQDhH4b0yM2QUJ1AGMsuDncKUTREVFzJR",
-	"vYGWxRtkCpZvz/EanOB1rdoDsdooj5eTTSvuYD0J4LOnExBUusZn7w5Biqj87Va0pA/FduY09l56BzDD",
-	"Bw9H3pfbL/9/AA==",
+	"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",
+	"/z8A",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
