@@ -46,20 +46,48 @@ func Export(w io.Writer, origin string, defaultTTL uint32, soa *dns.SOA, records
 		}
 		return bytes.Compare(a.wire.RData, b.wire.RData) < 0
 	})
-	bw := bufio.NewWriter(w)
-	fmt.Fprintf(bw, "$ORIGIN %s\n$TTL %d\n", origin, defaultTTL)
-	line := func(rr dns.RR) {
-		h := rr.Header()
-		fmt.Fprintf(bw, "%s\t%d\tIN\t%s\t%s\n", relative(h.Name, origin), h.Ttl, typeName(h.Rrtype), rdataText(rr))
-	}
+	zw := NewWriter(w, origin, defaultTTL)
 	if soa != nil {
-		line(soa)
+		if err := zw.SOA(soa); err != nil {
+			return err
+		}
 	}
 	for _, e := range entries {
-		line(e.rr)
+		if err := zw.Record(e.rr); err != nil {
+			return err
+		}
 	}
-	return bw.Flush()
+	return zw.Flush()
 }
+
+// Writer writes a BIND master file line by line: NewWriter writes $ORIGIN and $TTL, SOA and
+// Record write one "owner<TAB>ttl<TAB>IN<TAB>TYPE<TAB>rdata" line with the owner relative to
+// origin, in the order they are called. Flush must be called at the end.
+type Writer struct {
+	bw     *bufio.Writer
+	origin string
+}
+
+// NewWriter starts a master file for origin on w.
+func NewWriter(w io.Writer, origin string, defaultTTL uint32) *Writer {
+	origin = dns.CanonicalName(origin)
+	zw := &Writer{bw: bufio.NewWriter(w), origin: origin}
+	fmt.Fprintf(zw.bw, "$ORIGIN %s\n$TTL %d\n", origin, defaultTTL)
+	return zw
+}
+
+// SOA writes the SOA line; call it once, before any Record.
+func (zw *Writer) SOA(soa dns.RR) error { return zw.Record(soa) }
+
+// Record writes the line of rr.
+func (zw *Writer) Record(rr dns.RR) error {
+	h := rr.Header()
+	_, err := fmt.Fprintf(zw.bw, "%s\t%d\tIN\t%s\t%s\n", relative(h.Name, zw.origin), h.Ttl, typeName(h.Rrtype), rdataText(rr))
+	return err
+}
+
+// Flush writes what is buffered to the underlying writer.
+func (zw *Writer) Flush() error { return zw.bw.Flush() }
 
 func typeName(t uint16) string {
 	if s, ok := dns.TypeToString[t]; ok {
