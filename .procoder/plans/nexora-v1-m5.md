@@ -1,6 +1,6 @@
 # nexora-v1-m5 — implementation plan
 
-Status: draft (reconciled with the M1–M4 code at HEAD 91cf9a4 plus the uncommitted M4 Tasks 10–11 work)
+Status: implemented (2026-09-14)
 Spec: .procoder/specs/nexora-v1.md
 
 ## Goal
