@@ -1,6 +1,7 @@
 package querylog
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"strconv"
@@ -180,6 +181,40 @@ func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
 		lastSeq = e.seq
 	}
 	return page, nil
+}
+
+// Top implements Topper over the records held in the ring.
+func (b *Builtin) Top(_ context.Context, q TopQuery) ([]TopEntry, error) {
+	counts := map[string]int64{}
+	b.mu.RLock()
+	for _, e := range b.ring {
+		r := e.rec
+		if (!q.From.IsZero() && r.Time.Before(q.From)) || (!q.To.IsZero() && r.Time.After(q.To)) ||
+			(len(q.Filters) > 0 && !slices.Contains(q.Filters, r.Filter)) {
+			continue
+		}
+		var key string
+		switch q.Field {
+		case TopName:
+			key = r.Name
+		case TopClient:
+			key = r.Client
+		case TopCategory:
+			key = r.Category
+		}
+		if key != "" {
+			counts[key]++
+		}
+	}
+	b.mu.RUnlock()
+	out := make([]TopEntry, 0, len(counts))
+	for k, n := range counts {
+		out = append(out, TopEntry{Key: k, Count: n})
+	}
+	slices.SortFunc(out, func(a, b TopEntry) int {
+		return cmp.Or(cmp.Compare(b.Count, a.Count), strings.Compare(a.Key, b.Key))
+	})
+	return out[:min(len(out), max(q.Limit, 0))], nil
 }
 
 // matches reports whether r passes q; lowerName is the normalised name fragment and groups the

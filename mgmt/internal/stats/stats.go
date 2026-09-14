@@ -15,17 +15,20 @@ import (
 )
 
 const (
-	retention   = 24 * time.Hour
-	pruneEvery  = 100
-	window      = 5 * time.Minute
-	bucketWidth = 30 * time.Second
+	retention = 24 * time.Hour
+	// rollupRetention keeps the 7-day dashboard range covered.
+	rollupRetention = 8 * 24 * time.Hour
+	pruneEvery      = 100
+	window          = 5 * time.Minute
+	bucketWidth     = 30 * time.Second
 )
 
 // inserts counts Record calls per engine (engine id -> *atomic.Uint64) to pace pruning.
 var inserts sync.Map
 
-// Record stores one Stats sample received now and, once per 100 samples of that engine, deletes
-// its samples older than 24 h.
+// Record stores one Stats sample received now, replaces the engine's rollup sample of the current
+// 5-minute bucket with it and, once per 100 samples of that engine, deletes its samples older than
+// 24 h and its rollup rows older than 8 days.
 func Record(ctx context.Context, st *store.Store, engineID string, s *controlv1.Stats) error {
 	raw, err := proto.Marshal(s)
 	if err != nil {
@@ -35,10 +38,19 @@ func Record(ctx context.Context, st *store.Store, engineID string, s *controlv1.
 		on conflict do nothing`, engineID, raw); err != nil {
 		return store.MapError(err)
 	}
+	if _, err := st.Pool.Exec(ctx, `insert into engine_stats_rollup(engine_id, bucket, stats)
+		values ($1, date_bin('5 minutes', now(), timestamptz 'epoch'), $2)
+		on conflict (engine_id, bucket) do update set stats = excluded.stats`, engineID, raw); err != nil {
+		return store.MapError(err)
+	}
 	c, _ := inserts.LoadOrStore(engineID, new(atomic.Uint64))
 	if c.(*atomic.Uint64).Add(1)%pruneEvery == 0 {
-		_, err = st.Pool.Exec(ctx, "delete from engine_stats where engine_id = $1 and at < now() - $2 * interval '1 second'",
-			engineID, int64(retention.Seconds()))
+		if _, err := st.Pool.Exec(ctx, "delete from engine_stats where engine_id = $1 and at < now() - $2 * interval '1 second'",
+			engineID, int64(retention.Seconds())); err != nil {
+			return store.MapError(err)
+		}
+		_, err = st.Pool.Exec(ctx, "delete from engine_stats_rollup where engine_id = $1 and bucket < now() - $2 * interval '1 second'",
+			engineID, int64(rollupRetention.Seconds()))
 	}
 	return store.MapError(err)
 }

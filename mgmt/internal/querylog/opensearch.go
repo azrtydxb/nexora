@@ -95,7 +95,124 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 		limit = defaultLimit
 	}
 	limit = min(limit, maxLimit)
+	body := map[string]any{
+		"size":             limit + 1,
+		"track_total_hits": false,
+		"query":            map[string]any{"bool": map[string]any{"filter": filterClauses(q)}},
+		// debt: @timestamp has millisecond resolution, so records sharing the millisecond at a
+		// page boundary can be skipped by search_after; revisit with a unique tiebreaker field.
+		"sort": []map[string]any{{"@timestamp": "desc"}},
+	}
+	if q.Cursor != "" {
+		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
+		var after []any
+		if err != nil || json.Unmarshal(raw, &after) != nil || len(after) == 0 {
+			return Page{}, ErrInvalidCursor
+		}
+		body["search_after"] = after
+	}
+	resp, err := o.search(ctx, body)
+	if err != nil {
+		return Page{}, err
+	}
+	var page Page
+	for i, hit := range resp.Hits.Hits {
+		if i == limit {
+			cursor, err := json.Marshal(resp.Hits.Hits[i-1].Sort)
+			if err != nil {
+				return Page{}, err
+			}
+			page.NextCursor = base64.RawURLEncoding.EncodeToString(cursor)
+			break
+		}
+		var src osSource
+		if err := json.Unmarshal(hit.Source, &src); err != nil {
+			return Page{}, fmt.Errorf("opensearch document %s: %w", hit.ID, err)
+		}
+		a := src.Attributes
+		filter := a.Filter
+		if filter == "" {
+			filter = a.FilterResult
+		}
+		rpzAction := a.RPZAction
+		if rpzAction == "none" {
+			rpzAction = ""
+		}
+		page.Records = append(page.Records, Record{
+			Time: src.Timestamp, Client: a.Client, Name: a.Name, QType: a.QType, RCode: a.RCode, Cache: a.Cache,
+			Filter: filter, Upstream: a.Upstream, Transport: a.Transport, EngineID: a.EngineID,
+			ListID: a.ListID, Category: a.Category, DurationUS: a.DurationUS,
+			Source: a.Source, Rule: a.Rule, PolicyGroupID: a.PolicyGroup, RPZZoneID: a.RPZZone, RPZAction: rpzAction,
+			ACLRefused: a.ACLRefused, UpstreamsRaced: a.Raced,
+		})
+	}
+	return page, nil
+}
 
+// topFields maps each top list field to its document attribute.
+var topFields = map[TopField]string{TopName: "dns.question.name", TopClient: "client.address", TopCategory: "nexora.filter.category"}
+
+// Top implements Topper with a terms aggregation on the attribute's keyword field under the same
+// time and filter clauses as Search. It asks for one bucket more than Limit because records without
+// the attribute can aggregate under the empty key, which is dropped.
+func (o *OpenSearch) Top(ctx context.Context, q TopQuery) ([]TopEntry, error) {
+	field, ok := topFields[q.Field]
+	if !ok {
+		return nil, fmt.Errorf("top list field %q", q.Field)
+	}
+	body := map[string]any{
+		"size":             0,
+		"track_total_hits": false,
+		"query":            map[string]any{"bool": map[string]any{"filter": filterClauses(Query{From: q.From, To: q.To, Filters: q.Filters})}},
+		"aggs":             map[string]any{"top": map[string]any{"terms": map[string]any{"field": "attributes." + field + ".keyword", "size": q.Limit + 1}}},
+	}
+	resp, err := o.search(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	var aggs struct {
+		Top struct {
+			Buckets []struct {
+				Key      string `json:"key"`
+				DocCount int64  `json:"doc_count"`
+			} `json:"buckets"`
+		} `json:"top"`
+	}
+	if len(resp.Aggregations) > 0 {
+		if err := json.Unmarshal(resp.Aggregations, &aggs); err != nil {
+			return nil, fmt.Errorf("opensearch aggregation: %w", err)
+		}
+	}
+	out := []TopEntry{}
+	for _, b := range aggs.Top.Buckets {
+		if b.Key != "" && len(out) < q.Limit {
+			out = append(out, TopEntry{Key: b.Key, Count: b.DocCount})
+		}
+	}
+	return out, nil
+}
+
+// search runs body against the index; transport failures and HTTP 5xx answers are
+// ErrBackendUnavailable.
+func (o *OpenSearch) search(ctx context.Context, body map[string]any) (*opensearchapi.SearchResp, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, openSearchTimeout)
+	defer cancel()
+	resp, err := o.client.Search(ctx, &opensearchapi.SearchReq{Indices: []string{o.index}, Body: bytes.NewReader(raw)})
+	if err != nil {
+		if resp == nil || resp.Inspect().Response == nil || resp.Inspect().Response.StatusCode >= 500 {
+			return nil, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		}
+		return nil, fmt.Errorf("opensearch search: %w", err)
+	}
+	return resp, nil
+}
+
+// filterClauses is the bool filter of q's time range and field filters (limit and cursor aside).
+func filterClauses(q Query) []map[string]any {
 	filters := []map[string]any{}
 	if !q.From.IsZero() || !q.To.IsZero() {
 		r := map[string]any{}
@@ -150,67 +267,7 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 		}
 		filters = append(filters, should(alternatives...))
 	}
-	body := map[string]any{
-		"size":             limit + 1,
-		"track_total_hits": false,
-		"query":            map[string]any{"bool": map[string]any{"filter": filters}},
-		// debt: @timestamp has millisecond resolution, so records sharing the millisecond at a
-		// page boundary can be skipped by search_after; revisit with a unique tiebreaker field.
-		"sort": []map[string]any{{"@timestamp": "desc"}},
-	}
-	if q.Cursor != "" {
-		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
-		var after []any
-		if err != nil || json.Unmarshal(raw, &after) != nil || len(after) == 0 {
-			return Page{}, ErrInvalidCursor
-		}
-		body["search_after"] = after
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return Page{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, openSearchTimeout)
-	defer cancel()
-	resp, err := o.client.Search(ctx, &opensearchapi.SearchReq{Indices: []string{o.index}, Body: bytes.NewReader(raw)})
-	if err != nil {
-		if resp == nil || resp.Inspect().Response == nil || resp.Inspect().Response.StatusCode >= 500 {
-			return Page{}, fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
-		}
-		return Page{}, fmt.Errorf("opensearch search: %w", err)
-	}
-	var page Page
-	for i, hit := range resp.Hits.Hits {
-		if i == limit {
-			cursor, err := json.Marshal(resp.Hits.Hits[i-1].Sort)
-			if err != nil {
-				return Page{}, err
-			}
-			page.NextCursor = base64.RawURLEncoding.EncodeToString(cursor)
-			break
-		}
-		var src osSource
-		if err := json.Unmarshal(hit.Source, &src); err != nil {
-			return Page{}, fmt.Errorf("opensearch document %s: %w", hit.ID, err)
-		}
-		a := src.Attributes
-		filter := a.Filter
-		if filter == "" {
-			filter = a.FilterResult
-		}
-		rpzAction := a.RPZAction
-		if rpzAction == "none" {
-			rpzAction = ""
-		}
-		page.Records = append(page.Records, Record{
-			Time: src.Timestamp, Client: a.Client, Name: a.Name, QType: a.QType, RCode: a.RCode, Cache: a.Cache,
-			Filter: filter, Upstream: a.Upstream, Transport: a.Transport, EngineID: a.EngineID,
-			ListID: a.ListID, Category: a.Category, DurationUS: a.DurationUS,
-			Source: a.Source, Rule: a.Rule, PolicyGroupID: a.PolicyGroup, RPZZoneID: a.RPZZone, RPZAction: rpzAction,
-			ACLRefused: a.ACLRefused, UpstreamsRaced: a.Raced,
-		})
-	}
-	return page, nil
+	return filters
 }
 
 // terms matches documents whose attribute field equals one of values.

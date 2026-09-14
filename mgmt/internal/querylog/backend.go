@@ -59,6 +59,37 @@ type Backend interface {
 	Search(ctx context.Context, q Query) (Page, error)
 }
 
+// TopField is the record field a top list counts: "name", "client" or "category".
+type TopField string
+
+// Top list fields.
+const (
+	TopName     TopField = "name"
+	TopClient   TopField = "client"
+	TopCategory TopField = "category"
+)
+
+// TopQuery counts records between From and To (zero times do not bound) whose filter result is one
+// of Filters (empty: any) by Field, returning at most Limit entries.
+type TopQuery struct {
+	From, To time.Time
+	Field    TopField
+	Filters  []string
+	Limit    int
+}
+
+// TopEntry is one key of a top list with its record count.
+type TopEntry struct {
+	Key   string
+	Count int64
+}
+
+// Topper is a backend that aggregates top lists; entries are ordered by count descending, then key,
+// and records with an empty key are not counted.
+type Topper interface {
+	Top(ctx context.Context, q TopQuery) ([]TopEntry, error)
+}
+
 // Noop is a backend without records.
 type Noop struct{}
 
