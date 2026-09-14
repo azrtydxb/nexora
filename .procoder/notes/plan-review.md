@@ -57,3 +57,6 @@
 
 - RESOLVED (debt marker in `mgmt/internal/dnssec/lifecycle.go`, data loss): `SweepTokenOrphans` destroyed every token object labelled `nexora-dnssec`, so two installations sharing a PKCS#11 token would destroy each other's live DNSSEC keys after the 1 h grace. Migration `00502_installation.sql` adds a one-row `installation` id (`store.InstallationID`), `secrets.Config.Installation` is required with PKCS#11, and key objects are labelled `nexora-dnssec:<installation id>`; generation and sweeps use only that label. `TestSweepLeavesOtherInstallationsTokenKeys` (red before the change: the sweep destroyed both keys). A database restored into a second installation shares the id; `docs/operations.md` Key storage says to give it its own token.
 
+## Filter categories plan review (2026-09-14)
+
+- Accepted: URLhaus also behind a license acknowledgement (its terms may require a paid subscription for commercial use); OpenSearch query log moves to `nexora-querylog-v2` with a collector rename rule; packed 128-byte block index (~21 B/name) instead of the spec's 16-byte slot layout; ARM prefetch via inline asm on stable Rust; catalog mirror env var for e2e fixtures.
