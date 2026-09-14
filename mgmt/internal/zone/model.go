@@ -50,6 +50,8 @@ type Zone struct {
 	TransferTSIGKeyID  *uuid.UUID
 	Notify             []Endpoint
 	UpdateTSIGKeyIDs   []uuid.UUID
+	UpdateAllowCIDRs   []netip.Prefix // update sources; empty allows any (TSIG still required)
+	AllowQueryCIDRs    []netip.Prefix // query clients; empty uses access_control.authoritative_allow_cidrs
 	Primaries          []Endpoint
 	CurrentSeq         int64
 	ImageSeq           int64
@@ -86,6 +88,8 @@ type CreateZoneInput struct {
 	Transfer         TransferInput
 	Notify           []Endpoint
 	UpdateTSIGKeyIDs []uuid.UUID
+	UpdateAllowCIDRs []string
+	AllowQueryCIDRs  []string
 	// EngineGroupID scopes the zone to one engine group (nil: served by every group).
 	EngineGroupID *uuid.UUID
 }
@@ -105,6 +109,8 @@ type UpdateZoneInput struct {
 	Transfer         *TransferInput
 	Notify           *[]Endpoint
 	UpdateTSIGKeyIDs *[]uuid.UUID
+	UpdateAllowCIDRs *[]string
+	AllowQueryCIDRs  *[]string
 }
 
 // RecordInput is one record as written by an operator; Name is absolute.

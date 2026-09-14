@@ -45,7 +45,7 @@ type querier interface {
 // zoneColumns are selected FROM zoneFrom; DNSSECEnabled comes from zone_dnssec (Task 12).
 const zoneColumns = `z.id, z.name, z.kind, z.revision, z.serial, z.default_ttl, z.soa_mname, z.soa_rname, z.soa_refresh,
 	z.soa_retry, z.soa_expire, z.soa_minimum, z.soa_ttl, z.transfer_allow_cidrs, z.transfer_tsig_key_id, z.notify_targets,
-	z.update_tsig_key_ids, z.primaries, z.current_seq, z.image_seq, z.loaded, z.expired, z.last_refresh_at, z.last_success_at,
+	z.update_tsig_key_ids, z.update_allow_cidrs, z.allow_query_cidrs, z.primaries, z.current_seq, z.image_seq, z.loaded, z.expired, z.last_refresh_at, z.last_success_at,
 	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at, z.engine_group_id`
 
 const zoneFrom = " FROM zones z LEFT JOIN zone_dnssec d ON d.zone_id = z.id"
@@ -56,7 +56,7 @@ func scanZone(row pgx.Row) (*Zone, error) {
 	var ttl, refresh, retry, expire, minimum, soaTTL int32
 	err := row.Scan(&z.ID, &z.Name, &z.Kind, &z.Revision, &serial, &ttl, &z.SOA.MName, &z.SOA.RName, &refresh, &retry,
 		&expire, &minimum, &soaTTL, &z.TransferAllowCIDRs, &z.TransferTSIGKeyID, &z.Notify, &z.UpdateTSIGKeyIDs,
-		&z.Primaries, &z.CurrentSeq, &z.ImageSeq, &z.Loaded, &z.Expired, &z.LastRefreshAt, &z.LastSuccessAt, &z.NextRefreshAt,
+		&z.UpdateAllowCIDRs, &z.AllowQueryCIDRs, &z.Primaries, &z.CurrentSeq, &z.ImageSeq, &z.Loaded, &z.Expired, &z.LastRefreshAt, &z.LastSuccessAt, &z.NextRefreshAt,
 		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt, &z.EngineGroupID)
 	if err != nil {
 		return nil, store.MapError(err)
@@ -148,12 +148,12 @@ func validSOA(soa SOA) error {
 	return nil
 }
 
-func parseCIDRs(in []string) ([]netip.Prefix, error) {
+func parseCIDRs(field string, in []string) ([]netip.Prefix, error) {
 	out := make([]netip.Prefix, 0, len(in))
 	for _, c := range in {
 		p, err := netip.ParsePrefix(c)
 		if err != nil {
-			return nil, invalid("invalid_cidr", fmt.Sprintf("transfer allow_cidrs: %q is not a CIDR", c))
+			return nil, invalid("invalid_cidr", fmt.Sprintf("%s: %q is not a CIDR", field, c))
 		}
 		out = append(out, p.Masked())
 	}
@@ -269,7 +269,15 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 	if err := validEndpoints("notify", in.Notify); err != nil {
 		return nil, err
 	}
-	cidrs, err := parseCIDRs(in.Transfer.AllowCIDRs)
+	cidrs, err := parseCIDRs("transfer allow_cidrs", in.Transfer.AllowCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	updateCIDRs, err := parseCIDRs("update allow_cidrs", in.UpdateAllowCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	queryCIDRs, err := parseCIDRs("allow_query_cidrs", in.AllowQueryCIDRs)
 	if err != nil {
 		return nil, err
 	}
@@ -294,11 +302,13 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 		}
 		var id uuid.UUID
 		err := tx.QueryRow(ctx, `INSERT INTO zones (name, kind, default_ttl, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire,
-			soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries, engine_group_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+			soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries, engine_group_id,
+			update_allow_cidrs, allow_query_cidrs)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
 			name, in.Kind, int64(in.DefaultTTL), dns.CanonicalName(in.SOA.MName), dns.CanonicalName(in.SOA.RName),
 			int64(in.SOA.Refresh), int64(in.SOA.Retry), int64(in.SOA.Expire), int64(in.SOA.Minimum), int64(in.SOA.TTL),
-			cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries), in.EngineGroupID).Scan(&id)
+			cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries), in.EngineGroupID,
+			updateCIDRs, queryCIDRs).Scan(&id)
 		if err != nil {
 			return auth.Change{}, err
 		}
@@ -340,7 +350,7 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 		return nil, invalid("invalid_ttl", "default_ttl is too large")
 	}
 	var keys []uuid.UUID
-	var cidrs []netip.Prefix
+	var cidrs, updateCIDRs, queryCIDRs []netip.Prefix
 	if in.Primaries != nil {
 		if err := validEndpoints("primaries", *in.Primaries); err != nil {
 			return nil, err
@@ -358,11 +368,23 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 	}
 	if in.Transfer != nil {
 		var err error
-		if cidrs, err = parseCIDRs(in.Transfer.AllowCIDRs); err != nil {
+		if cidrs, err = parseCIDRs("transfer allow_cidrs", in.Transfer.AllowCIDRs); err != nil {
 			return nil, err
 		}
 		if in.Transfer.TSIGKeyID != nil {
 			keys = append(keys, *in.Transfer.TSIGKeyID)
+		}
+	}
+	if in.UpdateAllowCIDRs != nil {
+		var err error
+		if updateCIDRs, err = parseCIDRs("update allow_cidrs", *in.UpdateAllowCIDRs); err != nil {
+			return nil, err
+		}
+	}
+	if in.AllowQueryCIDRs != nil {
+		var err error
+		if queryCIDRs, err = parseCIDRs("allow_query_cidrs", *in.AllowQueryCIDRs); err != nil {
+			return nil, err
 		}
 	}
 	return s.Mutate(ctx, id, func(tx pgx.Tx, z *Zone) (string, any, any, RebuildOptions, error) {
@@ -407,6 +429,12 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 		}
 		if in.UpdateTSIGKeyIDs != nil {
 			set("update_tsig_key_ids", nonNil(*in.UpdateTSIGKeyIDs))
+		}
+		if in.UpdateAllowCIDRs != nil {
+			set("update_allow_cidrs", updateCIDRs)
+		}
+		if in.AllowQueryCIDRs != nil {
+			set("allow_query_cidrs", queryCIDRs)
 		}
 		if in.Transfer != nil {
 			set("transfer_allow_cidrs", cidrs)

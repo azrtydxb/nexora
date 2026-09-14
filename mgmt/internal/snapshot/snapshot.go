@@ -326,6 +326,11 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 		return nil, fmt.Errorf("access control: %w", err)
 	}
 	snap.AclAllowCidrs = append(snap.AclAllowCidrs, extraACL...)
+	if err := tx.QueryRow(ctx, `select array(select host(c) || '/' || masklen(c)
+		from access_control, unnest(authoritative_allow_cidrs) with ordinality as u(c, n) order by n)`).Scan(&snap.AuthoritativeAllowCidrs); err != nil {
+		return nil, fmt.Errorf("authoritative access control: %w", err)
+	}
+	snap.AuthoritativeAclSet = true
 	if err := buildFilterLists(ctx, tx, snap, groupID); err != nil {
 		return nil, err
 	}

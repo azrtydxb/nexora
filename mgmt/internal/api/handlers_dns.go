@@ -288,12 +288,29 @@ func (h *handlers) UpdateResolverSettings(ctx context.Context, req UpdateResolve
 // ---- access control ----
 
 const accessControlSelect = `select array(select host(c) || '/' || masklen(c)
-	from unnest(allow_cidrs) with ordinality as u(c, n) order by n), revision from access_control`
+	from unnest(allow_cidrs) with ordinality as u(c, n) order by n),
+	array(select host(c) || '/' || masklen(c) from unnest(authoritative_allow_cidrs) with ordinality as u(c, n) order by n),
+	revision from access_control`
 
 func scanAccessControl(row pgx.Row) (AccessControl, error) {
 	var a AccessControl
-	err := row.Scan(&a.AllowCidrs, &a.Revision)
+	var authoritative []string
+	err := row.Scan(&a.AllowCidrs, &authoritative, &a.Revision)
+	a.AuthoritativeAllowCidrs = &authoritative
 	return a, store.MapError(err)
+}
+
+// maskedCIDRs parses every entry as a prefix and returns the canonical masked forms.
+func maskedCIDRs(field string, in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		p, err := netip.ParsePrefix(strings.TrimSpace(c))
+		if err != nil {
+			return nil, invalid("%s: %q is not a CIDR", field, c)
+		}
+		out = append(out, p.Masked().String())
+	}
+	return out, nil
 }
 
 func (h *handlers) GetAccessControl(ctx context.Context, _ GetAccessControlRequestObject) (GetAccessControlResponseObject, error) {
@@ -305,16 +322,18 @@ func (h *handlers) GetAccessControl(ctx context.Context, _ GetAccessControlReque
 }
 
 func (h *handlers) UpdateAccessControl(ctx context.Context, req UpdateAccessControlRequestObject) (UpdateAccessControlResponseObject, error) {
-	cidrs := make([]string, 0, len(req.Body.AllowCidrs))
-	for _, c := range req.Body.AllowCidrs {
-		p, err := netip.ParsePrefix(strings.TrimSpace(c))
-		if err != nil {
-			return nil, invalid("allow_cidrs: %q is not a CIDR", c)
+	cidrs, err := maskedCIDRs("allow_cidrs", req.Body.AllowCidrs)
+	if err != nil {
+		return nil, err
+	}
+	var authoritative []string // nil keeps the stored list
+	if req.Body.AuthoritativeAllowCidrs != nil {
+		if authoritative, err = maskedCIDRs("authoritative_allow_cidrs", *req.Body.AuthoritativeAllowCidrs); err != nil {
+			return nil, err
 		}
-		cidrs = append(cidrs, p.Masked().String())
 	}
 	var after AccessControl
-	err := h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
+	err = h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 		before, err := scanAccessControl(tx.QueryRow(ctx, accessControlSelect+" for update"))
 		if err != nil {
 			return auth.Change{}, err
@@ -322,7 +341,9 @@ func (h *handlers) UpdateAccessControl(ctx context.Context, req UpdateAccessCont
 		if err := checkRevision(before.Revision, req.Body.Revision); err != nil {
 			return auth.Change{}, err
 		}
-		if _, err := tx.Exec(ctx, "update access_control set allow_cidrs = $1::cidr[], revision = revision + 1, updated_at = now()", cidrs); err != nil {
+		if _, err := tx.Exec(ctx, `update access_control set allow_cidrs = $1::cidr[],
+			authoritative_allow_cidrs = coalesce($2::cidr[], authoritative_allow_cidrs), revision = revision + 1, updated_at = now()`,
+			cidrs, authoritative); err != nil {
 			return auth.Change{}, err
 		}
 		after, err = scanAccessControl(tx.QueryRow(ctx, accessControlSelect))

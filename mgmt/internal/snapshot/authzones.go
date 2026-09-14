@@ -49,7 +49,9 @@ func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot
 	rows, err = tx.Query(ctx, `SELECT z.id::text, z.name, z.kind, z.serial, z.image_seq, z.current_seq, i.serial, i.blob_sha256, b.size,
 		array(SELECT host(c) || '/' || masklen(c) FROM unnest(z.transfer_allow_cidrs) WITH ORDINALITY AS u(c, n) ORDER BY n),
 		coalesce(z.transfer_tsig_key_id::text, ''), z.notify_targets, z.primaries,
-		array(SELECT k.name FROM tsig_keys k WHERE k.id = ANY(z.update_tsig_key_ids) ORDER BY k.name), z.expired
+		array(SELECT k.name FROM tsig_keys k WHERE k.id = ANY(z.update_tsig_key_ids) ORDER BY k.name), z.expired,
+		array(SELECT host(c) || '/' || masklen(c) FROM unnest(z.allow_query_cidrs) WITH ORDINALITY AS u(c, n) ORDER BY n),
+		array(SELECT host(c) || '/' || masklen(c) FROM unnest(z.update_allow_cidrs) WITH ORDINALITY AS u(c, n) ORDER BY n)
 		FROM zones z JOIN zone_images i ON i.zone_id = z.id AND i.seq = z.image_seq JOIN blobs b ON b.sha256 = i.blob_sha256
 		WHERE (z.kind = 'primary' OR z.loaded) AND (z.engine_group_id IS NULL OR z.engine_group_id = $1) ORDER BY z.name`, engineGroupID)
 	if err != nil {
@@ -61,7 +63,8 @@ func AddAuthZones(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot
 		var kind, transferKey string
 		var serial, imageSerial, size int64
 		if err := rows.Scan(&r.id, &r.az.Name, &kind, &serial, &r.imageSeq, &r.currentSeq, &imageSerial, &r.az.Image.Sha256, &size,
-			&r.az.Transfer.AllowCidrs, &transferKey, &r.notifyRaw, &r.primaryRaw, &r.az.UpdateTsigKeys, &r.az.Expired); err != nil {
+			&r.az.Transfer.AllowCidrs, &transferKey, &r.notifyRaw, &r.primaryRaw, &r.az.UpdateTsigKeys, &r.az.Expired,
+			&r.az.AllowQueryCidrs, &r.az.UpdateAllowCidrs); err != nil {
 			rows.Close()
 			return fmt.Errorf("auth zones: %w", err)
 		}

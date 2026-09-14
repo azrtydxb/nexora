@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 
 	"github.com/google/uuid"
 
@@ -26,20 +27,27 @@ func zoneEndpointsIn(eps []ZoneEndpoint) []zone.Endpoint {
 	return out
 }
 
-func zoneOut(z *zone.Zone) Zone {
-	cidrs := make([]string, 0, len(z.TransferAllowCIDRs))
-	for _, p := range z.TransferAllowCIDRs {
-		cidrs = append(cidrs, p.String())
+// prefixesOut renders prefixes as strings; the result is never nil.
+func prefixesOut(ps []netip.Prefix) []string {
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, p.String())
 	}
+	return out
+}
+
+func zoneOut(z *zone.Zone) Zone {
+	updateCIDRs := prefixesOut(z.UpdateAllowCIDRs)
 	out := Zone{
 		Id: z.ID, EngineGroupId: z.EngineGroupID, Name: z.Name, Kind: ZoneKind(z.Kind), Revision: z.Revision, Serial: int64(z.Serial),
 		DefaultTtl: int64(z.DefaultTTL), DnssecEnabled: z.DNSSECEnabled, CreatedAt: z.CreatedAt, UpdatedAt: z.UpdatedAt,
 		Soa: ZoneSOA{Mname: z.SOA.MName, Rname: z.SOA.RName, Refresh: int64(z.SOA.Refresh), Retry: int64(z.SOA.Retry),
 			Expire: int64(z.SOA.Expire), Minimum: int64(z.SOA.Minimum), Ttl: int64(z.SOA.TTL)},
-		Transfer:  ZoneTransfer{AllowCidrs: cidrs, TsigKeyId: z.TransferTSIGKeyID},
-		Notify:    zoneEndpointsOut(z.Notify),
-		Update:    ZoneUpdatePolicy{TsigKeyIds: append([]uuid.UUID{}, z.UpdateTSIGKeyIDs...)},
-		Primaries: zoneEndpointsOut(z.Primaries),
+		Transfer:        ZoneTransfer{AllowCidrs: prefixesOut(z.TransferAllowCIDRs), TsigKeyId: z.TransferTSIGKeyID},
+		Notify:          zoneEndpointsOut(z.Notify),
+		Update:          ZoneUpdatePolicy{TsigKeyIds: append([]uuid.UUID{}, z.UpdateTSIGKeyIDs...), AllowCidrs: &updateCIDRs},
+		Primaries:       zoneEndpointsOut(z.Primaries),
+		AllowQueryCidrs: prefixesOut(z.AllowQueryCIDRs),
 	}
 	if z.Kind == "secondary" {
 		out.SecondaryStatus = &ZoneSecondaryStatus{
@@ -147,8 +155,22 @@ func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) 
 	if b.Notify != nil {
 		in.Notify = zoneEndpointsIn(*b.Notify)
 	}
+	if b.AllowQueryCidrs != nil {
+		cidrs, err := maskedCIDRs("allow_query_cidrs", *b.AllowQueryCidrs)
+		if err != nil {
+			return nil, err
+		}
+		in.AllowQueryCIDRs = cidrs
+	}
 	if b.Update != nil {
 		in.UpdateTSIGKeyIDs = b.Update.TsigKeyIds
+		if b.Update.AllowCidrs != nil {
+			cidrs, err := maskedCIDRs("update.allow_cidrs", *b.Update.AllowCidrs)
+			if err != nil {
+				return nil, err
+			}
+			in.UpdateAllowCIDRs = cidrs
+		}
 	}
 	z, err := h.d.Zones.CreateZone(ctx, PrincipalFrom(ctx).Actor(), in)
 	if errors.Is(err, zone.ErrUnknownEngineGroup) {
@@ -200,9 +222,23 @@ func (h *handlers) UpdateZone(ctx context.Context, req UpdateZoneRequestObject) 
 		t := transferIn(b.Transfer)
 		in.Transfer = &t
 	}
+	if b.AllowQueryCidrs != nil {
+		cidrs, err := maskedCIDRs("allow_query_cidrs", *b.AllowQueryCidrs)
+		if err != nil {
+			return nil, err
+		}
+		in.AllowQueryCIDRs = &cidrs
+	}
 	if b.Update != nil {
 		ids := b.Update.TsigKeyIds
 		in.UpdateTSIGKeyIDs = &ids
+		if b.Update.AllowCidrs != nil {
+			cidrs, err := maskedCIDRs("update.allow_cidrs", *b.Update.AllowCidrs)
+			if err != nil {
+				return nil, err
+			}
+			in.UpdateAllowCIDRs = &cidrs
+		}
 	}
 	z, err := h.d.Zones.UpdateZone(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, in)
 	if err != nil {
