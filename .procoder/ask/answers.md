@@ -1,6 +1,6 @@
 # What a human decided
 
-Written 2026-09-13 11:14 UTC. procoder reads this
+Written 2026-09-14 07:03 UTC. procoder reads this
 file to avoid asking a question twice; edit an answer here to change what
 it believes. Reword the question and it will be asked again.
 
@@ -25,3 +25,14 @@ Question: Engine language and base
 **Answer (2026-09-13):** Rust + hickory-proto codec; own server loop, cache, resolver.
 
 Answer: Rust engine on hickory-proto codec, own server loop/cache/resolver (chosen by the user via the question tool on 2026-09-13)
+
+## [decision] decisions.md
+
+Key: 6b55131ee473
+Question: Static egress IP for Nexora engines on kw (UniFi DNS interception bypass)
+
+- Cilium Egress Gateway: one static IP for all engines via a gateway node (needs enable-bpf-masquerade + enable-ipv4-egress-gateway, rolling cilium restart; gateway node is a single point of failure in OSS Cilium)
+- Multus + macvlan: engines get their own LAN IPs from a small static range (new cluster component; engine gains an outbound source-address setting; no single point of failure)
+- kube-vip egress annotation on the DNS Service (only works for the engine on the VIP node; not viable for a DaemonSet)
+
+Answer: None of the options — the user disabled the UniFi DNS content filter (the redirect source) instead; kw nodes now use 192.168.10.1 as resolver and kw runs recursive mode (issue #1, 2026-09-14).
