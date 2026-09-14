@@ -32,6 +32,8 @@ type Config struct {
 	EngineCertTTL time.Duration
 	// CatalogMirror, when set, is a base URL serving every filter catalog source at <base>/<source key>.
 	CatalogMirror string
+	// RepositoryURL, when set, is the https source repository the GUI links the build commit to.
+	RepositoryURL string
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -71,6 +73,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PKCS11TokenLabel: getenv("NEXORA_PKCS11_TOKEN_LABEL"),
 		PKCS11PinFile:    getenv("NEXORA_PKCS11_PIN_FILE"),
 		CatalogMirror:    getenv("NEXORA_CATALOG_MIRROR"),
+		RepositoryURL:    getenv("NEXORA_REPOSITORY_URL"),
 		OIDC: OIDCConfig{
 			Issuer:           getenv("NEXORA_OIDC_ISSUER"),
 			ClientID:         getenv("NEXORA_OIDC_CLIENT_ID"),
@@ -141,6 +144,9 @@ func Load(getenv func(string) string) (Config, error) {
 	c.EngineCertTTL = certTTL
 	if c.CatalogMirror != "" && !strings.HasPrefix(c.CatalogMirror, "http://") && !strings.HasPrefix(c.CatalogMirror, "https://") {
 		return Config{}, fmt.Errorf("NEXORA_CATALOG_MIRROR must be an http(s) URL")
+	}
+	if c.RepositoryURL != "" && !strings.HasPrefix(c.RepositoryURL, "https://") {
+		return Config{}, fmt.Errorf("NEXORA_REPOSITORY_URL must be an https URL")
 	}
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {

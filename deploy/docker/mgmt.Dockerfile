@@ -6,10 +6,16 @@ COPY web/package.json web/pnpm-lock.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
 COPY web ./
 COPY mgmt/api/openapi.yaml /src/mgmt/api/openapi.yaml
-RUN pnpm run build
+# The build stamp shown in the GUI footer (__NEXORA_VERSION__ and friends in web/vite.config.ts).
+ARG VERSION=dev
+ARG COMMIT=
+ARG BUILD_DATE=
+RUN NEXORA_VERSION=${VERSION} NEXORA_COMMIT=${COMMIT} NEXORA_BUILD_DATE=${BUILD_DATE} pnpm run build
 
 FROM golang:1.27-trixie AS build
 ARG VERSION=dev
+ARG COMMIT=
+ARG BUILD_DATE=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -19,7 +25,7 @@ COPY --from=web /src/web/dist mgmt/internal/webui/dist
 # cgo: PKCS#11 modules (NEXORA_PKCS11_MODULE) are C shared libraries loaded with dlopen, so the binary
 # links glibc dynamically and the runtime image is Debian (same trixie glibc as the build stage).
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /nexora-mgmt ./mgmt/cmd/nexora-mgmt \
+    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" -o /nexora-mgmt ./mgmt/cmd/nexora-mgmt \
  && /nexora-mgmt version
 
 # No PKCS#11 module is installed: mount the HSM vendor's module (and its configuration) and point

@@ -38,6 +38,7 @@ func TestLoadValidation(t *testing.T) {
 		"engine cert ttl nan": func(m map[string]string) { m["NEXORA_ENGINE_CERT_TTL"] = "ninety days" },
 		"pkcs11 module only":  func(m map[string]string) { m["NEXORA_PKCS11_MODULE"] = "/usr/lib/softhsm/libsofthsm2.so" },
 		"catalog mirror":      func(m map[string]string) { m["NEXORA_CATALOG_MIRROR"] = "ftp://mirror.test/lists" },
+		"repository url":      func(m map[string]string) { m["NEXORA_REPOSITORY_URL"] = "http://github.com/azrtydxb/nexora" },
 		"pkcs11 no pin file": func(m map[string]string) {
 			m["NEXORA_PKCS11_MODULE"], m["NEXORA_PKCS11_TOKEN_LABEL"] = "/usr/lib/softhsm/libsofthsm2.so", "nexora"
 		},

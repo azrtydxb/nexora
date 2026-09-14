@@ -4,13 +4,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
  && rm -rf /var/lib/apt/lists/*
 # The image tag, compiled into the binary (nexora_engine::VERSION); scripts/build-image.sh passes it.
 ARG VERSION=dev
+# The full commit hash the image was built from (empty outside a git checkout).
+ARG COMMIT=
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY proto proto
 COPY engine engine
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    NEXORA_VERSION="${VERSION}" cargo build --locked --release -p nexora-engine \
+    NEXORA_VERSION="${VERSION}" NEXORA_COMMIT="${COMMIT}" cargo build --locked --release -p nexora-engine \
  && /src/target/release/nexora-engine --version \
  && install -m 0755 target/release/nexora-engine /nexora-engine
 

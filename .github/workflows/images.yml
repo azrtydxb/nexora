@@ -65,7 +65,10 @@ jobs:
           file: ${{ matrix.image.file }}
           builder: nexora
           platforms: ${{ matrix.arch.platform }}
-          build-args: VERSION=${{ steps.meta.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }}
           # ignore-error: a cache write must never fail a publish.

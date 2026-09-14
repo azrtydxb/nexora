@@ -4,8 +4,9 @@
 #
 #   scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine [-t tag] [-p linux/arm64] [context]
 #
-# The tag is passed as the build argument VERSION, which the Nexora Dockerfiles stamp into the
-# binaries (nexora-mgmt /api/v1/health, nexora-engine --version).
+# The tag is passed as the build argument VERSION, the full commit hash as COMMIT and the UTC build
+# time as BUILD_DATE; the Nexora Dockerfiles stamp them into the binaries and the GUI
+# (nexora-mgmt /api/v1/health and /api/v1/version, nexora-engine --version).
 #
 # Push credentials are read from the cluster (the `ci` account's dockerconfigjson)
 # into a temporary DOCKER_CONFIG that is deleted on exit, so no password is ever
@@ -57,6 +58,9 @@ if [ -z "$tag" ]; then
 	tag="dev-${sha}"
 fi
 
+commit=$(git -C "$context" rev-parse HEAD 2>/dev/null || echo "")
+build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 for f in ca.crt tls.crt tls.key; do
@@ -81,5 +85,7 @@ DOCKER_CONFIG="$work/docker" buildctl --addr "$addr" \
 	--opt filename="$(basename "$dockerfile")" \
 	--opt platform="$platform" \
 	--opt build-arg:VERSION="$tag" \
+	--opt build-arg:COMMIT="$commit" \
+	--opt build-arg:BUILD_DATE="$build_date" \
 	--output "type=image,name=${image},push=true"
 echo "pull as 192.168.10.131/azrtydxb/${name}:${tag}"

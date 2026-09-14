@@ -49,14 +49,19 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
 )
 
-// version is set at build time with -ldflags "-X main.version=<tag>"; main hands it to the API's
-// health report.
-var version = "dev"
+// version, commit and buildDate are set at build time with -ldflags "-X main.version=<tag>
+// -X main.commit=<sha> -X main.buildDate=<RFC 3339>"; main hands them to the API's health and version
+// reports.
+var (
+	version   = "dev"
+	commit    = ""
+	buildDate = ""
+)
 
 const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> [--if-missing] | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F | engine-group create --name N [--description D] [--if-missing] | join-token create --engine-group G [--ttl 24h] [--max-uses N] [--label k=v]"
 
 func main() {
-	api.Version = version
+	api.Version, api.Commit, api.BuildDate = version, commit, buildDate
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
@@ -67,7 +72,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var err error
 	switch {
 	case len(args) == 1 && args[0] == "version":
-		fmt.Fprintf(stdout, "nexora-mgmt %s\n", version)
+		fmt.Fprintf(stdout, "nexora-mgmt %s %s\n", version, commit)
 	case len(args) == 1 && args[0] == "serve":
 		err = serve(ctx, stdout)
 	case len(args) == 1 && args[0] == "migrate":
@@ -263,6 +268,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	api.RepositoryURL = cfg.RepositoryURL
 	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
