@@ -91,7 +91,7 @@ No two tasks in one wave touch the same file.
 | 1    | 14                   | `mgmt/internal/querylog/opensearch.go`, `.../opensearch_test.go`, `e2e/querylog_paging_test.go` (new)                                                                                                                                                                                                                                |
 | 1    | 15                   | `mgmt/internal/secrets/pkcs11.go`, `.../pkcs11_test.go`, `.../export_test.go` (new), `.../secrets.go` (Unseal only)                                                                                                                                                                                                                  |
 | 1    | 16                   | `mgmt/internal/zone/import.go`, `mgmt/internal/zonefile/export.go`, `mgmt/internal/api/zonefile.go`, `mgmt/internal/zone/export_test.go` (new), `mgmt/internal/api/zonefile_test.go` (new)                                                                                                                                           |
-| 1    | 17                   | `mgmt/internal/zone/service.go`, `.../build.go`, `.../validate.go`, `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)                                                                                                                                                                      |
+| 1    | 17                   | `mgmt/internal/zone/service.go`, `.../build.go`, `.../validate.go`, `.../model.go` (RebuildOptions), `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)                                                                                                                                                                      |
 | 1    | 18                   | `e2e/fixtures/authhier/{spec,server,authhier_test}.go`, `e2e/dnssec_test.go`                                                                                                                                                                                                                                                         |
 | 1    | 19                   | `e2e/harness/otelcol.go`, `e2e/harness/harness_test.go`                                                                                                                                                                                                                                                                              |
 | 1    | 20                   | `scripts/compose-verify.sh` (new), `deploy/compose/*`, `docs/operations.md` (sections "Install with Docker Compose", "Plain PostgreSQL and Compose", "Engines ahead of a restored database"), `deploy/deploytest/compose_test.go`                                                                                                    |
@@ -877,6 +877,7 @@ Files:
 - `engine/src/recursor/rrcache.rs`
 - `engine/src/recursor/dnssec/nsec_cache.rs`
 - `engine/src/recursor/dnssec/validator.rs` (construction only)
+- `engine/src/recursor/testnet.rs` (the `RecursionParams` literal gains `cache_max_bytes: 0`)
 - `engine/src/snapshot_m3.rs`
 
 Interfaces:
@@ -977,9 +978,9 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
   #[test]
   fn cache_max_bytes_outside_range_is_rejected() {
       for (bytes, ok) in [(0u64, true), (4 << 20, true), (64 << 20, true), (16 << 30, true), ((4 << 20) - 1, false), ((16 << 30) + 1, false)] {
-          let mut s = valid_snapshot(); // the module's existing builder
+          let mut s = ok_snapshot(); // the module's existing builder
           s.recursion.as_mut().unwrap().cache_max_bytes = bytes;
-          assert_eq!(validate(&s).is_ok(), ok, "cache_max_bytes {bytes}");
+          assert_eq!(validate_m3(&s).is_ok(), ok, "cache_max_bytes {bytes}");
       }
   }
   ```
@@ -1049,7 +1050,7 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
 - [ ] `nsec_cache.rs`:
   - remove `MAX_DENIALS_PER_ZONE` and its `debt:` comment, and `max_zones`;
   - add `capacity: AtomicU64`, `ZoneDenials.bytes: u64` and a cache-wide `bytes: u64` kept inside the mutex (`struct Zones { map: HashMap<Name, ZoneDenials>, bytes: u64 }`);
-  - an entry's bytes = `64 + Σ record_bytes(records)`; add them on insert (replacing an entry subtracts the old one), subtract on `retain` of expired entries;
+  - an entry's bytes = `64 + Σ record_bytes(records)`; add them on insert (replacing an entry subtracts the old one), subtract on `retain` of expired entries; a zone also counts `64 + Σ record_bytes(soa)` for its SOA;
   - a zone stops taking new entries once its own bytes would exceed the capacity;
   - after inserting, while `bytes > capacity`, remove the zone with the smallest `inserted` other than the one just written;
   - `set_capacity(bytes)` stores the capacity and evicts the same way.
@@ -1058,11 +1059,11 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
 - [ ] `RecursorState::sync(&runtime)` in `recursor/mod.rs`: read the runtime's `RecursionParams::cache_max_bytes` (the params `recursor/dispatch.rs` builds from the snapshot), then call `set_capacity` with `memory::shares(..)` on `recursor.rrcache`, `recursor.infra` and the validator's aggressive NSEC cache.
 - [ ] `snapshot_m3.rs`: in the `recursion` block, add
   ```rust
-  if r.cache_max_bytes != 0 && !(memory::MIN_CACHE_MAX_BYTES..=memory::MAX_CACHE_MAX_BYTES).contains(&r.cache_max_bytes) {
-      return Err(SnapshotError::Invalid(format!(
-          "recursion.cache_max_bytes: {} not 0 or in 4194304..=17179869184",
+  if r.cache_max_bytes != 0 && !(MIN_CACHE_MAX_BYTES..=MAX_CACHE_MAX_BYTES).contains(&r.cache_max_bytes) {
+      return Err(format!(
+          "recursion.cache_max_bytes: {} not 0 or in {MIN_CACHE_MAX_BYTES}..={MAX_CACHE_MAX_BYTES}",
           r.cache_max_bytes
-      )));
+      ));
   }
   ```
   following the file's existing error style.
@@ -1232,12 +1233,12 @@ Interfaces: store field `ResolutionSettings.RecursorCacheMaxBytes int64`; API fi
   ALTER TABLE resolution_settings DROP COLUMN recursor_cache_max_bytes;
   ```
 - [ ] `store/resolution.go`: add `RecursorCacheMaxBytes int64` to `ResolutionSettings` and to the select and update statements of `GetResolutionSettings`/`UpdateResolutionSettings`.
-- [ ] `openapi.yaml`: in `ResolutionSettings`, add `recursor_cache_max_bytes` to `required` and the property `recursor_cache_max_bytes: { type: integer, format: int64, minimum: 4194304, maximum: 17179869184, description: "Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes." }`. Run `make generate` on the laptop; expect `gen.go` and `schema.d.ts` to change.
-- [ ] `api/resolution.go`: map the field in `resolutionOut` and in the update input.
+- [ ] `openapi.yaml`: in `ResolutionSettings`, add `recursor_cache_max_bytes` to `required` and the property `recursor_cache_max_bytes: { type: integer, format: int64, minimum: 4194304, maximum: 17179869184, description: "Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes." }`. Regenerate on the laptop with `cd mgmt/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml` (the version `gen.go` was generated with) and `cd web && pnpm run gen:api`; expect `gen.go` and `schema.d.ts` to change.
+- [ ] `api/resolution.go`: map the field in `resolutionOut` and in the update input; `validateResolution` rejects values outside 4194304..17179869184 with `invalid_request`.
 - [ ] `snapshot/resolution.go`: add `CacheMaxBytes: uint64(res.RecursorCacheMaxBytes),` to the `RecursionConfig` literal.
 - [ ] `ResolutionSection.tsx`:
   - form field `recursor_cache_mib: string`, initialised with `String(s.recursor_cache_max_bytes / 1048576)`;
-  - an input labelled `Recursor cache memory (MiB)` (type number, min 4, max 16384), with the M6 help tooltip "Memory for the RRset, aggressive NSEC and server caches of recursive resolution";
+  - an input labelled `Recursor cache memory (MiB)` (type number, min 4, max 16384), with the hint "Memory for the RRset, aggressive NSEC and server caches of recursive resolution" (the `Field` `hint` this page already uses; the M6 help tooltip is not on this branch);
   - saved as `recursor_cache_max_bytes: Number(form.recursor_cache_mib) * 1048576`.
 - [ ] In `17-resolution.spec.ts`, after the "Maximum upstream queries" fill:
   - `await card.getByLabel("Recursor cache memory (MiB)").fill("128");`;
@@ -1708,14 +1709,16 @@ Interfaces:
 
 ## Task 17: Record edits without loading the zone (#29)
 
-Files: `mgmt/internal/zone/service.go`, `mgmt/internal/zone/build.go`, `mgmt/internal/zone/validate.go`, `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)
+Files: `mgmt/internal/zone/service.go`, `mgmt/internal/zone/build.go`, `mgmt/internal/zone/validate.go`, `mgmt/internal/zone/model.go` (`RebuildOptions` lives there; one field and one type added), `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)
 Interfaces:
 
 - `RebuildOptions` gains `Edit *EditDelta`, with `type EditDelta struct { Before, After []dns.RR }`: the RRsets at the edited owner/type pairs before and after the change.
 - `checkOwners(ctx context.Context, tx pgx.Tx, z *Zone, owners ...string) error` replaces `checkZoneRecords` for record edits.
+- `recordEdit(ctx, tx, z, owners []string, sets []rrset, change func() error) (*EditDelta, error)` reads the RRsets, runs the change, checks the owners and reads the RRsets again; `rtypeOf(*Record) uint16`.
+- `build.go` helpers shared by both paths: `nextSerial(z, opts)`, `writeVersion(ctx, tx, z, origin, newSerial, d *nzf.Delta, forceImage, image func() ([]nzf.Record, error))`, `writeImage(ctx, tx, z, origin, seq, serial, recs)`.
 - `CheckSet` stays for import and dynamic updates.
 
-- [ ] Create `mgmt/internal/zone/edit_test.go` (package `zone_test`, reusing `newService`, `createZone` and `actor` from `service_test.go`):
+- [x] Create `mgmt/internal/zone/edit_test.go` (package `zone_test`, reusing `newService`, `createZone` and `actor` from `service_test.go`):
   ```go
   // rowTracer counts the rows each zone_records SELECT returned.
   type rowTracer struct {
@@ -1784,7 +1787,7 @@ Interfaces:
   	}
   }
   ```
-  Creating 2,000 records one by one is slow but valid; bulk-insert them with SQL plus one rebuild if the test exceeds 2 minutes. An image falling due during the three measured edits reads the full set legitimately: before resetting the tracer, force an image, for example with the `Rebuild` `Force` option the zone package already has, so none is due.
+  As built, the 2,000 records are bulk-inserted with one `INSERT ... SELECT generate_series` and published by `zone.RebuildWithImageForTest(t, pool, zoneID)` (in `export_internal_test.go`): a forced `Rebuild` plus a full image at the new version (`Force` alone writes no image), so no image falls due during the three measured edits.
   ```go
   func TestIncrementalEditsMatchFullRebuild(t *testing.T) {
   	ctx := context.Background()
@@ -1825,7 +1828,7 @@ Interfaces:
   	}
   }
   ```
-  `LoadServed` and `LoadRecords` are the exported loaders in `build.go`/`service.go`; adapt their signatures. Add `DiffForTest` in `mgmt/internal/zone/export_internal_test.go`, a package-internal test file this task owns: it compares ignoring SOA serial and RRSIGs and returns the differing lines. A failed create or update (for example an RRset TTL conflict) is fine and skipped.
+  As built: `LoadServed(ctx, tx, z)` and `LoadRecords(ctx, tx, zoneID)` take a transaction, so the test begins one and re-reads the zone with `GetZone`; after every edit the test refreshes the revisions of the live records (a sibling's TTL change bumps them) and fails if fewer than 100 of the 200 edits succeeded, so the delta is exercised. Add `DiffForTest` in `mgmt/internal/zone/export_internal_test.go`, a package-internal test file this task owns: it compares ignoring SOA serial and RRSIGs and returns the differing lines. A failed create or update (for example an RRset TTL conflict) is fine and skipped.
   ```go
   func TestOwnerScopedChecksKeepRules(t *testing.T) {
   	ctx := context.Background()
@@ -1859,24 +1862,24 @@ Interfaces:
   	_, err = s.UpdateRecord(ctx, actor, z.ID, c.ID, c.Revision, zone.RecordInput{Name: "host.own.test.", Type: "CNAME", TTL: 300, Data: "www.example."})
   	code(err, "cname_conflict")
   	_ = a
-  	ns := apexNS(t, s, z.ID) // the zone's only apex NS record
+  	ns := apexNS(t, s, z) // the zone's only apex NS record
   	_, err = s.UpdateRecord(ctx, actor, z.ID, ns.ID, ns.Revision, zone.RecordInput{Name: "www.own.test.", Type: "NS", TTL: 300, Data: "ns1.own.test."})
   	code(err, "last_apex_ns")
   }
   ```
   `apexNS` lists the zone's records with the service's list function and returns the apex NS.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run "TestRecordEditDoesNotLoadWholeZone|TestIncrementalEditsMatchFullRebuild|TestOwnerScopedChecksKeepRules"'`. Expect `TestRecordEditDoesNotLoadWholeZone` to FAIL with `a record edit read 20xx zone_records rows`. The other two pass today and guard the rewrite.
-- [ ] In `validate.go`, factor `CheckSet`'s rules into per-owner functions. `CheckSet` keeps calling them over the whole set.
-- [ ] In `service.go`, add `checkOwners`. It reads only these rows and applies the same rules and error codes:
-  - `SELECT owner, rtype, rdata_wire FROM zone_records WHERE zone_id = $1 AND lower(owner) = ANY($2)` for the edited owners plus their ancestors up to the apex (DNAME above, DS/NS at the owner, CNAME exclusivity);
-  - `SELECT count(*) FROM zone_records WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = 2` (apex NS);
-  - for an owner holding a DNAME, `SELECT EXISTS (SELECT 1 FROM zone_records WHERE zone_id = $1 AND lower(owner) LIKE '%.' || $2 ESCAPE '\')` with `%`, `_` and `\` escaped in `$2`.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run "TestRecordEditDoesNotLoadWholeZone|TestIncrementalEditsMatchFullRebuild|TestOwnerScopedChecksKeepRules"'`. Expect `TestRecordEditDoesNotLoadWholeZone` to FAIL with `a record edit read 20xx zone_records rows`. The other two pass today and guard the rewrite.
+- [x] In `validate.go`, factor `CheckSet`'s rules into per-owner functions. `CheckSet` keeps calling them over the whole set.
+- [x] In `service.go`, add `checkOwners`. It reads only these rows and applies the same rules and error codes:
+  - `SELECT lower(owner), rtype FROM zone_records WHERE zone_id = $1 AND lower(owner) = ANY($2)` for the apex, the edited owners and their ancestors up to the apex (DNAME above, DS/NS at the owner, CNAME exclusivity); the apex is always among the names, so this also gives the apex NS count without a separate query;
+  - for an owner holding a DNAME, `SELECT lower(owner) FROM zone_records WHERE zone_id = $1 AND lower(owner) LIKE '%.' || $2 ESCAPE '\' LIMIT 1` with `%`, `_` and `\` escaped in `$2` (the name found goes into the `dname_occludes` message, as `CheckSet` words it);
+  - owners with no records left are skipped, as `CheckSet` only visits owners that hold records.
   - `CreateRecord` checks the new owner; `UpdateRecord` checks the old and new owners; `DeleteRecord` checks the deleted owner.
   - Replace the `checkZoneRecords` calls, and delete `checkZoneRecords` if nothing else uses it.
-- [ ] In `CreateRecord`/`UpdateRecord`/`DeleteRecord`:
+- [x] In `CreateRecord`/`UpdateRecord`/`DeleteRecord`:
   - read the RRsets at each affected (owner, type) before the change (`SELECT ... WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = $3`) and after it;
   - pass them as `RebuildOptions{Edit: &EditDelta{Before, After}}` through `Mutate`.
-- [ ] In `build.go`'s `Rebuild`, add the incremental path at the top:
+- [x] In `build.go`'s `Rebuild`, add the incremental path at the top:
   ```go
   if opts.Edit != nil && !z.DNSSECEnabled && z.Kind == "primary" && z.CurrentSeq > 0 && !opts.Force {
   	return rebuildEdit(ctx, tx, z, opts, now)
@@ -1886,14 +1889,14 @@ Interfaces:
   1. converts `Before`/`After` with `toRecords`;
   2. diffs them with `diffIgnoringSOA(before, after)` (no change and no serial → return false);
   3. computes the new serial as `Rebuild` does;
-  4. builds the old SOA from the zone row with `oldSerial` and the new SOA with `newSerial` (`setSOASerial` on the row's SOA RR);
+  4. builds the old SOA from the zone row with `oldSerial` and the new SOA with `newSerial` (`soaRR(z)` with the serial replaced); it reads the served serial at `current_seq` (`zone_journal.to_serial`, else `zone_images.serial`) and forces an image when it differs from the row's serial, as `Rebuild` does;
   5. writes the `nzf.Delta{Origin, FromSerial, ToSerial, Deleted: [oldSOA]+deleted, Added: [newSOA]+added}` journal row exactly as `Rebuild` does;
   6. when `needImage` is due, loads `desiredRRs` once and writes the image;
   7. prunes the journal and updates the zone row as `Rebuild` does.
   - Share the journal, image and zone-row code with `Rebuild` by extracting it into a helper rather than copying it.
   - Replace the old `debt:` marker in `service.go` with this marker at the incremental-path condition in `build.go`:
     `// debt: DNSSEC-signed zones still rebuild from the whole record set per edit (NSEC/NSEC3 chain and RRSIG maintenance need the ordered owner set; zone_signatures limits re-signing); revisit when signed zones with hundreds of thousands of records are edited record by record.`
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/zone/... ./mgmt/internal/dnssec/... ./mgmt/internal/dynupdate/... ./mgmt/internal/xfrin/...'` and expect all to pass. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run "TestAuthoritativeZonePropagation|TestZoneFileRoundTrip|TestDynamicUpdate"'` and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/zone/... ./mgmt/internal/dnssec/... ./mgmt/internal/dynupdate/... ./mgmt/internal/xfrin/...'` and expect all to pass. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run "TestAuthoritativeZonePropagation|TestZoneFileRoundTrip|TestSecondaryAndDynamicUpdate"'` and expect PASS.
 
 ## Task 18: Wildcard synthesis in the private DNS hierarchy (#9)
 

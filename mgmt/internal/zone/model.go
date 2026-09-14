@@ -115,8 +115,15 @@ type RecordInput struct {
 }
 
 // RebuildOptions steer Rebuild: Serial proposes a serial (adopted when RFC 1982-greater, always
-// for secondaries); Force writes a new version even without changes.
+// for secondaries); Force writes a new version even without changes; Edit, set by record edits,
+// lets unsigned primary zones write their delta from the edited RRsets.
 type RebuildOptions struct {
 	Serial *uint32
 	Force  bool
+	Edit   *EditDelta
+}
+
+// EditDelta holds the stored RRsets at the edited (owner, type) pairs before and after the edit.
+type EditDelta struct {
+	Before, After []dns.RR
 }
