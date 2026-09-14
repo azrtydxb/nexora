@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useNavigate } from "react-router";
 import {
   ArrowLeftRight,
   BadgeCheck,
@@ -15,6 +15,7 @@ import {
   Funnel,
   Globe,
   KeyRound,
+  KeySquare,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -27,6 +28,7 @@ import {
   Sun,
   Tags,
   TextSearch,
+  UserRound,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -34,6 +36,8 @@ import {
 import { api } from "@/api/client";
 import { useCan, useCurrentUser, useLogout } from "@/auth/AuthProvider";
 import { roleCan, type OperationId } from "@/auth/permissions";
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
+import { SavedNote } from "@/components/common";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -345,7 +349,16 @@ function UserMenu() {
   const logout = useLogout();
   const [theme, toggleTheme] = useTheme();
   const [open, setOpen] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordChanged, setPasswordChanged] = useState(false);
+  const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!passwordChanged) return;
+    const t = window.setTimeout(() => setPasswordChanged(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [passwordChanged]);
 
   useEffect(() => {
     if (!open) return;
@@ -363,7 +376,8 @@ function UserMenu() {
 
   if (!user) return null;
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative flex items-center gap-3" ref={ref}>
+      <SavedNote show={passwordChanged}>Password changed</SavedNote>
       <button
         type="button"
         data-testid="user-menu"
@@ -384,7 +398,7 @@ function UserMenu() {
       {open && (
         <div
           role="menu"
-          className="bg-popover text-popover-foreground absolute right-0 z-40 mt-1.5 w-56 rounded-md border p-1 shadow-lg"
+          className="bg-popover text-popover-foreground absolute top-full right-0 z-40 mt-1.5 w-56 rounded-md border p-1 shadow-lg"
         >
           <div className="px-2.5 py-2">
             <div className="truncate text-sm font-medium">{user.username}</div>
@@ -393,6 +407,28 @@ function UserMenu() {
             </div>
           </div>
           <div className="bg-border -mx-1 my-1 h-px" />
+          <MenuItem
+            data-testid="menu-profile"
+            onClick={() => {
+              setOpen(false);
+              navigate("/account");
+            }}
+          >
+            <UserRound className="h-4 w-4" />
+            Profile
+          </MenuItem>
+          {user.source === "local" && (
+            <MenuItem
+              data-testid="menu-change-password"
+              onClick={() => {
+                setOpen(false);
+                setChangingPassword(true);
+              }}
+            >
+              <KeySquare className="h-4 w-4" />
+              Change password
+            </MenuItem>
+          )}
           <MenuItem onClick={toggleTheme}>
             {theme === "dark" ? (
               <Sun className="h-4 w-4" />
@@ -406,6 +442,12 @@ function UserMenu() {
             Sign out
           </MenuItem>
         </div>
+      )}
+      {changingPassword && (
+        <ChangePasswordDialog
+          onClose={() => setChangingPassword(false)}
+          onDone={() => setPasswordChanged(true)}
+        />
       )}
     </div>
   );

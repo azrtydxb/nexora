@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import { RequireAuth } from "@/auth/AuthProvider";
 import { AppShell } from "@/components/layout/AppShell";
 import { AccessControlPage } from "@/pages/AccessControlPage";
+import { AccountPage } from "@/pages/AccountPage";
 import { ApiTokensPage } from "@/pages/ApiTokensPage";
 import { AuditPage } from "@/pages/AuditPage";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
       { path: "users", element: <UsersPage /> },
       { path: "api-tokens", element: <ApiTokensPage /> },
       { path: "audit", element: <AuditPage /> },
+      { path: "account", element: <AccountPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
