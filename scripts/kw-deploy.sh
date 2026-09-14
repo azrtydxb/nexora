@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Deploy Nexora to kw (namespace nexora): build and push the images, apply deploy/kw, create the CA,
-# key-encryption key, demo TSIG key and DNS TLS secrets, run the BIND primary of the demo secondary
-# zone, bootstrap through the API (deploy/kw/bootstrap.sh) and roll out the engines.
-# Ends by printing the environment TestKwSmoke needs (see deploy/kw/README.md).
+# Deploy Nexora to kw (namespace nexora): build and push the images, apply the supporting manifests in
+# deploy/kw (OpenSearch, CNPG, collector, block list, BIND primary), create the CA, key-encryption key,
+# demo TSIG key and DNS TLS secrets, install the Helm release nexora (deploy/helm/nexora with
+# deploy/kw/values-kw.yaml) in two phases around deploy/kw/bootstrap.sh: the management plane first,
+# then the engines of the engine groups default and edge-b. Ends by printing the environment of the kw
+# tests (see deploy/kw/README.md; scripts/kw-acceptance.sh runs them).
 #   scripts/kw-deploy.sh [--tag TAG] [--skip-build]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,8 +34,11 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 if [ "$build" = 1 ]; then
-	"$root/scripts/build-image.sh" -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" "$root"
-	"$root/scripts/build-image.sh" -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag" "$root"
+	# Build from a clean worktree of HEAD, so the image tag sha-<7> names exactly what is in the image.
+	git -C "$root" worktree add --detach "$tmp/src" HEAD
+	"$root/scripts/build-image.sh" -f deploy/docker/engine.Dockerfile -n nexora-engine -t "$tag" "$tmp/src"
+	"$root/scripts/build-image.sh" -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt -t "$tag" "$tmp/src"
+	git -C "$root" worktree remove --force "$tmp/src"
 fi
 
 kubectl --context "$ctx" apply -f "$kw/namespace.yaml"
@@ -73,28 +78,48 @@ if ! k get secret nexora-dns-tls >/dev/null 2>&1; then
 		k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d >"$tmp/ca-in/ca.crt" &&
 		k get secret nexora-ca -o jsonpath='{.data.ca\.key}' | base64 -d >"$tmp/ca-in/ca.key")
 	(cd "$root" && go run ./mgmt/cmd/nexora-mgmt ca issue-dns --ca-cert "$tmp/ca-in/ca.crt" --ca-key "$tmp/ca-in/ca.key" \
-		--names dns.nexora.kw.local,192.168.10.136 --days 90 --out "$tmp/dnstls")
+		--names dns.nexora.kw.local,192.168.10.136,192.168.10.137 --days 90 --out "$tmp/dnstls")
 	k create secret tls nexora-dns-tls --cert="$tmp/dnstls/tls.crt" --key="$tmp/dnstls/tls.key"
 	rm -rf "$tmp/ca-in" "$tmp/dnstls"
 fi
 
-sed "s/NEXORA_TAG/$tag/" "$kw/mgmt.yaml" | k apply -f -
+kubectl --context "$ctx" label node worker-24 worker-25 nexora.io/engine-group=edge-b --overwrite
+
+# One-time switch from the kubectl-applied M1-M4 manifests to the chart: remove objects Helm does not own.
+if k get deployment nexora-mgmt >/dev/null 2>&1 &&
+	[ "$(k get deployment nexora-mgmt -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')" != Helm ]; then
+	k delete deployment/nexora-mgmt daemonset/nexora-engine service/nexora-mgmt service/nexora-mgmt-grpc \
+		service/nexora-mgmt-lb service/nexora-dns service/nexora-engine-metrics ingress/nexora \
+		configmap/nexora-engine-config --ignore-not-found
+fi
+
+release() {
+	helm --kube-context "$ctx" -n "$ns" upgrade --install nexora "$root/deploy/helm/nexora" \
+		-f "$kw/values-kw.yaml" --set image.tag="$tag" --wait --timeout 15m "$@"
+}
+
+# Phase 1: the management plane; the engine join tokens come from its API.
+release --set engine.enabled=false
 k rollout status deployment/nexora-mgmt --timeout=10m
 k rollout status deployment/nexora-otelcol --timeout=5m
 k rollout status deployment/nexora-blocklist --timeout=5m
-
 "$kw/bootstrap.sh"
 
-# Server-side apply: client-side apply merges Service ports by port number alone, so 853/UDP (DoQ)
-# would be dropped next to 853/TCP (DoT).
-sed "s/NEXORA_TAG/$tag/" "$kw/engine.yaml" | k apply --server-side --force-conflicts -f -
+# Phase 2: engines of both engine groups.
+release
 k rollout status daemonset/nexora-engine --timeout=15m
-# M1 ran the engines as a Deployment; the DaemonSet replaces it once it serves on every node.
-k delete deployment nexora-engine --ignore-not-found
+k rollout status daemonset/nexora-engine-edge-b --timeout=15m
+"$kw/bootstrap.sh"
+
 dns_ip=$(k get service nexora-dns -o jsonpath='{.spec.loadBalancerIP}')
+edge_ip=$(k get service nexora-dns-edge-b -o jsonpath='{.spec.loadBalancerIP}')
 mgmt_ip=$(k get service nexora-mgmt-lb -o jsonpath='{.spec.loadBalancerIP}')
-engines=$(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}')
+engines=$(($(k get daemonset nexora-engine -o jsonpath='{.status.desiredNumberScheduled}') + \
+$(k get daemonset nexora-engine-edge-b -o jsonpath='{.status.desiredNumberScheduled}')))
+edge_ips=$(k get pods -l nexora.io/engine-group=edge-b -o jsonpath='{range .items[*]}{.status.podIP}{","}{end}')
 echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
+echo "NEXORA_KW_EDGE_B_DNS_ADDR=${edge_ip}:53"
+echo "NEXORA_KW_EDGE_B_ENGINE_IPS=${edge_ips%,}"
 echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.local}"
 echo "NEXORA_KW_ENCRYPTED_ADDR=${dns_ip}"
 echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local"

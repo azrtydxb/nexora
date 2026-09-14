@@ -790,13 +790,21 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
 ## kw deployment
 
 kw is the project's lab cluster (arm64 k3s). The procedure, secrets and manual
-checks are in `deploy/kw/README.md`; `scripts/kw-deploy.sh` builds the images,
-creates the secrets and deploys, and `deploy/kw/bootstrap.sh` configures the
-API idempotently. The Helm release uses `deploy/kw/values-kw.yaml`:
+checks are in `deploy/kw/README.md`. `scripts/kw-deploy.sh` builds the images
+from a clean worktree of HEAD (tag `sha-<7>`), creates the secrets, labels the
+`edge-b` nodes and installs the Helm release `nexora` in two phases: the
+management plane first, then `deploy/kw/bootstrap.sh` (idempotent API
+configuration, including engine group `edge-b` and both join token secrets),
+then the engines of both groups. The release uses `deploy/kw/values-kw.yaml`:
 
 ```sh
 helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
 ```
+
+`scripts/kw-acceptance.sh` restarts the `edge-b` engines and runs
+`TestKwSmoke`, `TestKwSmokeM4` and `TestKwFullProduct` from the dev pod against
+the live release. The admin password is in the secret `nexora-admin`
+(`kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d`).
 
 | Component                                           | Address                                                                                            |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------- |

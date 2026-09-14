@@ -5145,10 +5145,12 @@ Interfaces: for release `R` the name prefix `F` is `R` when `R` contains `nexora
 
 ## Task 14: Final kw deployment and TestKwFullProduct
 
+As built (2026-09-14, release `nexora` revision 2, images `sha-93dcd04`): `scripts/kw-deploy.sh` builds from a clean `git worktree` of HEAD (the tag names exactly what is in the image) and `scripts/kw-acceptance.sh` takes an optional `go test -run` pattern (default `TestKwSmoke|TestKwFullProduct`). `bootstrap.sh` creates `edge-b` with the canary parameters used by the test (`canary_count` 1, 20 s health window, 60 s ack timeout, 0.05 SERVFAIL ratio, 20 health queries) but strategy `all_at_once`, so the smoke tests' changes are not delayed by a health window; the engine DELETE is a soft delete (`deleted_at`). Correction to the test below: every mgmt replica exports the same fleet gauges (read from PostgreSQL), so the edge-b query is `max(nexora_mgmt_engines{namespace="nexora",engine_group="edge-b",status="current"})`; the drafted `max(sum by (engine_group) (...))` summed both replicas and read 4. The M4 database (goose 403) was dumped into the dev pod (`/work/kw-backup/nexora-pre-m5-202609140030.dump`, restored into a scratch PostgreSQL to verify) before the switch; migrations 00500-00502 ran in the `migrate` init container and zones, records, DNSSEC keys, TSIG key and the admin survived.
+
 Files: `scripts/kw-deploy.sh` (node labels, one-time removal of the kubectl-applied mgmt/engine objects, two-phase Helm install, printed environment), `deploy/kw/bootstrap.sh` (engine group `edge-b`, its join token secret, pruning of pre-M5 engine rows), `deploy/kw/mgmt.yaml` and `deploy/kw/engine.yaml` (removed; the chart replaces them), `deploy/kw/README.md` (chart-based deployment, addresses, engine groups, known limits), `scripts/kw-acceptance.sh` (copies the CA files and password into the dev pod, restarts the `edge-b` engines, runs the kw tests), `e2e/kw_full_product_test.go` (`TestKwFullProduct`)
 Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s: `NEXORA_KW_EDGE_B_DNS_ADDR` (`192.168.10.137:53`), `NEXORA_KW_EDGE_B_ENGINE_IPS` (comma-separated pod IPs of `nexora-engine-edge-b`), `NEXORA_KW_PROMETHEUS_URL` (default `http://kps-prometheus.monitoring.svc:9090`); reuses `loadKwEnv`, `kwLogin`, `kwUniqueName`, `kwWaitApplied`, `aValues` and the Task 7 harness helpers.
 
-- [ ] Write `e2e/kw_full_product_test.go`:
+- [x] Write `e2e/kw_full_product_test.go`:
   ```go
   package e2e
 
@@ -5407,7 +5409,7 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
   			if v, ok := promQuery(`max(nexora_mgmt_engines_disconnected{namespace="nexora"})`); !ok || v != 0 {
   				return fmt.Errorf("nexora_mgmt_engines_disconnected = %v (scraped %v), want 0", v, ok)
   			}
-  			if v, ok := promQuery(`max(sum by (engine_group) (nexora_mgmt_engines{namespace="nexora",engine_group="edge-b",status="current"}))`); !ok || v != 2 {
+  			if v, ok := promQuery(`max(nexora_mgmt_engines{namespace="nexora",engine_group="edge-b",status="current"})`); !ok || v != 2 {
   				return fmt.Errorf("current edge-b engines = %v (scraped %v), want 2", v, ok)
   			}
   			if _, firing := promQuery(`ALERTS{alertname="NexoraRolloutHalted",alertstate="firing"}`); firing {
@@ -5429,8 +5431,8 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
   	})
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go vet ./e2e/ && go test ./e2e/ -run TestKwFullProduct -count=1 -v'` without the kw variables and expect `--- SKIP: TestKwFullProduct` with `NEXORA_KW_DNS_ADDR and NEXORA_KW_API_URL are not set`.
-- [ ] Change `deploy/kw/bootstrap.sh`: after the RPZ block and before the join token block, add
+- [x] Run `scripts/dev-exec.sh 'go vet ./e2e/ && go test ./e2e/ -run TestKwFullProduct -count=1 -v'` without the kw variables and expect `--- SKIP: TestKwFullProduct` with `NEXORA_KW_DNS_ADDR and NEXORA_KW_API_URL are not set`.
+- [x] Change `deploy/kw/bootstrap.sh`: after the RPZ block and before the join token block, add
   ```bash
   edge=$(call "$api/api/v1/engine-groups" | jq -r '.[] | select(.name=="edge-b") | .id')
   if [ -z "$edge" ]; then
@@ -5453,7 +5455,7 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
   		call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed pre-M5 engine $id"
   	done
   ```
-- [ ] Replace the mgmt and engine part of `scripts/kw-deploy.sh` (from `sed "s/NEXORA_TAG/$tag/" "$kw/mgmt.yaml"` to the end) with:
+- [x] Replace the mgmt and engine part of `scripts/kw-deploy.sh` (from `sed "s/NEXORA_TAG/$tag/" "$kw/mgmt.yaml"` to the end) with:
   ```bash
   kubectl --context "$ctx" label node worker-24 worker-25 nexora.io/engine-group=edge-b --overwrite
 
@@ -5498,8 +5500,8 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
   echo "NEXORA_KW_ENGINES=${engines}"
   echo "NEXORA_KW_MGMT_LB_IP=${mgmt_ip}"
   ```
-  and add `192.168.10.137` to the `--names` of the `nexora-dns-tls` issuance (`dns.nexora.kw.local,192.168.10.136,192.168.10.137`; an existing secret is replaced by deleting it once: `kubectl --context kw -n nexora delete secret nexora-dns-tls` before the deploy). Then `git rm deploy/kw/mgmt.yaml deploy/kw/engine.yaml`.
-- [ ] Create `scripts/kw-acceptance.sh` (mode 0755):
+  and add `192.168.10.137` to the `--names` of the `nexora-dns-tls` issuance (`dns.nexora.kw.local,192.168.10.136,192.168.10.137`; an existing secret is replaced by deleting it once: `kubectl --context kw -n nexora delete secret nexora-dns-tls` before the deploy). Then remove `deploy/kw/mgmt.yaml` and `deploy/kw/engine.yaml`.
+- [x] Create `scripts/kw-acceptance.sh` (mode 0755):
   ```bash
   #!/usr/bin/env bash
   # Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct) in the dev pod against
@@ -5529,17 +5531,17 @@ Interfaces: environment read by `TestKwFullProduct` in addition to `loadKwEnv`'s
   	NEXORA_KW_PROMETHEUS_URL=http://kps-prometheus.monitoring.svc:9090 \
   	go test -count=1 -v -timeout 45m -run 'TestKwSmoke|TestKwFullProduct' ./e2e/
   ```
-- [ ] Update `deploy/kw/README.md`: the deploy command stays `scripts/kw-deploy.sh [--tag sha-<7>] [--skip-build]`, now followed by `scripts/kw-acceptance.sh`; the file table replaces `mgmt.yaml` and `engine.yaml` with `values-kw.yaml` (Helm release `nexora` from `deploy/helm/nexora`) and adds `nexora-join-token-edge-b` under "Secrets"; "Addresses" adds `192.168.10.137` (engine group `edge-b`, `externalTrafficPolicy: Cluster`, engines see node addresses there) and the node label `nexora.io/engine-group=edge-b` on `worker-24` and `worker-25`; "Known limits" replaces the `emptyDir` entry with "engine state is hostPath `/var/lib/nexora/<workload>`; a restarted pod keeps its engine id; removing that directory and the pod re-enrolls it as a new engine".
-- [ ] Build and deploy the current commit: run `scripts/kw-deploy.sh` and expect `helm` to report `STATUS: deployed` twice, `daemon set "nexora-engine" successfully rolled out`, `daemon set "nexora-engine-edge-b" successfully rolled out`, and the printed `NEXORA_KW_ENGINES=8` and `NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53`; then `kubectl --context kw -n nexora get svc nexora-mgmt-lb nexora-dns nexora-dns-edge-b -o jsonpath='{range .items[*]}{.metadata.name}={.status.loadBalancer.ingress[0].ip}{"\n"}{end}'` and expect `nexora-mgmt-lb=192.168.10.135`, `nexora-dns=192.168.10.136`, `nexora-dns-edge-b=192.168.10.137`.
-- [ ] Run `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwSmoke`, `--- PASS: TestKwSmokeM4` and `--- PASS: TestKwFullProduct` with every subtest passing (`TestKwSmoke/recursion` skips itself on kw as documented).
-- [ ] Commit: `git add deploy/kw scripts/kw-deploy.sh scripts/kw-acceptance.sh e2e/kw_full_product_test.go && git commit -m "feat(kw): fleet deployment from the Helm chart with two engine groups; TestKwFullProduct"`.
+- [x] Update `deploy/kw/README.md`: the deploy command stays `scripts/kw-deploy.sh [--tag sha-<7>] [--skip-build]`, now followed by `scripts/kw-acceptance.sh`; the file table replaces `mgmt.yaml` and `engine.yaml` with `values-kw.yaml` (Helm release `nexora` from `deploy/helm/nexora`) and adds `nexora-join-token-edge-b` under "Secrets"; "Addresses" adds `192.168.10.137` (engine group `edge-b`, `externalTrafficPolicy: Cluster`, engines see node addresses there) and the node label `nexora.io/engine-group=edge-b` on `worker-24` and `worker-25`; "Known limits" replaces the `emptyDir` entry with "engine state is hostPath `/var/lib/nexora/<workload>`; a restarted pod keeps its engine id; removing that directory and the pod re-enrolls it as a new engine".
+- [x] Build and deploy the current commit: run `scripts/kw-deploy.sh` and expect `helm` to report `STATUS: deployed` twice, `daemon set "nexora-engine" successfully rolled out`, `daemon set "nexora-engine-edge-b" successfully rolled out`, and the printed `NEXORA_KW_ENGINES=8` and `NEXORA_KW_EDGE_B_DNS_ADDR=192.168.10.137:53`; then `kubectl --context kw -n nexora get svc nexora-mgmt-lb nexora-dns nexora-dns-edge-b -o jsonpath='{range .items[*]}{.metadata.name}={.status.loadBalancer.ingress[0].ip}{"\n"}{end}'` and expect `nexora-mgmt-lb=192.168.10.135`, `nexora-dns=192.168.10.136`, `nexora-dns-edge-b=192.168.10.137`.
+- [x] Run `scripts/kw-acceptance.sh` and expect `--- PASS: TestKwSmoke`, `--- PASS: TestKwSmokeM4` and `--- PASS: TestKwFullProduct` with every subtest passing (`TestKwSmoke/recursion` skips itself on kw as documented).
+- [ ] Commit (lead): `git add deploy/kw scripts/kw-deploy.sh scripts/kw-acceptance.sh e2e/kw_full_product_test.go && git commit -m "feat(kw): fleet deployment from the Helm chart with two engine groups; TestKwFullProduct"`.
 
 ## Task 15: Operations documentation and README
 
 Files: `docs/operations.md` (install, upgrade, backup/restore, rollouts, lifecycle, monitoring, kw), `README.md` (product overview and quick start), `deploy/deploytest/docs_test.go` (`TestOperationsDoc`)
 Interfaces: headings listed in the test; every repository path the documents mention in backticks must exist.
 
-As built: `docs/operations.md` keeps the eight required headings and the content below, verified against the code, and adds overview (components, features per milestone, ports, mgmt environment and CLI, `engine.toml` essentials), first-run setup and access (lost setup token: `user create --admin --password-file /dev/stdin`; a new install forwards with no upstreams), enrolling engines, encrypted DNS, key storage, a state-location table, Compose backup/restore, performance tuning and the perf gate, known limitations and troubleshooting. Corrections to the draft below: the setup-token `kubectl logs` uses the label selector (only one replica logs it), `docker compose run` needs `-T` when redirecting the token, and the restore loop pauses/resumes one group repeatedly because each publish adds exactly one global version. The kw section describes the chart release from `deploy/kw/values-kw.yaml` and points to `deploy/kw/README.md`; it does not name `scripts/kw-acceptance.sh`, which Task 14 creates (re-check that section when Task 14 lands). README has no badges (the repository has no CI remote yet).
+As built: `docs/operations.md` keeps the eight required headings and the content below, verified against the code, and adds overview (components, features per milestone, ports, mgmt environment and CLI, `engine.toml` essentials), first-run setup and access (lost setup token: `user create --admin --password-file /dev/stdin`; a new install forwards with no upstreams), enrolling engines, encrypted DNS, key storage, a state-location table, Compose backup/restore, performance tuning and the perf gate, known limitations and troubleshooting. Corrections to the draft below: the setup-token `kubectl logs` uses the label selector (only one replica logs it), `docker compose run` needs `-T` when redirecting the token, and the restore loop pauses/resumes one group repeatedly because each publish adds exactly one global version. The kw section describes the chart release from `deploy/kw/values-kw.yaml` and points to `deploy/kw/README.md`; Task 14 added the two-phase install, `scripts/kw-acceptance.sh` and the admin password command to that section. README has no badges (the repository has no CI remote yet).
 
 - [x] Write the failing test `deploy/deploytest/docs_test.go`:
   ```go
