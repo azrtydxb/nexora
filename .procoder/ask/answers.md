@@ -1,8 +1,47 @@
 # What a human decided
 
-Written 2026-09-14 17:36 UTC. procoder reads this
+Written 2026-09-14 18:29 UTC. procoder reads this
 file to avoid asking a question twice; edit an answer here to change what
 it believes. Reword the question and it will be asked again.
+
+## [decision] decisions.md
+
+Key: 00bd8f6fbd64
+Question: Publish today's work to GitHub
+
+- Push main (c2476ce, 96962cc, 031a15f) and close #53 with the measured results
+- Push main only; leave #53 open
+- Keep local for now
+
+**Answer (2026-09-14):** Push main and close #53 with the measured results.
+
+Answer: Push main and close #53 with the measured results. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 0d0681d03129
+Question: Nexora recursion ACL on kw
+
+- Keep current ACL (all private ranges incl. 192.168.0.0/16)
+- Restrict to 192.168.10.0/24 plus the cluster's own ranges (loopback, pod network 10.42.0.0/16)
+- Restrict to 192.168.10.0/24 plus other named subnets
+
+**Answer (2026-09-14):** Keep all private IP ranges allowed (current default ACL); no change.
+
+Answer: Keep all private IP ranges allowed (current default ACL); no change. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 1909d8cf412e
+Question: Zero-downtime deploys (#53): cluster changes needed on kw
+
+- Upgrade kube-vip v0.8.7 -> v1.2.3 (one control-plane node at a time, API VIP 192.168.10.100 checked after each) and lower the engine CPU request 2 -> 500m (limit stays 4), then deploy with a live zero-loss check
+- Keep kube-vip v0.8.7: accept that .136/.139 may move node for a few seconds per deploy; only lower the CPU request
+- Code and tests only for now; no kw changes and no deploy yet
+
+**Answer (2026-09-14):** Upgrade kube-vip v0.8.7 -> v1.2.3 one control-plane node at a time (API VIP and LB IPs checked after each) and lower the engine CPU request 2 -> 500m (limit 4), then deploy with a live zero-loss check.
+
+Answer: Upgrade kube-vip v0.8.7 -> v1.2.3 one control-plane node at a time (API VIP and LB IPs checked after each) and lower the engine CPU request 2 -> 500m (limit 4), then deploy with a live zero-loss check. (user, 2026-09-14)
 
 ## [decision] decisions.md
 
@@ -12,6 +51,33 @@ Question: Nexora v1 spec interview (2026-09-13)
 All answers recorded in .procoder/specs/nexora-v1.md.
 
 Answer: Not a question — a log entry; every spec decision was answered by the user in the interview and is recorded in .procoder/specs/nexora-v1.md
+
+## [decision] decisions.md
+
+Key: 2a68cad0b514
+Question: x86 reference hardware for performance proof (#2, #6, #7, #8)
+
+- Use the arc-azrtydxb-amd64 runner as reference box and novanas (192.168.10.211) as load host; record results even if not a dedicated 10GbE box
+- No reference hardware available: close #2/#6/#7/#8 as not measurable for now
+- Leave pending until hardware exists
+
+**Answer (2026-09-14):** Leave pending until real hardware exists; do not implement.
+
+Answer: Leave pending until real hardware exists; do not implement. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 4267fce1a2a9
+Question: LLM provider for the AI features (#42-#52)
+
+- fastllm already running on kw (OpenAI-compatible endpoint), no data leaves the network
+- Anthropic API (Claude), key supplied as a Kubernetes Secret
+- OpenAI API, key supplied as a Kubernetes Secret
+- Provider-agnostic code, tested only against a fake provider until a key/endpoint is given
+
+**Answer (2026-09-14):** fastllm on kw (OpenAI-compatible); code stays provider-agnostic.
+
+Answer: fastllm on kw (OpenAI-compatible); code stays provider-agnostic. (user, 2026-09-14)
 
 ## [decision] decisions.md
 
@@ -28,6 +94,83 @@ Answer: Rust engine on hickory-proto codec, own server loop/cache/resolver (chos
 
 ## [decision] decisions.md
 
+Key: 45e5981b6697
+Question: ClickHouse and Loki query-log backends (#35, #36): where to test
+
+- Deploy ClickHouse on kw (namespace nexora) and use the existing Loki in monitoring; also local e2e
+- Local e2e only (binaries in the dev pod), nothing new on kw
+
+**Answer (2026-09-14):** Deploy ClickHouse on kw (namespace nexora), use the existing Loki in monitoring, plus local e2e.
+
+Answer: Deploy ClickHouse on kw (namespace nexora), use the existing Loki in monitoring, plus local e2e. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 51abc4acec19
+Question: Scope of the recursion fallback change
+
+- Minimal: fallback always on in the engine (no setting/API/GUI), plus engine pod dnsConfig 1.1.1.1/8.8.8.8
+- Full: keep as a configurable setting with API, GUI toggle and tests (current agent scope)
+- Container dnsConfig only, no fallback code
+
+**Answer (2026-09-14):** None of these — the user meant the engine container resolver order 127.0.0.1, 8.8.8.8, 1.1.1.1 (pod DNS config, no code). Fallback code agent stopped and reverted.
+
+Answer: None of these — the user meant the engine container resolver order 127.0.0.1, 8.8.8.8, 1.1.1.1 (pod DNS config, no code). Fallback code agent stopped and reverted. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 569137d659bf
+Question: Milestone order for all open issues
+
+- Operator UX first (#54-#67), then hardening/tech debt, protocols, platform/packaging, data backends and DHCP, AI last
+- AI features (#42-#52) right after Operator UX
+- Tech debt and v1-unproven items first, then features
+
+**Answer (2026-09-14):** Operator UX first (#54-#67), then hardening/tech debt, DNS protocols, platform/packaging, data backends, AI last.
+
+Answer: Operator UX first (#54-#67), then hardening/tech debt, DNS protocols, platform/packaging, data backends, AI last. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 67655559fca7
+Question: Scope of "revert all"
+
+- Only the DNS resolver / fallback work (already reverted); keep the paused rolling-deploy work for later
+- Also discard the uncommitted rolling-deploy work (issue #53 stays open)
+- Also undo today's applied kw network changes (kube-vip per-service election, vip_nodename, pool 139-154, second DNS IP .139)
+
+**Answer (2026-09-14):** Only the DNS resolver work (already reverted). Keep the paused, uncommitted rolling-deploy work; kw stays as is.
+
+Answer: Only the DNS resolver work (already reverted). Keep the paused, uncommitted rolling-deploy work; kw stays as is. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 69a75d8fa6a6
+Question: DHCP server scope (#34)
+
+- DHCPv4 only, with automatic DNS registration, off by default, tested only in isolated e2e (never on the home LAN)
+- DHCPv4 and DHCPv6, same rules
+- Drop DHCP (close #34 as won't do)
+
+**Answer (2026-09-14):** Leave DHCP pending — not decided yet; do not implement #34.
+
+Answer: Leave DHCP pending — not decided yet; do not implement #34. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 6b17959e97c0
+Question: Zero-downtime kw deploys (issue #53)
+
+- Rolling fix, pass = a client using both .136 and .139 never fails
+- Stricter: zero lost queries per IP
+- Change the design
+
+**Answer (2026-09-14):** Stricter — zero lost queries on each DNS address during a redeploy.
+
+Answer: Stricter — zero lost queries on each DNS address during a redeploy. (user, 2026-09-14)
+
+## [decision] decisions.md
+
 Key: 6b55131ee473
 Question: Static egress IP for Nexora engines on kw (UniFi DNS interception bypass)
 
@@ -36,6 +179,32 @@ Question: Static egress IP for Nexora engines on kw (UniFi DNS interception bypa
 - kube-vip egress annotation on the DNS Service (only works for the engine on the VIP node; not viable for a DaemonSet)
 
 Answer: None of the options — the user disabled the UniFi DNS content filter (the redirect source) instead; kw nodes now use 192.168.10.1 as resolver and kw runs recursive mode (issue #1, 2026-09-14).
+
+## [decision] decisions.md
+
+Key: 6c95fa85df25
+Question: Engine on Windows and macOS (#40)
+
+- Portable I/O path (no recvmmsg/SO_REUSEPORT fast path) for macOS and Windows, built and unit-tested in CI; macOS also smoke-tested locally
+- macOS only
+- Leave pending (not decided)
+
+**Answer (2026-09-14):** Out of scope, will not do (close #40).
+
+Answer: Out of scope, will not do (close #40). (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 6d5e244c0081
+Question: mDNS support (#30)
+
+- mDNS reflector/gateway: answer unicast DNS queries for .local names from mDNS on the engine's local segment, optional cross-VLAN reflection
+- Full mDNS responder advertising Nexora's own services only
+- Leave pending (not decided)
+
+**Answer (2026-09-14):** mDNS gateway: unicast .local answers from mDNS on the engine's segment, optional cross-VLAN reflection.
+
+Answer: mDNS gateway: unicast .local answers from mDNS on the engine's segment, optional cross-VLAN reflection. (user, 2026-09-14)
 
 ## [decision] decisions.md
 
@@ -49,3 +218,182 @@ Question: Enlarge kube-vip pool and add second Nexora DNS IP
 **Answer (2026-09-14):** Apply now — user confirmed UniFi DHCP excludes 192.168.10.139-154.
 
 Answer: Apply now — user confirmed UniFi DHCP excludes 192.168.10.139-154 (2026-09-14); applied: pool 120-137,139-154, svc_election=true, vip_nodename=spec.nodeName, nexora-dns-2 on 192.168.10.139.
+
+## [decision] decisions.md
+
+Key: 79acc465c135
+Question: Docker host for the compose example (#5)
+
+- Use novanas (192.168.10.211) as Docker host
+- No Docker host: verify compose with a rootless container runtime in the dev pod instead
+- Leave pending
+
+**Answer (2026-09-14):** Use novanas (192.168.10.211) as the Docker host.
+
+Answer: Use novanas (192.168.10.211) as the Docker host. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 83b9aaccfa19
+Question: fastllm API key for Nexora's AI features
+
+- User creates Secret `nexora-ai` (key `api-key`, plus model name) in namespace nexora; AI work uses the fake provider until it exists
+- Build and test AI against the fake provider only; wire fastllm later
+
+**Answer (2026-09-14):** User supplied base URL http://192.168.10.125:4000/v1 and model qwen3-6-35b-a3b; the API key is stored only in Kubernetes Secret nexora/nexora-ai (never in the repo).
+
+Answer: User supplied base URL http://192.168.10.125:4000/v1 and model qwen3-6-35b-a3b; the API key is stored only in Kubernetes Secret nexora/nexora-ai (never in the repo). (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 8648346907f9
+Question: Kubernetes operator (#37)
+
+- Operator with CRDs for installations (mgmt + engines, replacing hand-written Helm values) and for engine groups; Helm chart stays
+- Declarative config CRDs only (zones, filter lists, policies synced into the management plane, GitOps)
+- Leave pending (not decided)
+
+**Answer (2026-09-14):** Operator with CRDs for installations (mgmt + engines) and engine groups; Helm chart stays.
+
+Answer: Operator with CRDs for installations (mgmt + engines) and engine groups; Helm chart stays. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 8f2502f2c207
+Question: AI features that change configuration (#46, #45, #51, #49)
+
+- Suggest only: AI produces proposals; nothing is applied until an operator reviews and applies it (audited)
+- Allow auto-apply per feature when an operator turns it on explicitly (off by default)
+
+**Answer (2026-09-14):** Suggest only: nothing is applied until an operator reviews and applies it (audited).
+
+Answer: Suggest only: nothing is applied until an operator reviews and applies it (audited). (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: 988e3c8ac8da
+Question: PostgreSQL HA (#41)
+
+- First-class CNPG integration in the Helm chart (optional HA cluster, backups) plus docs; no HA logic in the management plane
+- Built-in HA management in the management plane
+- Leave pending (not decided)
+
+**Answer (2026-09-14):** Optional CNPG HA cluster and backups in the Helm chart plus docs; no HA logic in the management plane.
+
+Answer: Optional CNPG HA cluster and backups in the Helm chart plus docs; no HA logic in the management plane. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: a1449b450f1a
+Question: New name for the Upstreams menu/page (#57)
+
+- Resolution
+- Resolver
+- DNS resolution
+- Forwarding & recursion
+
+**Answer (2026-09-14):** Forwarding & recursion.
+
+Answer: Forwarding & recursion. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: a44075a33750
+Question: Deploying to kw while the user is away (home LAN depends on .136/.139)
+
+- Deploy after each milestone once all tests pass, zero-downtime path with a live DNS probe; roll back automatically on any lost queries or failed acceptance
+- Deploy management plane and GUI changes only; engine changes wait for the user
+- No kw deploys; everything stays in the dev pod and local e2e
+
+**Answer (2026-09-14):** Deploy after each milestone once all tests pass, zero-downtime with a live DNS probe; roll back on any lost query or failed acceptance.
+
+Answer: Deploy after each milestone once all tests pass, zero-downtime with a live DNS probe; roll back on any lost query or failed acceptance. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: a53d4e3e2ffe
+Question: Break the DNS loop before UniFi upstream points to Nexora
+
+- CoreDNS: kw.local -> 192.168.10.1, everything else -> 1.1.1.1/8.8.8.8; nodes back to 1.1.1.1/8.8.8.8; engines recursion with fallback to 1.1.1.1/8.8.8.8 (not on DNSSEC bogus)
+- Engines only (no cluster/node change)
+- Also other UniFi-local zones besides kw.local
+
+**Answer (2026-09-14):** Engines fallback only — engines recurse first and fall back to 1.1.1.1/8.8.8.8 when recursion fails (not on DNSSEC bogus); CoreDNS and nodes stay on 192.168.10.1.
+
+Answer: Engines fallback only — engines recurse first and fall back to 1.1.1.1/8.8.8.8 when recursion fails (not on DNSSEC bogus); CoreDNS and nodes stay on 192.168.10.1. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: b351b37a516d
+Question: Uncached recursion latency before switching the home network (avg 1.2 s vs ~60-100 ms)
+
+- Switch now in forward mode: Nexora forwards to 1.1.1.1/8.8.8.8 with DNSSEC validation and all filtering; later move back to recursive once faster
+- Switch now in recursive mode and accept slow first lookups while the cache warms
+- Don't switch yet: first improve recursion (parallel DNSSEC fetches, fastest-server selection, prefetch) and re-measure
+
+**Answer (2026-09-14):** Switch now in recursive mode (accept slow first lookups) and in parallel improve recursion latency (parallel DNSSEC fetches, fastest-server selection) without prefetching.
+
+Answer: Switch now in recursive mode (accept slow first lookups) and in parallel improve recursion latency (parallel DNSSEC fetches, fastest-server selection) without prefetching. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: b576a67919c4
+Question: novanas access for the compose example (#5)
+
+- User gives SSH access (host/user) to a Docker host; until then #5 waits
+- Verify compose with podman in the dev pod instead
+
+**Answer (2026-09-14):** User supplied SSH credentials for user piwi on novanas; used once to install an SSH key, not stored.
+
+Answer: User supplied SSH credentials for user piwi on novanas; used once to install an SSH key, not stored. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: e78cc7be27ba
+Question: How engines reach cluster names with resolver order 127.0.0.1, 8.8.8.8, 1.1.1.1
+
+- Use addresses instead of cluster names: management URL https://192.168.10.135:9443 (already in the gRPC certificate) and a fixed ClusterIP for the collector
+- Nexora forward zone cluster.local -> CoreDNS 10.43.0.10 (also answers cluster names to LAN clients)
+- Put CoreDNS first: 10.43.0.10, 127.0.0.1, 8.8.8.8
+
+**Answer (2026-09-14):** None — user said stop, no changes, revert all (scope being clarified).
+
+Answer: None — user said stop, no changes, revert all (scope being clarified). (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: f54252f115cf
+Question: Engine logs backend for the engine modal (#65)
+
+- Engines keep a bounded in-memory log ring buffer and stream it over the existing control connection (works everywhere, no extra backend)
+- Engines export logs via OTLP to the query-log backend (OpenSearch/Loki) and the management plane queries it
+
+**Answer (2026-09-14):** Bounded in-memory log buffer on each engine, streamed over the existing control connection.
+
+Answer: Bounded in-memory log buffer on each engine, streamed over the existing control connection. (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: fa3173de4c92
+Question: ODoH (#32)
+
+- Target and proxy roles (RFC 9230)
+- Target role only
+- Leave pending
+
+**Answer (2026-09-14):** Target and proxy roles (RFC 9230).
+
+Answer: Target and proxy roles (RFC 9230). (user, 2026-09-14)
+
+## [decision] decisions.md
+
+Key: fb39fdb18299
+Question: Release channel for packages and tarballs (#38, #39)
+
+- GitHub Releases on azrtydxb/nexora for amd64 and arm64 (tarballs, deb, rpm), built by CI on tags
+- Nexus raw/apt/yum repositories on kw
+- Both
+
+**Answer (2026-09-14):** Keep #38 and #39 pending (not decided); do not implement.
+
+Answer: Keep #38 and #39 pending (not decided); do not implement. (user, 2026-09-14)
