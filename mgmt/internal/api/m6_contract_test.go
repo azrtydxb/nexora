@@ -25,8 +25,13 @@ func TestM6OperationsAreRoutedAndAuthenticated(t *testing.T) {
 		t.Fatalf("setup -> %d", code)
 	}
 	for _, p := range paths {
-		if code := admin.do(p.method, p.path, map[string]any{}, nil); code == http.StatusNotFound || code == http.StatusMethodNotAllowed {
-			t.Fatalf("%s %s is not routed (%d)", p.method, p.path, code)
+		// A handler may answer 404 for an unknown engine with a JSON error; a route miss has no error code.
+		var body struct {
+			Code string `json:"code"`
+		}
+		code := admin.do(p.method, p.path, map[string]any{}, &body)
+		if code == http.StatusMethodNotAllowed || (code == http.StatusNotFound && body.Code != "not_found") {
+			t.Fatalf("%s %s is not routed (%d %q)", p.method, p.path, code, body.Code)
 		}
 	}
 }
