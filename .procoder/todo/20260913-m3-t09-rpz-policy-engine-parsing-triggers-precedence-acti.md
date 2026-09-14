@@ -1,6 +1,6 @@
 # M3 Task 9: RPZ policy engine — parsing, triggers, precedence, actions and query-path hooks
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -12,8 +12,8 @@ is committed.
 
 ## Acceptance criteria
 
-- [ ] (library steps done; integration steps pending Task 5) Every step of Task 9 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] (library steps done; integration steps pending Task 5) Every step of Task 9 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -24,3 +24,8 @@ is committed.
 - NOT DONE: query-path / dispatch integration (`server/mod.rs`, `dispatch.rs`, `RecursorState.rpz`) — blocked on Task 5 (no `RecursorState`, `dispatch.rs`, `Shared.recursor` yet); plan marks those steps "Integration (after Task 5)". Not committed (lead commits).
 
 - Integration steps completed together with M3 Task 5 (see Task 5 As-built notes in the plan): query-phase hook in `handle_packet` (`rpz_reply`), `MissJob.rpz` bypassing coalescing and cache, response-phase check and local-data CNAME chase in `dispatch.rs`. Verified by `recursor::dispatch_tests` (6 passed), `tests/rpz_pipeline.rs` (1 passed), `cache_hit_path_does_not_allocate` (forward, recursive+validation, RPZ triggers) and `make engine-test` exit 0. Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- plan steps: done; deviations recorded as As-built notes in the plan; deferred integration steps completed in later commits (git log)
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 54eaf2b

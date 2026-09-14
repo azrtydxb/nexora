@@ -1,6 +1,6 @@
 # M4 Task 11: RFC 2136 dynamic updates authenticated with TSIG
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -16,7 +16,7 @@ is committed.
 - [x] `TestPrerequisitesRFC2136` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSecondaryAndDynamicUpdate` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestUpdateSectionAndSerial` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -31,3 +31,7 @@ Engine side done (2026-09-14): `engine/src/authoritative/update.rs` (+ `update_t
 - `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib -- update_tests'` — `test result: ok. 4 passed`.
 - `scripts/dev-exec.sh make e2e-build` then `NEXORA_E2E_BIN_DIR=/work/nexora/bin go test -count=3 ./e2e/ -run "TestSecondaryAndDynamicUpdate|TestAXFRIXFROut|TestAuthoritativeZonePropagation" -v` — `--- PASS: TestSecondaryAndDynamicUpdate` x3; `ok github.com/piwi3910/nexora/e2e 44.782s`.
 - `scripts/dev-exec.sh make engine-test` — all suites ok incl. hot_path_alloc; fmt and clippy `-D warnings` clean.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 5e7280b

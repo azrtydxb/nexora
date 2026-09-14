@@ -1,6 +1,6 @@
 # M1 Task 23: First deployment to kw and `TestKwSmoke`
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -15,7 +15,7 @@ is committed.
 - [x] Every step of Task 23 in `.procoder/plans/nexora-v1-m1.md` is done as written (deviations recorded in the plan first)
 - [x] `TestKwSmoke` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestMain` passes in the dev pod (`scripts/dev-exec.sh`) (TestMain removed per the plan; the e2e package builds and vets)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -25,3 +25,7 @@ is committed.
 - Green: `scripts/dev-exec.sh 'env NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_API_URL=http://nexora.kw.local go test -count=1 -v -run TestKwSmoke ./e2e/'` -> `--- PASS: TestKwSmoke (2.22s)`; `go vet ./e2e/` ok.
 - Manual: `dig @192.168.10.136 example.com +short` -> 172.66.147.243, 104.20.23.154 (UDP and TCP, laptop and dev pod); `dig @192.168.10.136 ads.nexora-smoke.test +short` -> 0.0.0.0; Playwright login as admin over http://192.168.10.135 and http://nexora.kw.local -> engines page lists 3 engines `current 6`; `/api/v1/query-log` returns records from backend `opensearch`.
 - Gate: `procoder check` over the changed files -> `11 clean, 0 unformatted ... (0 blocking)`; `shellcheck` clean.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 176c703

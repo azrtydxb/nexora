@@ -1,6 +1,6 @@
 # M1 Task 17: Blocklist subscriptions — fetcher, parser, normalised blobs, and the subscription acceptance test
 
-Status: done
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description

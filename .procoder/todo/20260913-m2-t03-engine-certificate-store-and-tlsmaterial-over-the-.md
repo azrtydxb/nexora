@@ -1,6 +1,6 @@
 # M2 Task 3: Engine certificate store and TlsMaterial over the control stream
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 3 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed (fmt/clippy clean; commit left to the lead)
+- [x] procoder gate clean over the changed files; work committed (fmt/clippy clean; commit left to the lead)
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` -> exit 0.
 - e2e forwarding/control tests as in Task 2 evidence (run after Task 3 changes) -> PASS.
 - Deviations recorded in the plan: fingerprint via M1 `sha2`+`hex` (no direct aws-lc-rs dep, rustls `aws_lc_rs` feature enabled); `spawn_workers` third parameter deferred to Task 4 (no unused parameter); `clock::unix_now` added.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 33609a6

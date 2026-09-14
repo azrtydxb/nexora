@@ -1,6 +1,6 @@
 # M4 Task 9: BIND zone file import and export
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -17,7 +17,7 @@ is committed.
 - [x] `TestParseAllTypes` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestParseRefusals` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestZoneFileRoundTrip` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -26,3 +26,7 @@ is committed.
 - `scripts/dev-exec.sh 'go test ./e2e/ -run TestZoneFileRoundTrip -count=2 -v'` -> PASS (ldns-compare-zones -a -s -e reports +0 -0 ~0).
 - Deviations recorded in the plan ("Built (as implemented)" under Task 9). TestGUICoverage stays red for importZoneFile/exportZoneFile until Task 15.
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 57e38a4

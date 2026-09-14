@@ -1,6 +1,6 @@
 # M4 Task 4: Engine runtime integration — incremental zone loading and dispatch before recursion
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 4 in `.procoder/plans/nexora-v1-m4.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed (fmt + clippy clean; commit left to the lead)
+- [x] procoder gate clean over the changed files; work committed (fmt + clippy clean; commit left to the lead)
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - AA fix (lead request): `cache::tests::upstream_aa_is_cleared_on_every_served_reply` failed before (`uncached reply keeps AA`), passes after.
 - `cargo fmt --all -- --check` exit 0; clippy `-D warnings` clean.
 - M1-M3 e2e (release engine + current mgmt, BIN=/tmp/authm4/bin, NEXORA_E2E_* set by hand because the toolbox pod lacks them): 17 tests incl. TestForwardCacheTTL, TestDNSSECValidation, TestRPZPolicy, TestRecursionRootHints, TestEncryptedTransports, TestPerClientPolicy → `ok github.com/piwi3910/nexora/e2e 158.134s`. GUI and kw tests not run.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 87c30f7

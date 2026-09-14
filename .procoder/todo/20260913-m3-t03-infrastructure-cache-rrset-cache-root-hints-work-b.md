@@ -1,6 +1,6 @@
 # M3 Task 3: Infrastructure cache, RRset cache, root hints, work budget
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 3 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -22,3 +22,7 @@ is committed.
 - `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` clean; `cargo fmt -p nexora-engine --check` clean; `cargo test --locked -p nexora-engine --lib` -> `76 passed; 0 failed; 1 ignored`.
 - As-built notes recorded in the plan (is_empty/len, derives, debt on non-atomic infra updates).
 - Not committed (lead commits serially).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 083f943

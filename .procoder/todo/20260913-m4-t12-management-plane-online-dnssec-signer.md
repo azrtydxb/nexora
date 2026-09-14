@@ -1,6 +1,6 @@
 # M4 Task 12: Management-plane online DNSSEC signer
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -18,7 +18,7 @@ is committed.
 - [x] `TestSignNSEC3IncludesEmptyNonTerminalsWithZeroIterations` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSignNSECChainAndSignatures` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSignatureReuseAndRefresh` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed (gate clean: yes; commit left to the lead)
+- [x] procoder gate clean over the changed files; work committed (gate clean: yes; commit left to the lead)
 
 ## Evidence
 
@@ -28,3 +28,7 @@ is committed.
 - `scripts/dev-exec.sh 'go test ./mgmt/internal/dnssec/ ./mgmt/internal/zone/ ./mgmt/internal/dynupdate/ ./mgmt/internal/xfrin/ ./mgmt/internal/api/ ./mgmt/internal/zonefile/ ./mgmt/internal/snapshot/ ./mgmt/internal/control/ ./mgmt/internal/store/... -count=1'` -> all ok.
 - `go vet ./mgmt/...` (pod) -> ok; `gofmt -l mgmt` -> empty; `procoder check` -> 0 unformatted, 0 blocking; `procoder lint` -> 0 findings.
 - Deviations (recorded in the plan): migration 00402 (00401 taken); Task 13 goldens kept (not overwritten), BIND validation test instead; SignRRset dropped; reuse needs > RefreshBefore + 1h; Maintainer (refresh + advisory lock) added now.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in f04a92b

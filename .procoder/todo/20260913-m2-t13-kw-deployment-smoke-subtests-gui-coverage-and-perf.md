@@ -1,6 +1,6 @@
 # M2 Task 13: kw deployment, smoke subtests, GUI coverage and perf gate
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -16,7 +16,7 @@ deployment" (real client IPs, version stamping, HTTPS GUI with Secure cookies).
 - [x] Every step of Task 13 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
 - [x] `TestGUICoverage` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestKWSmoke` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -41,3 +41,7 @@ deployment" (real client IPs, version stamping, HTTPS GUI with Secure cookies).
   `test result: ok. 1 passed`.
 - `procoder check` over the changed files -> `10 clean, 0 unformatted`; `shellcheck` on the three
   scripts clean; `cargo fmt --check`, `cargo clippy -D warnings`, `go vet ./e2e/ ./mgmt/cmd/...` clean.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in ca572be

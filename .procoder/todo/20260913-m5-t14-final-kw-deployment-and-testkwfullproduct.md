@@ -1,6 +1,6 @@
 # M5 Task 14: Final kw deployment and TestKwFullProduct
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,9 +14,9 @@ is committed.
 
 - [x] Every step of Task 14 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
 - [x] `TestEncryptedTransports` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestKwBodiesMatchOpenAPI` passes in the dev pod (`scripts/dev-exec.sh`) — no such test exists in the repository (template criterion); not applicable
+- [x] `TestKwBodiesMatchOpenAPI` passes in the dev pod (`scripts/dev-exec.sh`) — no such test exists in the repository (template criterion); not applicable (N/A names: TestKwBodiesMatchOpenAPI)
 - [x] `TestKwFullProduct` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed (gate clean; commit is the lead's)
+- [x] procoder gate clean over the changed files; work committed (gate clean; commit is the lead's)
 
 ## Evidence
 
@@ -27,3 +27,8 @@ is committed.
 - `scripts/kw-acceptance.sh` run 1: TestKwFullProduct/fleet-metrics-and-alerts FAIL (`current edge-b engines = 4`: the query summed both mgmt replicas); test query fixed to `max(...)`.
 - `scripts/kw-acceptance.sh` run 2: `--- PASS: TestKwFullProduct (43.02s)` (all 6 subtests), `--- PASS: TestKwSmokeM4 (0.90s)`, `--- PASS: TestKwSmoke (9.45s)` (recursion SKIP as documented), `ok github.com/piwi3910/nexora/e2e 53.390s`.
 - `scripts/dev-exec.sh 'go test ./e2e/ -run TestEncryptedTransports -count=1'`: `ok`; `go test ./deploy/deploytest/ -count=1 -v`: TestComposeExample, TestOperationsDoc, TestHelmTemplate, TestImagesWorkflow PASS.
+
+Closing evidence (lead, 2026-09-14):
+
+- TestKwBodiesMatchOpenAPI: N/A — no test with this name exists (criterion was auto-generated from plan text); the behaviour is covered by the task's actual tests, which passed in the full suite (engine/mgmt/web/e2e/bench/deploy) passed in the dev pod during the pre-release hardening sweep at 93dcd04
+- gate/commit: commit gate passed on every commit for this task; todo last committed in bf6ca96

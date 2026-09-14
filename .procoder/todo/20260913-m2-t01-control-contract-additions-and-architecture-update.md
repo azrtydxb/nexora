@@ -1,6 +1,6 @@
 # M2 Task 1: Control contract additions and architecture update
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -15,7 +15,7 @@ is committed.
 - [x] Every step of Task 1 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
 - [x] `TestM2ContractFieldNumbers` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSnapshotCannotReachTlsMaterial` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -27,3 +27,7 @@ is committed.
 - `scripts/dev-exec.sh 'cargo fmt --all -- --check; cargo clippy --locked -p nexora-engine --all-targets -- -D warnings; cargo test --locked -p nexora-engine'` -> fmt clean, clippy Finished with no warnings, every `test result: ok` (lib 22 passed, all integration binaries ok, 0 failed).
 - `scripts/dev-exec.sh 'make webui-placeholder && go vet ./gen/... ./mgmt/internal/control/ && gofmt -l gen mgmt; go test -count=1 ./gen/... ./mgmt/...'` -> no vet/gofmt output; ok for gen/controlv1, api, auth, blocklist, config, control, pki, querylog, snapshot, stats, store.
 - Not committed (the lead commits serially per the implementer brief).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 9bcddf6

@@ -1,6 +1,6 @@
 # M3 Task 4: Iterative resolver (delegations, bailiwick, glueless NS, CNAME/DNAME, QNAME minimisation, limits)
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 4 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - clippy -D warnings (all targets) clean; `cargo fmt --check` clean; `cargo test --locked -p nexora-engine --lib` -> `76 passed; 0 failed; 1 ignored`.
 - Deviations (hickory has no DNAME RDATA, per-step failover, SERVFAIL not lame, answer scrubbing, DS-only-for-owner) recorded in the plan's Task 4 "As built" notes.
 - Not committed (lead commits serially).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 083f943

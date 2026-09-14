@@ -1,6 +1,6 @@
 # M2 Task 5: DoQ listener (RFC 9250)
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 5 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -21,3 +21,7 @@ is committed.
 - After: `cargo test --locked -p nexora-engine --lib server::doq`: `test result: ok. 2 passed; 0 failed`.
 - `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` exit 0 (isolated tree, see Task 4 evidence); full `--all-targets` suite green there; `listen_port_zero::encrypted_listeners_on_port_zero_are_bound_by_every_worker_and_reported` passes (DoQ port held by both workers).
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 85dbb4b

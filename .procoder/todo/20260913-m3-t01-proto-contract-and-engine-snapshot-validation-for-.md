@@ -1,6 +1,6 @@
 # M3 Task 1: Proto contract and engine snapshot validation for M3 fields
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 1 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -27,3 +27,7 @@ is committed.
 - `make e2e-build` + `go test -count=1 ./e2e/...` -> all M1/M2 tests pass except TestQueryLogBackends/opensearch and TestObservabilityMetricsTraces, which failed only because the pod lacked NEXORA_E2E_OPENSEARCH_URL / NEXORA_E2E_JAEGER_QUERY_URL; rerun with the dev-pod.yaml values -> `ok github.com/piwi3910/nexora/e2e 28.140s`.
 - `procoder check` over changed files: 0 unformatted; the 2 BLOCKING secret findings are the pre-existing Task 11 test literal `tsig_secret` in the plan (present at HEAD), not introduced here.
 - Not committed (lead commits serially).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 08565f0

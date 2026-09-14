@@ -1,6 +1,6 @@
 # M3 Task 12: GUI — `/rpz`, `/dnssec`, resolution settings and forward zones on `/upstreams`
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 12 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
 - [x] `TestGUICoverage` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -25,3 +25,6 @@ is committed.
 - Red run of TestGUICoverage before implementation was not executed (specs and screens were written in one pass).
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 361a3fd

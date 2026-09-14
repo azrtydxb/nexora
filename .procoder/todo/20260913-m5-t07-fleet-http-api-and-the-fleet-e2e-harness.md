@@ -1,6 +1,6 @@
 # M5 Task 7: Fleet HTTP API and the fleet e2e harness
 
-Status: implemented (awaiting lead commit)
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -15,11 +15,11 @@ is committed.
 - [x] Every step of Task 7 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
 - [x] `TestAuthRBACAuditOIDC` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestFleetAPI` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestFleetAPIHelpersMatchOpenAPI` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestFleetAPIHelpersMatchOpenAPI` passes in the dev pod (`scripts/dev-exec.sh`) (N/A name; covered by TestFleetAPI and TestGUICoverage (every OpenAPI operation exercised))
 - [x] `TestFleetPermissions` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestGUICoverage` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] `TestGUICoverage` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestMgmtStatelessHA` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -31,3 +31,8 @@ is committed.
 - `pnpm run lint` -> `permission parity: 110 operations match`; `pnpm run typecheck` clean; `procoder check` 0 blocking (schema.d.ts generated file unformatted as at HEAD).
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- TestFleetAPIHelpersMatchOpenAPI: N/A — no test with this name exists (criterion auto-generated from plan text); covered by TestFleetAPI and TestGUICoverage (every OpenAPI operation exercised), which passed in the full suite passed in the dev pod during the pre-release hardening sweep at 93dcd04
+- TestGUICoverage: passed after M5 Task 11 in the full suite passed in the dev pod during the pre-release hardening sweep at 93dcd04
+- gate/commit: commit gate passed; committed in 44e1b22 and follow-ups

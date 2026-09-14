@@ -1,6 +1,6 @@
 # M4 Task 10: Secondary zones — engine NOTIFY intake, management-plane AXFR/IXFR pulls and SOA timers
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -18,7 +18,7 @@ is committed.
 - [x] `TestInterpretIncremental` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRefreshAXFRThenIXFRThenUpToDate` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRefreshFailureRetriesAndExpires` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -35,3 +35,7 @@ Engine side done (2026-09-14): `engine/src/authoritative/notify_in.rs` (+ `notif
 - `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib -- notify_in_tests update_tests auth_families'` — `test result: ok. 6 passed` (both notify_in tests, auth_families_render_every_label_at_zero). The tests were written together with the implementation in one pass; the red run (unresolved import) was not captured separately.
 - `scripts/dev-exec.sh make e2e-build` then `NEXORA_E2E_BIN_DIR=/work/nexora/bin go test -count=3 ./e2e/ -run "TestSecondaryAndDynamicUpdate|TestAXFRIXFROut|TestAuthoritativeZonePropagation" -v` — 3x PASS each; `ok github.com/piwi3910/nexora/e2e 44.782s`.
 - `scripts/dev-exec.sh make engine-test` — all suites ok (lib `194 passed; 0 failed; 1 ignored`, hot_path_alloc `2 passed`); `cargo fmt --all -- --check` clean; `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` clean.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 5e7280b

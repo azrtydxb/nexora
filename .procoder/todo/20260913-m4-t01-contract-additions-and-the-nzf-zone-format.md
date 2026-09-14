@@ -1,6 +1,6 @@
 # M4 Task 1: Contract additions and the NZF zone format
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -21,7 +21,7 @@ is committed.
 - [x] `TestM4ContractFieldNumbers` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestOutOfZoneOwnerRefused` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSerialArithmeticRFC1982` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -32,3 +32,6 @@ is committed.
 - Engine still builds: `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` clean (needed one no-op `ServerMsg` arm in `engine/src/control.rs`, recorded in the plan).
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 7f6798b

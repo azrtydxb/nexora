@@ -1,6 +1,6 @@
 # M2 Task 7: Management plane schema, store and snapshot policy section
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -18,7 +18,7 @@ is committed.
 - [x] `TestPolicyGroupsRevisionAndCIDRUniqueness` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRewritesScopes` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRewritesScopesAndGlobalSafeSearch` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -28,3 +28,7 @@ is committed.
 - `scripts/dev-exec.sh 'make mgmt-test'` (race) -> ok for api, auth, blocklist, config, control, pki, querylog, snapshot, stats, store, gen, bench.
 - Deviations recorded in the plan under Task 7 "As built": block-kind check for group filter lists, `store.GetRewrite`, advisory lock in `checkCNAME`, blob GC keeps group blobs.
 - Not committed (the lead commits serially per the implementer brief).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 09bf799

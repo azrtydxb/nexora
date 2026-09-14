@@ -1,6 +1,6 @@
 # M3 Task 10: RPZ sources — blob files, AXFR/IXFR with TSIG, SOA refresh, last-good persistence
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -12,8 +12,8 @@ is committed.
 
 ## Acceptance criteria
 
-- [ ] (library steps done; integration steps pending Task 5) Every step of Task 10 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] (library steps done; integration steps pending Task 5) Every step of Task 10 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -25,3 +25,8 @@ is committed.
 - NOT DONE: control-stream `RpzTsigKeys` arm, `Stats.rpz_zones`, metrics render hook, `ResolutionRuntime.rpz`, `RecursorState` embedding and background `run` — blocked on Task 5; plan marks them "Integration (after Task 5)". Red-before-green not observed for transfer_tests (implementation written first; mutation check instead). Not committed.
 
 - Integration steps completed together with M3 Task 5 (see Task 5 As-built notes in the plan): `ResolutionRuntime.rpz`, `RecursorState.rpz` + `sync`, `manager.run` on `nexora-recursor`, `RpzTsigKeys` control-stream arm, `Stats.rpz_zones`, RPZ metrics in `render`. Verified by `recursor::dispatch_tests` (6 passed), `tests/rpz_pipeline.rs` (1 passed), `cache_hit_path_does_not_allocate` (forward, recursive+validation, RPZ triggers) and `make engine-test` exit 0. Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- plan steps: done; deviations recorded as As-built notes in the plan; deferred integration steps completed in later commits (git log)
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 54eaf2b

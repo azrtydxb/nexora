@@ -1,6 +1,6 @@
 # M5 Task 9: Engine side of renewal, rotation, revocation and fleet health
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 9 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed (gate clean 2026-09-14; commit left to the lead)
+- [x] procoder gate clean over the changed files; work committed (gate clean 2026-09-14; commit left to the lead)
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - full: `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets'` -> every suite `test result: ok` (lib 203 passed, 1 ignored); `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` -> no findings; `cargo fmt --all -- --check` -> clean.
 - `procoder check` over the 7 changed engine files -> `7 clean, 0 unformatted, 0 unchecked` (0 blocking).
 - Deviations recorded in the plan (Task 9 "As built" note): staged identity confirmed before promotion, `subject_public_key_info` instead of `public_key_der`, webpki verification of the issued certificate.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in c302c1f

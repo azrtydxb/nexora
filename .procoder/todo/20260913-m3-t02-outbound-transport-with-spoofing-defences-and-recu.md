@@ -1,6 +1,6 @@
 # M3 Task 2: Outbound transport with spoofing defences and recursor metrics
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 2 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -22,3 +22,7 @@ is committed.
 - Plan text for the TCP retry updated to match (TCP query counted in upstream_queries; malformed/I-O/deadline error mapping).
 - clippy -D warnings, fmt, full engine test suite and M1/M2 e2e: see M3 Task 1 evidence (same run).
 - Not committed (lead commits serially).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 08565f0

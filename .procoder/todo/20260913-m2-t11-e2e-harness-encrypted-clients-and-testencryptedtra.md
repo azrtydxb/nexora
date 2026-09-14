@@ -1,6 +1,6 @@
 # M2 Task 11: E2E harness encrypted clients and `TestEncryptedTransports`
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 11 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
 - [x] `TestEncryptedTransports` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -24,3 +24,7 @@ is committed.
 - `go test -count=4 -run "TestPerClientPolicy|TestEncryptedTransports"` — 4/4 PASS each.
 - `go test ./e2e/fixtures/...` — `TestDNSFixtureStaticRecords` PASS.
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 392f6f4

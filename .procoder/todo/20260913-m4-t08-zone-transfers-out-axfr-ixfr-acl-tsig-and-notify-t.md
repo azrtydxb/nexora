@@ -1,6 +1,6 @@
 # M4 Task 8: Zone transfers out (AXFR/IXFR, ACL + TSIG) and NOTIFY to secondaries
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 8 in `.procoder/plans/nexora-v1-m4.md` is done as written (deviations recorded in the plan first)
 - [x] `TestAXFRIXFROut` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -24,3 +24,7 @@ is committed.
 - `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/ -run TestAXFRIXFROut -count=1 -v'` → `--- PASS: TestAXFRIXFROut (3.40s)` against the in-progress mgmt tree (zones + tsig-keys API present).
 - `scripts/dev-exec.sh 'go test ./e2e/ -run "TestAXFRIXFROut|TestRPZ|TestAuthoritative" -count=1'` → `ok github.com/piwi3910/nexora/e2e 29.466s`.
 - clippy `-D warnings` clean, `gofmt`/`go vet ./e2e/ ./e2e/harness/` clean. Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 899ec87

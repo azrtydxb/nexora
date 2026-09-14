@@ -1,6 +1,6 @@
 # M2 Task 8: OpenAPI operations and handlers for policies, rewrites and safe search
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -15,7 +15,7 @@ is committed.
 - [x] Every step of Task 8 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
 - [x] `TestPolicyGroupAPI` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRewriteAPIValidation` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -26,3 +26,7 @@ is committed.
 - `procoder check` over changed files -> 0 unformatted, 0 blocking.
 - Known: `TestGUICoverage` (e2e) will report the eleven new operations uncovered until M2 Task 10; not run here.
 - Not committed (the lead commits serially per the implementer brief).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 09bf799

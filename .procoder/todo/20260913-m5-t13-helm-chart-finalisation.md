@@ -1,6 +1,6 @@
 # M5 Task 13: Helm chart finalisation
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -16,7 +16,7 @@ is committed.
 - [x] `TestComposeExample` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestHelmTemplate` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestImagesWorkflow` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -28,3 +28,6 @@ is committed.
 - Plan test fixes: decode into `map[string]any` (yaml.v3 propagates the named `obj` type to nested maps, so `path` saw nothing); PrometheusRule assertion includes the namespace matcher the plan's own template emits. Plan updated.
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in d07a3cd

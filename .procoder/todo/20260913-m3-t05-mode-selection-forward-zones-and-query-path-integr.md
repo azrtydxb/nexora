@@ -1,6 +1,6 @@
 # M3 Task 5: Mode selection, forward zones and query-path integration
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 5 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -22,3 +22,7 @@ is committed.
 - `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings`: clean; `cargo fmt`: applied.
 - `make engine-test`: exit 0 (lib `125 passed; 1 ignored`, `cache_hit_path_does_not_allocate ... ok`, `rpz_pipeline 1 passed`).
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 54eaf2b

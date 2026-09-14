@@ -1,6 +1,6 @@
 # M3 Task 6: DNSSEC primitives — signature verification, validity windows, DS matching, NSEC/NSEC3 denial
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 6 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
 - [x] `TestKey` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - GREEN: same command -> `test result: ok. 8 passed; 0 failed`.
 - `cargo fmt -p nexora-engine --check` clean (dev pod); `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` reports nothing under `recursor/dnssec` (the crate still fails clippy on the concurrent RPZ work in `rpz/apply.rs` and `rpz/tsig.rs`); `cargo test --locked -p nexora-engine --lib` -> `117 passed; 0 failed; 2 ignored`.
 - Not committed (lead commits serially).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 083f943

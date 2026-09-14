@@ -1,6 +1,6 @@
 # M2 Task 9: Management plane DNS TLS certificate loading, push and status
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -19,7 +19,7 @@ is committed.
 - [x] `TestDNSTLSWatcherRotationKeepsLastGood` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestDnsTlsStatusWithoutCertificate` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestIssueAndLoadDNSTLS` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -32,3 +32,7 @@ is committed.
 - `procoder check` over changed files -> 15 clean, 0 unformatted, 0 blocking.
 - Engine-side acceptance (real TlsMaterialResult from an engine) not exercised: engine Task 3 is uncommitted; covered by M2 Task 11 e2e.
 - Not committed (the lead commits serially per the implementer brief).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 2f7cb07

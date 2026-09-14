@@ -1,6 +1,6 @@
 # M5 Task 12: Release images workflow and docker-compose example
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -15,7 +15,7 @@ is committed.
 - [x] Every step of Task 12 in `.procoder/plans/nexora-v1-m5.md` is done as written (deviations recorded in the plan first)
 - [x] `TestComposeExample` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestImagesWorkflow` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -25,3 +25,6 @@ is committed.
 - `prettier --check` on compose YAML and images.yml -> clean; `golangci-lint run ./deploy/...` -> 0 issues.
 - Not run: the compose stack itself (no Docker available; `docker compose config` not executed). `ca init --if-missing` depends on M5 Task 8's CLI. Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in d07a3cd

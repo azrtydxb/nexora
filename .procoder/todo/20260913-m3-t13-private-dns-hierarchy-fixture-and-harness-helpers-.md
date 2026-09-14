@@ -1,6 +1,6 @@
 # M3 Task 13: Private DNS hierarchy fixture and harness helpers (fake root/TLD/leaf, signed zones, spoofer, BIND primary)
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -20,7 +20,7 @@ is committed.
 - [x] `TestRootReferralCarriesSignedDSAndRootDSMatches` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSignedGoodVerifiesAndBadDoesNot` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSpoofServerSendsForgeriesBeforeRealAnswer` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -32,3 +32,6 @@ is committed.
 - Lint: `golangci-lint run ./e2e/fixtures/... ./e2e/harness/...` no findings in the new files; `gofmt -l e2e` empty; `procoder check` on the changed files: 11 clean.
 - Not verified here: `(*Hierarchy).ConfigureRecursion` (needs Task 11's `/resolution` and `/dnssec/trust-anchors`; exercised by Task 14).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 3f99d75

@@ -1,6 +1,6 @@
 # M3 Task 14: Acceptance tests — TestRecursionRootHints, TestSpoofedReplyRejected, TestDNSSECValidation, TestRPZPolicy
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -17,7 +17,7 @@ is committed.
 - [x] `TestRPZPolicy` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestRecursionRootHints` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestSpoofedReplyRejected` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -32,3 +32,7 @@ is committed.
   -> exit 0: `ok e2e 231.512s`, `ok e2e/fixtures/authhier`, `ok e2e/fixtures/cmd/nexora-fixture`, `ok e2e/harness`,
   `ok bench/cmd/perfgate`, `ok bench/dnsperf`.
 - No product bug surfaced; `ConfigureRecursion` worked unchanged. Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in b643000

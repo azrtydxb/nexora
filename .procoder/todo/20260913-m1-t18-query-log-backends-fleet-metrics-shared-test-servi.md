@@ -1,6 +1,6 @@
 # M1 Task 18: Query-log backends, fleet metrics, shared test services, and the observability acceptance tests
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -12,7 +12,7 @@ is committed.
 
 ## Acceptance criteria
 
-- [ ] Every step of Task 18 (all but the `kubectl apply` of `deploy/dev/dev-pod.yaml`, deferred so the toolbox pod is not recreated under concurrent agents; recorded in the plan) in `.procoder/plans/nexora-v1-m1.md` is done as written (deviations recorded in the plan first)
+- [x] Every step of Task 18 (all but the `kubectl apply` of `deploy/dev/dev-pod.yaml`, deferred so the toolbox pod is not recreated under concurrent agents; recorded in the plan) in `.procoder/plans/nexora-v1-m1.md` is done as written (deviations recorded in the plan first)
 - [x] `TestBuiltinRingSearchAndCapacity` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestCollectorExportsFleetMetrics` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestOTelSinkDownNoBackpressure` passes in the dev pod (`scripts/dev-exec.sh`)
@@ -32,3 +32,7 @@ is committed.
 - OpenSearch document shape and `.keyword` filters verified by feeding otelcol-contrib 0.160's `opensearch` exporter an OTLP log and querying OpenSearch 3.8.0 (bare `term` on `attributes.dns.response.code` -> 0 hits; probe index deleted).
 - `procoder check` over the changed files -> 16 clean, 0 unformatted, 0 blocking.
 - Open: `kubectl --context kw apply -f deploy/dev/dev-pod.yaml` (recreates the toolbox pod) not yet run.
+
+Closing evidence (lead, 2026-09-14):
+
+- plan steps: done; deviations recorded as As-built notes in the plan; deferred integration steps completed in later commits (git log)

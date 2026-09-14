@@ -1,6 +1,6 @@
 # M1 Task 10: End-to-end harness and fixture servers
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -16,8 +16,8 @@ is committed.
 - [x] `TestDNSFixtureBehaviours` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestHarnessOtelcolStarts` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestHarnessPostgres` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] `TestHarnessStandaloneEngineAnswersViaFixture` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] `TestHarnessStandaloneEngineAnswersViaFixture` passes in the dev pod (`scripts/dev-exec.sh`)
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -43,3 +43,7 @@ is committed.
 - `go vet ./e2e/harness/ ./e2e/fixtures/...`, `gofmt -l e2e` clean; `procoder check` over the
   changed files -> `13 clean, 0 unformatted ... (0 blocking)`.
 
+Closing evidence (lead, 2026-09-14):
+
+- TestHarnessStandaloneEngineAnswersViaFixture: passed in the full suite (engine/mgmt/web/e2e/bench/deploy) passed in the dev pod during the pre-release hardening sweep at 93dcd04
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 6f26c58

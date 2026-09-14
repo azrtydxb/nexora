@@ -1,6 +1,6 @@
 # M3 Task 15: kw deployment update and kw smoke subtests
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 15 in `.procoder/plans/nexora-v1-m3.md` is done as written (deviations recorded in the plan first)
 - [x] `TestKwSmokeM3` passes in the dev pod (`scripts/dev-exec.sh`) — as built, the M3 subtests are part of `TestKwSmoke` (plan updated)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - Egress probe from the kw dev pod: `dig +norec @198.41.0.4 example.com` and `dig +norec @192.0.2.1 example.com` return recursive answers (flags `qr ra`/`qr aa ra`) — outbound 53 is redirected, so kw runs forward mode with `validate_forwarded`.
 - `scripts/dev-exec.sh env NEXORA_KW_... go test -count=1 -v -run 'TestKwSmoke$' ./e2e/` (twice): `--- PASS: TestKwSmoke (9.40s)`; all M1/M2 subtests PASS, `dnssec-forwarded`, `trust-anchors`, `rpz`, `m3-metrics` PASS, `recursion` SKIP (redirect detected).
 - `delv @192.168.10.136 dnssec-failed.org`: `;; resolution failed: failure` (dig: SERVFAIL, `EDE: 9 (DNSKEY Missing)`; with +cd NOERROR); `dig @192.168.10.136 +dnssec cloudflare.com`: `flags: qr rd ra ad`, NOERROR.
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 3af7663

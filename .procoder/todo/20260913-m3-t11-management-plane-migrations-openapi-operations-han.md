@@ -1,6 +1,6 @@
 # M3 Task 11: Management plane — migrations, OpenAPI operations, handlers, snapshot builder, stats ingestion
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -19,7 +19,7 @@ is committed.
 - [x] `TestValidateDomainAndForwardAddresses` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestValidateZoneCountsRecordsAndSerial` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestValidateZoneRejectsIncludeMissingSOASyntaxAndSize` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed (lead commits)
+- [x] procoder gate clean over the changed files; work committed (lead commits)
 
 ## Evidence
 
@@ -29,3 +29,7 @@ is committed.
 - `pnpm run lint` in the pod -> `permission parity: 77 operations match`.
 - Blob GC regression: `TestCollectBlobsKeepsRPZZoneFiles` fails without the fetcher fix (`violates foreign key constraint "rpz_zones_blob_sha256_fkey"`), passes with it.
 - e2e: see the task report (full `go test ./e2e/...` run in the dev pod).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in f1f244f

@@ -1,6 +1,6 @@
 # M1 Task 21: Two-tier dnsperf performance gate
 
-Status: done
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description

@@ -1,6 +1,6 @@
 # M4 Task 2: Engine NZF decoder, in-memory zone model, delta application
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 2 in `.procoder/plans/nexora-v1-m4.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -23,3 +23,6 @@ is committed.
 - Fuzz: `cd engine/fuzz && cargo +nightly fuzz run nzf_parse <tmp corpus seeded from engine/fuzz/corpus/nzf_parse> -- -max_total_time=60` → `Done 187917 runs in 61 second(s)`, no crash.
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 7f6798b

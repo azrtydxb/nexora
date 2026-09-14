@@ -1,6 +1,6 @@
 # M5 Task 10: Fleet acceptance tests
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -23,7 +23,7 @@ is committed.
 - [x] `TestJoinTokenGroupAndExpiry` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestMgmtCLIFleet` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestMgmtStatelessHA` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -36,3 +36,6 @@ is committed.
 - `make e2e-build` + `go test -count=1 ./e2e/...` in three chunks (harness/fixtures packages ok; every e2e test `--- PASS` including `TestMgmtStatelessHA` and `TestGUICoverage`; `TestKwSmoke*` SKIP without kw env).
 - Not committed (lead commits).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in d15f28e

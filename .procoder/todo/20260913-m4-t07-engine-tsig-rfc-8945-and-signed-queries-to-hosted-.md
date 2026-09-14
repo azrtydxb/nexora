@@ -1,6 +1,6 @@
 # M4 Task 7: Engine TSIG (RFC 8945) and signed queries to hosted zones
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 7 in `.procoder/plans/nexora-v1-m4.md` is done as written (deviations recorded in the plan first)
 - [x] `TestTSIGVectors` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -23,3 +23,7 @@ is committed.
 - Tests were written together with the implementation; the red run was not observed separately.
 - `scripts/dev-exec.sh 'make engine-test'` → every target `test result: ok` (lib 176 passed, 1 ignored); `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings` clean; `cargo fmt` applied.
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 899ec87

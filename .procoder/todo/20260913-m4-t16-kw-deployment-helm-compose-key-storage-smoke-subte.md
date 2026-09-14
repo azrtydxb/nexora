@@ -1,6 +1,6 @@
 # M4 Task 16: kw deployment, Helm/compose key storage, smoke subtests
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -14,7 +14,7 @@ is committed.
 
 - [x] Every step of Task 16 in `.procoder/plans/nexora-v1-m4.md` is done as written (deviations recorded in the plan first)
 - [x] `TestKWSmokeM4` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -28,3 +28,6 @@ is committed.
 - Manual (dev pod): SOA +dnssec `flags: qr aa ra`, RRSIG SOA 13; `delv -a anchor +root=nexora-demo.kw.` SOA and www A `; fully validated`; AXFR with TSIG 34 records TSIG-signed, without key `; Transfer failed.`; signed nsupdate exit 0 and `smoke-upd` A 192.0.2.99 in DNS (validated) and API, unsigned `update failed: REFUSED` (test record removed afterwards); `bind-demo.kw.` serial 2026091401, `last_error ""`, `www.bind-demo.kw.` `aa` 192.0.2.53, TSIG AXFR 7 lines.
 - `gofmt -l e2e/` clean, `go vet ./e2e/` clean, `shellcheck deploy/kw/bootstrap.sh scripts/kw-deploy.sh` clean, `kubectl apply --dry-run=server -f deploy/kw/bind-primary.yaml` ok.
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in ed232b2

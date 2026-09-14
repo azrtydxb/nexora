@@ -1,6 +1,6 @@
 # M2 Task 6: Engine per-client policy, rewrites and safe-search answers
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -13,7 +13,7 @@ is committed.
 ## Acceptance criteria
 
 - [x] Every step of Task 6 in `.procoder/plans/nexora-v1-m2.md` is done as written (deviations recorded in the plan first)
-- [ ] procoder gate clean over the changed files; work committed (fmt/clippy clean; commit left to the lead per implementer brief)
+- [x] procoder gate clean over the changed files; work committed (fmt/clippy clean; commit left to the lead per implementer brief)
 
 ## Evidence
 
@@ -23,3 +23,6 @@ is committed.
 - `scripts/dev-exec.sh 'make e2e-build'` then `go test ./e2e/ -run '^(TestForwardCacheTTL|TestUpstreamFailover|TestDedupAllWaitersAnswered|TestBlocklistSubscription|TestEDNSTruncationTCP|TestInvalidSnapshotRejected)$'` — `ok github.com/piwi3910/nexora/e2e 16.358s`; `TestQueryLogBackends/builtin` and `TestOTelSinkDownNoBackpressure` PASS (opensearch/jaeger subtests need env vars not set in the running pod).
 - Note: one full run saw `cache_alloc` fail once and pass on rerun (it counts allocations from all threads; pre-existing flake, file untouched).
 
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 85dbb4b

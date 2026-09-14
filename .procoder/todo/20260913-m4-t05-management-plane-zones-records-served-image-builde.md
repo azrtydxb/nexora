@@ -1,6 +1,6 @@
 # M4 Task 5: Management-plane zones, records, served-image builder, journal, snapshot and API
 
-Status: open
+Status: closed 2026-09-14
 Created: 2026-09-13
 
 ## Description
@@ -21,7 +21,7 @@ is committed.
 - [x] `TestSerialWrapsAroundRFC1982` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestStaleRecordRevisionConflicts` passes in the dev pod (`scripts/dev-exec.sh`)
 - [x] `TestValidationRules` passes in the dev pod (`scripts/dev-exec.sh`)
-- [ ] procoder gate clean over the changed files; work committed
+- [x] procoder gate clean over the changed files; work committed
 
 ## Evidence
 
@@ -32,3 +32,7 @@ is committed.
 - `make e2e-build` (engine at 87c30f7) then `go test ./e2e/ -run "TestAuthoritativeZonePropagation|TestZoneFileRoundTrip" -count=2 -v` -> PASS x2 each.
 - Deviations recorded in the plan ("Built (as implemented)" under Task 5). TestGUICoverage stays red for the new zone operations until Task 15 (GUI).
 - Not committed (lead commits).
+
+Closing evidence (lead, 2026-09-14):
+
+- gate/commit: commit gate passed on every commit for this task; todo last committed in 57e38a4
