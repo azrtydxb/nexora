@@ -3,6 +3,7 @@ package harness_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -52,6 +53,27 @@ func TestHarnessOtelcolStarts(t *testing.T) {
 	if col.OTLPGRPC == "" {
 		t.Fatal("no OTLP address")
 	}
+}
+
+func TestHarnessOtelcolRestartWaitsForPortHolder(t *testing.T) {
+	env := harness.New(t)
+	col := env.StartOtelcol(harness.OtelcolConfig{DebugFile: env.Dir + "/otel.jsonl"})
+	col.Stop()
+	l, err := net.Listen("tcp", col.OTLPGRPC)
+	if err != nil {
+		t.Fatalf("take the stopped collector's port: %v", err)
+	}
+	go func() { time.Sleep(1500 * time.Millisecond); l.Close() }()
+	started := time.Now()
+	col.Restart(env)
+	if time.Since(started) < time.Second {
+		t.Fatal("restart returned while another process still held the port")
+	}
+	c, err := net.DialTimeout("tcp", col.OTLPGRPC, time.Second)
+	if err != nil {
+		t.Fatalf("collector not listening after restart: %v", err)
+	}
+	c.Close()
 }
 
 func TestHarnessFixtureClients(t *testing.T) {

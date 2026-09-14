@@ -127,7 +127,7 @@ func (o *Otelcol) start(e *Env, mayRetry bool) bool {
 			if mayRetry && addressInUseRE.Match(log) {
 				return false
 			}
-			e.T.Fatalf("otelcol-contrib exited:\n%s", tail(o.Proc.LogPath, 50))
+			e.T.Fatalf("otelcol %s: otelcol-contrib exited:\n%s", o.OTLPGRPC, tail(o.Proc.LogPath, 50))
 		default:
 		}
 		// Readiness comes from the log, not a dial alone: a dial could reach whatever process
@@ -151,11 +151,13 @@ func (o *Otelcol) Stop() {
 	o.Proc.Stop()
 }
 
-// Restart stops the collector if running and starts it again on the same port and config.
-// debt: the port stays free while the collector is down and is not re-picked (exporters point at
-// it), so another process taking it fails the test; revisit if that is ever observed.
+// Restart stops the collector if running and starts it again on the same port and config: the
+// exporters point at that port. A port another process holds is retried for 10 s.
 func (o *Otelcol) Restart(e *Env) {
 	e.T.Helper()
 	o.Proc.Stop()
-	o.start(e, false)
+	deadline := time.Now().Add(10 * time.Second)
+	for !o.start(e, time.Now().Before(deadline)) {
+		time.Sleep(200 * time.Millisecond)
+	}
 }
