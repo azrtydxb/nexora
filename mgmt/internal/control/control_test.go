@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -259,6 +260,92 @@ func TestGetBlobStreamsMiBChunks(t *testing.T) {
 	}
 	if _, err := mustRecvErr(client, f.ctx); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown blob -> %v", err)
+	}
+}
+
+func TestGetBlobDoesNotHoldWholeBlob(t *testing.T) {
+	f := setup(t, 1)
+	client, _ := f.enroll(t, f.addr[0])
+	data := make([]byte, 64<<20)
+	_, _ = rand.Read(data)
+	sha := sha256Hex(data)
+	// A pgx connection keeps its last parameters referenced (ExtendedQueryBuilder.ParamValues), so
+	// the insert runs on a connection that is closed afterwards: only the server's heap is measured.
+	conn, err := f.st.Pool.Acquire(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3)", sha, len(data), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Hijack().Close(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	data = nil
+	s, err := client.GetBlob(f.ctx, &controlv1.GetBlobRequest{Sha256: sha})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := sha256.New()
+	first, err := s.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Write(first.Data)
+	time.Sleep(300 * time.Millisecond) // the server fills the flow-control window and waits in Send
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	if ms.HeapAlloc > 40<<20 {
+		t.Fatalf("heap %d MiB while a 64 MiB blob is mid-stream", ms.HeapAlloc>>20)
+	}
+	chunks := 1
+	for {
+		c, err := s.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunks++
+		h.Write(c.Data)
+	}
+	if chunks != 64 || hex.EncodeToString(h.Sum(nil)) != sha {
+		t.Fatalf("chunks=%d, hash match=%v", chunks, hex.EncodeToString(h.Sum(nil)) == sha)
+	}
+}
+
+func TestGetBlobChunkBoundaries(t *testing.T) {
+	f := setup(t, 1)
+	client, _ := f.enroll(t, f.addr[0])
+	for _, c := range []struct{ size, chunks int }{{0, 0}, {control.BlobChunkSize, 1}, {2 * control.BlobChunkSize, 2}} {
+		data := make([]byte, c.size)
+		_, _ = rand.Read(data)
+		sha := sha256Hex(data)
+		if _, err := f.st.Pool.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3) on conflict do nothing", sha, len(data), data); err != nil {
+			t.Fatal(err)
+		}
+		s, err := client.GetBlob(f.ctx, &controlv1.GetBlobRequest{Sha256: sha})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []byte
+		n := 0
+		for {
+			ch, err := s.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			n++
+			got = append(got, ch.Data...)
+		}
+		if n != c.chunks || sha256Hex(got) != sha {
+			t.Fatalf("size %d: %d chunks (want %d), match=%v", c.size, n, c.chunks, sha256Hex(got) == sha)
+		}
 	}
 }
 
