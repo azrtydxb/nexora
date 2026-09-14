@@ -3,6 +3,7 @@
 use crate::proto::{
     ConfigSnapshot, ResolutionMode, RpzPolicyOverride, TsigAlgorithm, rpz_zone::Source,
 };
+use crate::recursor::memory::{MAX_CACHE_MAX_BYTES, MIN_CACHE_MAX_BYTES};
 use hickory_proto::rr::Name;
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
@@ -36,6 +37,14 @@ pub fn validate_m3(s: &ConfigSnapshot) -> Result<(), String> {
             return Err(format!(
                 "recursion.max_delegation_depth: {} not in 1..=64",
                 r.max_delegation_depth
+            ));
+        }
+        if r.cache_max_bytes != 0
+            && !(MIN_CACHE_MAX_BYTES..=MAX_CACHE_MAX_BYTES).contains(&r.cache_max_bytes)
+        {
+            return Err(format!(
+                "recursion.cache_max_bytes: {} not 0 or in {MIN_CACHE_MAX_BYTES}..={MAX_CACHE_MAX_BYTES}",
+                r.cache_max_bytes
             ));
         }
         if r.authority_port > u32::from(u16::MAX) {
@@ -288,6 +297,22 @@ mod tests {
             validate_m3(&s).unwrap_err(),
             "recursion.max_delegation_depth: 65 not in 1..=64"
         );
+    }
+
+    #[test]
+    fn cache_max_bytes_outside_range_is_rejected() {
+        for (bytes, ok) in [
+            (0u64, true),
+            (4 << 20, true),
+            (64 << 20, true),
+            (16 << 30, true),
+            ((4 << 20) - 1, false),
+            ((16 << 30) + 1, false),
+        ] {
+            let mut s = ok_snapshot();
+            s.recursion.as_mut().unwrap().cache_max_bytes = bytes;
+            assert_eq!(validate_m3(&s).is_ok(), ok, "cache_max_bytes {bytes}");
+        }
     }
 
     #[test]

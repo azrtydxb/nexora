@@ -4,6 +4,7 @@
 
 use super::budget::{Dependencies, Dependency, Limit, WorkBudget};
 use super::infra::{InfraCache, Plan, RACE_STAGGER};
+use super::memory;
 use super::metrics::RecursorMetrics;
 use super::roothints::RootHints;
 use super::rrcache::{Credibility, DnssecStatus, RrCache};
@@ -25,9 +26,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-// debt: fixed capacities (entries); revisit when memory limits become configurable (not in v1).
-const INFRA_CAPACITY: usize = 10_000;
-const RRSET_CAPACITY: usize = 100_000;
 /// Minimised queries answered inside one zone (the name exists but is not delegated: an empty
 /// non-terminal or a record of another type) before the full name is sent to that zone's
 /// servers. RFC 9156 §2.3 leaves this cap to the resolver; one step still keeps every label
@@ -45,6 +43,8 @@ pub struct RecursionParams {
     pub max_upstream_queries: u32,
     pub max_delegation_depth: u32,
     pub authority_port: u16,
+    /// `RecursionConfig.cache_max_bytes` (0: the default budget).
+    pub cache_max_bytes: u64,
 }
 
 impl RecursionParams {
@@ -59,6 +59,7 @@ impl RecursionParams {
                 max_upstream_queries: DEFAULT_MAX_UPSTREAM_QUERIES,
                 max_delegation_depth: DEFAULT_MAX_DELEGATION_DEPTH,
                 authority_port: 53,
+                cache_max_bytes: 0,
             },
             Some(c) => Self {
                 root_hints: Arc::new(RootHints::from_config(&c.root_hints)),
@@ -66,6 +67,7 @@ impl RecursionParams {
                 max_upstream_queries: or(c.max_upstream_queries, DEFAULT_MAX_UPSTREAM_QUERIES),
                 max_delegation_depth: or(c.max_delegation_depth, DEFAULT_MAX_DELEGATION_DEPTH),
                 authority_port: u16::try_from(or(c.authority_port, 53)).unwrap_or(53),
+                cache_max_bytes: c.cache_max_bytes,
             },
         }
     }
@@ -377,8 +379,8 @@ impl Recursor {
     pub fn new(metrics: Arc<RecursorMetrics>) -> Self {
         Self {
             transport: Transport::new(metrics.clone()),
-            infra: InfraCache::new(INFRA_CAPACITY),
-            rrcache: RrCache::new(RRSET_CAPACITY),
+            infra: InfraCache::new(memory::shares(0).infra),
+            rrcache: RrCache::new(memory::shares(0).rrset),
             metrics,
             ipv6: AtomicBool::new(false),
             trace: Trace::default(),

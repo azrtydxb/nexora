@@ -1076,9 +1076,9 @@ Depends on Task 3 (same `engine/src/server/mod.rs`).
 Files: `engine/src/server/buffers.rs` (new), `engine/src/server/mod.rs` (module declaration and the two `WorkerAnswerer` methods), `engine/src/server/stream.rs`, `engine/src/server/doq.rs`, `engine/tests/hot_path_alloc.rs`
 Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() -> Vec<u8>, give(Vec<u8>)}`.
 
-- [ ] In `hot_path_alloc.rs`, add a big-allocation counter next to `ALLOCS`: `static BIG: Cell<usize>`, incremented by the armed allocator when `layout.size() >= 60_000` in `alloc` and `realloc`.
-- [ ] Add a helper `stream_setup() -> (Arc<Shared>, Vec<u8> /* query */)`. It applies a snapshot with `acl_allow_cidrs: ["127.0.0.0/8"]`, an 8 MiB cache and no filter, and inserts a cached answer for `hot.example. A` for client `127.0.0.1` exactly as `measure` does (`CacheKey::in_partition(&v, policy.cache_partition())`).
-- [ ] Add the stream test:
+- [x] In `hot_path_alloc.rs`, add a big-allocation counter next to `ALLOCS`: `static BIG: Cell<usize>`, incremented by the armed allocator when the requested size is at least 60,000 octets (`layout.size()` in `alloc`, the new size in `realloc`).
+- [x] Add a helper `stream_setup() -> (Arc<Shared>, Vec<u8> /* query */)`. It applies a snapshot with `acl_allow_cidrs: ["127.0.0.0/8"]`, an 8 MiB cache and an empty filter (no lists), and inserts a cached answer for `hot.example. A` for client `127.0.0.1` exactly as `measure` does (`CacheKey::in_partition(&v, policy.cache_partition())`).
+- [x] Add the stream test:
   ```rust
   #[test]
   fn stream_answers_reuse_pooled_buffers() {
@@ -1117,17 +1117,17 @@ Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() 
       assert_eq!(BIG.with(Cell::get), 0, "a stream query allocated a 64 KiB buffer");
   }
   ```
-  If the async closure does not borrow-check, inline the loop body twice. The shape that matters: 64 warm-up round trips, then 1,000 measured ones.
-- [ ] Add `doq_answers_reuse_pooled_buffers` the same way:
+  As built, the round trip is a helper `async fn stream_roundtrip(wr, rd, frame, reply)` (it also asserts one answer) instead of the async closure. The shape that matters: 64 warm-up round trips, then 1,000 measured ones.
+- [x] Add `doq_answers_reuse_pooled_buffers` the same way:
   - self-signed `rcgen` certificate installed in a `CertStore`;
   - `nexora_engine::server::doq::bind_doq("127.0.0.1:0", tls::quic_server_config(store), doq::endpoint_config(&[7; 64]))`;
   - `run_doq(server, Rc::new(WorkerAnswerer(ctx)), store)` spawned locally;
   - a quinn client built as in `doq.rs`'s `client_endpoint` test helper;
-  - each query opens a bidirectional stream, writes the length-prefixed query with message ID 0 (DoQ requires it; rebuild `query` with ID 0), finishes, and reads to the end;
+  - each query opens a bidirectional stream, writes the length-prefixed query with message ID 0 (DoQ requires it; rebuild `query` with ID 0), finishes, and reads to the end into a preallocated reply buffer (`recv.read` loop, helper `doq_roundtrip`);
   - 32 warm-up queries, then 200 measured with `ARMED` set;
   - assert `BIG == 0` with the message `a DoQ query allocated a 64 KiB buffer`.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc -- stream_answers_reuse_pooled_buffers doq_answers_reuse_pooled_buffers'`. Expect FAIL on both assertions, with `left` about 2,000 (answer buffer and frame) and about 200.
-- [ ] Create `engine/src/server/buffers.rs`:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc -- stream_answers_reuse_pooled_buffers doq_answers_reuse_pooled_buffers'`. Expect FAIL on both assertions, with `left` 1,000 (the answer buffer; the old frame is sized to the answer) and 200 (observed).
+- [x] Create `engine/src/server/buffers.rs`:
   ```rust
   //! Per-worker pool of stream query, answer and frame buffers. Every worker thread runs its own
   //! single-threaded runtime, so a thread-local pool is a per-worker pool without locks.
@@ -1163,20 +1163,20 @@ Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() 
   }
   ```
   Declare `pub mod buffers;` in `server/mod.rs`.
-- [ ] In `WorkerAnswerer::answer_frames`, replace `let mut out = vec![0u8; 65535];` with `let mut out = buffers::take(); out.resize(65535, 0);`. `answer` already resizes the `out` it is given.
-- [ ] In `stream.rs`:
+- [x] In `WorkerAnswerer::answer_frames`, replace `let mut out = vec![0u8; 65535];` with `let mut out = buffers::take(); out.resize(65535, 0);`. `answer` already resizes the `out` it is given. On a `FastOutcome::Slow` outcome (zone transfer), `buffers::give(out)` before running the slow job. `buffers.rs` has a unit test `pool_reuses_bounded_and_rejects_grown_buffers` (reuse, capacity check, `POOL_MAX` bound).
+- [x] In `stream.rs`:
   - replace `let mut msg = vec![0u8; n];` with `let mut msg = buffers::take(); msg.resize(n, 0);`;
   - in the per-query task, build each frame from `buffers::take()` and `give` the answer message after copying it;
   - `give(msg)` after `answer_frames` returns;
-  - in the writer task, `buffers::give(frame)` after `write_all`;
+  - in the writer task, `buffers::give(frame)` after `write_all` (whether or not it succeeded);
   - delete the `debt:` comment.
-- [ ] In `doq.rs`:
-  - read the stream into a pooled buffer, `let mut buf = buffers::take();` with a `recv.read` loop up to `MAX_STREAM` (exceeding it keeps the existing protocol error), instead of `read_to_end`;
+- [x] In `doq.rs`:
+  - read the stream into a pooled buffer, `let mut buf = buffers::take();` with a `recv.read_chunk(MAX_STREAM + 1 - buf.len(), true)` loop up to `MAX_STREAM` (exceeding it keeps the existing `message too long` protocol error), instead of `read_to_end`; new test `oversized_stream_closes_connection_with_protocol_error` in `doq.rs` (a shared `connect_echo_server` helper also serves the existing test);
   - `let mut out = buffers::take();` for the answer;
   - the frame comes from `buffers::take()`;
-  - `give` all three after `send.write_all`;
+  - `give` all three after `send.write_all` (error paths drop them);
   - delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --lib server:: && cargo test --locked -p nexora-engine --test upstream_encrypted && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect all to pass. That covers `pipelined_queries_all_answered_on_one_stream`, `one_stream_per_query_and_nonzero_id_closes_connection` and zone transfers over TCP.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --lib server:: && cargo test --locked -p nexora-engine --test upstream_encrypted && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect all to pass. That covers `pipelined_queries_all_answered_on_one_stream`, `one_stream_per_query_and_nonzero_id_closes_connection` and zone transfers over TCP.
 
 ## Task 12: recursor_cache_max_bytes in the API, snapshot and GUI (#18)
 
