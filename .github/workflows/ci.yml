@@ -35,6 +35,9 @@ jobs:
             echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked -p nexora-engine --all-targets -- -D warnings
       - run: cargo test --locked -p nexora-engine --all-targets
@@ -57,6 +60,9 @@ jobs:
             echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: make webui-placeholder
       - name: gofmt
         run: test -z "$(gofmt -l mgmt e2e bench | tee /dev/stderr)"
@@ -82,4 +88,7 @@ jobs:
             echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
           } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: make web-test

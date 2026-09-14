@@ -48,6 +48,9 @@ jobs:
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler dnsperf
           curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
           echo /usr/local/go/bin >> "$GITHUB_PATH"
+      # Container root does not own the runner's checkout; trust it so git and go build's VCS
+      # stamping work (ephemeral container, so trusting every path is harmless).
+      - run: git config --global --add safe.directory '*'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { path: head }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,6 +108,9 @@ jobs:
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler dnsperf openssh-client
           curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xz
           echo /usr/local/go/bin >> "$GITHUB_PATH"
+      # Container root does not own the runner's checkout; trust it so git and go build's VCS
+      # stamping work (ephemeral container, so trusting every path is harmless).
+      - run: git config --global --add safe.directory '*'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build release binaries
         run: |
