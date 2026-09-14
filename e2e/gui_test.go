@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -19,9 +20,16 @@ func TestGUICoverage(t *testing.T) {
 	pg := env.StartPostgres()
 	ca := env.InitCA()
 	oidc := env.StartOIDCFixture(harness.OIDCUser{Username: "ada", Email: "ada@example.test", Groups: []string{"nexora-admins"}})
-	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins", ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t)}})
 	web := env.StartHTTPFixture()
 	web.SetList(t, "gui", "a.gui.test\nb.gui.test\n")
+	// Catalog sources download from the fixture mirror, never the internet.
+	web.SetList(t, "hagezi-gambling", "casino.gui.test\n")
+	web.SetList(t, "blp-gambling", "bets.gui.test\n")
+	web.SetList(t, "hagezi-pro", "ads.gui.test\n")
+	web.SetList(t, "oisd-big", "*.oisd.gui.test\n")
+	web.SetList(t, "hagezi-tif", "malware.gui.test\n")
+	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins",
+		ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t), harness.CatalogMirrorEnv(web)}})
 	fx := env.StartDNSFixture()
 
 	vars := map[string]string{
@@ -55,6 +63,12 @@ func TestGUICoverage(t *testing.T) {
 	name := harness.UniqueName("gui")
 	harness.MustQuery(t, eng.DNS, name, dns.TypeA, harness.QueryOpts{})
 	vars["NEXORA_E2E_QUERY_NAME"] = strings.TrimSuffix(name, ".")
+	if code, reason := admin.SetFilterCategory("malware", true, nil, true); code != http.StatusOK {
+		t.Fatalf("enable malware -> %d %s", code, reason)
+	}
+	if st := admin.RefreshSource("malware", "hagezi-tif"); st.EntryCount != 1 || st.LastError != "" {
+		t.Fatalf("hagezi-tif from the fixture mirror: %+v", st)
+	}
 	time.Sleep(12 * time.Second) // one engine Stats interval so the dashboard has samples
 
 	specs, _ := filepath.Glob(filepath.Join(harness.RepoRoot(t), "web/e2e/screens/[012][0-9]-*.spec.ts"))

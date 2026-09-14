@@ -4,6 +4,11 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
 import {
+  licenseNoticesFromError,
+  useFilterCategories,
+  type LicenseNotice,
+} from "@/api/filterCategories";
+import {
   useCreatePolicyGroup,
   useDeletePolicyGroup,
   useGlobalSafeSearch,
@@ -19,6 +24,7 @@ import {
   MessageRow,
   SavedNote,
 } from "@/components/common";
+import { LicenseNoticeDialog } from "@/components/categories";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -47,6 +53,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 type PolicyGroup = Schemas["PolicyGroup"];
+type Category = Schemas["FilterCategory"];
 type SafeSearch = Schemas["SafeSearch"];
 type YouTube = SafeSearch["youtube"];
 
@@ -99,12 +106,16 @@ export function PoliciesPage() {
   const canDelete = useCan("deletePolicyGroup");
   const groups = usePolicyGroups();
   const lists = useFilterLists();
+  const categories = useFilterCategories();
   const del = useDeletePolicyGroup();
   const [editing, setEditing] = useState<PolicyGroup | "new" | null>(null);
   const [deleting, setDeleting] = useState<PolicyGroup | null>(null);
   const rows = groups.data ?? [];
   const listNames = new Map((lists.data ?? []).map((l) => [l.id, l.name]));
-  const cols = 5 + (canUpdate || canDelete ? 1 : 0);
+  const categoryNames = new Map(
+    (categories.data ?? []).map((c) => [c.key, c.name]),
+  );
+  const cols = 6 + (canUpdate || canDelete ? 1 : 0);
 
   return (
     <>
@@ -147,6 +158,7 @@ export function PoliciesPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>CIDRs</TableHead>
                 <TableHead>Filter lists</TableHead>
+                <TableHead>Categories</TableHead>
                 <TableHead>Safe search</TableHead>
                 <TableHead>Engine group</TableHead>
                 {(canUpdate || canDelete) && (
@@ -178,6 +190,19 @@ export function PoliciesPage() {
                         {g.filter_list_ids.map((id) => (
                           <Badge key={id} variant="secondary">
                             {listNames.get(id) ?? id.slice(0, 8)}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-3 align-top">
+                    {g.category_keys.length === 0 ? (
+                      <span className="text-muted-foreground">None</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {g.category_keys.map((k) => (
+                          <Badge key={k} variant="secondary">
+                            {categoryNames.get(k) ?? k}
                           </Badge>
                         ))}
                       </div>
@@ -235,6 +260,7 @@ export function PoliciesPage() {
         <PolicyGroupDialog
           group={editing === "new" ? null : editing}
           lists={lists.data}
+          categories={categories.data}
           onClose={() => setEditing(null)}
         />
       )}
@@ -401,6 +427,7 @@ type GroupForm = {
   description: string;
   cidrs: string;
   filterListIds: string[];
+  categoryKeys: string[];
   allowlist: string;
   safeSearch: SafeSearch;
   engineGroupId: string | null;
@@ -413,6 +440,7 @@ function toGroupForm(g: PolicyGroup | null): GroupForm {
     description: g?.description ?? "",
     cidrs: g?.cidrs.join("\n") ?? "",
     filterListIds: g?.filter_list_ids ?? [],
+    categoryKeys: g?.category_keys ?? [],
     allowlist: g?.allowlist.join("\n") ?? "",
     safeSearch: g?.safe_search ?? offSafeSearch,
     engineGroupId: g?.engine_group_id ?? null,
@@ -423,13 +451,16 @@ function toGroupForm(g: PolicyGroup | null): GroupForm {
 function PolicyGroupDialog({
   group,
   lists,
+  categories,
   onClose,
 }: {
   group: PolicyGroup | null;
   lists: Schemas["FilterList"][] | undefined;
+  categories: Category[] | undefined;
   onClose: () => void;
 }) {
   const [form, setForm] = useState<GroupForm>(() => toGroupForm(group));
+  const [notices, setNotices] = useState<LicenseNotice[] | null>(null);
   const set = <K extends keyof GroupForm>(key: K, value: GroupForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
   const create = useCreatePolicyGroup();
@@ -446,6 +477,20 @@ function PolicyGroupDialog({
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    save.reset();
+    const pending = groupLicenseNotices(
+      categories,
+      form.categoryKeys,
+      group?.category_keys ?? [],
+    );
+    if (pending.length > 0) {
+      setNotices(pending);
+      return;
+    }
+    send(false);
+  }
+
+  function send(acknowledged: boolean) {
     const body = {
       name: form.name.trim(),
       description: form.description.trim(),
@@ -454,11 +499,17 @@ function PolicyGroupDialog({
       allowlist: lines(form.allowlist),
       safe_search: form.safeSearch,
       engine_group_id: form.engineGroupId,
-      // Kept unchanged until the dialog gains a category picker.
-      category_keys: group?.category_keys ?? [],
-      acknowledge_license: false,
+      category_keys: form.categoryKeys,
+      acknowledge_license: acknowledged,
     };
-    const done = { onSuccess: onClose };
+    const done = {
+      onSuccess: onClose,
+      onError: (err: Error) => {
+        // The server's refusal (the catalog changed since the page loaded) opens the same notice.
+        const refused = licenseNoticesFromError(err, categories);
+        if (refused && !acknowledged) setNotices(refused);
+      },
+    };
     if (group) {
       update.mutate(
         { id: group.id, body: { ...body, revision: form.revision } },
@@ -475,6 +526,15 @@ function PolicyGroupDialog({
       setForm(toGroupForm(r.data));
       update.reset();
     }
+  }
+
+  function toggleCategory(key: string, on: boolean) {
+    set(
+      "categoryKeys",
+      on
+        ? [...form.categoryKeys, key]
+        : form.categoryKeys.filter((x) => x !== key),
+    );
   }
 
   function toggleList(id: string, on: boolean) {
@@ -572,6 +632,35 @@ function PolicyGroupDialog({
               </div>
             )}
           </fieldset>
+          <fieldset className="grid gap-2">
+            <legend className="mb-1.5 text-sm font-medium">Categories</legend>
+            {(categories ?? []).length === 0 ? (
+              <p className="text-muted-foreground text-sm">
+                No filter categories available
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(categories ?? []).map((c) => (
+                  <label
+                    key={c.key}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      className="accent-primary h-4 w-4"
+                      checked={form.categoryKeys.includes(c.key)}
+                      onChange={(e) => toggleCategory(c.key, e.target.checked)}
+                    />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="text-muted-foreground text-xs">
+              Blocks the category's enabled sources for this group, whether or
+              not the category is on globally.
+            </p>
+          </fieldset>
           <div className="grid gap-1.5">
             <Label htmlFor="group-allowlist">Allowlist</Label>
             <Textarea
@@ -613,7 +702,10 @@ function PolicyGroupDialog({
               </AlertDescription>
             </Alert>
           ) : (
-            <ErrorAlert error={save.error} thing="This group" />
+            <ErrorAlert
+              error={notices ? null : save.error}
+              thing="This group"
+            />
           )}
           <ErrorAlert error={fresh.error} prefix="Could not reload the group" />
           <DialogFooter className="gap-2 pt-2">
@@ -625,7 +717,35 @@ function PolicyGroupDialog({
             </Button>
           </DialogFooter>
         </form>
+        <LicenseNoticeDialog
+          notices={notices}
+          confirmLabel="Acknowledge and save"
+          pending={save.isPending}
+          onCancel={() => {
+            save.reset();
+            setNotices(null);
+          }}
+          onConfirm={() => {
+            setNotices(null);
+            send(true);
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * The enabled sources of newly selected categories that are not free for commercial use: the group
+ * puts them in effect for its clients, so saving needs acknowledge_license.
+ */
+function groupLicenseNotices(
+  categories: Category[] | undefined,
+  selected: string[],
+  before: string[],
+): LicenseNotice[] {
+  return (categories ?? [])
+    .filter((c) => selected.includes(c.key) && !before.includes(c.key))
+    .flatMap((c) => c.sources.filter((s) => s.enabled && !s.commercial_use))
+    .map((s) => ({ key: s.key, name: s.name, notice: s.notice }));
 }

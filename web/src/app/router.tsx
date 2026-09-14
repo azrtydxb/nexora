@@ -10,6 +10,7 @@ import { DnssecPage } from "@/pages/DnssecPage";
 import { EngineDetailPage } from "@/pages/EngineDetailPage";
 import { EngineGroupPage } from "@/pages/EngineGroupPage";
 import { EnginesPage } from "@/pages/EnginesPage";
+import { FilterCategoriesPage } from "@/pages/FilterCategoriesPage";
 import { FilteringPage } from "@/pages/FilteringPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
       { path: "upstreams", element: <UpstreamsPage /> },
       { path: "access-control", element: <AccessControlPage /> },
       { path: "filtering", element: <FilteringPage /> },
+      { path: "filtering/categories", element: <FilterCategoriesPage /> },
       { path: "policies", element: <PoliciesPage /> },
       { path: "rewrites", element: <RewritesPage /> },
       { path: "rpz", element: <RpzPage /> },

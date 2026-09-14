@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   ShieldHalf,
   Sun,
+  Tags,
   TextSearch,
   Users,
   type LucideIcon,
@@ -42,6 +43,8 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   op: OperationId;
+  /** Active only on the exact path, for an item with a sibling item below its path. */
+  end?: boolean;
 };
 
 // Each item shows when the user may call the screen's list operation.
@@ -81,6 +84,14 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Filtering",
         icon: Funnel,
         op: "listFilterLists",
+        end: true,
+      },
+      {
+        route: "filter-categories",
+        path: "/filtering/categories",
+        label: "Categories",
+        icon: Tags,
+        op: "listFilterCategories",
       },
       {
         route: "policies",
@@ -231,7 +242,7 @@ function NavEntry({ item }: { item: NavItem }) {
   return (
     <NavLink
       to={item.path}
-      end={item.path === "/"}
+      end={item.path === "/" || item.end}
       data-testid={`nav-${item.route}`}
       className={({ isActive }) =>
         cn(
