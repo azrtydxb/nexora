@@ -15,6 +15,25 @@ unsafe impl Send for AlignedBytes {}
 // SAFETY: shared access is read-only.
 unsafe impl Sync for AlignedBytes {}
 
+/// An empty `Vec` with room for `capacity` items whose whole 2 MiB pages are advised for
+/// transparent huge pages before first touch (Linux), so filling a large build buffer takes one
+/// page fault per 2 MiB instead of per 4 KiB.
+pub fn huge_vec<T>(capacity: usize) -> Vec<T> {
+    let v = Vec::with_capacity(capacity);
+    #[cfg(target_os = "linux")]
+    {
+        const HUGE: usize = 2 << 20;
+        let start = (v.as_ptr() as usize).next_multiple_of(HUGE);
+        let end = (v.as_ptr() as usize + v.capacity() * size_of::<T>()) & !(HUGE - 1);
+        if end > start {
+            // SAFETY: advice on whole pages inside the allocation `v` owns; failure only loses
+            // huge pages.
+            unsafe { libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_HUGEPAGE) };
+        }
+    }
+    v
+}
+
 impl AlignedBytes {
     pub fn zeroed(len: usize) -> AlignedBytes {
         let len = len.max(BLOCK).next_multiple_of(BLOCK);

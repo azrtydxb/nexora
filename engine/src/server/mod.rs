@@ -20,7 +20,8 @@ use crate::bootstrap::Bootstrap;
 use crate::cache::{self, CacheKey, CachedResponse, Lookup, ServeMode};
 use crate::clock;
 use crate::edns::{self, CookieSecret, ReplyOpt, Transport};
-use crate::filter::{EffectivePolicy, RewriteAnswer, Verdict};
+use crate::filter::decisions::DecisionCache;
+use crate::filter::{EffectivePolicy, ListHit, RewriteAnswer, Verdict};
 use crate::inflight::{self, InFlight, Join, Resolution};
 use crate::recursor::dispatch::{self, ForwardUpstream, MissQuery, RpzPending};
 use crate::recursor::rpz::apply::{PolicyOutcome, apply_action};
@@ -30,7 +31,7 @@ use crate::recursor::{LocalBoxFuture, RecursorState};
 use crate::runtime::Runtime;
 use crate::telemetry::metrics::{Metrics, WorkerCounters};
 use crate::telemetry::querylog::{
-    self, CacheOutcome, FilterOutcome, NO_POLICY_GROUP, QueryRecord, RING_CAPACITY,
+    self, CacheOutcome, FilterOutcome, NO_FILTER_LIST, NO_POLICY_GROUP, QueryRecord, RING_CAPACITY,
 };
 use crate::upstream::{self, Question, UpstreamSet, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
@@ -123,6 +124,9 @@ pub struct WorkerCtx {
     pub index: usize,
     pub shared: Arc<Shared>,
     pub upstreams: WorkerUpstreams,
+    /// This worker's filter decisions for repeated names (valid across runtimes: keyed by index
+    /// generation and view).
+    pub filter_decisions: DecisionCache,
 }
 
 impl WorkerCtx {
@@ -132,6 +136,7 @@ impl WorkerCtx {
             index,
             shared,
             upstreams: WorkerUpstreams::new(mismatched),
+            filter_decisions: DecisionCache::default(),
         }
     }
 
@@ -278,6 +283,8 @@ impl Scope<'_> {
             route: 0,
             dnssec: 0,
             rpz_action: 0,
+            filter_list: NO_FILTER_LIST,
+            filter_generation: 0,
         }
     }
 
@@ -397,19 +404,16 @@ pub fn handle_packet(
 
     let (policy, group) = rt.policy.select(client.ip());
     rec.policy_group = group.unwrap_or(NO_POLICY_GROUP);
-    let verdict = policy.check(q.key.as_wire());
+    let verdict = policy.check_cached(&ctx.filter_decisions, q.key.as_wire());
     rec.filter_us = micros(scope.started.elapsed());
     match verdict {
         Verdict::Pass => {}
         Verdict::Allowed => rec.filter = FilterOutcome::Allowed,
-        Verdict::Blocked => {
-            ctx.counters()
-                .filter_blocked
-                .fetch_add(1, Ordering::Relaxed);
-            rec.filter = FilterOutcome::Blocked;
+        Verdict::Blocked(hit) => {
+            record_block(ctx, policy, hit, &mut rec);
             let n = policy
-                .filter()
-                .write_block_reply(&q, &mut out[..limit], opt.as_ref());
+                .block_reply()
+                .write(&q, &mut out[..limit], opt.as_ref());
             return reply(&scope, rec, out, n);
         }
         // Rewrite replies never enter the cache.
@@ -718,13 +722,10 @@ fn leader_answer(
     insert: bool,
 ) -> Option<Bytes> {
     let info = wire::walk_response(&response, q).ok()?;
-    if policy.filter().cloaked(&info.cname_targets) {
-        ctx.counters()
-            .filter_blocked
-            .fetch_add(1, Ordering::Relaxed);
-        rec.filter = FilterOutcome::Blocked;
+    if let Some(hit) = policy.filter().cloaked(&info.cname_targets) {
+        record_block(ctx, policy, hit, rec);
         let mut buf = vec![0u8; HEADER_LEN + q.qname.len() + 4 + 16 + 12];
-        let n = policy.filter().write_block_reply(q, &mut buf, None);
+        let n = policy.block_reply().write(q, &mut buf, None);
         buf.truncate(n);
         return Some(Bytes::from(buf));
     }
@@ -732,6 +733,17 @@ fn leader_answer(
         rt.cache.insert(key, &response, q, clock::now_secs());
     }
     Some(response)
+}
+
+/// Counts a blocked query (in total and per category of the matching lists) and records the
+/// blocking list for the query log. Allocation-free.
+fn record_block(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, rec: &mut QueryRecord) {
+    let c = ctx.counters();
+    c.filter_blocked.fetch_add(1, Ordering::Relaxed);
+    c.count_categories(policy.filter().categories(hit));
+    rec.filter = FilterOutcome::Blocked;
+    rec.filter_list = hit.list;
+    rec.filter_generation = policy.filter().index().generation();
 }
 
 fn serve(

@@ -1,4 +1,5 @@
-//! The v1 matcher, kept only as the oracle for filter_index_matches_filterset_semantics.
+//! The v1 matcher, kept as the oracle for filter_index_matches_filterset_semantics and as the
+//! baseline `filter_bench --v1` measures in the same run.
 
 use super::{BlockMode, domain_to_wire};
 use rustc_hash::FxHashSet;

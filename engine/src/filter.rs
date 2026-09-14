@@ -1,19 +1,23 @@
 //! Blocklist/allowlist matching on wire-format name suffixes, and block replies.
 
+pub mod calibrate;
+pub mod decisions;
 pub mod index;
+pub mod lists;
 pub mod names;
-#[cfg(test)]
-mod oracle;
+#[doc(hidden)]
+pub mod oracle;
 pub mod prefetch;
 pub mod storage;
 pub mod synth;
 
 use crate::edns::ReplyOpt;
 use crate::proto::{ConfigSnapshot, RewriteSet, RewriteType};
-use crate::snapshot::{BlobSource, SnapshotError};
-use crate::wire::{self, NameKey, QueryView, SynthAnswer};
+use crate::wire::{self, QueryView, SynthAnswer};
+use decisions::DecisionCache;
 use hickory_proto::rr::Name;
-use rustc_hash::{FxHashMap, FxHashSet};
+use lists::SnapshotLists;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -33,110 +37,18 @@ pub enum BlockMode {
     Refused = 3,
 }
 
+pub use index::{FilterDecision, FilterIndex, FilterView, ListHit};
+
+/// The configured block response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FilterDecision {
-    None,
-    Blocked,
-    Allowed,
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct ListStats {
-    pub entries: usize,
-    pub invalid_lines: usize,
-}
-
-pub struct FilterSet {
+pub struct BlockReply {
     pub mode: BlockMode,
     pub ttl: u32,
-    blocked: FxHashSet<Box<[u8]>>,
-    allowed: FxHashSet<Box<[u8]>>,
 }
 
-impl FilterSet {
-    pub fn empty() -> FilterSet {
-        FilterSet {
-            mode: BlockMode::NullIp,
-            ttl: 0,
-            blocked: FxHashSet::default(),
-            allowed: FxHashSet::default(),
-        }
-    }
-
-    /// Builds from decompressed lists of one domain per line.
-    pub fn build(
-        blocklists: &[Vec<u8>],
-        allowlists: &[Vec<u8>],
-        mode: BlockMode,
-        ttl: u32,
-    ) -> (FilterSet, ListStats) {
-        let mut stats = ListStats::default();
-        let mut load = |lists: &[Vec<u8>], set: &mut FxHashSet<Box<[u8]>>| {
-            for line in lists.iter().flat_map(|l| l.split(|&b| b == b'\n')) {
-                if line.is_empty() {
-                    continue;
-                }
-                match domain_to_wire(line) {
-                    Some(name) => {
-                        set.insert(name);
-                    }
-                    None => stats.invalid_lines += 1,
-                }
-            }
-        };
-        let mut set = FilterSet {
-            mode,
-            ttl,
-            ..FilterSet::empty()
-        };
-        load(blocklists, &mut set.blocked);
-        load(allowlists, &mut set.allowed);
-        stats.entries = set.blocked.len() + set.allowed.len();
-        (set, stats)
-    }
-
-    /// Walks the label suffixes of a lowercase wire name, longest first; the
-    /// first allowlisted suffix wins, then the first blocklisted one.
-    pub fn decide(&self, name_wire: &[u8]) -> FilterDecision {
-        if self.blocked.is_empty() && self.allowed.is_empty() {
-            return FilterDecision::None;
-        }
-        let mut pos = 0;
-        let mut decision = FilterDecision::None;
-        while let Some(&len) = name_wire.get(pos) {
-            if len == 0 {
-                break;
-            }
-            let suffix = &name_wire[pos..];
-            if self.allowed.contains(suffix) {
-                return FilterDecision::Allowed;
-            }
-            if decision == FilterDecision::None && self.blocked.contains(suffix) {
-                if self.allowed.is_empty() {
-                    return FilterDecision::Blocked;
-                }
-                // A shorter allowlisted suffix still beats this block.
-                decision = FilterDecision::Blocked;
-            }
-            pos += 1 + usize::from(len);
-        }
-        decision
-    }
-
-    /// True when any CNAME target is blocked.
-    pub fn cloaked(&self, cname_targets: &[NameKey]) -> bool {
-        cname_targets
-            .iter()
-            .any(|t| self.decide(t.as_wire()) == FilterDecision::Blocked)
-    }
-
-    /// Writes the configured block reply; returns 0 when `out` is too small.
-    pub fn write_block_reply(
-        &self,
-        q: &QueryView<'_>,
-        out: &mut [u8],
-        opt: Option<&ReplyOpt>,
-    ) -> usize {
+impl BlockReply {
+    /// Writes the block reply; returns 0 when `out` is too small.
+    pub fn write(&self, q: &QueryView<'_>, out: &mut [u8], opt: Option<&ReplyOpt>) -> usize {
         match self.mode {
             BlockMode::NullIp => {
                 let answer = match q.qtype {
@@ -204,7 +116,7 @@ pub enum RewriteAnswer {
 pub enum Verdict<'a> {
     Pass,
     Allowed,
-    Blocked,
+    Blocked(ListHit),
     Rewrite(&'a RewriteAnswer),
 }
 
@@ -258,11 +170,12 @@ impl RewriteTable {
 /// The filter and rewrites that apply to one client.
 pub struct EffectivePolicy {
     group_id: Box<str>,
-    filter: Arc<FilterSet>,
+    filter: Arc<FilterView>,
+    block: BlockReply,
     rewrites: RewriteTable,
-    /// Identifies `filter` among the runtime's distinct filter sets (global = 0).
-    /// Cached upstream answers are only valid for the filter set whose CNAME
-    /// cloaking check admitted them, so it is part of the cache key.
+    /// Identifies `filter` among the runtime's distinct views (global = 0). Cached upstream
+    /// answers are only valid for the view whose CNAME cloaking check admitted them, so it is part
+    /// of the cache key.
     cache_partition: u16,
 }
 
@@ -271,20 +184,36 @@ impl EffectivePolicy {
         &self.group_id
     }
 
-    pub fn filter(&self) -> &FilterSet {
+    pub fn filter(&self) -> &FilterView {
         &self.filter
+    }
+
+    pub fn block_reply(&self) -> BlockReply {
+        self.block
     }
 
     pub fn cache_partition(&self) -> u16 {
         self.cache_partition
     }
 
+    /// The rewrite or filter verdict for `wire_name`, deciding without a decision cache.
     pub fn check(&self, wire_name: &[u8]) -> Verdict<'_> {
+        self.verdict(wire_name, |name| self.filter.decide(name))
+    }
+
+    /// [`EffectivePolicy::check`] through the worker's decision cache (the query fast path).
+    #[inline]
+    pub fn check_cached(&self, cache: &DecisionCache, wire_name: &[u8]) -> Verdict<'_> {
+        self.verdict(wire_name, |name| cache.decide(&self.filter, name))
+    }
+
+    #[inline(always)]
+    fn verdict(&self, wire_name: &[u8], decide: impl FnOnce(&[u8]) -> FilterDecision) -> Verdict<'_> {
         if let Some(r) = self.rewrites.lookup(wire_name) {
             return Verdict::Rewrite(r);
         }
-        match self.filter.decide(wire_name) {
-            FilterDecision::Blocked => Verdict::Blocked,
+        match decide(wire_name) {
+            FilterDecision::Blocked(hit) => Verdict::Blocked(hit),
             FilterDecision::Allowed => Verdict::Allowed,
             FilterDecision::None => Verdict::Pass,
         }
@@ -300,16 +229,20 @@ pub struct PolicyTable {
     v6: Box<[(u8, FxHashMap<u128, u16>)]>,
     /// The filter key of every group cache partition, in partition order (1..).
     partition_keys: Box<[String]>,
+    /// Memory of the global view and every distinct group view.
+    views_memory_bytes: u64,
 }
 
 impl PolicyTable {
     /// Only global policy: no groups and no rewrites.
-    pub fn global_only(global_filter: Arc<FilterSet>) -> PolicyTable {
+    pub fn global_only(global: Arc<FilterView>, block: BlockReply) -> PolicyTable {
         PolicyTable {
             groups: Box::new([]),
+            views_memory_bytes: global.memory_bytes(),
             global: EffectivePolicy {
                 group_id: "".into(),
-                filter: global_filter,
+                filter: global,
+                block,
                 rewrites: RewriteTable::default(),
                 cache_partition: 0,
             },
@@ -361,12 +294,19 @@ impl PolicyTable {
         &self.partition_keys
     }
 
-    /// Validates and builds the policy section of `snap`; `global_filter`
-    /// (M1's `FilterConfig` selection) supplies the block mode and TTL.
+    pub fn views_memory_bytes(&self) -> u64 {
+        self.views_memory_bytes
+    }
+
+    /// Validates and builds the policy section of `snap`: one view over `index` per distinct
+    /// group list selection (shared by groups selecting the same lists), `global` for clients in
+    /// no group, and `block` for every policy.
     pub fn build(
         snap: &ConfigSnapshot,
-        global_filter: Arc<FilterSet>,
-        blobs: &dyn BlobSource,
+        lists: &SnapshotLists,
+        index: &Arc<FilterIndex>,
+        global: Arc<FilterView>,
+        block: BlockReply,
     ) -> Result<PolicyTable, String> {
         let mut sets: HashMap<&str, RewriteTable> = HashMap::new();
         for set in &snap.rewrite_sets {
@@ -394,44 +334,32 @@ impl PolicyTable {
             ));
         }
 
-        let mut filters: HashMap<String, (Arc<FilterSet>, u16)> = HashMap::new();
+        let mut views: HashMap<String, (Arc<FilterView>, u16)> = HashMap::new();
+        let mut views_memory_bytes = global.memory_bytes();
         let mut partition_keys = Vec::new();
         let mut groups = Vec::with_capacity(snap.policy_groups.len());
         let mut v4: FxHashMap<(u8, u32), u16> = FxHashMap::default();
         let mut v6: FxHashMap<(u8, u128), u16> = FxHashMap::default();
-        for (index, g) in snap.policy_groups.iter().enumerate() {
-            let index = index as u16;
+        for (index_in_snapshot, g) in snap.policy_groups.iter().enumerate() {
+            let group_index = index_in_snapshot as u16;
             let rewrites = merged(&g.rewrite_set_ids, &|id| {
                 format!("policy group {}: unknown rewrite set {id}", g.id)
             })?;
 
-            let mut hashes: Vec<&str> = g.blocklists.iter().map(|b| b.sha256.as_str()).collect();
-            hashes.sort_unstable();
-            let key = format!("{}|{}", hashes.join(","), g.allowlist.join(","));
-            let (filter, cache_partition) = match filters.get(&key) {
+            let key = lists.group_key(index_in_snapshot);
+            let (filter, cache_partition) = match views.get(&key) {
                 Some((f, p)) => (f.clone(), *p),
                 None => {
-                    let decoded = g
-                        .blocklists
-                        .iter()
-                        .map(|r| {
-                            let bytes = blobs.read(r)?;
-                            decode_blob(&bytes).map_err(|e| SnapshotError::Blob {
-                                sha256: r.sha256.clone(),
-                                reason: format!("zstd: {e}"),
-                            })
-                        })
-                        .collect::<Result<Vec<_>, SnapshotError>>()
-                        .map_err(|e| format!("policy group {}: {e}", g.id))?;
-                    let allow = g.allowlist.join("\n").into_bytes();
-                    let filter = Arc::new(
-                        FilterSet::build(&decoded, &[allow], global_filter.mode, global_filter.ttl)
-                            .0,
-                    );
+                    let selected = &lists.groups[index_in_snapshot];
+                    let view = Arc::new(index.view(
+                        &lists.indexes(index, &selected.block),
+                        &lists.indexes(index, selected.allow.as_slice()),
+                    ));
+                    views_memory_bytes += view.memory_bytes();
                     partition_keys.push(key.clone());
                     let partition = partition_keys.len() as u16;
-                    filters.insert(key, (filter.clone(), partition));
-                    (filter, partition)
+                    views.insert(key, (view.clone(), partition));
+                    (view, partition)
                 }
             };
 
@@ -443,10 +371,10 @@ impl PolicyTable {
                     .ok_or_else(|| format!("policy group {}: invalid cidr {cidr}", g.id))?;
                 let previous = match net {
                     ipnet::IpNet::V4(n) => {
-                        v4.insert((n.prefix_len(), u32::from(n.network())), index)
+                        v4.insert((n.prefix_len(), u32::from(n.network())), group_index)
                     }
                     ipnet::IpNet::V6(n) => {
-                        v6.insert((n.prefix_len(), u128::from(n.network())), index)
+                        v6.insert((n.prefix_len(), u128::from(n.network())), group_index)
                     }
                 };
                 if let Some(other) = previous {
@@ -460,12 +388,14 @@ impl PolicyTable {
             groups.push(EffectivePolicy {
                 group_id: g.id.as_str().into(),
                 filter,
+                block,
                 rewrites,
                 cache_partition,
             });
         }
 
-        let mut table = PolicyTable::global_only(global_filter);
+        let mut table = PolicyTable::global_only(global, block);
+        table.views_memory_bytes = views_memory_bytes;
         table.global.rewrites = global_rewrites;
         table.groups = groups.into_boxed_slice();
         table.v4 = by_prefix_len(v4);
@@ -625,15 +555,37 @@ mod policy_tests {
         let (r, z) = ads_blob();
         MapBlobs(HashMap::from([(r.sha256, z)]))
     }
-    fn global() -> Arc<FilterSet> {
-        Arc::new(
-            FilterSet::build(
-                &[b"ads.example.test\n".to_vec()],
-                &[],
-                BlockMode::NullIp,
-                60,
-            )
-            .0,
+    fn table(s: &ConfigSnapshot) -> Result<PolicyTable, String> {
+        let mut s = s.clone();
+        let (r, _) = ads_blob();
+        s.filter = Some(crate::proto::FilterConfig {
+            blocklists: vec![BlobRef {
+                name: "global".into(),
+                ..r
+            }],
+            block_mode: 1,
+            block_ttl: 60,
+            ..Default::default()
+        });
+        let lists = SnapshotLists::collect(&s)?;
+        let index = Arc::new(
+            lists
+                .build_index(&blobs(), 64 << 20, 1)
+                .map_err(|e| e.to_string())?,
+        );
+        let global = Arc::new(index.view(
+            &lists.indexes(&index, &lists.global_block),
+            &lists.indexes(&index, &lists.global_allow),
+        ));
+        PolicyTable::build(
+            &s,
+            &lists,
+            &index,
+            global,
+            BlockReply {
+                mode: BlockMode::NullIp,
+                ttl: 60,
+            },
         )
     }
     fn group(
@@ -650,6 +602,7 @@ mod policy_tests {
             blocklists: lists.to_vec(),
             allowlist: allow.iter().map(|s| s.to_string()).collect(),
             rewrite_set_ids: sets.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         }
     }
     fn snapshot() -> ConfigSnapshot {
@@ -695,11 +648,11 @@ mod policy_tests {
 
     #[test]
     fn most_specific_cidr_wins_and_group_replaces_global() {
-        let t = PolicyTable::build(&snapshot(), global(), &blobs()).unwrap();
+        let t = table(&snapshot()).unwrap();
         let ads = wire("x.ads.example.test");
         let (p, g) = t.select("10.2.3.4".parse::<IpAddr>().unwrap());
         assert_eq!((p.group_id(), g), ("wide", Some(0)));
-        assert!(matches!(p.check(&ads), Verdict::Blocked));
+        assert!(matches!(p.check(&ads), Verdict::Blocked(_)));
         assert!(matches!(
             p.check(&wire("ok.ads.example.test")),
             Verdict::Allowed
@@ -716,12 +669,12 @@ mod policy_tests {
         assert_eq!(p.group_id(), "narrow");
         let (p, g) = t.select("192.0.2.1".parse::<IpAddr>().unwrap());
         assert_eq!((p.group_id(), g), ("", None));
-        assert!(matches!(p.check(&ads), Verdict::Blocked));
+        assert!(matches!(p.check(&ads), Verdict::Blocked(_)));
     }
 
     #[test]
     fn rewrite_precedence_exact_wildcard_and_set_order() {
-        let t = PolicyTable::build(&snapshot(), global(), &blobs()).unwrap();
+        let t = table(&snapshot()).unwrap();
         let (global, _) = t.select("192.0.2.1".parse::<IpAddr>().unwrap());
         match global.check(&wire("nas.home.test")) {
             Verdict::Rewrite(RewriteAnswer::Addrs { a, aaaa }) => {
@@ -771,13 +724,13 @@ mod policy_tests {
         let mut s = snapshot();
         s.policy_groups[1].cidrs.push("10.0.0.0/8".into());
         assert_eq!(
-            PolicyTable::build(&s, global(), &blobs()).err().unwrap(),
+            table(&s).err().unwrap(),
             "policy group narrow: cidr 10.0.0.0/8 also in group wide"
         );
         let mut s = snapshot();
         s.policy_groups[0].cidrs = vec!["10.0.0.1/8".into()];
         assert_eq!(
-            PolicyTable::build(&s, global(), &blobs()).err().unwrap(),
+            table(&s).err().unwrap(),
             "policy group wide: invalid cidr 10.0.0.1/8"
         );
         let mut s = snapshot();
@@ -787,15 +740,15 @@ mod policy_tests {
             name: "x".into(),
         });
         assert_eq!(
-            PolicyTable::build(&s, global(), &blobs()).err().unwrap(),
-            "policy group wide: blob nope: missing"
+            table(&s).err().unwrap(),
+            "blob nope: missing"
         );
         let mut s = snapshot();
         s.rewrite_sets[0]
             .rules
             .push(rule("nas.home.test", RewriteType::Cname, "other.test"));
         assert_eq!(
-            PolicyTable::build(&s, global(), &blobs()).err().unwrap(),
+            table(&s).err().unwrap(),
             "rewrite set custom:global: nas.home.test has CNAME and other records"
         );
         let mut s = snapshot();
@@ -803,7 +756,7 @@ mod policy_tests {
             .rules
             .push(rule("bad.test", RewriteType::A, "fd00::1"));
         assert_eq!(
-            PolicyTable::build(&s, global(), &blobs()).err().unwrap(),
+            table(&s).err().unwrap(),
             "rewrite set custom:global: bad.test A value fd00::1 is not an IPv4 address"
         );
     }
@@ -818,7 +771,7 @@ mod policy_tests {
             &["ok.ads.example.test"],
             &[],
         ));
-        let t = PolicyTable::build(&s, global(), &blobs()).unwrap();
+        let t = table(&s).unwrap();
         let part = |ip: &str| t.select(ip.parse::<IpAddr>().unwrap()).0.cache_partition();
         assert_eq!(part("192.0.2.1"), 0, "global");
         assert_ne!(

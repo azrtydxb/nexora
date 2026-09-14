@@ -9,7 +9,7 @@
 
 use super::names::{self, Levels, MAX_LEVELS};
 use super::prefetch::prefetch_read;
-use super::storage::{AlignedBytes, BLOCK};
+use super::storage::{AlignedBytes, BLOCK, huge_vec};
 use rustc_hash::FxHashMap;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
@@ -257,6 +257,9 @@ pub struct FilterIndex {
     memory_bytes: u64,
     build_seconds: f64,
     generation: u64,
+    /// View ids for the decision cache: one per distinct (block, allow) list mask pair, so equal
+    /// views share cached decisions and different views never do.
+    view_ids: parking_lot::Mutex<FxHashMap<Box<[u64]>, u16>>,
 }
 
 /// Runs `work(i)` for `i` in `0..items` on `threads` scoped threads (inline for one thread).
@@ -313,7 +316,7 @@ fn scan_lists(lists: &[ListInput<'_>], opts: &IndexOptions) -> (Vec<Vec<Record>>
     let results: Vec<Scanned> = run_parallel(items.len(), opts.threads, |i| {
         let (list, start, end) = items[i];
         let text = lists[usize::from(list)].text;
-        let mut out = Vec::with_capacity((end - start) / 12 + 16);
+        let mut out = huge_vec((end - start) / 12 + 16);
         let mut invalid = 0;
         let mut at = start;
         while at < end {
@@ -374,8 +377,8 @@ fn scatter(parts: Vec<Vec<Record>>, threads: usize) -> (Vec<Record>, [usize; 256
             *cur += n;
         }
     }
-    let mut out = vec![Record::default(); at];
-    let dst = SharedRecords(out.as_mut_ptr());
+    let mut out: Vec<Record> = huge_vec(at);
+    let dst = SharedMut(out.as_mut_ptr());
     run_parallel(parts.len(), threads, |p| {
         let mut cur = offsets[p];
         for r in &parts[p] {
@@ -386,22 +389,31 @@ fn scatter(parts: Vec<Vec<Record>>, threads: usize) -> (Vec<Record>, [usize; 256
             cur[b] += 1;
         }
     });
+    // SAFETY: the parts wrote every index below `at` exactly once.
+    unsafe { out.set_len(at) };
     (out, counts)
 }
 
-/// A pointer to the scatter output shared by the threads writing disjoint ranges of it.
-#[derive(Clone, Copy)]
-struct SharedRecords(*mut Record);
+/// A pointer into one allocation shared by threads that each write their own disjoint index
+/// range of it.
+struct SharedMut<T>(*mut T);
 
-impl SharedRecords {
-    fn at(self, i: usize) -> *mut Record {
+impl<T> Clone for SharedMut<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for SharedMut<T> {}
+
+impl<T> SharedMut<T> {
+    fn at(self, i: usize) -> *mut T {
         self.0.wrapping_add(i)
     }
 }
-// SAFETY: every thread writes only its own disjoint index range (see `scatter`).
-unsafe impl Send for SharedRecords {}
+// SAFETY: every user writes only the index range it owns (see the call sites).
+unsafe impl<T: Send> Send for SharedMut<T> {}
 // SAFETY: as above.
-unsafe impl Sync for SharedRecords {}
+unsafe impl<T: Send> Sync for SharedMut<T> {}
 
 /// The last two labels of a validated text name.
 fn two_label_suffix(text: &[u8]) -> &[u8] {
@@ -644,7 +656,8 @@ fn pick(slots: &[Slot], b1: u32, b2: u32, size: u8) -> Option<u32> {
 /// uniques that did not fit.
 fn place(order: &[(u64, u32, u8)], slots: &mut [Slot], next: &mut [u32]) -> (Vec<u32>, Vec<u32>) {
     let blocks = slots.len() as u32;
-    let mut chosen = vec![STASHED; next.len()];
+    let mut chosen = huge_vec(next.len());
+    chosen.resize(next.len(), STASHED);
     let mut overflow = Vec::new();
     for (p, &(key, i, size)) in order.iter().enumerate() {
         if let Some(&(ahead, _, _)) = order.get(p + 16) {
@@ -810,9 +823,10 @@ impl BlockWriter<'_, '_> {
         }
     }
 
-    /// Writes `count` blocks. Item `p` (unique `item(p)`) goes to block `chosen[p]`. A sequential
-    /// pass fixes every entry's slot and octet position, so `threads` threads then write disjoint
-    /// octet ranges over contiguous item ranges, prefetching the texts and blocks ahead.
+    /// Writes `count` blocks. Item `p` (unique `item(p)`) goes to block `chosen[p]`. Each of
+    /// `threads` threads owns a contiguous block range: it lists its items in item order, counts
+    /// its blocks' entries, then encodes and writes the entries (prefetching texts and blocks
+    /// ahead), so entry order inside a block is item order whatever the thread count.
     fn write_all(
         &self,
         count: usize,
@@ -823,80 +837,56 @@ impl BlockWriter<'_, '_> {
     ) -> AlignedBytes {
         // One spare block keeps word comparisons of the last block's entries inside the table.
         let mut bytes = AlignedBytes::zeroed((count + 1) * BLOCK);
-        let mut cursor: Vec<(u8, u8)> = vec![(0, 0); count];
-        for &b in chosen.iter().filter(|&&b| b != STASHED) {
-            cursor[b as usize].1 += 1;
-        }
-        {
-            let table = bytes.as_mut_slice();
-            for (b, c) in cursor.iter_mut().enumerate() {
-                table[b * BLOCK] = c.1;
-                table[b * BLOCK + 1] = tags.get(b).copied().unwrap_or(0);
+        let dst = SharedMut(bytes.as_mut_slice().as_mut_ptr());
+        let per = count.div_ceil(threads.max(1)).max(1);
+        run_parallel(count.div_ceil(per), threads, |t| {
+            let (lo, hi) = ((t * per) as u32, ((t + 1) * per).min(count) as u32);
+            let mine: Vec<u32> = (0..chosen.len() as u32)
+                .filter(|&p| (lo..hi).contains(&chosen[p as usize]))
+                .collect();
+            // Per block of the range: next entry octet and next fingerprint slot.
+            let mut cursor = vec![(0u8, 0u8); (hi - lo) as usize];
+            for &p in &mine {
+                cursor[(chosen[p as usize] - lo) as usize].1 += 1;
+            }
+            for (i, c) in cursor.iter_mut().enumerate() {
+                let b = lo as usize + i;
+                // SAFETY: the header octets of blocks lo..hi belong to this thread.
+                unsafe {
+                    dst.at(b * BLOCK).write(c.1);
+                    dst.at(b * BLOCK + 1)
+                        .write(tags.get(b).copied().unwrap_or(0));
+                }
                 *c = ((HEADER + usize::from(c.1)) as u8, 0);
             }
-        }
-        // Per item: octet offset of its entry and of its fingerprint in the table.
-        let places: Vec<(u32, u32)> = chosen
-            .iter()
-            .enumerate()
-            .map(|(p, &b)| {
-                if b == STASHED {
-                    return (u32::MAX, u32::MAX);
-                }
-                let u = &self.uniques[item(p) as usize];
-                let (pos, k) = cursor[b as usize];
-                cursor[b as usize] = (pos + entry_len(usize::from(u.len) + 1, u.set) as u8, k + 1);
-                let base = b * BLOCK as u32;
-                (base + u32::from(pos), base + (HEADER as u32) + u32::from(k))
-            })
-            .collect();
-        let dst = SharedBytes(bytes.as_mut_slice().as_mut_ptr());
-        let per = chosen.len().div_ceil(threads.max(1)).max(1);
-        run_parallel(chosen.len().div_ceil(per), threads, |t| {
             let mut entry = [0u8; 72];
-            for p in t * per..((t + 1) * per).min(chosen.len()) {
-                if let Some(&(ahead, _)) = places.get(p + 8)
-                    && ahead != u32::MAX
-                {
-                    let u = &self.uniques[item(p + 8) as usize];
+            for (j, &p) in mine.iter().enumerate() {
+                if let Some(&ahead) = mine.get(j + 8) {
+                    let u = &self.uniques[item(ahead as usize) as usize];
                     let text = self.lists[usize::from(u.list)].text;
                     prefetch_read(text.as_ptr().wrapping_add(u.offset as usize));
-                    prefetch_read(dst.at(ahead as usize));
+                    prefetch_read(dst.at(chosen[ahead as usize] as usize * BLOCK));
                 }
-                let (at, fp_at) = places[p];
-                if at == u32::MAX {
-                    continue;
-                }
-                let m = item(p);
-                let n = self.encode(&mut entry, m);
+                let b = chosen[p as usize];
+                let m = item(p as usize);
                 let u = &self.uniques[m as usize];
-                // SAFETY: `places` gives every item its own octets (entries do not overlap and fit
-                // their block, fingerprints have one slot each), inside the table.
+                let c = &mut cursor[(b - lo) as usize];
+                let n = self.encode(&mut entry, m);
+                let base = b as usize * BLOCK;
+                // SAFETY: the cursor gives every entry of block b (owned by this thread) its own
+                // octets, which fit the block because placement counted their sizes, and its own
+                // fingerprint slot; all inside the table.
                 unsafe {
-                    std::ptr::copy_nonoverlapping(entry.as_ptr(), dst.at(at as usize), n);
-                    dst.at(fp_at as usize)
+                    std::ptr::copy_nonoverlapping(entry.as_ptr(), dst.at(base + usize::from(c.0)), n);
+                    dst.at(base + HEADER + usize::from(c.1))
                         .write(entry_fingerprint(u.key, u.len + 1));
                 }
+                *c = (c.0 + n as u8, c.1 + 1);
             }
         });
         bytes
     }
 }
-
-/// A pointer to table octets shared by threads writing disjoint ranges of them.
-#[derive(Clone, Copy)]
-struct SharedBytes(*mut u8);
-
-impl SharedBytes {
-    fn at(self, i: usize) -> *mut u8 {
-        self.0.wrapping_add(i)
-    }
-}
-
-// SAFETY: every thread writes only octets `write_all` assigned to its items.
-unsafe impl Send for SharedBytes {}
-// SAFETY: as above.
-unsafe impl Sync for SharedBytes {}
 
 impl FilterIndex {
     /// Builds the index; never allocates blocks for an index above `opts.max_bytes`.
@@ -944,7 +934,7 @@ impl FilterIndex {
         let deduped = run_parallel(groups.len(), threads, |g| {
             let mut group = groups[g].lock();
             let mut sets = SetTable::new(lists.len());
-            let mut out = Vec::with_capacity(group.iter().map(|b| b.len()).sum());
+            let mut out = huge_vec(group.iter().map(|b| b.len()).sum());
             let mut sorted = Vec::new();
             for bucket in group.iter_mut() {
                 dedupe_bucket(lists, bucket, &mut sorted, &mut sets, &mut out);
@@ -953,38 +943,59 @@ impl FilterIndex {
         });
         drop(groups);
         drop(records);
+        // Intern every thread's sets (counts complete them), renumber, then write the uniques with
+        // their final set ids in parallel into disjoint ranges of one allocation.
         let mut sets = SetTable::new(lists.len());
-        let mut uniques = Vec::with_capacity(deduped.iter().map(|(_, u)| u.len()).sum());
-        for (local, part) in deduped {
-            let remap: Vec<u32> = (0..local.len() as u32)
-                .map(|id| {
-                    if id == 0 {
-                        0
-                    } else {
-                        sets.intern(local.get(id), local.counts[id as usize])
-                    }
-                })
-                .collect();
-            uniques.extend(part.into_iter().map(|u| Unique {
-                set: remap[u.set as usize],
-                ..u
-            }));
-        }
-        let remap = sets.renumber();
+        let (locals, parts): (Vec<SetTable>, Vec<Vec<Unique>>) = deduped.into_iter().unzip();
+        let to_global: Vec<Vec<u32>> = locals
+            .iter()
+            .map(|local| {
+                (0..local.len() as u32)
+                    .map(|id| match id {
+                        0 => 0,
+                        _ => sets.intern(local.get(id), local.counts[id as usize]),
+                    })
+                    .collect()
+            })
+            .collect();
+        drop(locals);
+        let renumbered = sets.renumber();
+        let mut starts = Vec::with_capacity(parts.len());
+        let total = parts.iter().fold(0, |at, part| {
+            starts.push(at);
+            at + part.len()
+        });
+        let mut uniques: Vec<Unique> = huge_vec(total);
+        let dst = SharedMut(uniques.as_mut_ptr());
+        let marks = run_parallel(parts.len(), threads, |i| {
+            let (mut single_mask, mut heavy_keys) = ([0u64; 4], Vec::new());
+            for (k, u) in parts[i].iter().enumerate() {
+                let set = renumbered[to_global[i][u.set as usize] as usize];
+                if u.flags & SINGLE != 0 {
+                    single_mask[(u.hash >> 6) as usize & 3] |= 1 << (u.hash & 63);
+                }
+                if u.flags & MARKER != 0 {
+                    heavy_keys.push(u.key);
+                }
+                // SAFETY: part i owns indexes starts[i]..starts[i] + len, inside the capacity.
+                unsafe { dst.at(starts[i] + k).write(Unique { set, ..*u }) };
+            }
+            (single_mask, heavy_keys)
+        });
+        // SAFETY: the parts wrote every index below `total` exactly once.
+        unsafe { uniques.set_len(total) };
+        drop(parts);
         let mut single_mask = [0u64; 4];
         let mut heavy_keys = Vec::new();
-        for u in &mut uniques {
-            u.set = remap[u.set as usize];
-            if u.flags & SINGLE != 0 {
-                single_mask[(u.hash >> 6) as usize & 3] |= 1 << (u.hash & 63);
+        for (mask, keys) in marks {
+            for (m, w) in single_mask.iter_mut().zip(mask) {
+                *m |= w;
             }
-            if u.flags & MARKER != 0 {
-                heavy_keys.push(u.key);
-            }
+            heavy_keys.extend(keys);
         }
         let heavy = heavy_table(&heavy_keys);
 
-        let mut sizes = Vec::with_capacity(uniques.len());
+        let mut sizes = huge_vec(uniques.len());
         let (mut sum, mut long_bytes) = (0usize, 0usize);
         for u in &uniques {
             // The entry and its fingerprint octet.
@@ -1014,13 +1025,15 @@ impl FilterIndex {
         for start in size_starts.iter_mut().rev() {
             (*start, at) = (at, at + *start);
         }
-        let mut order = vec![(0u64, 0u32, 0u8); uniques.len()];
+        let mut order = huge_vec(uniques.len());
+        order.resize(uniques.len(), (0u64, 0u32, 0u8));
         for (i, (u, &size)) in uniques.iter().zip(&sizes).enumerate() {
             order[size_starts[usize::from(size)]] = (u.key, i as u32, size);
             size_starts[usize::from(size)] += 1;
         }
         let mut slots = vec![Slot::EMPTY; block_count];
-        let mut next = vec![u32::MAX; uniques.len()];
+        let mut next = huge_vec(uniques.len());
+        next.resize(uniques.len(), u32::MAX);
         let (mut chosen, overflow) = place(&order, &mut slots, &mut next);
         drop(order);
         let overflow = relocate(
@@ -1118,6 +1131,7 @@ impl FilterIndex {
             memory_bytes,
             build_seconds: started.elapsed().as_secs_f64(),
             generation: BUILDS.fetch_add(1, Ordering::Relaxed) + 1,
+            view_ids: Default::default(),
         })
     }
 
@@ -1143,6 +1157,7 @@ impl FilterIndex {
             memory_bytes: 4 * BLOCK as u64,
             build_seconds: 0.0,
             generation: 0,
+            view_ids: Default::default(),
         }
     }
 
@@ -1178,6 +1193,41 @@ impl FilterIndex {
         self.by_id.get(id).copied()
     }
 
+    /// Up to `n` listed names as lowercase wire names, one per sampled primary block (blocks
+    /// stepped evenly), skipping long names and heavy-suffix markers. Off the query path.
+    pub fn sample_names(&self, n: usize) -> Vec<Box<[u8]>> {
+        let mut out = Vec::with_capacity(n);
+        if self.entries == 0 || n == 0 {
+            return out;
+        }
+        let step = (self.block_count as usize / n).max(1);
+        for b in (0..self.block_count).step_by(step) {
+            if out.len() == n {
+                break;
+            }
+            let block = self.blocks.as_slice();
+            let base = b as usize * BLOCK;
+            let count = usize::from(block[base] & COUNT_MASK);
+            let mut pos = base + HEADER + count;
+            for _ in 0..count {
+                let head = block[pos];
+                let (set, set_len) = names::read_varint(&block[pos + 1..]);
+                if head >= LONG_MARKER {
+                    pos += 1 + set_len + 5;
+                    continue;
+                }
+                let symbols = head & !MARKER;
+                let packed = pos + 1 + set_len;
+                if set != 0 {
+                    out.push(names::unpack_wire(&block[packed..], symbols));
+                    break;
+                }
+                pos = packed + (7 * usize::from(symbols)).div_ceil(8);
+            }
+        }
+        out
+    }
+
     /// A view that blocks with the `block` lists and allows with the `allow` lists (list indexes).
     pub fn view(self: &Arc<Self>, block: &[u16], allow: &[u16]) -> FilterView {
         let words = self.set_words;
@@ -1189,6 +1239,19 @@ impl FilterIndex {
             m
         };
         let (block_mask, allow_mask) = (mask(block), mask(allow));
+        let cache_owner = {
+            let mut ids = self.view_ids.lock();
+            let next = ids.len();
+            let key: Box<[u64]> = block_mask.iter().chain(&allow_mask).copied().collect();
+            let id = *ids.entry(key).or_insert(next.min(usize::from(u16::MAX)) as u16);
+            // Generation 0 (the empty index), generations past 48 bits and views past 65,535
+            // distinct masks are decided without the cache.
+            if self.generation == 0 || self.generation >> 48 != 0 || id == u16::MAX {
+                0
+            } else {
+                self.generation << 16 | u64::from(id)
+            }
+        };
         let mut class = vec![0u8; self.set_count];
         let mut first_list = vec![u16::MAX; self.set_count];
         let mut categories = vec![0u64; self.set_count];
@@ -1220,6 +1283,7 @@ impl FilterIndex {
         }
         FilterView {
             index: self.clone(),
+            cache_owner,
             memory_bytes: 11 * self.set_count as u64,
             class: class.into_boxed_slice(),
             first_list: first_list.into_boxed_slice(),
@@ -1481,6 +1545,8 @@ impl FilterIndex {
 /// matching block list and category slot bits.
 pub struct FilterView {
     index: Arc<FilterIndex>,
+    /// Decision cache key part: `generation << 16 | view id`, 0 = not cached.
+    cache_owner: u64,
     class: Box<[u8]>,
     first_list: Box<[u16]>,
     categories: Box<[u64]>,
@@ -1530,6 +1596,12 @@ impl FilterView {
 
     pub fn memory_bytes(&self) -> u64 {
         self.memory_bytes
+    }
+
+    /// The decision cache key of this view: index generation and view id (0: never cached).
+    #[inline]
+    pub fn cache_owner(&self) -> u64 {
+        self.cache_owner
     }
 
     pub fn index(&self) -> &Arc<FilterIndex> {
@@ -1672,6 +1744,7 @@ mod tests {
             for _ in 0..3 {
                 views.push((subset(&mut r, &block), subset(&mut r, &allow)));
             }
+            let cache = crate::filter::decisions::DecisionCache::new(16);
             for (vb, va) in &views {
                 let view = index.view(vb, va);
                 let pick = |ls: &[u16]| {
@@ -1702,7 +1775,9 @@ mod tests {
                         name(&mut r)
                     );
                     let wire = domain_to_wire(q.as_bytes()).unwrap();
-                    match (oracle.decide(&wire), view.decide(&wire)) {
+                    let decided = view.decide(&wire);
+                    assert_eq!(cache.decide(&view, &wire), decided, "cached {q} (round {round})");
+                    match (oracle.decide(&wire), decided) {
                         (Decision::None, FilterDecision::None)
                         | (Decision::Allowed, FilterDecision::Allowed) => {}
                         (Decision::Blocked, FilterDecision::Blocked(hit)) => {

@@ -4,7 +4,10 @@ use crate::acl::Acl;
 use crate::authoritative::loader::{self, LoadCounts};
 use crate::authoritative::set::AuthSet;
 use crate::cache::{Cache, CacheSettings};
-use crate::filter::{self, BlockMode, FilterSet, ListStats, PolicyTable};
+use crate::filter::calibrate::{self, Calibration};
+use crate::filter::index::IndexError;
+use crate::filter::lists::{self, SnapshotLists};
+use crate::filter::{BlockMode, BlockReply, FilterIndex, PolicyTable};
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
 use crate::recursor::dispatch::ResolutionRuntime;
 use crate::snapshot::{BlobSource, SnapshotError};
@@ -25,15 +28,21 @@ pub struct TelemetrySettings {
 pub struct Runtime {
     pub version: u64,
     pub acl: Acl,
-    /// The global selection (`FilterConfig`), for clients in no policy group.
-    pub filter: Arc<FilterSet>,
-    /// Per-client policy groups and rewrites; selects `filter` for global clients.
+    /// Every block and allow list of the snapshot; policies decide through views over it.
+    pub filter_index: Arc<FilterIndex>,
+    /// [`SnapshotLists::key`] of `filter_index`: a snapshot with the same key reuses the index.
+    pub filter_key: String,
+    /// The index memory cap in force.
+    pub filter_max_bytes: u64,
+    /// Index plus views.
+    pub filter_memory_bytes: u64,
+    /// Decision time of `filter_index`, measured after its build.
+    pub filter_calibration: Calibration,
+    /// Per-client policy groups and rewrites; the global view for clients in no group.
     pub policy: PolicyTable,
-    /// `b:<sha256>` per blocklist, `a:<sha256>` per allowlist, `g:<key>` per
-    /// policy-group cache partition, `r:<ResolutionRuntime::config_key>`, then
-    /// `u:<upstreams_key>`.
+    /// `l:<SnapshotLists::key>`, `g:<key>` per policy-group cache partition,
+    /// `r:<ResolutionRuntime::config_key>`, then `u:<upstreams_key>`.
     pub filter_hashes: Vec<String>,
-    pub filter_stats: ListStats,
     pub cache: Arc<Cache>,
     pub upstreams: Arc<UpstreamSet>,
     pub telemetry: TelemetrySettings,
@@ -50,14 +59,23 @@ pub struct Runtime {
 impl Runtime {
     /// Before any snapshot: every client is REFUSED and nothing is forwarded.
     pub fn initial() -> Runtime {
-        let filter = Arc::new(FilterSet::empty());
+        let index = Arc::new(FilterIndex::empty());
         Runtime {
             version: 0,
             acl: Acl::parse(&[]).expect("empty acl"),
-            filter: filter.clone(),
-            policy: PolicyTable::global_only(filter),
+            policy: PolicyTable::global_only(
+                Arc::new(index.view(&[], &[])),
+                BlockReply {
+                    mode: BlockMode::NullIp,
+                    ttl: 0,
+                },
+            ),
+            filter_index: index,
+            filter_key: String::new(),
+            filter_max_bytes: lists::DEFAULT_MAX_BYTES,
+            filter_memory_bytes: 0,
+            filter_calibration: Calibration::default(),
             filter_hashes: Vec::new(),
-            filter_stats: ListStats::default(),
             cache: Arc::new(Cache::new(CacheSettings {
                 max_bytes: INITIAL_CACHE_BYTES,
                 min_ttl: 0,
@@ -113,37 +131,52 @@ impl Runtime {
         };
 
         let f = s.filter.clone().unwrap_or_default();
-        let read_all = |refs: &[proto::BlobRef]| {
-            refs.iter()
-                .map(|r| {
-                    filter::decode_blob(&blobs.read(r)?).map_err(|e| SnapshotError::Blob {
-                        sha256: r.sha256.clone(),
-                        reason: format!("zstd: {e}"),
-                    })
-                })
-                .collect::<Result<Vec<_>, SnapshotError>>()
-        };
         let mode = match f.block_mode() {
             proto::BlockMode::Nxdomain => BlockMode::NxDomain,
             proto::BlockMode::Refused => BlockMode::Refused,
             proto::BlockMode::NullIp | proto::BlockMode::Unspecified => BlockMode::NullIp,
         };
-        let (filter, filter_stats) = FilterSet::build(
-            &read_all(&f.blocklists)?,
-            &read_all(&f.allowlists)?,
+        let lists = SnapshotLists::collect(s).map_err(SnapshotError::Invalid)?;
+        let filter_max_bytes = match s.filter_index_max_bytes {
+            0 => lists::default_max_bytes(std::path::Path::new(lists::CGROUP_MEMORY_MAX)),
+            n => n,
+        };
+        let (filter_index, filter_calibration) =
+            match previous.filter(|p| p.filter_key == lists.key) {
+                Some(p) => (p.filter_index.clone(), p.filter_calibration.clone()),
+                None => {
+                    let index = Arc::new(lists.build_index(
+                        blobs,
+                        filter_max_bytes,
+                        lists::build_threads(),
+                    )?);
+                    let calibration = calibrate::measure(&index);
+                    (index, calibration)
+                }
+            };
+        let block = BlockReply {
             mode,
-            f.block_ttl,
-        );
-        let filter = Arc::new(filter);
-        let policy =
-            PolicyTable::build(s, filter.clone(), blobs).map_err(SnapshotError::Invalid)?;
+            ttl: f.block_ttl,
+        };
+        let global = Arc::new(filter_index.view(
+            &lists.indexes(&filter_index, &lists.global_block),
+            &lists.indexes(&filter_index, &lists.global_allow),
+        ));
+        let policy = PolicyTable::build(s, &lists, &filter_index, global, block)
+            .map_err(SnapshotError::Invalid)?;
+        let filter_memory_bytes = filter_index.memory_bytes() + policy.views_memory_bytes();
+        if filter_memory_bytes > filter_max_bytes {
+            return Err(SnapshotError::Invalid(
+                IndexError::OverCap {
+                    needed: filter_memory_bytes,
+                    cap: filter_max_bytes,
+                }
+                .to_string(),
+            ));
+        }
         let resolution =
             Arc::new(ResolutionRuntime::build(s, blobs).map_err(SnapshotError::Invalid)?);
-        let filter_hashes: Vec<String> = f
-            .blocklists
-            .iter()
-            .map(|b| format!("b:{}", b.sha256))
-            .chain(f.allowlists.iter().map(|a| format!("a:{}", a.sha256)))
+        let filter_hashes: Vec<String> = std::iter::once(format!("l:{}", lists.key))
             .chain(policy.partition_keys().iter().map(|k| format!("g:{k}")))
             .chain(std::iter::once(format!("r:{}", resolution.config_key)))
             .chain(std::iter::once(format!("u:{}", upstreams_key(s))))
@@ -166,10 +199,13 @@ impl Runtime {
         Ok(Runtime {
             version: s.version,
             acl,
-            filter,
+            filter_key: lists.key,
+            filter_index,
+            filter_max_bytes,
+            filter_memory_bytes,
+            filter_calibration,
             policy,
             filter_hashes,
-            filter_stats,
             cache,
             upstreams,
             telemetry: TelemetrySettings {

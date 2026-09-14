@@ -2,8 +2,11 @@
 //! Prometheus endpoint that renders them.
 
 use crate::clock;
+use crate::filter::lists::{self, CATEGORY_SLOTS};
 use crate::edns::Transport;
-use crate::proto::{DnssecStats, RecursionStats, Stats, TrustAnchorState, UpstreamStatus};
+use crate::proto::{
+    DnssecStats, FilterIndexStats, RecursionStats, Stats, TrustAnchorState, UpstreamStatus,
+};
 use crate::recursor::RecursorState;
 use crate::runtime::Runtime;
 use crate::server::Shared;
@@ -64,6 +67,8 @@ pub struct WorkerCounters {
     pub cache_misses: Counter,
     pub stale_served: Counter,
     pub filter_blocked: Counter,
+    /// Blocked queries per category slot (`filter::lists::category_slot`) of the matching lists.
+    pub filter_blocked_category: [Counter; CATEGORY_SLOTS],
     pub mismatched_replies: Arc<Counter>,
     /// Authoritative answers by `AUTH_ANSWER_RESULTS` slot.
     pub auth_answers: [Counter; 5],
@@ -110,8 +115,19 @@ impl WorkerCounters {
             cache_misses: counter(),
             stale_served: counter(),
             filter_blocked: counter(),
+            filter_blocked_category: array::from_fn(|_| counter()),
             mismatched_replies: Arc::new(counter()),
             auth_answers: array::from_fn(|_| counter()),
+        }
+    }
+
+    /// Counts one blocked query in every category slot set in `slots`.
+    #[inline]
+    pub fn count_categories(&self, mut slots: u64) {
+        while slots != 0 {
+            self.filter_blocked_category[slots.trailing_zeros() as usize]
+                .fetch_add(1, Ordering::Relaxed);
+            slots &= slots - 1;
         }
     }
 
@@ -516,11 +532,7 @@ impl Metrics {
             "Cached response bytes",
             ConstGauge::new(rt.cache.bytes()),
         );
-        reg.register(
-            "nexora_filter_blocked",
-            "Queries blocked by the filter",
-            counter(t.filter_blocked),
-        );
+        self.register_filter(&mut reg, rt);
 
         let now = clock::now_secs();
         let up = Family::<Labels, Gauge>::default();
@@ -605,6 +617,66 @@ impl Metrics {
         let mut out = String::with_capacity(4096);
         text::encode(&mut out, &reg).expect("writing to a String cannot fail");
         out
+    }
+
+    /// Blocked queries per category (every category in use, even at zero), per category slot.
+    fn blocked_by_category(&self) -> Vec<(String, u64)> {
+        lists::category_names()
+            .into_iter()
+            .map(|(slot, name)| {
+                let n = self.sum(|w| {
+                    w.filter_blocked_category[usize::from(slot)].load(Ordering::Relaxed)
+                });
+                (name, n)
+            })
+            .collect()
+    }
+
+    /// Filter index size, cap, build and decision time, and blocks per category.
+    fn register_filter(&self, reg: &mut Registry, rt: &Runtime) {
+        let blocked = Family::<Labels, PromCounter>::default();
+        for (name, n) in self.blocked_by_category() {
+            blocked.get_or_create(&vec![("category", name)]).inc_by(n);
+        }
+        reg.register(
+            "nexora_filter_blocked",
+            "Blocked queries by category of the matching lists (custom: lists without a category); a name in several categories counts in each",
+            blocked,
+        );
+        reg.register(
+            "nexora_filter_index_entries",
+            "Distinct names in the filter index",
+            ConstGauge::new(rt.filter_index.entries()),
+        );
+        reg.register(
+            "nexora_filter_index_bytes",
+            "Filter index and view memory",
+            ConstGauge::new(rt.filter_memory_bytes),
+        );
+        reg.register(
+            "nexora_filter_index_max_bytes",
+            "Filter index memory cap in force",
+            ConstGauge::new(rt.filter_max_bytes),
+        );
+        reg.register(
+            "nexora_filter_index_build_seconds",
+            "Duration of the build that produced the filter index",
+            ConstGauge::<f64>::new(rt.filter_index.build_seconds()),
+        );
+        let c = &rt.filter_calibration;
+        if !c.cpu.is_empty() {
+            let decision = Family::<Labels, Gauge<f64, AtomicU64>>::default();
+            for (kind, ns) in [("blocked", c.blocked_ns), ("clean", c.clean_ns)] {
+                decision
+                    .get_or_create(&vec![("kind", kind.to_owned()), ("cpu", c.cpu.clone())])
+                    .set(ns / 1e9);
+            }
+            reg.register(
+                "nexora_filter_index_decision_seconds",
+                "Median filter decision time measured after the index build, on the fastest allowed core",
+                decision,
+            );
+        }
     }
 
     /// Hosted-zone families; every label value is created even at zero.
@@ -737,6 +809,16 @@ impl Metrics {
             recursion: Some(recursion_stats(recursor)),
             dnssec: Some(dnssec_stats(rt, recursor)),
             rpz_zones: recursor.rpz.manager.status(),
+            filter_index: Some(FilterIndexStats {
+                entries: rt.filter_index.entries(),
+                bytes: rt.filter_memory_bytes,
+                max_bytes: rt.filter_max_bytes,
+                build_seconds: rt.filter_index.build_seconds(),
+                decision_ns_blocked: rt.filter_calibration.blocked_ns,
+                decision_ns_clean: rt.filter_calibration.clean_ns,
+                cpu: rt.filter_calibration.cpu.clone(),
+                blocked_by_category: self.blocked_by_category().into_iter().collect(),
+            }),
         }
     }
 }

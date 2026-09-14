@@ -4,7 +4,10 @@
 //! can block a worker.
 
 use super::metrics::Signal;
-use super::querylog::{DNSSEC_NAMES, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at};
+use super::querylog::{
+    DNSSEC_NAMES, NO_FILTER_LIST, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at,
+};
+use crate::filter::index::ListMeta;
 use crate::runtime::{Runtime, TelemetrySettings};
 use crate::server::Shared;
 use crate::wire;
@@ -62,9 +65,10 @@ pub fn log_record(
     upstream_name: &str,
     engine_id: &str,
     policy_group: &str,
+    filter_list: Option<&ListMeta>,
 ) -> LogRecord {
     let name = presentation(r.name.as_wire());
-    LogRecord {
+    let mut record = LogRecord {
         time_unix_nano: r.unix_micros.saturating_mul(1000),
         severity_number: SeverityNumber::Info as i32,
         severity_text: "INFO".into(),
@@ -92,7 +96,14 @@ pub fn log_record(
             kv("nexora.rpz", name_at(&RPZ_NAMES, r.rpz_action)),
         ],
         ..Default::default()
+    };
+    if let Some(meta) = filter_list {
+        record.attributes.extend([
+            kv("nexora.filter.list_id", &*meta.id),
+            kv("nexora.filter.category", &*meta.category),
+        ]);
     }
+    record
 }
 
 /// SERVFAIL always; otherwise slower than a non-zero threshold, or every
@@ -346,9 +357,14 @@ impl Exporter {
             }
             if keep_logs {
                 let group = rt.policy.group(r.policy_group).map_or("", |g| g.group_id());
+                // Only a list of the index build that decided names the record's list.
+                let list = (r.filter_list != NO_FILTER_LIST
+                    && rt.filter_index.generation() == r.filter_generation)
+                    .then(|| rt.filter_index.lists().get(usize::from(r.filter_list)))
+                    .flatten();
                 self.current
                     .logs
-                    .push(log_record(&r, upstream, &engine_id, group));
+                    .push(log_record(&r, upstream, &engine_id, group, list));
             }
             self.current.opened.get_or_insert_with(Instant::now);
             if self.current.logs.len() >= BATCH_MAX {

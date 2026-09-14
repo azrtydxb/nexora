@@ -446,6 +446,19 @@ pub fn label_listable(name: &[u8], start: usize) -> bool {
     true
 }
 
+/// The uncompressed wire name (root octet appended) of an entry's `symbols` octets packed 7 bits
+/// each (the inverse of [`pack_wire_text`]). Off the query path.
+pub fn unpack_wire(packed: &[u8], symbols: u8) -> Box<[u8]> {
+    let mut out = Vec::with_capacity(usize::from(symbols) + 1);
+    for i in 0..usize::from(symbols) {
+        let (at, shift) = (7 * i / 8, 7 * i % 8);
+        let pair = u16::from(packed[at]) | u16::from(packed.get(at + 1).copied().unwrap_or(0)) << 8;
+        out.push((pair >> shift) as u8 & 0x7F);
+    }
+    out.push(0);
+    out.into_boxed_slice()
+}
+
 pub fn write_varint(out: &mut [u8], mut v: u32) -> usize {
     let mut i = 0;
     loop {

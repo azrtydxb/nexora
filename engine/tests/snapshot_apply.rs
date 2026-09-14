@@ -1,6 +1,6 @@
 use arc_swap::ArcSwap;
 use nexora_engine::acl::Acl;
-use nexora_engine::filter::{BlockMode, FilterDecision, FilterSet, domain_to_wire};
+use nexora_engine::filter::{FilterDecision, domain_to_wire};
 use nexora_engine::proto::*;
 use nexora_engine::runtime::Runtime;
 use nexora_engine::snapshot::{self, ApplyOutcome, DirBlobs};
@@ -252,14 +252,37 @@ fn persist_failure_still_applies_and_reports() {
 
 #[test]
 fn filter_subdomains_allowlist_invalid_lines_and_cloaking() {
+    use nexora_engine::filter::index::{FilterIndex, IndexOptions, ListInput, ListKind};
     let block = b"ads.example\ntracker.example.net\nnot a domain\n-bad-.example\n".to_vec();
     let allow = b"good.ads.example\n".to_vec();
-    let (f, stats) = FilterSet::build(&[block], &[allow], BlockMode::NxDomain, 60);
-    assert_eq!(stats.entries, 3);
-    assert_eq!(stats.invalid_lines, 2);
+    let inputs = [
+        ListInput {
+            id: "b",
+            category: "",
+            category_slot: 0,
+            kind: ListKind::Block,
+            text: &block,
+        },
+        ListInput {
+            id: "a",
+            category: "",
+            category_slot: 0,
+            kind: ListKind::Allow,
+            text: &allow,
+        },
+    ];
+    let index = Arc::new(FilterIndex::build(&inputs, &IndexOptions::new(16 << 20)).unwrap());
+    assert_eq!((index.entries(), index.invalid_lines()), (3, 2));
+    let f = index.view(&[0], &[1]);
     let w = |s: &str| domain_to_wire(s.as_bytes()).unwrap();
-    assert_eq!(f.decide(&w("ads.example")), FilterDecision::Blocked);
-    assert_eq!(f.decide(&w("x.y.ads.example")), FilterDecision::Blocked);
+    assert!(matches!(
+        f.decide(&w("ads.example")),
+        FilterDecision::Blocked(_)
+    ));
+    assert!(matches!(
+        f.decide(&w("x.y.ads.example")),
+        FilterDecision::Blocked(_)
+    ));
     assert_eq!(f.decide(&w("good.ads.example")), FilterDecision::Allowed);
     assert_eq!(
         f.decide(&w("sub.good.ads.example")),
@@ -268,8 +291,160 @@ fn filter_subdomains_allowlist_invalid_lines_and_cloaking() {
     assert_eq!(f.decide(&w("example")), FilterDecision::None);
     assert_eq!(f.decide(&w("notads.example")), FilterDecision::None);
     let target = NameKey::from_wire_lowercase(&w("cdn.tracker.example.net")).unwrap();
-    assert!(f.cloaked(&[target]));
-    assert!(!FilterSet::empty().cloaked(&[target]));
+    assert!(f.cloaked(&[target]).is_some());
+    assert!(
+        Arc::new(FilterIndex::empty())
+            .view(&[], &[])
+            .cloaked(&[target])
+            .is_none()
+    );
+}
+
+fn with_lists(version: u64, dir: &std::path::Path, group_allow: &[&str]) -> ConfigSnapshot {
+    let mut s = base(version);
+    let ads = blob(dir, "ads.example\ntracker.example.net\n");
+    let ads_ref = FilterListRef {
+        list_id: "ads".into(),
+        category: "ads-tracking".into(),
+        position: 1,
+        blob: Some(ads.clone()),
+    };
+    let f = s.filter.as_mut().unwrap();
+    f.blocklists = vec![ads.clone()];
+    f.blocklist_refs = vec![ads_ref.clone()];
+    s.policy_groups = vec![PolicyGroup {
+        id: "kids".into(),
+        name: "kids".into(),
+        cidrs: vec!["127.0.0.2/32".into()],
+        blocklists: vec![ads],
+        blocklist_refs: vec![ads_ref],
+        allowlist: group_allow.iter().map(|x| x.to_string()).collect(),
+        ..Default::default()
+    }];
+    s
+}
+
+#[test]
+fn unchanged_lists_reuse_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    assert!(matches!(
+        snapshot::apply(&cur, with_lists(1, dir.path(), &["ok.ads.example"]), &blobs, None),
+        ApplyOutcome::Applied { .. }
+    ));
+    let first = cur.load_full();
+    let blocked = |rt: &Runtime| {
+        rt.policy
+            .select("127.0.0.1".parse().unwrap())
+            .0
+            .filter()
+            .decide(&domain_to_wire(b"x.ads.example").unwrap())
+    };
+    assert!(
+        matches!(blocked(&first), FilterDecision::Blocked(_)),
+        "positive path: the list blocks"
+    );
+    assert!(first.filter_index.entries() >= 3);
+
+    let mut same_lists = with_lists(2, dir.path(), &["ok.ads.example"]);
+    same_lists.cache.as_mut().unwrap().max_bytes = 8 << 20;
+    same_lists.upstreams[0].timeout_ms = 300;
+    assert!(matches!(
+        snapshot::apply(&cur, same_lists, &blobs, None),
+        ApplyOutcome::Applied { .. }
+    ));
+    let second = cur.load_full();
+    assert!(
+        Arc::ptr_eq(&first.filter_index, &second.filter_index),
+        "no list changed: the index is reused"
+    );
+    assert_eq!(
+        first.filter_index.generation(),
+        second.filter_index.generation()
+    );
+
+    assert!(matches!(
+        snapshot::apply(
+            &cur,
+            with_lists(3, dir.path(), &["other.ads.example"]),
+            &blobs,
+            None
+        ),
+        ApplyOutcome::Applied { .. }
+    ));
+    let third = cur.load_full();
+    assert!(
+        !Arc::ptr_eq(&second.filter_index, &third.filter_index),
+        "an allowlist edit rebuilds the index"
+    );
+    assert!(third.filter_index.generation() > second.filter_index.generation());
+}
+
+#[test]
+fn filter_index_over_cap_rejects_snapshot_and_keeps_previous() {
+    let dir = tempfile::tempdir().unwrap();
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    assert!(matches!(
+        snapshot::apply(&cur, with_lists(1, dir.path(), &[]), &blobs, None),
+        ApplyOutcome::Applied { .. }
+    ));
+    let mut capped = with_lists(2, dir.path(), &["new.example"]);
+    // Below the two 128-octet blocks of the smallest index.
+    capped.filter_index_max_bytes = 256;
+    let reason = outcome_reason(snapshot::apply(&cur, capped, &blobs, None));
+    assert!(reason.contains("above the cap of 256 bytes"), "{reason}");
+    let rt = cur.load();
+    assert_eq!(rt.version, 1);
+    let (p, _) = rt.policy.select("127.0.0.2".parse().unwrap());
+    assert!(
+        matches!(
+            p.filter().decide(&domain_to_wire(b"ads.example").unwrap()),
+            FilterDecision::Blocked(_)
+        ),
+        "previous index still active"
+    );
+}
+
+#[test]
+fn filter_list_refs_are_validated() {
+    let dir = tempfile::tempdir().unwrap();
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    let good = blob(dir.path(), "ads.example\n");
+    let mut s = base(1);
+    s.filter.as_mut().unwrap().blocklist_refs = vec![FilterListRef {
+        list_id: "ads".into(),
+        category: "ads-tracking".into(),
+        position: 1,
+        blob: Some(good.clone()),
+    }];
+    assert!(matches!(
+        snapshot::apply(&cur, s, &blobs, None),
+        ApplyOutcome::Applied { version: 1, .. }
+    ));
+    let mut bad = base(2);
+    bad.filter.as_mut().unwrap().blocklist_refs = vec![FilterListRef {
+        list_id: "ads".into(),
+        category: "ads-tracking".into(),
+        position: 1,
+        blob: Some(BlobRef {
+            sha256: "XYZ".into(),
+            ..good
+        }),
+    }];
+    assert_eq!(
+        outcome_reason(snapshot::apply(&cur, bad, &blobs, None)),
+        "invalid snapshot: sha256 XYZ must be 64 lowercase hex"
+    );
+    assert_eq!(cur.load().version, 1);
 }
 
 #[test]

@@ -19,6 +19,7 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/filter.rs                         block replies, rewrites, per-client policy (M2) on filter views
   src/filter/{names,prefetch,storage}.rs suffix hashing and 7-bit wire packing, cache prefetch, huge-page bytes
   src/filter/{index,lists,calibrate}.rs shared filter index and views, snapshot list collection, decision timing
+  src/filter/decisions.rs               per-worker decision cache for repeated names
   src/filter/synth.rs                   deterministic synthetic lists for tests and filter_bench
   src/upstream/{mod,udp,tcp,dot,doh}.rs forwarding transports + health
   src/inflight.rs                       cross-worker request coalescing
@@ -237,9 +238,21 @@ host concerns and are not part of the snapshot.
   high bit rejected) with the stored entry. It never allocates. `FilterView`
   (per global or group policy) maps a set id to allow/block, the first matching
   list in position order (attribution) and category slot bits.
-- The index is built on the control runtime with up to four threads, swapped in
-  with the runtime, and reused when every list id, kind and content hash is
-  unchanged. Cap: `ConfigSnapshot.filter_index_max_bytes` when non-zero, else
+- Each worker owns a `filter::decisions::DecisionCache` (`WorkerCtx`), which
+  the query fast path decides through: 32,768 direct-mapped 64-octet slots
+  plus a one-octet tag per slot (about 2 MiB per worker). A keyed 64-bit hash
+  of the wire name picks the slot; the tag array rejects most misses before the
+  slot is read. A hit needs the slot's owner (index generation << 16 | view id),
+  length and name octets to equal the query's, so collisions never share a
+  decision. View ids are per index and per distinct (block, allow) list
+  selection, so a reused index keeps cached decisions and every new index
+  build (new generation) invalidates them. Names above 48 wire octets, the
+  empty index and CNAME cloaking checks bypass the cache. Lock- and
+  allocation-free; decisions are never shared between workers.
+- The index is built on the control runtime with up to four threads (the CPUs
+  the cgroup allows; large build buffers are advised for transparent huge
+  pages), swapped in with the runtime, and reused when every list id, kind,
+  category and content hash is unchanged. Cap: `ConfigSnapshot.filter_index_max_bytes` when non-zero, else
   50% of `/sys/fs/cgroup/memory.max`, else 512 MiB; a snapshot whose index and
   views exceed it is rejected and the previous runtime stays.
 - Answers whose CNAME chain reaches a blocked name are blocked.

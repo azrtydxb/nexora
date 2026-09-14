@@ -3,7 +3,7 @@
 
 use super::{FastOutcome, Scope, WorkerCtx, handle_packet, resolve_miss};
 use crate::edns::Transport;
-use crate::filter::{BlockMode, EffectivePolicy, FilterSet, RewriteAnswer, Verdict};
+use crate::filter::{BlockMode, BlockReply, EffectivePolicy, RewriteAnswer, Verdict};
 use crate::runtime::Runtime;
 use crate::telemetry::querylog::FilterOutcome;
 use crate::wire;
@@ -117,7 +117,7 @@ pub async fn rewrite_response<C: RewriteContext>(
                         owner = target.clone();
                         current = next;
                     }
-                    Verdict::Blocked => {
+                    Verdict::Blocked(_) => {
                         let (rcode, records) = ctx.block(target, qtype);
                         resp.answers.extend(records);
                         resp.metadata.response_code = rcode;
@@ -155,13 +155,9 @@ fn name_wire(name: &Name) -> Vec<u8> {
     out
 }
 
-/// The block records and rcode of `filter`'s block mode for `(owner, qtype)`.
-fn block_records(
-    filter: &FilterSet,
-    owner: &Name,
-    qtype: RecordType,
-) -> (ResponseCode, Vec<Record>) {
-    match filter.mode {
+/// The block records and rcode of `block`'s mode for `(owner, qtype)`.
+fn block_records(block: BlockReply, owner: &Name, qtype: RecordType) -> (ResponseCode, Vec<Record>) {
+    match block.mode {
         BlockMode::NxDomain => (ResponseCode::NXDomain, Vec::new()),
         BlockMode::Refused => (ResponseCode::Refused, Vec::new()),
         BlockMode::NullIp => {
@@ -171,7 +167,7 @@ fn block_records(
                 _ => None,
             };
             let records = rdata
-                .map(|r| Record::from_rdata(owner.clone(), filter.ttl, r))
+                .map(|r| Record::from_rdata(owner.clone(), block.ttl, r))
                 .into_iter()
                 .collect();
             (ResponseCode::NoError, records)
@@ -190,7 +186,7 @@ impl RewriteContext for InlineCtx<'_> {
         Err(())
     }
     fn block(&self, owner: &Name, qtype: RecordType) -> (ResponseCode, Vec<Record>) {
-        block_records(self.0.filter(), owner, qtype)
+        block_records(self.0.block_reply(), owner, qtype)
     }
 }
 
@@ -266,7 +262,7 @@ impl RewriteContext for WorkerRewriteCtx {
     }
 
     fn block(&self, owner: &Name, qtype: RecordType) -> (ResponseCode, Vec<Record>) {
-        block_records(self.policy().filter(), owner, qtype)
+        block_records(self.policy().block_reply(), owner, qtype)
     }
 }
 
@@ -307,7 +303,8 @@ pub async fn run_rewrite_job(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: RewriteJ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{BlockMode, FilterSet, PolicyTable};
+    use crate::filter::PolicyTable;
+    use crate::filter::lists::SnapshotLists;
     use crate::proto::{BlobRef, ConfigSnapshot, RewriteRule, RewriteSet, RewriteType};
     use crate::snapshot::{BlobSource, SnapshotError};
     use hickory_proto::op::{MessageType, Query};
@@ -350,13 +347,11 @@ mod tests {
             )
         }
     }
-    struct NoBlobs;
-    impl BlobSource for NoBlobs {
-        fn read(&self, r: &BlobRef) -> Result<Vec<u8>, SnapshotError> {
-            Err(SnapshotError::Blob {
-                sha256: r.sha256.clone(),
-                reason: "unused".into(),
-            })
+    /// The one list blob of a test snapshot.
+    struct OneBlob(Vec<u8>);
+    impl BlobSource for OneBlob {
+        fn read(&self, _: &BlobRef) -> Result<Vec<u8>, SnapshotError> {
+            Ok(self.0.clone())
         }
     }
     fn ctx(rules: Vec<(&str, RewriteType, &str)>, blocked: &str) -> Ctx {
@@ -375,13 +370,26 @@ mod tests {
                     .collect(),
             }],
             global_rewrite_set_ids: vec!["s".into()],
+            filter: Some(crate::proto::FilterConfig {
+                blocklists: vec![BlobRef {
+                    sha256: "b".repeat(64),
+                    size: 1,
+                    name: "blocked".into(),
+                }],
+                ..Default::default()
+            }),
             ..Default::default()
         };
-        let global = Arc::new(
-            FilterSet::build(&[blocked.as_bytes().to_vec()], &[], BlockMode::NullIp, 10).0,
-        );
+        let blobs = OneBlob(zstd::encode_all(blocked.as_bytes(), 3).unwrap());
+        let lists = SnapshotLists::collect(&snap).unwrap();
+        let index = Arc::new(lists.build_index(&blobs, 16 << 20, 1).unwrap());
+        let global = Arc::new(index.view(&lists.indexes(&index, &lists.global_block), &[]));
+        let block = BlockReply {
+            mode: BlockMode::NullIp,
+            ttl: 10,
+        };
         Ctx {
-            table: PolicyTable::build(&snap, global, &NoBlobs).unwrap(),
+            table: PolicyTable::build(&snap, &lists, &index, global, block).unwrap(),
             upstream_calls: Cell::new(0),
         }
     }

@@ -112,15 +112,31 @@ pub fn validate(s: &ConfigSnapshot, applied_version: u64) -> Result<(), Snapshot
     let blobs = s
         .filter
         .iter()
-        .flat_map(|f| f.blocklists.iter().chain(&f.allowlists));
+        .flat_map(|f| {
+            f.blocklists
+                .iter()
+                .chain(&f.allowlists)
+                .chain(ref_blobs(&f.blocklist_refs))
+                .chain(ref_blobs(&f.allowlist_refs))
+        })
+        .chain(
+            s.policy_groups
+                .iter()
+                .flat_map(|g| g.blocklists.iter().chain(ref_blobs(&g.blocklist_refs))),
+        );
     for b in blobs {
         if !is_sha256_hex(&b.sha256) {
             return invalid(format!("sha256 {} must be 64 lowercase hex", b.sha256));
         }
     }
+    crate::filter::lists::SnapshotLists::collect(s).map_err(SnapshotError::Invalid)?;
     crate::snapshot_m3::validate_m3(s).map_err(SnapshotError::Invalid)?;
     crate::authoritative::loader::validate(&s.auth_zones).map_err(SnapshotError::Invalid)?;
     Ok(())
+}
+
+fn ref_blobs(refs: &[crate::proto::FilterListRef]) -> impl Iterator<Item = &BlobRef> {
+    refs.iter().filter_map(|r| r.blob.as_ref())
 }
 
 /// Also keeps blob names safe to join onto a directory.

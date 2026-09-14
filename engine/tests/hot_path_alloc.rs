@@ -37,6 +37,23 @@ fn cache_hit_path_does_not_allocate() {
     use nexora_engine::snapshot::{DirBlobs, apply};
 
     let shared = Shared::new(1);
+    // A list selected globally and by group g1 (with an allowlist): the measured cache-hit client
+    // walks a non-empty index with allow lists before its cache lookup.
+    let tmp = tempfile::tempdir().unwrap();
+    let z = zstd::encode_all(&b"ads.hot.test\n"[..], 3).unwrap();
+    let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&z));
+    std::fs::write(tmp.path().join(&sha), &z).unwrap();
+    let ads = BlobRef {
+        sha256: sha,
+        size: z.len() as u64,
+        name: "ads".into(),
+    };
+    let ads_ref = FilterListRef {
+        list_id: "ads".into(),
+        category: "ads-tracking".into(),
+        position: 1,
+        blob: Some(ads.clone()),
+    };
     let snap = ConfigSnapshot {
         version: 1,
         cache: Some(CacheConfig {
@@ -56,7 +73,9 @@ fn cache_hit_path_does_not_allocate() {
                 "2001:db8::/32".into(),
             ],
             rewrite_set_ids: vec!["r".into()],
-            ..Default::default()
+            blocklists: vec![ads.clone()],
+            blocklist_refs: vec![ads_ref.clone()],
+            allowlist: vec!["ok.ads.hot.test".into()],
         }],
         rewrite_sets: vec![RewriteSet {
             id: "r".into(),
@@ -71,13 +90,14 @@ fn cache_hit_path_does_not_allocate() {
         filter: Some(FilterConfig {
             block_mode: BlockMode::NullIp as i32,
             block_ttl: 60,
+            blocklists: vec![ads.clone()],
+            blocklist_refs: vec![ads_ref.clone()],
             ..Default::default()
         }),
         telemetry: Some(TelemetryConfig::default()),
         resolver: Some(ResolverConfig::default()),
         ..Default::default()
     };
-    let tmp = tempfile::tempdir().unwrap();
     // Forward mode (M1/M2), then recursive mode with DNSSEC validation (M3): a cache hit takes the
     // same allocation-free path in both.
     let mut recursive = snap.clone();
@@ -101,6 +121,7 @@ fn cache_hit_path_does_not_allocate() {
             nexora_engine::snapshot::ApplyOutcome::Applied { .. }
         ));
         measure(&shared);
+        measure_blocked(&shared);
     }
     // With RPZ query triggers loaded, a non-matching name still hits the cache without allocating.
     use nexora_engine::recursor::rpz::{index, parse};
@@ -117,6 +138,64 @@ fn cache_hit_path_does_not_allocate() {
             index::RpzZoneIndex::build("z", &zone, 0),
         )]));
     measure(&shared);
+    measure_blocked(&shared);
+}
+
+/// Blocked names never allocate: 256 names first decided by the index (group g1 with its
+/// allowlist, then a global client), then answered from the warmed decision cache.
+fn measure_blocked(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RecordType};
+    use hickory_proto::serialize::binary::BinEncodable;
+    use nexora_engine::edns::Transport;
+    use nexora_engine::server::{FastOutcome, WorkerCtx, handle_packet};
+
+    let query = |name: &str| {
+        let mut m = Message::new(2, MessageType::Query, OpCode::Query);
+        m.add_query(Query::query(Name::from_ascii(name).unwrap(), RecordType::A));
+        m.to_bytes().unwrap()
+    };
+    let warm = query("warm.ads.hot.test.");
+    let ctx = WorkerCtx::new(0, shared.clone());
+    let mut out = [0u8; 1232];
+    for client in ["10.1.2.3:5353", "127.0.0.1:5353"] {
+        let client: std::net::SocketAddr = client.parse().unwrap();
+        let names: Vec<Vec<u8>> = (0..256)
+            .map(|i| query(&format!("n{i}.{}.ads.hot.test.", client.ip())))
+            .collect();
+        let before = shared.metrics.totals().filter_blocked;
+        for _ in 0..64 {
+            let rt = shared.runtime.load();
+            assert!(matches!(
+                handle_packet(&ctx, &rt, &warm, client, Transport::Udp, &mut out),
+                FastOutcome::Reply(_)
+            ));
+        }
+        ALLOCS.with(|c| c.set(0));
+        ARMED.with(|a| a.set(true));
+        for i in 0..50_000 {
+            let rt = shared.runtime.load();
+            let q = &names[i % names.len()];
+            match handle_packet(&ctx, &rt, q, client, Transport::Udp, &mut out) {
+                FastOutcome::Reply(n) => assert!(n > 12),
+                _ => panic!("expected a block reply"),
+            }
+        }
+        ARMED.with(|a| a.set(false));
+        assert_eq!(
+            ALLOCS.with(Cell::get),
+            0,
+            "blocked reply path allocated for {client}"
+        );
+        assert!(
+            shared.metrics.totals().filter_blocked >= before + 50_064,
+            "the names were blocked for {client}"
+        );
+        assert!(
+            ctx.filter_decisions.hits() > 40_000,
+            "repeats came from the decision cache"
+        );
+    }
 }
 
 fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {

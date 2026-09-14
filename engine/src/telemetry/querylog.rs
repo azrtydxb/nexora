@@ -10,6 +10,8 @@ use std::sync::atomic::Ordering;
 pub const RING_CAPACITY: usize = 65536;
 /// `QueryRecord.policy_group` of a client in no policy group.
 pub const NO_POLICY_GROUP: u16 = u16::MAX;
+/// `QueryRecord.filter_list` of a query no list blocked.
+pub const NO_FILTER_LIST: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOutcome {
@@ -79,6 +81,10 @@ pub struct QueryRecord {
     pub dnssec: u8,
     /// 0 none, else `RpzAction::log_code`.
     pub rpz_action: u8,
+    /// The blocking list's index in the filter index of `filter_generation`; `NO_FILTER_LIST`
+    /// unless blocked.
+    pub filter_list: u16,
+    pub filter_generation: u64,
 }
 
 /// `QueryRecord.route` names.

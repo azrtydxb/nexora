@@ -382,8 +382,19 @@ pub async fn fetch_blobs(
     let refs = snap
         .filter
         .iter()
-        .flat_map(|f| f.blocklists.iter().chain(&f.allowlists))
-        .chain(snap.policy_groups.iter().flat_map(|g| &g.blocklists))
+        .flat_map(|f| {
+            f.blocklists.iter().chain(&f.allowlists).chain(
+                f.blocklist_refs
+                    .iter()
+                    .chain(&f.allowlist_refs)
+                    .filter_map(|r| r.blob.as_ref()),
+            )
+        })
+        .chain(snap.policy_groups.iter().flat_map(|g| {
+            g.blocklists
+                .iter()
+                .chain(g.blocklist_refs.iter().filter_map(|r| r.blob.as_ref()))
+        }))
         .chain(snap.rpz_zones.iter().filter_map(|z| match &z.source {
             Some(crate::proto::rpz_zone::Source::File(f)) => f.blob.as_ref(),
             _ => None,
@@ -395,6 +406,12 @@ pub async fn fetch_blobs(
         }))
         // Collected so no closure is held across an await (keeps the future `Send`).
         .collect::<Vec<_>>();
+    // The refs repeat the M1 blobs: fetch each blob once.
+    let mut seen = std::collections::HashSet::new();
+    let refs: Vec<_> = refs
+        .into_iter()
+        .filter(|r| seen.insert(r.sha256.as_str()))
+        .collect();
     for r in refs {
         let fail = |reason: String| SnapshotError::Blob {
             sha256: r.sha256.clone(),

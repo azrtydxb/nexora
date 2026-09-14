@@ -4,7 +4,9 @@ use nexora_engine::server::Shared;
 use nexora_engine::snapshot::{DirBlobs, apply};
 use nexora_engine::telemetry::metrics::{Signal, serve_metrics};
 use nexora_engine::telemetry::otlp::{log_record, should_trace, spans_for, spawn_telemetry_thread};
-use nexora_engine::telemetry::querylog::{CacheOutcome, FilterOutcome, QueryRecord, push};
+use nexora_engine::telemetry::querylog::{
+    CacheOutcome, FilterOutcome, NO_FILTER_LIST, QueryRecord, push,
+};
 use nexora_engine::wire::NameKey;
 use opentelemetry_proto::tonic::collector::logs::v1::{
     ExportLogsServiceRequest, ExportLogsServiceResponse,
@@ -39,6 +41,8 @@ fn record(rcode: u8) -> QueryRecord {
         route: 1,
         dnssec: 1,
         rpz_action: 0,
+        filter_list: NO_FILTER_LIST,
+        filter_generation: 0,
     }
 }
 
@@ -124,7 +128,7 @@ fn shared_with_endpoint(endpoint: &str) -> Arc<Shared> {
 
 #[test]
 fn log_record_attributes_and_trace_rules() {
-    let lr = log_record(&record(0), "fixture", "engine-uuid", "");
+    let lr = log_record(&record(0), "fixture", "engine-uuid", "", None);
     let keys: Vec<&str> = lr.attributes.iter().map(|kv| kv.key.as_str()).collect();
     for k in [
         "client.address",
@@ -262,7 +266,11 @@ fn metrics_endpoint_exposes_every_architecture_name() {
         "nexora_cache_stale_served_total",
         "nexora_cache_entries",
         "nexora_cache_bytes",
-        "nexora_filter_blocked_total",
+        "nexora_filter_blocked_total{category=\"custom\"} 0",
+        "nexora_filter_index_entries 0",
+        "nexora_filter_index_bytes",
+        "nexora_filter_index_max_bytes",
+        "nexora_filter_index_build_seconds",
         "nexora_upstream_up{upstream=\"fixture\"}",
         "nexora_upstream_rtt_seconds{",
         "nexora_upstream_queries_total{",
@@ -309,5 +317,42 @@ fn failed_export_counts_every_record_of_the_batch() {
     assert!(
         body.contains("nexora_export_dropped_total{signal=\"logs\"} 10"),
         "{body}"
+    );
+}
+
+#[test]
+fn blocked_records_carry_list_id_and_category() {
+    use nexora_engine::filter::index::{ListKind, ListMeta};
+    let meta = ListMeta {
+        id: "0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1".into(),
+        category: "gambling".into(),
+        category_slot: 1,
+        kind: ListKind::Block,
+        invalid_lines: 0,
+    };
+    let mut r = record(0);
+    r.filter = FilterOutcome::Blocked;
+    r.filter_list = 0;
+    let attrs = |lr: &opentelemetry_proto::tonic::logs::v1::LogRecord| {
+        lr.attributes
+            .iter()
+            .filter(|kv| kv.key.starts_with("nexora.filter."))
+            .map(|kv| (kv.key.clone(), format!("{:?}", kv.value)))
+            .collect::<Vec<_>>()
+    };
+    let with = attrs(&log_record(&r, "fixture", "engine-uuid", "", Some(&meta)));
+    assert_eq!(with.len(), 2, "{with:?}");
+    assert!(
+        with[0].0 == "nexora.filter.list_id"
+            && with[0].1.contains("0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1"),
+        "{with:?}"
+    );
+    assert!(
+        with[1].0 == "nexora.filter.category" && with[1].1.contains("gambling"),
+        "{with:?}"
+    );
+    assert!(
+        attrs(&log_record(&record(0), "fixture", "engine-uuid", "", None)).is_empty(),
+        "unblocked records carry no attribution"
     );
 }

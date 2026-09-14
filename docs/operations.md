@@ -790,26 +790,31 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
 
 ## Filter index performance
 
-Measured with `engine/examples/filter_bench.rs` on kw (node `worker-23`, RK3588; decisions on
-Cortex-A76 cores 4–5, CPU part `0xd0b`; build with 2 threads) against the 5.1M-name corpus in the
-dev pod (`/work/lists/clean-*.txt`: HaGeZi pro and TIF, Blocklist Project malware and porn, OISD
-nsfw). The v1 row is `FilterSet` on the same samples in the same run. Targets: < 150 ns per
-decision, < 120 MB, < 1.5 s build.
+Measured with `engine/examples/filter_bench.rs` on kw (node `worker-23`, RK3588; decisions pinned
+to Cortex-A76 core 4, CPU part `0xd0b`; build threads on A76 cores 4–7) against the 5.1M-name
+corpus in the dev pod (`/work/lists/clean-*.txt`: HaGeZi pro and TIF, Blocklist Project malware and
+porn, OISD nsfw). The v1 rows are `FilterSet` on the same samples in the same run. Targets (spec
+revision of 2026-09-14): clean < 150 ns, cold blocked < 300 ns, repeated names < 50 ns on a Zipf
+workload through the per-worker decision cache, < 120 MB, build < 2 s. Zipf: 1M names (20% listed),
+s = 1.0, 4M timed queries after 4M warm-up queries; "Zipf ns" is every query through a 32,768-slot
+`DecisionCache` (uncached in parentheses), "repeated ns" the queries of the top-ranked names.
 
-| date       | commit                   | unique names | index bytes     | bytes per name | build (2 threads) | blocked ns | clean ns | stash entries |
-| ---------- | ------------------------ | ------------ | --------------- | -------------- | ----------------- | ---------- | -------- | ------------- |
-| 2026-09-14 | uncommitted on `2644b27` | 5,136,759    | 118,199,700     | 23.0           | 1.87 s            | 284        | 107      | 14,236        |
-| 2026-09-14 | v1 `FilterSet`, same run | 5,136,759    | 323,956,736 RSS | 63.1           | 2.65 s            | 388        | 264      | —             |
-| spec       | v1 baseline (5.1M)       | 5.1M         | 309 MB          | 63             | 2.8 s             | 400        | 285      | —             |
+| date       | commit                    | unique names | index bytes     | build (threads)        | blocked ns | clean ns | Zipf ns (uncached) | repeated ns | hit rate |
+| ---------- | ------------------------- | ------------ | --------------- | ---------------------- | ---------- | -------- | ------------------ | ----------- | -------- |
+| 2026-09-14 | uncommitted on `92a8ece`  | 5,136,759    | 118,195,732     | 1.72 s (2), 1.24 s (4) | 274        | 103      | 124 (147)          | 32.9        | 63.5%    |
+| 2026-09-14 | v1 `FilterSet`, same run  | 5,136,759    | 259,657,728 RSS | 2.99 s (1)             | 425        | 303      | 200                | —           | —        |
+| 2026-09-14 | `dfc9b4c` (Task 4)        | 5,136,759    | 118,199,700     | 1.87 s (2)             | 284        | 107      | —                  | —           | —        |
+| 2026-09-14 | v1, same run as `dfc9b4c` | 5,136,759    | 323,956,736 RSS | 2.65 s (1)             | 388        | 264      | —                  | —           | —        |
+| spec       | v1 baseline (5.1M)        | 5.1M         | 309 MB          | 2.8 s (1)              | 400        | 285      | —                  | —           | —        |
 
-Blocked decisions miss the 150 ns target: the same binary decides a blocked name in 137 ns when
-the index is in cache, and every blocked sample needs one uncached block, which costs this node
-~140 ns more (a dependent DRAM read measures ~110 ns). Build misses 1.5 s.
+A cold blocked name needs one uncached block, which costs this node about 140 ns (a dependent
+DRAM read measures ~110 ns); repeated names avoid it through the decision cache. The node was
+shared with other workloads (load average 1.7), so absolute numbers vary by about ±10% between runs.
 
 ```
 scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example filter_bench &&
-  taskset -c 4,5 "${CARGO_TARGET_DIR:-target}/release/examples/filter_bench" --threads 2 --rounds 9 \
-  --json /tmp/filter-bench-kw.json /work/lists/clean-*.txt'
+  taskset -c 4-7 "${CARGO_TARGET_DIR:-target}/release/examples/filter_bench" --threads 2 --pin 4 \
+  --rounds 9 --v1 --json /tmp/filter-bench-kw.json /work/lists/clean-*.txt'
 ```
 
 `scripts/filter-corpus.sh <dir>` downloads the default catalog selection
