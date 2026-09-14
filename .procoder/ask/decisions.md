@@ -71,3 +71,11 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Restrict to 192.168.10.0/24 plus other named subnets
 
 **Answer (2026-09-14):** Keep all private IP ranges allowed (current default ACL); no change.
+
+## Uncached recursion latency before switching the home network (avg 1.2 s vs ~60-100 ms)
+
+- Switch now in forward mode: Nexora forwards to 1.1.1.1/8.8.8.8 with DNSSEC validation and all filtering; later move back to recursive once faster
+- Switch now in recursive mode and accept slow first lookups while the cache warms
+- Don't switch yet: first improve recursion (parallel DNSSEC fetches, fastest-server selection, prefetch) and re-measure
+
+**Answer (2026-09-14):** Switch now in recursive mode (accept slow first lookups) and in parallel improve recursion latency (parallel DNSSEC fetches, fastest-server selection) without prefetching.
