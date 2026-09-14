@@ -832,6 +832,11 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
   at about the engine's memory without filtering (response cache included)
   plus 3.5 times the largest index you expect, plus the margin: 1 GiB covers
   every catalog category (112–118 MB of index) with a 64 MiB response cache.
+- **CPU for rebuilds**: the index build uses up to four threads, bounded by the
+  engine's CPU limit. Give engines a CPU request that matches their real share
+  (kw uses request 2, limit 4): with a small request the build is starved on busy
+  nodes — on kw a 250m request left the control-plane node's rebuild at
+  2.1–2.6 s, against 1.3–1.5 s with request 2.
 - **Staleness**: `nexora_mgmt_filter_category_stale{category}` is 1 when an
   enabled category has an enabled source whose last refresh failed or is
   older than two refresh intervals; the GUI marks the category stale. Blocking

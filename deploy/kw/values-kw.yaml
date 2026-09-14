@@ -35,11 +35,15 @@ engine:
   initImage: 192.168.10.131/library/busybox:1.37
   ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
   stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
-  # Explicit memory limit: the engine caps its filter index at 50% of the cgroup limit (512 MiB here);
-  # the default category selection needs about 110 MB, every catalog category about 150 MB.
+  # Explicit memory limit: the engine caps its filter index at 50% of the cgroup limit (512 MiB here)
+  # and refuses a rebuild that would not fit; every catalog category (5.1M names) needs a 112 MiB index.
+  # CPU limit 4: the filter index build uses up to four threads (available_parallelism honours the CFS
+  # quota); with 2 CPUs shared with the query workers, builds on the busy control-plane node took 2.1-2.6 s.
+  # CPU request 2: a latency-sensitive DNS engine needs a real CPU share on busy nodes (master-12 runs
+  # Prometheus, the database and the kube-vip leader); with 250m it was starved under contention.
   resources:
-    requests: { cpu: 250m, memory: 384Mi }
-    limits: { cpu: "2", memory: 1Gi }
+    requests: { cpu: "2", memory: 384Mi }
+    limits: { cpu: "4", memory: 1Gi }
   # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
   # node must run a default-group engine.
   tolerations:
