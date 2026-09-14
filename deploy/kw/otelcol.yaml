@@ -13,18 +13,26 @@ data:
           grpc: { endpoint: "0.0.0.0:4317" }
     processors:
       batch: { timeout: 1s }
+      # OpenSearch cannot map nexora.filter both as a value and as the parent of
+      # nexora.filter.list_id / nexora.filter.category: rename it to nexora.filter.result.
+      transform/querylog:
+        log_statements:
+          - context: log
+            statements:
+              - set(attributes["nexora.filter.result"], attributes["nexora.filter"]) where attributes["nexora.filter"] != nil
+              - delete_key(attributes, "nexora.filter")
     exporters:
       debug: { verbosity: basic }
       opensearch:
         http: { endpoint: "http://opensearch.nexora.svc.cluster.local:9200" }
-        logs_index: nexora-querylog
+        logs_index: nexora-querylog-v2
         logs_index_time_format: "yyyy.MM.dd"
       otlp/jaeger:
         endpoint: "jaeger.observability.svc:4317"
         tls: { insecure: true }
     service:
       pipelines:
-        logs: { receivers: [otlp], processors: [batch], exporters: [opensearch] }
+        logs: { receivers: [otlp], processors: [batch, transform/querylog], exporters: [opensearch] }
         traces: { receivers: [otlp], processors: [batch], exporters: [otlp/jaeger] }
         metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
 ---

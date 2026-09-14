@@ -61,16 +61,20 @@ func (*OpenSearch) Name() string { return "opensearch" }
 type osSource struct {
 	Timestamp  time.Time `json:"@timestamp"`
 	Attributes struct {
-		Client     string `json:"client.address"`
-		Name       string `json:"dns.question.name"`
-		QType      string `json:"dns.question.type"`
-		RCode      string `json:"dns.response.code"`
-		Cache      string `json:"nexora.cache"`
-		Filter     string `json:"nexora.filter"`
-		Upstream   string `json:"nexora.upstream"`
-		Transport  string `json:"nexora.transport"`
-		EngineID   string `json:"nexora.engine.id"`
-		DurationUS int64  `json:"nexora.duration_us"`
+		Client string `json:"client.address"`
+		Name   string `json:"dns.question.name"`
+		QType  string `json:"dns.question.type"`
+		RCode  string `json:"dns.response.code"`
+		Cache  string `json:"nexora.cache"`
+		Filter string `json:"nexora.filter"` // indices written before nexora-querylog-v2
+		// FilterResult is nexora.filter as renamed by the collector's transform/querylog.
+		FilterResult string `json:"nexora.filter.result"`
+		ListID       string `json:"nexora.filter.list_id"`
+		Category     string `json:"nexora.filter.category"`
+		Upstream     string `json:"nexora.upstream"`
+		Transport    string `json:"nexora.transport"`
+		EngineID     string `json:"nexora.engine.id"`
+		DurationUS   int64  `json:"nexora.duration_us"`
 	} `json:"attributes"`
 }
 
@@ -100,11 +104,21 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 	}
 	for field, v := range map[string]string{
 		"client.address": q.Client, "dns.question.type": q.QType, "dns.response.code": q.RCode,
-		"nexora.cache": q.Cache, "nexora.filter": q.Filter,
+		"nexora.cache": q.Cache, "nexora.filter.category": q.Category,
 	} {
 		if v != "" {
 			filters = append(filters, map[string]any{"term": map[string]any{"attributes." + field + ".keyword": v}})
 		}
+	}
+	if q.Filter != "" {
+		// nexora-querylog-v2 indices carry nexora.filter.result; older ones nexora.filter.
+		filters = append(filters, map[string]any{"bool": map[string]any{
+			"should": []map[string]any{
+				{"term": map[string]any{"attributes.nexora.filter.keyword": q.Filter}},
+				{"term": map[string]any{"attributes.nexora.filter.result.keyword": q.Filter}},
+			},
+			"minimum_should_match": 1,
+		}})
 	}
 	body := map[string]any{
 		"size":             limit + 1,
@@ -150,9 +164,14 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 			return Page{}, fmt.Errorf("opensearch document %s: %w", hit.ID, err)
 		}
 		a := src.Attributes
+		filter := a.Filter
+		if filter == "" {
+			filter = a.FilterResult
+		}
 		page.Records = append(page.Records, Record{
 			Time: src.Timestamp, Client: a.Client, Name: a.Name, QType: a.QType, RCode: a.RCode, Cache: a.Cache,
-			Filter: a.Filter, Upstream: a.Upstream, Transport: a.Transport, EngineID: a.EngineID, DurationUS: a.DurationUS,
+			Filter: filter, Upstream: a.Upstream, Transport: a.Transport, EngineID: a.EngineID,
+			ListID: a.ListID, Category: a.Category, DurationUS: a.DurationUS,
 		})
 	}
 	return page, nil

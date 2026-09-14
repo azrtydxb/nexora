@@ -264,7 +264,7 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 		return nil, err
 	}
 	q := querylog.Query{Client: deref(p.Client), Name: deref(p.Name), QType: deref(p.Qtype), RCode: deref(p.Rcode),
-		Cache: deref(p.Cache), Filter: deref(p.Filter), Limit: limit, Cursor: deref(p.Cursor)}
+		Cache: deref(p.Cache), Filter: deref(p.Filter), Category: deref(p.Category), Limit: limit, Cursor: deref(p.Cursor)}
 	if p.From != nil {
 		q.From = *p.From
 	}
@@ -279,7 +279,7 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	for i, r := range page.Records {
 		out.Records[i] = QueryLogRecord{Time: r.Time, Client: r.Client, Name: r.Name, Qtype: r.QType, Rcode: r.RCode,
 			Cache: QueryLogRecordCache(r.Cache), Filter: QueryLogRecordFilter(r.Filter), Upstream: r.Upstream,
-			Transport: r.Transport, EngineId: r.EngineID, DurationUs: r.DurationUS}
+			Transport: r.Transport, EngineId: r.EngineID, DurationUs: r.DurationUS, ListId: r.ListID, Category: r.Category}
 	}
 	return SearchQueryLog200JSONResponse(out), nil
 }

@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { type Schemas } from "@/api/client";
 import {
   type Engine,
   type StatsWindow,
@@ -398,8 +399,45 @@ function EngineStatsCard({ id }: { id: string }) {
           </div>
         )}
       </div>
+      {stats.data?.filter_index && (
+        <FilterIndexFacts fi={stats.data.filter_index} />
+      )}
     </Card>
   );
+}
+
+function FilterIndexFacts({
+  fi,
+}: {
+  fi: NonNullable<Schemas["EngineStats"]["filter_index"]>;
+}) {
+  return (
+    <dl
+      data-testid="engine-filter-index"
+      className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4"
+    >
+      <Fact label="Filter index memory">
+        {formatBytes(fi.bytes)} of {formatBytes(fi.max_bytes)}
+      </Fact>
+      <Fact label="Filter index names">{fi.entries.toLocaleString()}</Fact>
+      <Fact label="Decision time">
+        {fi.decision_ns_blocked.toFixed(0)} ns blocked,{" "}
+        {fi.decision_ns_clean.toFixed(0)} ns clean ({fi.cpu})
+      </Fact>
+      <Fact label="Last index build">{fi.build_seconds.toFixed(2)} s</Fact>
+    </dl>
+  );
+}
+
+function formatBytes(n: number): string {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 type AssignmentForm = { group: string; labels: LabelRow[]; revision: number };

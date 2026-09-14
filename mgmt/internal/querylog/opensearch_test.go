@@ -42,3 +42,27 @@ func TestOpenSearchQueriesAttributesAndReportsUnavailable(t *testing.T) {
 		t.Fatalf("down backend -> %v", err)
 	}
 }
+
+func TestOpenSearchCategoryAndFilterGenerations(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"hits":{"hits":[{"_source":{"@timestamp":"2026-09-14T10:00:00Z","attributes":{"client.address":"10.0.0.9","dns.question.name":"casino.example.","dns.question.type":"A","dns.response.code":"NOERROR","nexora.cache":"none","nexora.filter.result":"blocked","nexora.filter.list_id":"l1","nexora.filter.category":"gambling","nexora.transport":"udp","nexora.engine.id":"e1","nexora.duration_us":12}},"sort":[1]}]}}`)
+	}))
+	defer srv.Close()
+	os, err := querylog.NewOpenSearch(config.OpenSearchConfig{URL: srv.URL, Index: "nexora-querylog-*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := os.Search(context.Background(), querylog.Query{Category: "gambling", Filter: "blocked", Limit: 5})
+	if err != nil || len(page.Records) != 1 || page.Records[0].Filter != "blocked" || page.Records[0].Category != "gambling" || page.Records[0].ListID != "l1" {
+		t.Fatalf("v2 document: %+v %v", page, err)
+	}
+	for _, want := range []string{`"attributes.nexora.filter.category.keyword":"gambling"`, `"attributes.nexora.filter.result.keyword":"blocked"`, `"attributes.nexora.filter.keyword":"blocked"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("query lacks %s: %s", want, body)
+		}
+	}
+}

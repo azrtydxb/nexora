@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, RotateCcw, Search } from "lucide-react";
 
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
+import { useFilterCategories } from "@/api/filterCategories";
 import { ErrorAlert, MessageRow } from "@/components/common";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -56,6 +57,7 @@ type Filters = {
   rcode: string;
   cache: string;
   filter: string;
+  category: string;
 };
 
 const emptyFilters: Filters = {
@@ -65,6 +67,7 @@ const emptyFilters: Filters = {
   rcode: any,
   cache: any,
   filter: any,
+  category: any,
 };
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {
@@ -87,6 +90,7 @@ export function QueryLogPage() {
   // Cursors of the pages before the current one; the current page's cursor is last.
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors[cursors.length - 1];
+  const categories = useFilterCategories();
 
   const q = useQuery({
     queryKey: ["query-log", applied, cursor],
@@ -101,6 +105,7 @@ export function QueryLogPage() {
               rcode: param(applied.rcode),
               cache: param(applied.cache),
               filter: param(applied.filter),
+              category: param(applied.category),
               limit: pageSize,
               cursor,
             },
@@ -158,7 +163,7 @@ export function QueryLogPage() {
       <Card className="mb-4 p-4">
         <form
           onSubmit={search}
-          className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_repeat(4,minmax(0,1fr))_auto]"
+          className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_repeat(5,minmax(0,1fr))_auto]"
           role="search"
         >
           <Field
@@ -217,7 +222,14 @@ export function QueryLogPage() {
             options={filterStates}
             onChange={(v) => set("filter", v)}
           />
-          <div className="col-span-2 flex items-end gap-2 md:col-span-4 xl:col-span-1">
+          <FilterSelect
+            label="Category"
+            id="querylog-category"
+            value={form.category}
+            options={(categories.data ?? []).map((c) => c.key)}
+            onChange={(v) => set("category", v)}
+          />
+          <div className="col-span-1 flex items-end gap-2 md:col-span-3 xl:col-span-1">
             <Button
               type="submit"
               data-testid="querylog-search"
@@ -274,6 +286,7 @@ export function QueryLogPage() {
               <TableHead className="h-10">Response</TableHead>
               <TableHead className="h-10">Cache</TableHead>
               <TableHead className="h-10">Filter</TableHead>
+              <TableHead className="h-10">Category</TableHead>
               <TableHead className="h-10">Upstream</TableHead>
               <TableHead className="h-10 text-right">Duration</TableHead>
             </TableRow>
@@ -281,14 +294,14 @@ export function QueryLogPage() {
           <TableBody>
             {!unavailable &&
               records.map((r, i) => <RecordRow key={`${r.time}-${i}`} r={r} />)}
-            {q.isPending && <MessageRow colSpan={9}>Loading…</MessageRow>}
+            {q.isPending && <MessageRow colSpan={10}>Loading…</MessageRow>}
             {q.isSuccess && records.length === 0 && (
-              <MessageRow colSpan={9}>
+              <MessageRow colSpan={10}>
                 No queries match these filters.
               </MessageRow>
             )}
             {unavailable && (
-              <MessageRow colSpan={9}>
+              <MessageRow colSpan={10}>
                 No results while the backend is down.
               </MessageRow>
             )}
@@ -366,6 +379,12 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
+      </TableCell>
+      <TableCell
+        className="py-2 whitespace-nowrap"
+        title={r.list_id || undefined}
+      >
+        {r.category || <span className="text-muted-foreground">—</span>}
       </TableCell>
       <TableCell className="py-2 whitespace-nowrap">
         {r.upstream || <span className="text-muted-foreground">—</span>}

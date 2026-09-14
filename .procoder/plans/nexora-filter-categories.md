@@ -3603,6 +3603,8 @@ As built so far: the `openapi.yaml` part (`category` parameter, required `list_i
 
 Interfaces: `querylog.Query.Category string`; `querylog.Record.ListID, Category string`; attribute keys `nexora.filter.list_id`, `nexora.filter.category`, OpenSearch fields `attributes.nexora.filter.category.keyword`, `attributes.nexora.filter.result.keyword` (v2 index) and `attributes.nexora.filter.keyword` (older indices); API query parameter `category`, record fields `list_id` and `category` (both required, empty when not blocked).
 
+As built (querylog part): `mgmt/internal/querylog` as below. `deploy/kw/otelcol.yaml` already gets Task 20's `transform/querylog` processor, `logs_index: nexora-querylog-v2` and `processors: [batch, transform/querylog]` (validated with `otelcol-contrib validate`). The Helm chart's default collector config only exports to `debug`, so it needs no rename.
+
 - [ ] Add to `mgmt/internal/querylog/builtin_test.go`:
   ```go
   func TestBuiltinCategoryAttribution(t *testing.T) {
@@ -4178,6 +4180,8 @@ Files: `web/src/pages/PoliciesPage.tsx` (categories fieldset, license notice, ca
 Interfaces: consumes `useFilterCategories` and `needsAcknowledgement`'s rule (Task 15), `Schemas["PolicyGroupInput"].category_keys`/`acknowledge_license`, `QueryLogRecord.category`/`list_id`, `EngineStats.filter_index` (Task 13/14); test ids `querylog-category`, `engine-filter-index`; fieldset legend `Categories`.
 
 As built so far: the policy-group part is its own test `categories in policy groups` (the first half of the test below, through `await expect(row).toContainText("Adult content")`), with `groupLicenseNotices` in `PoliciesPage.tsx` and the shared `LicenseNoticeDialog`; a server 422 `license_acknowledgement_required` also opens the notice. Still to do when Task 11/14 fields land: the query-log category filter and column, the engine filter index facts, the blocked malware query and `NEXORA_E2E_CATEGORY_QUERY_NAME` in `e2e/gui_test.go`, and a second test `category in the query log and filter index in engine detail` with the remaining steps.
+
+As built (query log and engine detail): the second test lives in its own spec `web/e2e/screens/23-querylog-category.spec.ts` (from `await page.getByTestId("nav-query-log").click()` on, after an operator login) so 22 stays untouched. `QueryLogPage.tsx` keeps its `form`/`set` state names (the plan's `draft` never existed); the filter index facts are a `FilterIndexFacts` component in `EngineDetailPage.tsx`. `e2e/gui_test.go` must still set `NEXORA_E2E_CATEGORY_QUERY_NAME` for spec 23.
 
 - [ ] Append to `web/e2e/screens/22-filter-categories.spec.ts`:
   ```ts

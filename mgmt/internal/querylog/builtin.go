@@ -101,8 +101,12 @@ func recordFromAttributes(attrs []*commonpb.KeyValue) Record {
 			r.RCode = v.GetStringValue()
 		case "nexora.cache":
 			r.Cache = v.GetStringValue()
-		case "nexora.filter":
+		case "nexora.filter", "nexora.filter.result":
 			r.Filter = v.GetStringValue()
+		case "nexora.filter.list_id":
+			r.ListID = v.GetStringValue()
+		case "nexora.filter.category":
+			r.Category = v.GetStringValue()
 		case "nexora.upstream":
 			r.Upstream = v.GetStringValue()
 		case "nexora.transport":
@@ -163,5 +167,6 @@ func matches(r Record, q Query, lowerName string) bool {
 		(q.QType == "" || r.QType == q.QType) &&
 		(q.RCode == "" || r.RCode == q.RCode) &&
 		(q.Cache == "" || r.Cache == q.Cache) &&
-		(q.Filter == "" || r.Filter == q.Filter)
+		(q.Filter == "" || r.Filter == q.Filter) &&
+		(q.Category == "" || r.Category == q.Category)
 }

@@ -44,3 +44,24 @@ func TestBuiltinRingSearchAndCapacity(t *testing.T) {
 		t.Fatalf("paging: %d then %d", len(first.Records), len(second.Records))
 	}
 }
+
+func TestBuiltinCategoryAttribution(t *testing.T) {
+	b := querylog.NewBuiltin(10)
+	req := request("casino.example.", "clean.example.")
+	attrs := &req.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Attributes
+	*attrs = append(*attrs, str("nexora.filter.list_id", "0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1"), str("nexora.filter.category", "gambling"))
+	b.Ingest("e1", req)
+	page, err := b.Search(context.Background(), querylog.Query{Category: "gambling", Limit: 10})
+	if err != nil || len(page.Records) != 1 || page.Records[0].Name != "casino.example." ||
+		page.Records[0].ListID != "0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1" || page.Records[0].Category != "gambling" {
+		t.Fatalf("category filter: %+v %v", page, err)
+	}
+	all, _ := b.Search(context.Background(), querylog.Query{Limit: 10})
+	if len(all.Records) != 2 {
+		t.Fatalf("positive path: %d records", len(all.Records))
+	}
+	none, _ := b.Search(context.Background(), querylog.Query{Category: "adult", Limit: 10})
+	if len(none.Records) != 0 {
+		t.Fatalf("other category matched: %+v", none)
+	}
+}

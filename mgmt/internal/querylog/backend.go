@@ -15,17 +15,19 @@ var ErrInvalidCursor = errors.New("invalid query log cursor")
 
 // Query is a query-log search. Empty strings and zero times do not filter.
 type Query struct {
-	From, To                                  time.Time
-	Client, Name, QType, RCode, Cache, Filter string
-	Limit                                     int
-	Cursor                                    string
+	From, To                                            time.Time
+	Client, Name, QType, RCode, Cache, Filter, Category string
+	Limit                                               int
+	Cursor                                              string
 }
 
 // Record is one logged DNS query.
 type Record struct {
 	Time                                                                     time.Time
 	Client, Name, QType, RCode, Cache, Filter, Upstream, Transport, EngineID string
-	DurationUS                                                               int64
+	// ListID and Category attribute a blocked query to the matching list; empty otherwise.
+	ListID, Category string
+	DurationUS       int64
 }
 
 // Page is one page of search results; NextCursor is empty on the last page.
