@@ -89,7 +89,7 @@ No two tasks in one wave touch the same file.
 | 1    | 9                    | `engine/src/runtime.rs`, `engine/src/telemetry/otlp.rs`, `engine/tests/telemetry_export.rs`                                                                                                                                                                                                                                          |
 | 1    | 13                   | `mgmt/internal/control/server.go`, `mgmt/internal/control/control_test.go`, `mgmt/migrations/00801_blobs_storage_external.sql`                                                                                                                                                                                                       |
 | 1    | 14                   | `mgmt/internal/querylog/opensearch.go`, `.../opensearch_test.go`, `e2e/querylog_paging_test.go` (new)                                                                                                                                                                                                                                |
-| 1    | 15                   | `mgmt/internal/secrets/pkcs11.go`, `.../pkcs11_test.go`, `.../export_test.go` (new)                                                                                                                                                                                                                                                  |
+| 1    | 15                   | `mgmt/internal/secrets/pkcs11.go`, `.../pkcs11_test.go`, `.../export_test.go` (new), `.../secrets.go` (Unseal only)                                                                                                                                                                                                                  |
 | 1    | 16                   | `mgmt/internal/zone/import.go`, `mgmt/internal/zonefile/export.go`, `mgmt/internal/api/zonefile.go`, `mgmt/internal/zone/export_test.go` (new), `mgmt/internal/api/zonefile_test.go` (new)                                                                                                                                           |
 | 1    | 17                   | `mgmt/internal/zone/service.go`, `.../build.go`, `.../validate.go`, `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)                                                                                                                                                                      |
 | 1    | 18                   | `e2e/fixtures/authhier/{spec,server,authhier_test}.go`, `e2e/dnssec_test.go`                                                                                                                                                                                                                                                         |
@@ -703,7 +703,7 @@ Interfaces: `pub fn revoked_key_verifies(rrset: &[Record], rrsigs: &[Record], ke
 Files: `engine/src/recursor/rpz/transfer.rs`, `engine/src/recursor/rpz/transfer_tests.rs`
 Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` unchanged; `#[cfg(test)] thread_local! { pub(super) static KEYS_BUILT: Cell<usize> }` in `transfer.rs`.
 
-- [ ] In `transfer.rs`, add the test counter and count every `record_key` call:
+- [x] In `transfer.rs`, add the test counter and count every `record_key` call:
   ```rust
   #[cfg(test)]
   thread_local! {
@@ -1486,10 +1486,10 @@ Interfaces: the cursor is base64url JSON `[timestamp, _id]`; a one-element curso
 
 ## Task 15: PKCS#11 session recovery (#27)
 
-Files: `mgmt/internal/secrets/pkcs11.go`, `mgmt/internal/secrets/pkcs11_test.go`, `mgmt/internal/secrets/export_test.go` (new)
-Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `module, label, pinFile string`, `mu sync.Mutex`, `gen uint64`. Test-only `(*Box).KillHSMSessionsForTest() error` and `(*Box).HSMPoolLenForTest() int`.
+Files: `mgmt/internal/secrets/pkcs11.go`, `mgmt/internal/secrets/pkcs11_test.go`, `mgmt/internal/secrets/export_test.go` (new), `mgmt/internal/secrets/secrets.go` (`Unseal` passes `ErrBackendUnavailable` through)
+Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `label, pinFile string`, `mu sync.Mutex`, `gen uint64`. Test-only `(*Box).KillHSMSessionsForTest() error` and `(*Box).HSMPoolLenForTest() int`.
 
-- [ ] Create `mgmt/internal/secrets/export_test.go`:
+- [x] Create `mgmt/internal/secrets/export_test.go`:
   ```go
   //go:build cgo
 
@@ -1501,7 +1501,7 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   // HSMPoolLenForTest reports the sessions currently idle in the pool.
   func (b *Box) HSMPoolLenForTest() int { return len(b.hsm.pool) }
   ```
-- [ ] Add to `pkcs11_test.go`:
+- [x] Add to `pkcs11_test.go`:
   ```go
   func TestPKCS11RecoversFromInvalidatedSessions(t *testing.T) {
   	cfg := softhsmConfig(t)
@@ -1530,8 +1530,9 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   		}
   		verifySignerMatchesDNSKEY(t, box, k)
   	}
-  	// A reset the pool cannot recover from: the PIN is gone.
-  	if err := os.Chmod(cfg.PKCS11PinFile, 0); err != nil {
+  	// A reset the pool cannot recover from: the PIN is gone. The tests run as root in the dev pod,
+  	// where chmod 0 does not stop reading, so the file gets a wrong PIN instead.
+  	if err := os.WriteFile(cfg.PKCS11PinFile, []byte("000000\n"), 0o600); err != nil {
   		t.Fatal(err)
   	}
   	if err := box.KillHSMSessionsForTest(); err != nil {
@@ -1552,10 +1553,10 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   	}
   }
   ```
-  If the tests run as root (so `chmod 0` does not stop reading), replace the PIN file content with a wrong PIN instead. Use the package's name for `ErrBackendUnavailable`, if it differs.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/secrets -run TestPKCS11RecoversFromInvalidatedSessions'`. Expect FAIL `unseal 0 after the reset: "" pkcs11: 0xB3: CKR_SESSION_HANDLE_INVALID`.
-- [ ] In `pkcs11.go`:
-  - store `module`, `label`, `pinFile` in `openHSM`;
+  The dev pod runs tests as root, so `chmod 0` does not stop reading; the test writes a wrong PIN instead.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/secrets -run TestPKCS11RecoversFromInvalidatedSessions'`. Expect FAIL `unseal 0 after the reset: "" envelope authentication failed` (`Unseal` hides the `CKR_SESSION_HANDLE_INVALID` underneath).
+- [x] In `pkcs11.go`:
+  - store `label`, `pinFile` in `openHSM`; the slot lookup and the login move into `findSlot()` and `login(sh, pin)`, shared by `openHSM` and `reopen`;
   - add `mu sync.Mutex` and `gen uint64`;
   - replace `with` (delete the `debt:` comment):
   ```go
@@ -1596,8 +1597,9 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
     2. finds the slot by `label` again (the slot id can change after re-insertion) and stores it;
     3. opens a RW session;
     4. if `seenGen == h.gen` (the first recovery for this event), reads the PIN with `readSecretFile(pinFile)`, logs in with `CKU_USER`, tolerates `CKR_USER_ALREADY_LOGGED_IN`, clears the PIN bytes and increments `gen`;
-    5. returns the new handle.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/secrets/... ./mgmt/internal/dnssec/...'` and expect all to pass, including `TestPKCS11SigningKeysStayInToken` and `TestSweepLeavesOtherInstallationsTokenKeys`.
+    5. returns the new handle; on a failed login it closes the new session first.
+- [x] In `secrets.go` `Unseal`, return an unwrap error that `errors.Is(err, ErrBackendUnavailable)` as is, instead of `envelope authentication failed`: a lost token is not a forged envelope.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/secrets/... ./mgmt/internal/dnssec/...'` and expect all to pass, including `TestPKCS11SigningKeysStayInToken` and `TestSweepLeavesOtherInstallationsTokenKeys`.
 
 ## Task 16: Streaming zone export (#28)
 
@@ -1907,7 +1909,7 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
   - start the default hierarchy as the other tests there do;
   - query `x.w.good.test. A` with DO at 127.0.53.3;
   - assert one A `192.0.2.60` owned by `x.w.good.test.`;
-  - assert an RRSIG over it with `Labels == 3` (fewer than the owner's 4) that verifies against the zone's ZSK with the owner rewritten back to `*.w.good.test.` (`sig.Verify(zsk, []dns.RR{wildcardCopy})`);
+  - assert an RRSIG over it with `Labels == 3` (fewer than the owner's 4) that verifies against the zone's ZSK with the owners of copies of the A and the RRSIG rewritten back to `*.w.good.test.` (`wildSig.Verify(zsk, []dns.RR{wildcardCopy})`; miekg's `Verify` rejects an RRset whose owner differs from the RRSIG's);
   - assert an NSEC in the authority section whose owner sorts before `x.w.good.test.` and whose next name sorts after it;
   - query `x.w.good.test. AAAA` and assert NOERROR, no answer, SOA and NSEC in the authority section;
   - query `x.w.wild.test. A` at 127.0.53.12 and assert the answer carries no NSEC in the authority section.

@@ -257,6 +257,9 @@ func (b *Box) Unseal(purpose string, envelope []byte) ([]byte, error) {
 	}
 	failed := errors.New("envelope authentication failed")
 	dek, err := unwrap(envelope[13:25], envelope[25:73])
+	if errors.Is(err, ErrBackendUnavailable) { // the token is gone, which is not a forged envelope
+		return nil, err
+	}
 	if err != nil || len(dek) != 32 {
 		clear(dek)
 		return nil, failed

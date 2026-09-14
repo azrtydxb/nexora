@@ -126,3 +126,53 @@ func TestPKCS11PinFileIsRequiredAndChecked(t *testing.T) {
 		t.Fatalf("wrong PIN: %v", err)
 	}
 }
+
+func TestPKCS11RecoversFromInvalidatedSessions(t *testing.T) {
+	cfg := softhsmConfig(t)
+	box, err := secrets.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer box.Close()
+	if err := box.EnsureHSMWrapKey(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	env, err := box.Seal("test-purpose", []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := box.KillHSMSessionsForTest(); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 8 {
+		if got, err := box.Unseal("test-purpose", env); err != nil || string(got) != "secret" {
+			t.Fatalf("unseal %d after the reset: %q %v", i, got, err)
+		}
+		k, err := box.GenerateSigningKey(t.Context(), secrets.BackendPKCS11, 13)
+		if err != nil {
+			t.Fatalf("generate %d after the reset: %v", i, err)
+		}
+		verifySignerMatchesDNSKEY(t, box, k)
+	}
+	// A reset the pool cannot recover from: the PIN is gone. The tests run as root in the dev pod,
+	// where chmod 0 does not stop reading, so the file gets a wrong PIN instead.
+	if err := os.WriteFile(cfg.PKCS11PinFile, []byte("000000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.KillHSMSessionsForTest(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := box.Unseal("test-purpose", env); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, secrets.ErrBackendUnavailable) {
+			t.Fatalf("unrecoverable token -> %v, want ErrBackendUnavailable", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("call deadlocked on a dead token")
+	}
+	if n := box.HSMPoolLenForTest(); n != 4 {
+		t.Fatalf("pool holds %d sessions, want 4", n)
+	}
+}
