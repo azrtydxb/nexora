@@ -121,6 +121,9 @@ impl Runtime {
             .collect::<Result<Vec<_>, _>>()?;
         let strategy = match s.resolver.as_ref().map(|r| r.strategy()) {
             Some(UpstreamStrategy::Fastest) => Strategy::Fastest,
+            Some(UpstreamStrategy::Parallel) => Strategy::Parallel {
+                max: s.resolver.as_ref().map_or(0, |r| r.parallel_max.min(8)) as u8,
+            },
             _ => Strategy::Ordered,
         };
         let upstreams = Arc::new(UpstreamSet::new(
@@ -244,6 +247,13 @@ fn upstreams_key(s: &ConfigSnapshot) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(s.resolver.as_ref().map_or(0, |r| r.strategy).to_be_bytes());
+    if let Some(r) = s
+        .resolver
+        .as_ref()
+        .filter(|r| r.strategy() == UpstreamStrategy::Parallel)
+    {
+        h.update(r.parallel_max.min(8).to_be_bytes());
+    }
     for u in &s.upstreams {
         let bytes = u.encode_to_vec();
         h.update((bytes.len() as u32).to_be_bytes());

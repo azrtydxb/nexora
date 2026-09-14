@@ -2,6 +2,7 @@
 
 use super::{ClientInfo, WorkerAnswerer, WorkerCtx, proxy, stream};
 use crate::edns::Transport;
+use crate::telemetry::metrics::ConnectionGuard;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::SocketAddr;
@@ -40,15 +41,20 @@ pub async fn run_tcp(ctx: Rc<WorkerCtx>, listener: std::net::TcpListener) {
         match listener.accept().await {
             Ok((tcp, peer)) => {
                 let _ = tcp.set_nodelay(true);
-                tokio::task::spawn_local(stream::serve_dns_stream(
-                    answerer.clone(),
-                    tcp,
-                    ClientInfo {
-                        addr: proxy::normalize_peer(peer),
-                        transport: Transport::Tcp,
-                    },
-                    IDLE_TIMEOUT,
-                ));
+                let answerer = answerer.clone();
+                tokio::task::spawn_local(async move {
+                    let _guard = ConnectionGuard::new(Transport::Tcp);
+                    stream::serve_dns_stream(
+                        answerer,
+                        tcp,
+                        ClientInfo {
+                            addr: proxy::normalize_peer(peer),
+                            transport: Transport::Tcp,
+                        },
+                        IDLE_TIMEOUT,
+                    )
+                    .await
+                });
             }
             Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
         }

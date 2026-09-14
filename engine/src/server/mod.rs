@@ -31,7 +31,8 @@ use crate::recursor::{LocalBoxFuture, RecursorState};
 use crate::runtime::Runtime;
 use crate::telemetry::metrics::{Metrics, WorkerCounters};
 use crate::telemetry::querylog::{
-    self, CacheOutcome, FilterOutcome, NO_FILTER_LIST, NO_POLICY_GROUP, QueryRecord, RING_CAPACITY,
+    self, ACL_NONE, CacheOutcome, FilterOutcome, FilterSource, NO_FILTER_LIST, NO_POLICY_GROUP,
+    NO_RPZ_ZONE, NO_RULE, QueryRecord, RING_CAPACITY,
 };
 use crate::upstream::{self, Question, UpstreamSet, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
@@ -102,6 +103,8 @@ pub struct WorkerForward<'a> {
     pub worker: &'a WorkerUpstreams,
     /// The upstream that answered last; `u8::MAX` while none did.
     pub upstream_index: Cell<u8>,
+    /// Upstreams raced for the last answer (`Forwarded::raced`); 1 until one answered.
+    pub raced: Cell<u8>,
 }
 
 impl ForwardUpstream for WorkerForward<'_> {
@@ -118,6 +121,7 @@ impl ForwardUpstream for WorkerForward<'_> {
                 .map_err(|e| e.to_string())?;
             self.upstream_index
                 .set(fwd.upstream_index.min(usize::from(u8::MAX - 1)) as u8);
+            self.raced.set(fwd.raced);
             Ok(fwd.response)
         })
     }
@@ -288,6 +292,12 @@ impl Scope<'_> {
             rpz_action: 0,
             filter_list: NO_FILTER_LIST,
             filter_generation: 0,
+            filter_source: FilterSource::None,
+            filter_rule_offset: NO_RULE,
+            rewrite_wildcard: false,
+            rpz_zone: NO_RPZ_ZONE,
+            acl_refused: ACL_NONE,
+            upstream_raced: 1,
         }
     }
 
@@ -301,6 +311,7 @@ impl Scope<'_> {
         self.ctx
             .counters()
             .observe(self.transport, r.rcode, u64::from(r.duration_us));
+        self.ctx.counters().observe_record(&r);
         querylog::push(&self.ctx.shared.querylog, &self.ctx.shared.metrics, r);
     }
 }
@@ -593,6 +604,7 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
         set: &rt.upstreams,
         worker: &ctx.upstreams,
         upstream_index: Cell::new(u8::MAX),
+        raced: Cell::new(1),
     };
     let bypass = !matches!(job.rpz, RpzPending::None);
     let answer = if bypass {
@@ -703,6 +715,7 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
 /// Records the route, DNSSEC state, RPZ action and upstream of a miss answer.
 fn note_answer(rec: &mut QueryRecord, ans: &dispatch::MissAnswer, forward: &WorkerForward<'_>) {
     rec.upstream = forward.upstream_index.get();
+    rec.upstream_raced = forward.raced.get();
     rec.route = ans.route as u8;
     rec.dnssec = ans.security as u8;
     if ans.rpz_action != 0 {

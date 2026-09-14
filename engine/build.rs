@@ -1,5 +1,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../proto/nexora/control/v1/control.proto");
+    println!("cargo:rerun-if-env-changed=NEXORA_VERSION");
+    println!("cargo:rerun-if-env-changed=NEXORA_COMMIT");
     // build_transport(false): the rpc `Connect` would otherwise collide with the
     // generated `EngineControlClient::connect(dst)` constructor; clients are built
     // with `EngineControlClient::new(channel)`.

@@ -29,3 +29,9 @@ pub const VERSION: &str = match option_env!("NEXORA_VERSION") {
     Some(v) => v,
     None => "dev",
 };
+
+/// The full commit hash: `NEXORA_COMMIT` at compile time, empty for an unstamped build.
+pub const COMMIT: &str = match option_env!("NEXORA_COMMIT") {
+    Some(v) => v,
+    None => "",
+};

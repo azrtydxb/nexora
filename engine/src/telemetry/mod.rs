@@ -2,4 +2,5 @@
 
 pub mod metrics;
 pub mod otlp;
+pub mod process;
 pub mod querylog;

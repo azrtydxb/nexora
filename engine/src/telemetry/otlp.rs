@@ -4,7 +4,10 @@
 //! can block a worker.
 
 use super::metrics::Signal;
-use super::querylog::{DNSSEC_NAMES, NO_FILTER_LIST, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at};
+use super::querylog::{
+    ACL_RECURSION, DNSSEC_NAMES, FilterSource, NO_FILTER_LIST, NO_RPZ_ZONE, NO_RULE, QueryRecord,
+    ROUTE_NAMES, RPZ_NAMES, name_at,
+};
 use crate::filter::index::ListMeta;
 use crate::runtime::{Runtime, TelemetrySettings};
 use crate::server::Shared;
@@ -57,13 +60,16 @@ pub fn spawn_telemetry_thread(shared: Arc<Shared>) -> JoinHandle<()> {
         .expect("spawn nexora-telemetry")
 }
 
-/// One OTLP log record with the attributes of `docs/architecture.md`.
+/// One OTLP log record with the attributes of `docs/architecture.md`; attribution attributes
+/// (`nexora.filter.source`, `.rule`, `nexora.acl.refused`, `nexora.rpz_zone`,
+/// `nexora.upstream_raced`) only when set.
 pub fn log_record(
     r: &QueryRecord,
     upstream_name: &str,
     engine_id: &str,
     policy_group: &str,
     filter_list: Option<&ListMeta>,
+    rpz_zone_id: &str,
 ) -> LogRecord {
     let name = presentation(r.name.as_wire());
     let mut record = LogRecord {
@@ -100,6 +106,42 @@ pub fn log_record(
             kv("nexora.filter.list_id", &*meta.id),
             kv("nexora.filter.category", &*meta.category),
         ]);
+    }
+    if r.filter_source != FilterSource::None {
+        record
+            .attributes
+            .push(kv("nexora.filter.source", r.filter_source.as_str()));
+    }
+    if r.filter_rule_offset != NO_RULE
+        && let Some(suffix) = r.name.as_wire().get(usize::from(r.filter_rule_offset)..)
+        && !suffix.is_empty()
+    {
+        let rule = presentation(suffix);
+        let prefix = if r.rewrite_wildcard { "*." } else { "" };
+        record.attributes.push(kv(
+            "nexora.filter.rule",
+            format!("{prefix}{}", rule.trim_end_matches('.')),
+        ));
+    }
+    if r.acl_refused != 0 {
+        let acl = if r.acl_refused == ACL_RECURSION {
+            "recursion"
+        } else {
+            "authoritative"
+        };
+        record.attributes.push(kv("nexora.acl.refused", acl));
+    }
+    if !rpz_zone_id.is_empty() {
+        record.attributes.push(kv("nexora.rpz_zone", rpz_zone_id));
+    }
+    if r.upstream_raced > 1 {
+        record.attributes.push(KeyValue {
+            key: "nexora.upstream_raced".into(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::IntValue(i64::from(r.upstream_raced))),
+            }),
+            ..Default::default()
+        });
     }
     record
 }
@@ -339,6 +381,7 @@ impl Exporter {
         let keep_logs = t.querylog_to_management || !t.otlp_endpoint.is_empty();
         let keep_traces = !t.otlp_endpoint.is_empty();
         let engine_id = self.shared.engine_id.load();
+        let rpz = self.shared.recursor.rpz.set.load();
         for _ in 0..BATCH_MAX {
             let Some(r) = self.shared.querylog.pop() else {
                 break;
@@ -360,9 +403,18 @@ impl Exporter {
                     && rt.filter_index.generation() == r.filter_generation)
                     .then(|| rt.filter_index.lists().get(usize::from(r.filter_list)))
                     .flatten();
+                let rpz_zone = if r.rpz_zone == NO_RPZ_ZONE {
+                    ""
+                } else {
+                    // debt: resolved against the RPZ set current at drain time, like upstream
+                    // names; a publication that reorders zones in that window mislabels records.
+                    rpz.zones
+                        .get(usize::from(r.rpz_zone))
+                        .map_or("", |z| z.id.as_str())
+                };
                 self.current
                     .logs
-                    .push(log_record(&r, upstream, &engine_id, group, list));
+                    .push(log_record(&r, upstream, &engine_id, group, list, rpz_zone));
             }
             self.current.opened.get_or_insert_with(Instant::now);
             if self.current.logs.len() >= BATCH_MAX {

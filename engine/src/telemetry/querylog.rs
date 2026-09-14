@@ -12,6 +12,14 @@ pub const RING_CAPACITY: usize = 65536;
 pub const NO_POLICY_GROUP: u16 = u16::MAX;
 /// `QueryRecord.filter_list` of a query no list blocked.
 pub const NO_FILTER_LIST: u16 = u16::MAX;
+/// `QueryRecord.filter_rule_offset` when no listed suffix or rewrite rule matched.
+pub const NO_RULE: u8 = u8::MAX;
+/// `QueryRecord.rpz_zone` when no RPZ zone decided.
+pub const NO_RPZ_ZONE: u16 = u16::MAX;
+/// `QueryRecord.acl_refused` values.
+pub const ACL_NONE: u8 = 0;
+pub const ACL_RECURSION: u8 = 1;
+pub const ACL_AUTHORITATIVE: u8 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheOutcome {
@@ -54,6 +62,32 @@ impl FilterOutcome {
     }
 }
 
+/// What decided a filtered, rewritten or refused query.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FilterSource {
+    None,
+    Blocklist,
+    Category,
+    Allowlist,
+    Rpz,
+    Rewrite,
+    Acl,
+}
+
+impl FilterSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FilterSource::None => "",
+            FilterSource::Blocklist => "blocklist",
+            FilterSource::Category => "category",
+            FilterSource::Allowlist => "allowlist",
+            FilterSource::Rpz => "rpz",
+            FilterSource::Rewrite => "rewrite",
+            FilterSource::Acl => "acl",
+        }
+    }
+}
+
 /// Stage offsets are microseconds from the query's arrival.
 #[derive(Clone, Copy)]
 pub struct QueryRecord {
@@ -85,6 +119,17 @@ pub struct QueryRecord {
     /// unless blocked.
     pub filter_list: u16,
     pub filter_generation: u64,
+    pub filter_source: FilterSource,
+    /// Octet offset in the wire name of the matched suffix or rewrite rule; `NO_RULE` for none.
+    pub filter_rule_offset: u8,
+    /// The matched rewrite rule is a `*.` wildcard.
+    pub rewrite_wildcard: bool,
+    /// Index into the RPZ zone set that decided; `NO_RPZ_ZONE` for none.
+    pub rpz_zone: u16,
+    /// `ACL_NONE`, `ACL_RECURSION` or `ACL_AUTHORITATIVE`.
+    pub acl_refused: u8,
+    /// Upstreams raced for the answer; 1 unless a parallel race ran.
+    pub upstream_raced: u8,
 }
 
 /// `QueryRecord.route` names.

@@ -5,7 +5,8 @@ use nexora_engine::snapshot::{DirBlobs, apply};
 use nexora_engine::telemetry::metrics::{Signal, serve_metrics};
 use nexora_engine::telemetry::otlp::{log_record, should_trace, spans_for, spawn_telemetry_thread};
 use nexora_engine::telemetry::querylog::{
-    CacheOutcome, FilterOutcome, NO_FILTER_LIST, QueryRecord, push,
+    CacheOutcome, FilterOutcome, FilterSource, NO_FILTER_LIST, NO_RPZ_ZONE, NO_RULE, QueryRecord,
+    push,
 };
 use nexora_engine::wire::NameKey;
 use opentelemetry_proto::tonic::collector::logs::v1::{
@@ -43,6 +44,12 @@ fn record(rcode: u8) -> QueryRecord {
         rpz_action: 0,
         filter_list: NO_FILTER_LIST,
         filter_generation: 0,
+        filter_source: FilterSource::None,
+        filter_rule_offset: NO_RULE,
+        rewrite_wildcard: false,
+        rpz_zone: NO_RPZ_ZONE,
+        acl_refused: 0,
+        upstream_raced: 1,
     }
 }
 
@@ -128,7 +135,7 @@ fn shared_with_endpoint(endpoint: &str) -> Arc<Shared> {
 
 #[test]
 fn log_record_attributes_and_trace_rules() {
-    let lr = log_record(&record(0), "fixture", "engine-uuid", "", None);
+    let lr = log_record(&record(0), "fixture", "engine-uuid", "", None, "");
     let keys: Vec<&str> = lr.attributes.iter().map(|kv| kv.key.as_str()).collect();
     for k in [
         "client.address",
@@ -340,7 +347,14 @@ fn blocked_records_carry_list_id_and_category() {
             .map(|kv| (kv.key.clone(), format!("{:?}", kv.value)))
             .collect::<Vec<_>>()
     };
-    let with = attrs(&log_record(&r, "fixture", "engine-uuid", "", Some(&meta)));
+    let with = attrs(&log_record(
+        &r,
+        "fixture",
+        "engine-uuid",
+        "",
+        Some(&meta),
+        "",
+    ));
     assert_eq!(with.len(), 2, "{with:?}");
     assert!(
         with[0].0 == "nexora.filter.list_id"
@@ -352,7 +366,181 @@ fn blocked_records_carry_list_id_and_category() {
         "{with:?}"
     );
     assert!(
-        attrs(&log_record(&record(0), "fixture", "engine-uuid", "", None)).is_empty(),
+        attrs(&log_record(
+            &record(0),
+            "fixture",
+            "engine-uuid",
+            "",
+            None,
+            ""
+        ))
+        .is_empty(),
         "unblocked records carry no attribution"
+    );
+}
+
+#[test]
+fn m6_attribution_attributes_are_emitted_only_when_set() {
+    use nexora_engine::filter::index::{ListKind, ListMeta};
+    use nexora_engine::telemetry::querylog::{ACL_AUTHORITATIVE, FilterSource};
+    let attrs = |lr: &opentelemetry_proto::tonic::logs::v1::LogRecord| {
+        lr.attributes
+            .iter()
+            .map(|kv| (kv.key.clone(), format!("{:?}", kv.value)))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let plain = attrs(&log_record(&record(0), "fx", "e", "", None, ""));
+    for k in [
+        "nexora.filter.source",
+        "nexora.filter.rule",
+        "nexora.rpz_zone",
+        "nexora.acl.refused",
+        "nexora.upstream_raced",
+    ] {
+        assert!(!plain.contains_key(k), "{k} on an unfiltered record");
+    }
+    let meta = ListMeta {
+        id: "allowlist".into(),
+        category: "".into(),
+        category_slot: 0,
+        kind: ListKind::Allow,
+        invalid_lines: 0,
+    };
+    let mut allowed = record(0);
+    allowed.filter = FilterOutcome::Allowed;
+    allowed.filter_source = FilterSource::Allowlist;
+    allowed.filter_list = 0;
+    allowed.filter_rule_offset = 8; // "\x07example\x03com" -> "com"
+    let a = attrs(&log_record(&allowed, "fx", "e", "", Some(&meta), ""));
+    assert!(a["nexora.filter.source"].contains("allowlist"), "{a:?}");
+    assert!(a["nexora.filter.rule"].contains("\"com\""), "{a:?}");
+    assert!(a["nexora.filter.list_id"].contains("allowlist"), "{a:?}");
+    let mut rewrite = record(0);
+    rewrite.filter = FilterOutcome::Rewritten;
+    rewrite.filter_source = FilterSource::Rewrite;
+    rewrite.filter_rule_offset = 8;
+    rewrite.rewrite_wildcard = true;
+    assert!(
+        attrs(&log_record(&rewrite, "fx", "e", "", None, ""))["nexora.filter.rule"]
+            .contains("*.com")
+    );
+    let mut refused = record(5);
+    refused.filter_source = FilterSource::Acl;
+    refused.acl_refused = ACL_AUTHORITATIVE;
+    refused.upstream_raced = 3;
+    let r = attrs(&log_record(&refused, "", "e", "", None, "rpz-zone-id"));
+    assert!(
+        r["nexora.acl.refused"].contains("authoritative")
+            && r["nexora.filter.source"].contains("acl"),
+        "{r:?}"
+    );
+    assert!(r["nexora.upstream_raced"].contains("IntValue(3)"), "{r:?}");
+    assert!(r["nexora.rpz_zone"].contains("rpz-zone-id"), "{r:?}");
+}
+
+#[test]
+fn m6_stats_fields_are_filled() {
+    let shared = shared_with_endpoint("");
+    let rt = shared.runtime.load();
+    let s = shared.metrics.stats(&rt, &shared.recursor);
+    assert_eq!(s.queries_by_rcode.len(), 7);
+    assert_eq!(s.queries_by_transport.len(), 5);
+    assert_eq!(s.answers_by_route.len(), 8);
+    assert_eq!(
+        s.miss_duration_bucket_counts.len(),
+        s.duration_bucket_bounds_us.len()
+    );
+    assert_eq!(
+        s.race_duration_bucket_counts.len(),
+        s.duration_bucket_bounds_us.len()
+    );
+    assert_eq!(s.acl_refused.len(), 2);
+    assert_eq!(s.open_connections.len(), 4);
+    assert!(
+        s.started_unix_ms > 0 && s.process_resident_bytes > 0 && s.process_cpu_seconds_total >= 0.0
+    );
+}
+
+#[test]
+fn m6_observe_record_counts_route_miss_latency_acl_and_rewrites() {
+    let shared = shared_with_endpoint("");
+    let w = &shared.metrics.workers[0];
+    let mut hit = record(0);
+    hit.cache = CacheOutcome::Hit;
+    w.observe_record(&hit);
+    w.observe_record(&record(0)); // miss, route 1: recursive, 950 us
+    let mut rewritten = record(0);
+    rewritten.cache = CacheOutcome::None;
+    rewritten.filter = FilterOutcome::Rewritten;
+    w.observe_record(&rewritten);
+    let mut passthru = record(0);
+    passthru.route = 0;
+    passthru.rpz_action = 3;
+    w.observe_record(&passthru);
+    let mut rpz = record(0);
+    rpz.rpz_action = 1;
+    w.observe_record(&rpz);
+    let mut refused = record(5);
+    refused.cache = CacheOutcome::None;
+    refused.acl_refused = nexora_engine::telemetry::querylog::ACL_RECURSION;
+    w.observe_record(&refused);
+    let s = shared
+        .metrics
+        .stats(&shared.runtime.load(), &shared.recursor);
+    let route = |k: &str| s.answers_by_route[k];
+    assert_eq!(
+        (
+            route("cache"),
+            route("recursive"),
+            route("rewritten"),
+            route("forwarded"),
+            route("rpz")
+        ),
+        (1, 1, 1, 1, 1),
+        "{:?}",
+        s.answers_by_route
+    );
+    assert_eq!(s.filter_rewritten_total, 1);
+    assert_eq!(
+        (s.acl_refused["recursion"], s.acl_refused["authoritative"]),
+        (1, 0)
+    );
+    // Misses: the plain miss, the passthru miss and the rpz miss, all 950 us (bucket <= 1000).
+    assert_eq!(s.miss_duration_bucket_counts[3], 0);
+    assert_eq!(s.miss_duration_bucket_counts[4], 3);
+}
+
+#[test]
+fn m6_parallel_strategy_maps_with_capped_max() {
+    use nexora_engine::upstream::Strategy;
+    let shared = shared_with_endpoint("");
+    assert_eq!(shared.runtime.load().upstreams.strategy, Strategy::Ordered);
+    let tmp = tempfile::tempdir().unwrap();
+    let snap = ConfigSnapshot {
+        version: 2,
+        resolver: Some(ResolverConfig {
+            strategy: UpstreamStrategy::Parallel as i32,
+            parallel_max: 20,
+        }),
+        cache: Some(CacheConfig {
+            max_bytes: 2 << 20,
+            max_ttl: 86400,
+            negative_max_ttl: 60,
+            ..Default::default()
+        }),
+        filter: Some(FilterConfig::default()),
+        ..Default::default()
+    };
+    apply(
+        &shared.runtime,
+        snap,
+        &DirBlobs {
+            dir: tmp.path().into(),
+        },
+        None,
+    );
+    assert_eq!(
+        shared.runtime.load().upstreams.strategy,
+        Strategy::Parallel { max: 8 }
     );
 }

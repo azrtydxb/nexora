@@ -20,8 +20,19 @@ struct Args {
     config: PathBuf,
 }
 
+/// `-V` prints `nexora-engine <VERSION>`; `--version` adds the commit of a stamped build.
+fn parse_args() -> Args {
+    use clap::{CommandFactory, FromArgMatches};
+    let long = format!("{} {}", nexora_engine::VERSION, nexora_engine::COMMIT);
+    // Leaked once at start: clap without its `string` feature takes a `&'static str`.
+    let long: &'static str = Box::leak(long.trim_end().to_owned().into_boxed_str());
+    let matches = Args::command().long_version(long).get_matches();
+    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() -> ExitCode {
-    let args = <Args as clap::Parser>::parse();
+    nexora_engine::telemetry::process::started_unix_ms();
+    let args = parse_args();
     let boot = match bootstrap::load(&args.config) {
         Ok(b) => b,
         Err(e) => {

@@ -6,6 +6,7 @@ pub mod tcp;
 pub mod udp;
 
 use crate::clock;
+use crate::telemetry::metrics::DURATION_BOUNDS_US;
 use crate::wire::NameKey;
 use bytes::Bytes;
 use crossbeam_utils::CachePadded;
@@ -43,6 +44,11 @@ pub enum Protocol {
 pub enum Strategy {
     Ordered,
     Fastest,
+    // debt: `Parallel` is served as `Fastest` until the race lands (M6 Task 15).
+    /// Races up to `max` of the fastest candidates (0 = every candidate, capped at 8).
+    Parallel {
+        max: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +91,8 @@ pub struct Health {
     pub ewma_rtt_us: AtomicU32,
     pub queries: AtomicU64,
     pub failures: AtomicU64,
+    /// Parallel races this upstream won.
+    pub race_wins: AtomicU64,
 }
 
 impl Health {
@@ -165,7 +173,7 @@ impl UpstreamSet {
         out.extend(self.health.iter().enumerate().filter_map(|(i, h)| {
             (h.is_up(now) || now >= h.down_until.load(Ordering::Relaxed)).then_some(i)
         }));
-        if self.strategy == Strategy::Fastest {
+        if matches!(self.strategy, Strategy::Fastest | Strategy::Parallel { .. }) {
             // Unmeasured (0) sorts after measured; the sort is stable by position.
             out.sort_by_key(|&i| {
                 let rtt = self.health[i].ewma_rtt_us.load(Ordering::Relaxed);
@@ -369,6 +377,54 @@ pub struct Forwarded {
     pub response: Bytes,
     pub upstream_index: usize,
     pub rtt: Duration,
+    /// Upstreams the query was raced across; 1 without a race.
+    pub raced: u8,
+}
+
+/// Parallel race durations (first acceptable reply), non-cumulative per
+/// `DURATION_BOUNDS_US` bucket; slot 15 is +Inf. Shared by every worker, off the cache-hit path.
+pub struct RaceHistogram {
+    buckets: [AtomicU64; 16],
+    sum_us: AtomicU64,
+}
+
+pub static RACE: RaceHistogram = RaceHistogram {
+    buckets: [const { AtomicU64::new(0) }; 16],
+    sum_us: AtomicU64::new(0),
+};
+
+impl RaceHistogram {
+    pub fn observe(&self, d: Duration) {
+        let us = u64::try_from(d.as_micros()).unwrap_or(u64::MAX);
+        let bucket = DURATION_BOUNDS_US
+            .iter()
+            .position(|&b| us <= b)
+            .unwrap_or(DURATION_BOUNDS_US.len());
+        self.buckets[bucket].fetch_add(1, Ordering::Relaxed);
+        self.sum_us.fetch_add(us, Ordering::Relaxed);
+    }
+
+    /// Total observed race time in microseconds.
+    pub fn sum_us(&self) -> u64 {
+        self.sum_us.load(Ordering::Relaxed)
+    }
+
+    /// Non-cumulative counts of all 16 slots (the last is +Inf).
+    pub fn counts(&self) -> [u64; 16] {
+        std::array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed))
+    }
+
+    /// Cumulative counts per finite bound, as `Stats` carries them.
+    pub fn cumulative(&self) -> Vec<u64> {
+        let mut sum = 0;
+        self.counts()[..DURATION_BOUNDS_US.len()]
+            .iter()
+            .map(|c| {
+                sum += c;
+                sum
+            })
+            .collect()
+    }
 }
 
 #[allow(clippy::large_enum_variant)] // one per upstream per worker, behind an Rc
@@ -481,6 +537,7 @@ pub async fn forward(
                     response,
                     upstream_index: index,
                     rtt,
+                    raced: 1,
                 });
             }
             Err(e) => {

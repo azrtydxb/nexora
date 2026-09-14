@@ -10,6 +10,9 @@ use crate::proto::{
 use crate::recursor::RecursorState;
 use crate::runtime::Runtime;
 use crate::server::Shared;
+use crate::telemetry::process;
+use crate::telemetry::querylog::{CacheOutcome, FilterOutcome, QueryRecord};
+use crate::upstream::RACE;
 use bytes::Bytes;
 use crossbeam_utils::CachePadded;
 use http_body_util::Full;
@@ -72,7 +75,31 @@ pub struct WorkerCounters {
     pub mismatched_replies: Arc<Counter>,
     /// Authoritative answers by `AUTH_ANSWER_RESULTS` slot.
     pub auth_answers: [Counter; 5],
+    /// Replies by `ANSWER_ROUTES` slot.
+    pub answers_by_route: [Counter; 8],
+    /// Non-cumulative durations of cache misses and stale answers; slot 15 is +Inf.
+    pub miss_duration_buckets: [Counter; 16],
+    /// ACL refusals by `ACL_REFUSED_LABELS` slot.
+    pub acl_refused: [Counter; 2],
+    pub filter_rewritten: Counter,
 }
+
+/// The `route` label per slot of `WorkerCounters::answers_by_route`.
+pub const ANSWER_ROUTES: [&str; 8] = [
+    "cache",
+    "authoritative",
+    "blocked",
+    "rewritten",
+    "rpz",
+    "forwarded",
+    "recursive",
+    "forward_zone",
+];
+/// The `acl` label per slot of `WorkerCounters::acl_refused` (`QueryRecord.acl_refused` - 1).
+pub const ACL_REFUSED_LABELS: [&str; 2] = ["recursion", "authoritative"];
+/// `QueryRecord.rpz_action` codes that did not change the answer: `passthru` and `disabled`.
+const RPZ_PASSTHRU: u8 = 3;
+const RPZ_DISABLED: u8 = 7;
 
 /// The `result` label per slot of `WorkerCounters::auth_answers`.
 pub const AUTH_ANSWER_RESULTS: [&str; 5] = ["answer", "nodata", "nxdomain", "referral", "servfail"];
@@ -118,6 +145,10 @@ impl WorkerCounters {
             filter_blocked_category: array::from_fn(|_| counter()),
             mismatched_replies: Arc::new(counter()),
             auth_answers: array::from_fn(|_| counter()),
+            answers_by_route: array::from_fn(|_| counter()),
+            miss_duration_buckets: array::from_fn(|_| counter()),
+            acl_refused: array::from_fn(|_| counter()),
+            filter_rewritten: counter(),
         }
     }
 
@@ -134,14 +165,50 @@ impl WorkerCounters {
     pub fn observe(&self, t: Transport, rcode: u8, duration_us: u64) {
         let slot = usize::from(rcode).min(RCODE_SLOTS - 1);
         self.queries[t.slot()][slot].fetch_add(1, Ordering::Relaxed);
-        let bucket = DURATION_BOUNDS_US
-            .iter()
-            .position(|&b| duration_us <= b)
-            .unwrap_or(DURATION_BOUNDS_US.len());
-        self.duration_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+        self.duration_buckets[duration_bucket(duration_us)].fetch_add(1, Ordering::Relaxed);
         self.duration_sum_us
             .fetch_add(duration_us, Ordering::Relaxed);
     }
+
+    /// Counts a finished reply by answer route, miss latency, ACL refusal and rewrite.
+    /// Replies no route produced (ACL refusals, malformed or unsupported queries) count in no
+    /// route. Allocation-free.
+    #[inline]
+    pub fn observe_record(&self, r: &QueryRecord) {
+        let route = match (r.cache, r.filter) {
+            (CacheOutcome::Hit | CacheOutcome::Stale, _) => Some(0),
+            (CacheOutcome::Auth, _) => Some(1),
+            (_, FilterOutcome::Blocked) => Some(2),
+            (_, FilterOutcome::Rewritten) => Some(3),
+            _ if !matches!(r.rpz_action, 0 | RPZ_PASSTHRU | RPZ_DISABLED) => Some(4),
+            (CacheOutcome::Miss, _) => Some(5 + usize::from(r.route).min(2)),
+            _ => None,
+        };
+        if let Some(slot) = route {
+            self.answers_by_route[slot].fetch_add(1, Ordering::Relaxed);
+        }
+        if matches!(r.cache, CacheOutcome::Miss | CacheOutcome::Stale) {
+            self.miss_duration_buckets[duration_bucket(u64::from(r.duration_us))]
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(c) = usize::from(r.acl_refused)
+            .checked_sub(1)
+            .and_then(|i| self.acl_refused.get(i))
+        {
+            c.fetch_add(1, Ordering::Relaxed);
+        }
+        if r.filter == FilterOutcome::Rewritten {
+            self.filter_rewritten.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The `DURATION_BOUNDS_US` bucket of `us`; `DURATION_BOUNDS_US.len()` is +Inf.
+fn duration_bucket(us: u64) -> usize {
+    DURATION_BOUNDS_US
+        .iter()
+        .position(|&b| us <= b)
+        .unwrap_or(DURATION_BOUNDS_US.len())
 }
 
 #[derive(Clone, Copy)]
@@ -162,8 +229,8 @@ const PROXY_REASONS: [&str; 3] = ["untrusted_peer", "invalid_header", "timeout"]
 pub struct EncryptedMetrics {
     /// `[dot, doh, doq]` x `[ok, failed, no_certificate]`.
     handshakes: [[AtomicU64; 3]; 3],
-    /// Open connections per `[dot, doh, doq]`.
-    connections: [AtomicI64; 3],
+    /// Open connections per `[dot, doh, doq, tcp]` (`conn_slot`).
+    connections: [AtomicI64; 4],
     /// `[GET, POST, other]` x `[200, 400, 404, 405, 413, 415]`.
     doh_requests: [[AtomicU64; 6]; 3],
     doq_protocol_errors: AtomicU64,
@@ -178,7 +245,7 @@ pub struct EncryptedMetrics {
 
 pub static ENCRYPTED: EncryptedMetrics = EncryptedMetrics {
     handshakes: [const { [const { AtomicU64::new(0) }; 3] }; 3],
-    connections: [const { AtomicI64::new(0) }; 3],
+    connections: [const { AtomicI64::new(0) }; 4],
     doh_requests: [const { [const { AtomicU64::new(0) }; 6] }; 3],
     doq_protocol_errors: AtomicU64::new(0),
     proxy_rejected: [const { [const { AtomicU64::new(0) }; 3] }; 2],
@@ -196,19 +263,27 @@ fn tidx(t: Transport) -> usize {
     }
 }
 
-/// Counts one open encrypted connection for as long as it lives.
+/// Index into `EncryptedMetrics::connections`: the `tidx` slots, then plain TCP at 3.
+fn conn_slot(t: Transport) -> usize {
+    match t {
+        Transport::Tcp => 3,
+        t => tidx(t),
+    }
+}
+
+/// Counts one open stream connection (TCP, DoT, DoH or DoQ) for as long as it lives.
 pub struct ConnectionGuard(Transport);
 
 impl ConnectionGuard {
     pub fn new(t: Transport) -> Self {
-        ENCRYPTED.connections[tidx(t)].fetch_add(1, Ordering::Relaxed);
+        ENCRYPTED.connections[conn_slot(t)].fetch_add(1, Ordering::Relaxed);
         Self(t)
     }
 }
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        ENCRYPTED.connections[tidx(self.0)].fetch_sub(1, Ordering::Relaxed);
+        ENCRYPTED.connections[conn_slot(self.0)].fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -429,6 +504,11 @@ pub struct Totals {
     pub stale_served: u64,
     pub filter_blocked: u64,
     pub mismatched_replies: u64,
+    pub answers_by_route: [u64; 8],
+    /// Non-cumulative; slot 15 is +Inf.
+    pub miss_duration_buckets: [u64; 16],
+    pub acl_refused: [u64; 2],
+    pub filter_rewritten: u64,
 }
 
 impl Totals {
@@ -457,6 +537,28 @@ impl EncodeMetric for DurationHistogram {
 
 type Labels = Vec<(&'static str, String)>;
 
+/// Histogram `(upper bound in seconds, count)` pairs from non-cumulative duration slots.
+fn bucket_pairs(counts: [u64; 16]) -> Vec<(f64, u64)> {
+    DURATION_BOUNDS_US
+        .iter()
+        .map(|&b| b as f64 / 1e6)
+        .chain([f64::MAX])
+        .zip(counts)
+        .collect()
+}
+
+/// Cumulative counts per finite `DURATION_BOUNDS_US` bound, as `Stats` carries them.
+fn cumulative(counts: &[u64; 16]) -> Vec<u64> {
+    let mut sum = 0;
+    counts[..DURATION_BOUNDS_US.len()]
+        .iter()
+        .map(|c| {
+            sum += c;
+            sum
+        })
+        .collect()
+}
+
 impl Metrics {
     pub fn totals(&self) -> Totals {
         let load = |c: &Counter| c.load(Ordering::Relaxed);
@@ -469,6 +571,12 @@ impl Metrics {
             stale_served: self.sum(|w| load(&w.stale_served)),
             filter_blocked: self.sum(|w| load(&w.filter_blocked)),
             mismatched_replies: self.sum(|w| load(&w.mismatched_replies)),
+            answers_by_route: array::from_fn(|i| self.sum(|w| load(&w.answers_by_route[i]))),
+            miss_duration_buckets: array::from_fn(|b| {
+                self.sum(|w| load(&w.miss_duration_buckets[b]))
+            }),
+            acl_refused: array::from_fn(|i| self.sum(|w| load(&w.acl_refused[i]))),
+            filter_rewritten: self.sum(|w| load(&w.filter_rewritten)),
         }
     }
 
@@ -490,12 +598,7 @@ impl Metrics {
         }
         reg.register("nexora_queries", "DNS replies sent", queries);
 
-        let buckets = DURATION_BOUNDS_US
-            .iter()
-            .map(|&b| b as f64 / 1e6)
-            .chain([f64::MAX])
-            .zip(t.duration_buckets)
-            .collect();
+        let buckets = bucket_pairs(t.duration_buckets);
         reg.register(
             "nexora_query_duration_seconds",
             "Time from query arrival to reply",
@@ -575,6 +678,44 @@ impl Metrics {
             "nexora_upstream_mismatched_replies",
             "Upstream datagrams that matched no pending query",
             counter(t.mismatched_replies),
+        );
+        let race_wins = Family::<Labels, PromCounter>::default();
+        for (spec, health) in rt.upstreams.specs.iter().zip(&rt.upstreams.health) {
+            race_wins
+                .get_or_create(&vec![("upstream", spec.name.clone())])
+                .inc_by(health.race_wins.load(Ordering::Relaxed));
+        }
+        reg.register(
+            "nexora_upstream_race_wins",
+            "Parallel upstream races won by the upstream",
+            race_wins,
+        );
+        let race = RACE.counts();
+        reg.register(
+            "nexora_upstream_race_duration_seconds",
+            "Time from the start of a parallel upstream race to its first acceptable reply",
+            DurationHistogram {
+                sum_seconds: RACE.sum_us() as f64 / 1e6,
+                count: race.iter().sum(),
+                buckets: bucket_pairs(race),
+            },
+        );
+        let answers = Family::<Labels, PromCounter>::default();
+        for (route, n) in ANSWER_ROUTES.iter().zip(t.answers_by_route) {
+            answers
+                .get_or_create(&vec![("route", (*route).to_owned())])
+                .inc_by(n);
+        }
+        reg.register("nexora_answers", "Replies by answer route", answers);
+        let acl = Family::<Labels, PromCounter>::default();
+        for (label, n) in ACL_REFUSED_LABELS.iter().zip(t.acl_refused) {
+            acl.get_or_create(&vec![("acl", (*label).to_owned())])
+                .inc_by(n);
+        }
+        reg.register(
+            "nexora_acl_refused",
+            "Queries refused by the recursion or authoritative access list",
+            acl,
         );
 
         let dropped = Family::<Labels, PromCounter>::default();
@@ -765,7 +906,10 @@ impl Metrics {
     pub fn stats(&self, rt: &Runtime, recursor: &RecursorState) -> Stats {
         let t = self.totals();
         let now = clock::now_secs();
-        let mut cumulative = 0;
+        let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        let open = |slot: usize| {
+            u64::try_from(ENCRYPTED.connections[slot].load(Ordering::Relaxed)).unwrap_or(0)
+        };
         Stats {
             unix_ms: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -777,13 +921,7 @@ impl Metrics {
             filter_blocked_total: t.filter_blocked,
             servfail_total: t.queries.iter().map(|q| q[2]).sum(),
             duration_bucket_bounds_us: DURATION_BOUNDS_US.to_vec(),
-            duration_bucket_counts: t.duration_buckets[..DURATION_BOUNDS_US.len()]
-                .iter()
-                .map(|c| {
-                    cumulative += c;
-                    cumulative
-                })
-                .collect(),
+            duration_bucket_counts: cumulative(&t.duration_buckets),
             duration_sum_us: t.duration_sum_us,
             upstreams: rt
                 .upstreams
@@ -797,7 +935,7 @@ impl Metrics {
                     rtt_us: h.ewma_rtt_us.load(Ordering::Relaxed),
                     queries_total: h.queries.load(Ordering::Relaxed),
                     failures_total: h.failures.load(Ordering::Relaxed),
-                    ..Default::default()
+                    race_wins_total: h.race_wins.load(Ordering::Relaxed),
                 })
                 .collect(),
             export_dropped_total: SIGNALS
@@ -819,7 +957,41 @@ impl Metrics {
                 cpu: rt.filter_calibration.cpu.clone(),
                 blocked_by_category: self.blocked_by_category().into_iter().collect(),
             }),
-            ..Default::default()
+            queries_by_rcode: RCODE_LABELS
+                .iter()
+                .enumerate()
+                .map(|(ri, rcode)| ((*rcode).to_owned(), t.queries.iter().map(|q| q[ri]).sum()))
+                .collect(),
+            queries_by_transport: TRANSPORTS
+                .iter()
+                .zip(&t.queries)
+                .map(|(tr, q)| (tr.as_str().to_owned(), q.iter().sum()))
+                .collect(),
+            miss_duration_bucket_counts: cumulative(&t.miss_duration_buckets),
+            filter_rewritten_total: t.filter_rewritten,
+            answers_by_route: ANSWER_ROUTES
+                .iter()
+                .zip(t.answers_by_route)
+                .map(|(route, n)| ((*route).to_owned(), n))
+                .collect(),
+            resolution_failures_total: load(&recursor.metrics.resolution_failures),
+            process_cpu_seconds_total: process::cpu_seconds(),
+            process_resident_bytes: process::resident_bytes(),
+            memory_limit_bytes: process::memory_limit_bytes(),
+            open_connections: [("tcp", 3), ("dot", 0), ("doh", 1), ("doq", 2)]
+                .into_iter()
+                .map(|(name, slot)| (name.to_owned(), open(slot)))
+                .collect(),
+            started_unix_ms: process::started_unix_ms(),
+            acl_refused: ACL_REFUSED_LABELS
+                .iter()
+                .zip(t.acl_refused)
+                .map(|(label, n)| ((*label).to_owned(), n))
+                .collect(),
+            tls_certificate_not_after_unix: ENCRYPTED.tls_not_after.load(Ordering::Relaxed),
+            // Filled by the engine log ring buffer (M6 Task 13).
+            log_lines_dropped_total: 0,
+            race_duration_bucket_counts: RACE.cumulative(),
         }
     }
 }
@@ -839,7 +1011,7 @@ fn recursion_stats(recursor: &RecursorState) -> RecursionStats {
             + load(&m.limit_cname_depth),
         infra_entries: u32::try_from(recursor.recursor.infra.len()).unwrap_or(u32::MAX),
         lame_marked: load(&m.lame_marked),
-        ..Default::default()
+        upstream_timeouts: load(&m.upstream_timeouts),
     }
 }
 

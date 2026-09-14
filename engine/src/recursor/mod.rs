@@ -192,6 +192,7 @@ async fn refresh_loop(shared: Arc<Shared>) {
             set: &rt.upstreams,
             worker: &upstreams,
             upstream_index: Cell::new(u8::MAX),
+            raced: Cell::new(1),
         };
         let p = &rt.resolution.params;
         let budget = WorkBudget::new(p.max_upstream_queries, p.max_delegation_depth);
