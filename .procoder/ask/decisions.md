@@ -31,3 +31,11 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Change the design
 
 **Answer (2026-09-14):** Stricter — zero lost queries on each DNS address during a redeploy.
+
+## Break the DNS loop before UniFi upstream points to Nexora
+
+- CoreDNS: kw.local -> 192.168.10.1, everything else -> 1.1.1.1/8.8.8.8; nodes back to 1.1.1.1/8.8.8.8; engines recursion with fallback to 1.1.1.1/8.8.8.8 (not on DNSSEC bogus)
+- Engines only (no cluster/node change)
+- Also other UniFi-local zones besides kw.local
+
+**Answer (2026-09-14):** Engines fallback only — engines recurse first and fall back to 1.1.1.1/8.8.8.8 when recursion fails (not on DNSSEC bogus); CoreDNS and nodes stay on 192.168.10.1.
