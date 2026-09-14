@@ -332,7 +332,12 @@ fn unchanged_lists_reuse_index() {
         dir: dir.path().to_path_buf(),
     };
     assert!(matches!(
-        snapshot::apply(&cur, with_lists(1, dir.path(), &["ok.ads.example"]), &blobs, None),
+        snapshot::apply(
+            &cur,
+            with_lists(1, dir.path(), &["ok.ads.example"]),
+            &blobs,
+            None
+        ),
         ApplyOutcome::Applied { .. }
     ));
     let first = cur.load_full();
@@ -460,4 +465,83 @@ fn acl_matches_v4_v6_and_mapped() {
             .unwrap()
             .allows("127.0.0.1".parse().unwrap())
     );
+}
+
+/// Catches: the build memory pre-check removed or skipped (the rebuild would run into the limit,
+/// here the snapshot would apply), page cache (`inactive_file`) counted as used memory, a rejected
+/// build replacing the previous runtime, and a limit reader that rejects every build.
+#[test]
+fn filter_rebuild_over_the_memory_limit_is_rejected_before_building() {
+    use nexora_engine::filter::Verdict;
+    use nexora_engine::filter::memory::BuildMemory;
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let mut s = base(1);
+    s.filter.as_mut().unwrap().blocklists = vec![blob(dir.path(), "old.example\n")];
+    assert!(matches!(
+        snapshot::apply(&cur, s, &blobs, None),
+        ApplyOutcome::Applied { .. }
+    ));
+    let blocked = |name: &str| {
+        let rt = cur.load();
+        let wire = domain_to_wire(name.as_bytes()).unwrap();
+        matches!(
+            rt.policy
+                .select("127.0.0.1".parse().unwrap())
+                .0
+                .check(&wire),
+            Verdict::Blocked(_)
+        )
+    };
+    assert!(blocked("old.example"));
+
+    // 200,000 names: 4.4 MB of text, whose 4.8 MB of name records plus per-thread build slack
+    // (at least 20 MB) do not fit the 16 MB left; the finished 5 MB index is far below the cap.
+    let names: String = (0..200_000)
+        .map(|i| format!("host{i}.big.example\n"))
+        .collect();
+    let big = blob(dir.path(), &names);
+    let snap = |version| {
+        let mut s = base(version);
+        s.filter.as_mut().unwrap().blocklists = vec![big.clone()];
+        s
+    };
+    let cgroup = tempfile::tempdir().unwrap();
+    let limit: u64 = 256 << 20;
+    let margin = BuildMemory::margin(limit);
+    let set_usage = |working_set: u64| {
+        let inactive_file: u64 = 64 << 20;
+        std::fs::write(cgroup.path().join("memory.max"), format!("{limit}\n")).unwrap();
+        std::fs::write(
+            cgroup.path().join("memory.current"),
+            format!("{}\n", working_set + inactive_file),
+        )
+        .unwrap();
+        std::fs::write(
+            cgroup.path().join("memory.stat"),
+            format!("anon {working_set}\nfile {inactive_file}\ninactive_file {inactive_file}\n"),
+        )
+        .unwrap();
+    };
+    set_usage(limit - margin - (16 << 20));
+    let memory = BuildMemory::cgroup(cgroup.path());
+    let reason = outcome_reason(snapshot::apply_with(&cur, snap(2), &blobs, None, &memory));
+    assert!(
+        reason.contains("filter index build stopped before records")
+            && reason.contains(&format!("memory limit of {limit} bytes")),
+        "{reason}"
+    );
+    assert_eq!(cur.load().version, 1, "the previous runtime stays applied");
+    assert!(blocked("old.example") && !blocked("host7.big.example"));
+
+    // With 80 MB left the same snapshot applies; counting the 64 MB of page cache would leave 16.
+    set_usage(limit - margin - (80 << 20));
+    assert!(matches!(
+        snapshot::apply_with(&cur, snap(3), &blobs, None, &memory),
+        ApplyOutcome::Applied { version: 3, .. }
+    ));
+    assert!(blocked("host7.big.example") && !blocked("old.example"));
 }

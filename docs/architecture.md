@@ -18,7 +18,7 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/acl.rs                            client CIDR allow list
   src/filter.rs                         block replies, rewrites, per-client policy (M2) on filter views
   src/filter/{names,prefetch,storage}.rs suffix hashing and 7-bit wire packing, cache prefetch, huge-page bytes
-  src/filter/{index,lists,calibrate}.rs shared filter index and views, snapshot list collection, decision timing
+  src/filter/{index,lists,memory,calibrate}.rs shared filter index and views, snapshot list collection, build memory guard, decision timing
   src/filter/decisions.rs               per-worker decision cache for repeated names
   src/filter/synth.rs                   deterministic synthetic lists for tests and filter_bench
   src/upstream/{mod,udp,tcp,dot,doh}.rs forwarding transports + health
@@ -255,6 +255,26 @@ host concerns and are not part of the snapshot.
   category and content hash is unchanged. Cap: `ConfigSnapshot.filter_index_max_bytes` when non-zero, else
   50% of `/sys/fs/cgroup/memory.max`, else 512 MiB; a snapshot whose index and
   views exceed it is rejected and the previous runtime stays.
+- Build pipeline (`FilterIndex::build_in`), shaped so the build holds about
+  one working copy at a time next to the previous index: blobs are read one at
+  a time and decoded into one `TextArena` mapping per list; lines are hashed
+  into 24-byte records in exactly sized per-chunk buffers, scattered by key
+  octet into one base-page buffer, then sorted and deduplicated per key bucket
+  into 24-byte names; every name is encoded (fingerprint octet and entry) with
+  its placement key and size, after which the texts are freed; placement and
+  the block copy use only the encoded entries. Each consumed buffer is returned
+  to the kernel in 2 MiB steps (`MADV_DONTNEED`) as the next one fills, and
+  glibc's mmap threshold is fixed at 1 MiB so freed buffers are unmapped.
+- Build memory guard (`filter::memory::BuildMemory`, from the engine's own
+  cgroup `/sys/fs/cgroup`): before each list is decoded and before each build
+  step (`records` with the whole estimate of 24 bytes per list line plus
+  8 MiB per thread and 8 MiB, then `scatter`, `dedupe`, `encode`, `placement`,
+  `blocks` with their own sizes) the working set (`memory.current` less
+  `inactive_file`) plus the step's bytes must stay below `memory.max` less
+  24 MiB plus 1/32 of the limit. Otherwise the build stops with
+  `IndexError::MemoryLimit` ("filter index build stopped before <step>: ...")
+  and the snapshot is rejected with the previous runtime kept, instead of the
+  kernel OOM-killing the engine. No limit (`max`) means no check.
 - Answers whose CNAME chain reaches a blocked name are blocked.
 - Block response: `null_ip` (A 0.0.0.0 / AAAA :: , other types NODATA),
   `nxdomain`, or `refused`; TTL `block_ttl`.

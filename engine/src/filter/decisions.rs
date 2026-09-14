@@ -160,12 +160,10 @@ impl DecisionCache {
             return self.miss(at, tag, owner, words, view, name_wire);
         }
         let slot = self.slots[at].get();
-        let diff = words
-            .iter()
-            .zip(&slot.words)
-            .fold((slot.owner ^ owner) | u64::from(slot.len ^ len as u8), |d, (a, b)| {
-                d | (a ^ b)
-            });
+        let diff = words.iter().zip(&slot.words).fold(
+            (slot.owner ^ owner) | u64::from(slot.len ^ len as u8),
+            |d, (a, b)| d | (a ^ b),
+        );
         if diff == 0 {
             self.hits.set(self.hits.get() + 1);
             return match slot.kind {
@@ -253,14 +251,24 @@ mod tests {
         let again: Vec<_> = names.iter().map(|n| cache.decide(&view, &w(n))).collect();
         assert_eq!(cache.hits() - before, 3, "every repeat is a hit");
         assert_eq!(first, again);
-        assert!(matches!(first[0], FilterDecision::Blocked(ListHit { list: 0, .. })));
+        assert!(matches!(
+            first[0],
+            FilterDecision::Blocked(ListHit { list: 0, .. })
+        ));
         assert_eq!(first[1..], [FilterDecision::Allowed, FilterDecision::None]);
         let long = format!("{}.ads.test", "l".repeat(CACHED_NAME_MAX));
         let before = cache.hits();
         for _ in 0..2 {
-            assert!(matches!(cache.decide(&view, &w(&long)), FilterDecision::Blocked(_)));
+            assert!(matches!(
+                cache.decide(&view, &w(&long)),
+                FilterDecision::Blocked(_)
+            ));
         }
-        assert_eq!(cache.hits(), before, "names above {CACHED_NAME_MAX} octets bypass the cache");
+        assert_eq!(
+            cache.hits(),
+            before,
+            "names above {CACHED_NAME_MAX} octets bypass the cache"
+        );
     }
 
     #[test]
@@ -276,12 +284,26 @@ mod tests {
         );
         let cache = DecisionCache::new(64);
         let name = w("x.ads.test");
-        assert!(matches!(cache.decide(&v_old, &name), FilterDecision::Blocked(_)));
+        assert!(matches!(
+            cache.decide(&v_old, &name),
+            FilterDecision::Blocked(_)
+        ));
         let before = cache.hits();
-        assert!(matches!(cache.decide(&v_old, &name), FilterDecision::Blocked(_)));
+        assert!(matches!(
+            cache.decide(&v_old, &name),
+            FilterDecision::Blocked(_)
+        ));
         assert_eq!(cache.hits(), before + 1, "positive path: the old view hits");
-        assert_eq!(cache.decide(&v_new, &name), FilterDecision::None, "not listed in the new build");
-        assert_eq!(cache.hits(), before + 1, "the new generation never reads the old decision");
+        assert_eq!(
+            cache.decide(&v_new, &name),
+            FilterDecision::None,
+            "not listed in the new build"
+        );
+        assert_eq!(
+            cache.hits(),
+            before + 1,
+            "the new generation never reads the old decision"
+        );
     }
 
     #[test]
@@ -314,17 +336,34 @@ mod tests {
     #[test]
     fn views_on_one_index_keep_separate_decisions() {
         let idx = index(b"ads.test\n", b"ok.ads.test\n");
-        let (blocking, allowing, nothing) = (idx.view(&[0], &[1]), idx.view(&[], &[1]), idx.view(&[0], &[]));
+        let (blocking, allowing, nothing) = (
+            idx.view(&[0], &[1]),
+            idx.view(&[], &[1]),
+            idx.view(&[0], &[]),
+        );
         assert_ne!(blocking.cache_owner(), allowing.cache_owner());
         assert_ne!(blocking.cache_owner(), nothing.cache_owner());
-        assert_eq!(idx.view(&[0], &[1]).cache_owner(), blocking.cache_owner(), "equal views share an id");
+        assert_eq!(
+            idx.view(&[0], &[1]).cache_owner(),
+            blocking.cache_owner(),
+            "equal views share an id"
+        );
         let cache = DecisionCache::new(1);
         let (ads, ok) = (w("x.ads.test"), w("ok.ads.test"));
-        assert!(matches!(cache.decide(&blocking, &ads), FilterDecision::Blocked(_)));
+        assert!(matches!(
+            cache.decide(&blocking, &ads),
+            FilterDecision::Blocked(_)
+        ));
         assert_eq!(cache.decide(&allowing, &ads), FilterDecision::None);
-        assert!(matches!(cache.decide(&blocking, &ads), FilterDecision::Blocked(_)));
+        assert!(matches!(
+            cache.decide(&blocking, &ads),
+            FilterDecision::Blocked(_)
+        ));
         assert_eq!(cache.decide(&blocking, &ok), FilterDecision::Allowed);
-        assert!(matches!(cache.decide(&nothing, &ok), FilterDecision::Blocked(_)));
+        assert!(matches!(
+            cache.decide(&nothing, &ok),
+            FilterDecision::Blocked(_)
+        ));
         assert_eq!(cache.decide(&blocking, &ok), FilterDecision::Allowed);
     }
 }

@@ -34,6 +34,55 @@ pub fn huge_vec<T>(capacity: usize) -> Vec<T> {
     v
 }
 
+/// An empty `Vec` with room for `capacity` items on base pages (Linux): a buffer that is written
+/// in many places at once but released progressively commits only what was written, where huge
+/// pages would commit all of it at the first writes.
+pub fn small_page_vec<T>(capacity: usize) -> Vec<T> {
+    let v = Vec::with_capacity(capacity);
+    #[cfg(target_os = "linux")]
+    // SAFETY: advice on whole pages inside the allocation `v` owns; failure only keeps huge pages.
+    unsafe {
+        let page = libc::sysconf(libc::_SC_PAGESIZE).max(1) as usize;
+        let start = (v.as_ptr() as usize).next_multiple_of(page);
+        let end = (v.as_ptr() as usize + v.capacity() * size_of::<T>()) & !(page - 1);
+        if end > start {
+            libc::madvise(
+                start as *mut libc::c_void,
+                end - start,
+                libc::MADV_NOHUGEPAGE,
+            );
+        }
+    }
+    v
+}
+
+/// Granularity of [`release`].
+pub const RELEASE_BYTES: usize = 2 << 20;
+
+/// Returns the whole 2 MiB ranges inside `len` bytes at `start` to the kernel (Linux), so a build
+/// buffer it has consumed stops counting against the memory limit before the buffer is freed. The
+/// bytes read as zero afterwards.
+///
+/// # Safety
+/// `start..start + len` is inside one live allocation the caller may write, nothing reads it as
+/// anything but plain integers again, and zero bytes are a valid value of whatever it holds.
+pub unsafe fn release(start: *const u8, len: usize) {
+    #[cfg(target_os = "linux")]
+    {
+        let from = (start as usize).next_multiple_of(RELEASE_BYTES);
+        let to = (start as usize + len) & !(RELEASE_BYTES - 1);
+        if to > from {
+            // SAFETY: whole pages inside the caller's allocation (contract above); the mapping
+            // stays valid and reads back zero.
+            unsafe {
+                libc::madvise(from as *mut libc::c_void, to - from, libc::MADV_DONTNEED);
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (start, len);
+}
+
 impl AlignedBytes {
     pub fn zeroed(len: usize) -> AlignedBytes {
         let len = len.max(BLOCK).next_multiple_of(BLOCK);

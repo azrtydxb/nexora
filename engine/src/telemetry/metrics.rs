@@ -2,8 +2,8 @@
 //! Prometheus endpoint that renders them.
 
 use crate::clock;
-use crate::filter::lists::{self, CATEGORY_SLOTS};
 use crate::edns::Transport;
+use crate::filter::lists::{self, CATEGORY_SLOTS};
 use crate::proto::{
     DnssecStats, FilterIndexStats, RecursionStats, Stats, TrustAnchorState, UpstreamStatus,
 };
@@ -624,9 +624,8 @@ impl Metrics {
         lists::category_names()
             .into_iter()
             .map(|(slot, name)| {
-                let n = self.sum(|w| {
-                    w.filter_blocked_category[usize::from(slot)].load(Ordering::Relaxed)
-                });
+                let n = self
+                    .sum(|w| w.filter_blocked_category[usize::from(slot)].load(Ordering::Relaxed));
                 (name, n)
             })
             .collect()

@@ -4,9 +4,7 @@
 //! can block a worker.
 
 use super::metrics::Signal;
-use super::querylog::{
-    DNSSEC_NAMES, NO_FILTER_LIST, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at,
-};
+use super::querylog::{DNSSEC_NAMES, NO_FILTER_LIST, QueryRecord, ROUTE_NAMES, RPZ_NAMES, name_at};
 use crate::filter::index::ListMeta;
 use crate::runtime::{Runtime, TelemetrySettings};
 use crate::server::Shared;

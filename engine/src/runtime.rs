@@ -7,6 +7,7 @@ use crate::cache::{Cache, CacheSettings};
 use crate::filter::calibrate::{self, Calibration};
 use crate::filter::index::IndexError;
 use crate::filter::lists::{self, SnapshotLists};
+use crate::filter::memory::{self, BuildMemory};
 use crate::filter::{BlockMode, BlockReply, FilterIndex, PolicyTable};
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
 use crate::recursor::dispatch::ResolutionRuntime;
@@ -93,11 +94,23 @@ impl Runtime {
     }
 
     /// Builds the runtime for a validated snapshot, carrying upstream health
-    /// and (when its settings are unchanged) the cache over from `previous`.
+    /// and (when its settings are unchanged) the cache over from `previous`; the filter index
+    /// build is guarded by the engine's own cgroup memory limit.
     pub fn build(
         s: &ConfigSnapshot,
         blobs: &dyn BlobSource,
         previous: Option<&Runtime>,
+    ) -> Result<Runtime, SnapshotError> {
+        Self::build_with(s, blobs, previous, &BuildMemory::cgroup(memory::CGROUP_DIR))
+    }
+
+    /// [`Runtime::build`] with the memory guard `memory`, whose limit also sets the default index
+    /// cap.
+    pub fn build_with(
+        s: &ConfigSnapshot,
+        blobs: &dyn BlobSource,
+        previous: Option<&Runtime>,
+        memory: &BuildMemory,
     ) -> Result<Runtime, SnapshotError> {
         let acl = Acl::parse(&s.acl_allow_cidrs).map_err(SnapshotError::Invalid)?;
 
@@ -138,21 +151,24 @@ impl Runtime {
         };
         let lists = SnapshotLists::collect(s).map_err(SnapshotError::Invalid)?;
         let filter_max_bytes = match s.filter_index_max_bytes {
-            0 => lists::default_max_bytes(std::path::Path::new(lists::CGROUP_MEMORY_MAX)),
+            0 => lists::default_max_bytes(memory.limit()),
             n => n,
         };
-        let (filter_index, filter_calibration) = match previous
-            .filter(|p| p.filter_key == lists.key)
-        {
-            Some(p) => (p.filter_index.clone(), p.filter_calibration.clone()),
-            None => {
-                let index =
-                    Arc::new(lists.build_index(blobs, filter_max_bytes, lists::build_threads())?);
-                let calibration = calibrate::measure(&index);
-                lists::release_freed_memory();
-                (index, calibration)
-            }
-        };
+        let (filter_index, filter_calibration) =
+            match previous.filter(|p| p.filter_key == lists.key) {
+                Some(p) => (p.filter_index.clone(), p.filter_calibration.clone()),
+                None => {
+                    let index = Arc::new(lists.build_index(
+                        blobs,
+                        filter_max_bytes,
+                        lists::build_threads(),
+                        memory,
+                    )?);
+                    let calibration = calibrate::measure(&index);
+                    lists::release_freed_memory();
+                    (index, calibration)
+                }
+            };
         let block = BlockReply {
             mode,
             ttl: f.block_ttl,

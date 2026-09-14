@@ -7,9 +7,10 @@
 //! longer names are keyed by their own hash instead, and the suffix gets a marker entry that sends
 //! lookups under it to a second, per-level probe. Single-label names are keyed by their own hash.
 
+use super::memory::BuildMemory;
 use super::names::{self, Levels, MAX_LEVELS};
 use super::prefetch::prefetch_read;
-use super::storage::{AlignedBytes, BLOCK, huge_vec};
+use super::storage::{AlignedBytes, BLOCK, RELEASE_BYTES, huge_vec, release, small_page_vec};
 use rustc_hash::FxHashMap;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
@@ -65,53 +66,51 @@ pub enum ListKind {
     Allow,
 }
 
-/// Decompressed list texts for a build in one zeroed huge-page mapping: the build reads the texts
-/// at random, and on huge pages those reads (and their prefetches) do not miss the TLB. Each text is
-/// followed by 8 zero bytes. Decoding blobs straight into it keeps a single copy of every text.
+/// Decompressed list texts of a build in list order, each in its own zeroed mapping advised for
+/// transparent huge pages (the build reads the texts at random, and on huge pages those reads and
+/// their prefetches do not miss the TLB) and followed by 8 zero bytes. Decoding blobs straight into
+/// it keeps a single copy of every text; the build frees it as soon as every name is encoded.
+#[derive(Default)]
 pub struct TextArena {
-    bytes: AlignedBytes,
-    used: usize,
+    texts: Vec<(AlignedBytes, usize)>,
 }
 
 impl TextArena {
-    /// Room for `texts` texts of `text_bytes` in total.
-    pub fn new(text_bytes: usize, texts: usize) -> TextArena {
-        TextArena {
-            bytes: AlignedBytes::zeroed((text_bytes + 8 * texts).max(1)),
-            used: 0,
-        }
+    pub fn new() -> TextArena {
+        TextArena::default()
     }
 
-    /// The unused room after the texts so far.
-    pub fn spare(&mut self) -> &mut [u8] {
-        &mut self.bytes.as_mut_slice()[self.used..]
+    /// Appends a text of `len` bytes that `fill` writes.
+    pub fn push_with<E>(
+        &mut self,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut bytes = AlignedBytes::zeroed(len + 8);
+        fill(&mut bytes.as_mut_slice()[..len])?;
+        self.texts.push((bytes, len));
+        Ok(())
     }
 
-    /// Takes the first `len` bytes of [`TextArena::spare`] as the next text; panics without room
-    /// for it and its padding.
-    pub fn commit(&mut self, len: usize) -> std::ops::Range<usize> {
-        assert!(
-            self.used + len + 8 <= self.bytes.len(),
-            "text arena overflow"
-        );
-        let range = self.used..self.used + len;
-        self.used += len + 8;
-        range
+    pub fn push(&mut self, text: &[u8]) {
+        let copied: Result<(), std::convert::Infallible> = self.push_with(text.len(), |b| {
+            b.copy_from_slice(text);
+            Ok(())
+        });
+        let Ok(()) = copied;
     }
 
-    pub fn push(&mut self, text: &[u8]) -> std::ops::Range<usize> {
-        self.spare()[..text.len()].copy_from_slice(text);
-        self.commit(text.len())
+    pub fn len(&self) -> usize {
+        self.texts.len()
     }
 
-    pub fn text(&self, range: std::ops::Range<usize>) -> &[u8] {
-        &self.bytes.as_slice()[range]
+    pub fn is_empty(&self) -> bool {
+        self.texts.is_empty()
     }
 
-    fn holds(&self, text: &[u8]) -> bool {
-        let base = self.bytes.as_slice().as_ptr() as usize;
-        let at = text.as_ptr() as usize;
-        at >= base && at + text.len() + 8 <= base + self.used
+    pub fn text(&self, i: usize) -> &[u8] {
+        let (bytes, len) = &self.texts[i];
+        &bytes.as_slice()[..*len]
     }
 }
 
@@ -166,6 +165,17 @@ pub enum IndexError {
     TooManyLists(usize),
     #[error("filter index placement failed after 4 stash resizes")]
     Placement,
+    #[error(
+        "filter index build stopped before {phase}: {in_use} bytes in use plus {needed} bytes \
+         needed exceed the engine memory limit of {limit} bytes less a {margin} byte margin"
+    )]
+    MemoryLimit {
+        phase: &'static str,
+        in_use: u64,
+        needed: u64,
+        limit: u64,
+        margin: u64,
+    },
 }
 
 /// A matched name: the first list of the view that lists it, and its list set.
@@ -193,11 +203,11 @@ struct Record {
     labels: u8,
 }
 
-/// One deduplicated name (or heavy-suffix marker) with its list set and placement key.
+/// One deduplicated name (or heavy-suffix marker) with its list set and placement key (24 bytes:
+/// the name's own hash is only needed while its group is deduplicated).
 #[derive(Clone, Copy, Default)]
 struct Unique {
     key: u64,
-    hash: u64,
     offset: u32,
     set: u32,
     list: u16,
@@ -205,8 +215,8 @@ struct Unique {
     flags: u8,
 }
 
-fn text_at<'a>(lists: &[ListInput<'a>], list: u16, offset: u32, len: u8) -> &'a [u8] {
-    &lists[usize::from(list)].text[offset as usize..offset as usize + usize::from(len)]
+fn text_at<'a>(texts: &[&'a [u8]], list: u16, offset: u32, len: u8) -> &'a [u8] {
+    &texts[usize::from(list)][offset as usize..offset as usize + usize::from(len)]
 }
 
 struct SetTable {
@@ -342,16 +352,18 @@ fn run_parallel<T: Send>(items: usize, threads: usize, work: impl Fn(usize) -> T
 /// The records and invalid line count of one scanned chunk.
 type Scanned = (Vec<Record>, u64);
 
-/// Splits list texts into line-aligned chunks and hashes every line into records.
-fn scan_lists(lists: &[ListInput<'_>], opts: &IndexOptions) -> (Vec<Vec<Record>>, Vec<u64>) {
-    let mut items: Vec<(u16, usize, usize)> = Vec::new();
-    for (list, input) in lists.iter().enumerate() {
-        let text = input.text;
+/// A line-aligned chunk of one list text: list, start, end, and its line count (a bound on its
+/// records).
+type Chunk = (u16, usize, usize, usize);
+
+/// Splits list texts into line-aligned chunks and counts their lines in parallel.
+fn chunk_lists(texts: &[&[u8]], threads: usize) -> Vec<Chunk> {
+    let mut chunks: Vec<Chunk> = Vec::new();
+    for (list, text) in texts.iter().enumerate() {
         // Blobs decompress to at most 512 MiB, so offsets fit u32.
         assert!(
             text.len() <= u32::MAX as usize,
-            "list {} is above 4 GiB",
-            input.id
+            "list {list} is above 4 GiB"
         );
         let mut start = 0;
         while start < text.len() {
@@ -359,14 +371,31 @@ fn scan_lists(lists: &[ListInput<'_>], opts: &IndexOptions) -> (Vec<Vec<Record>>
             if end < text.len() {
                 end = (names::find_byte(text, end, b'\n') + 1).min(text.len());
             }
-            items.push((list as u16, start, end));
+            chunks.push((list as u16, start, end, 0));
             start = end;
         }
     }
-    let results: Vec<Scanned> = run_parallel(items.len(), opts.threads, |i| {
-        let (list, start, end) = items[i];
-        let text = lists[usize::from(list)].text;
-        let mut out = huge_vec((end - start) / 12 + 16);
+    let lines = run_parallel(chunks.len(), threads, |i| {
+        let (list, start, end, _) = chunks[i];
+        let t = &texts[usize::from(list)][start..end];
+        t.iter().filter(|&&b| b == b'\n').count() + usize::from(t.last() != Some(&b'\n'))
+    });
+    for (c, n) in chunks.iter_mut().zip(lines) {
+        c.3 = n;
+    }
+    chunks
+}
+
+/// Hashes every line of the chunks into records (one exactly sized buffer per chunk).
+fn scan_lists(
+    texts: &[&[u8]],
+    chunks: &[Chunk],
+    opts: &IndexOptions,
+) -> (Vec<Vec<Record>>, Vec<u64>) {
+    let results: Vec<Scanned> = run_parallel(chunks.len(), opts.threads, |i| {
+        let (list, start, end, lines) = chunks[i];
+        let text = texts[usize::from(list)];
+        let mut out = huge_vec(lines);
         let mut invalid = 0;
         let mut at = start;
         while at < end {
@@ -388,17 +417,19 @@ fn scan_lists(lists: &[ListInput<'_>], opts: &IndexOptions) -> (Vec<Vec<Record>>
         }
         (out, invalid)
     });
-    let mut invalid = vec![0u64; lists.len()];
+    let mut invalid = vec![0u64; texts.len()];
     let mut parts = Vec::with_capacity(results.len());
-    for (&(list, _, _), (records, bad)) in items.iter().zip(results) {
+    for (&(list, _, _, _), (records, bad)) in chunks.iter().zip(results) {
         invalid[usize::from(list)] += bad;
         parts.push(records);
     }
     (parts, invalid)
 }
 
-/// Scatters records by the top key byte into one allocation, part by part in parallel (each part
-/// writes into offsets reserved for it); returns it with the bucket sizes.
+/// Scatters records by the top key byte into one allocation on base pages, part by part in
+/// parallel (each part writes into offsets reserved for it), returning each part's pages to the
+/// kernel as they are consumed, so the scatter holds about one copy of the records; returns the
+/// records with the bucket sizes.
 fn scatter(parts: Vec<Vec<Record>>, threads: usize) -> (Vec<Record>, [usize; 256]) {
     let part_counts: Vec<[usize; 256]> = run_parallel(parts.len(), threads, |p| {
         let mut c = [0usize; 256];
@@ -427,16 +458,26 @@ fn scatter(parts: Vec<Vec<Record>>, threads: usize) -> (Vec<Record>, [usize; 256
             *cur += n;
         }
     }
-    let mut out: Vec<Record> = huge_vec(at);
+    let mut out: Vec<Record> = small_page_vec(at);
     let dst = SharedMut(out.as_mut_ptr());
+    let parts: Vec<parking_lot::Mutex<Vec<Record>>> =
+        parts.into_iter().map(parking_lot::Mutex::new).collect();
+    let step = RELEASE_BYTES / 2 / size_of::<Record>();
     run_parallel(parts.len(), threads, |p| {
+        let mut part = std::mem::take(&mut *parts[p].lock());
         let mut cur = offsets[p];
-        for r in &parts[p] {
+        for k in 0..part.len() {
+            let r = part[k];
             let b = (r.key >> 56) as usize;
             // SAFETY: part p's records go to [offsets[p][b], offsets[p][b] + part_counts[p][b]),
             // ranges that are disjoint across parts and buckets and inside `out`.
-            unsafe { dst.at(cur[b]).write(*r) };
+            unsafe { dst.at(cur[b]).write(r) };
             cur[b] += 1;
+            if (k + 1) % step == 0 {
+                // SAFETY: records 0..=k of the part this thread owns were scattered and are never
+                // read again; they are integers.
+                unsafe { release(part.as_mut_ptr().cast(), (k + 1) * size_of::<Record>()) };
+            }
         }
     });
     // SAFETY: the parts wrote every index below `at` exactly once.
@@ -498,21 +539,25 @@ fn sort_bucket(bucket: &[Record], sorted: &mut Vec<Record>) {
     }
 }
 
-/// Sorts one bucket by `(key, hash)`, merges equal names (ASCII case-insensitively) into
-/// uniques with local set ids, and splits heavy two-label groups (flat keys and markers).
+/// Merges equal names (ASCII case-insensitively) of a bucket sorted by `(key, hash)` into uniques
+/// with local set ids, and splits heavy two-label groups (flat keys and markers). `hashes` is
+/// scratch for the name hashes of the current group.
 fn dedupe_bucket(
-    lists: &[ListInput<'_>],
-    bucket: &mut [Record],
-    sorted: &mut Vec<Record>,
+    texts: &[&[u8]],
+    bucket: &[Record],
     sets: &mut SetTable,
     out: &mut Vec<Unique>,
+    hashes: &mut Vec<u64>,
 ) {
-    sort_bucket(bucket, sorted);
-    let bucket = &sorted[..bucket.len()];
     let mut scratch = vec![0u64; sets.words];
     // Set ids of the one-list sets, which most names have.
-    let mut single = vec![u32::MAX; lists.len()];
-    let text = |r: &Record| text_at(lists, r.list, r.offset, r.len);
+    let mut single = vec![u32::MAX; texts.len()];
+    let text = |r: &Record| text_at(texts, r.list, r.offset, r.len);
+    let flags = |r: &Record| match r.labels {
+        1 => SINGLE,
+        2 => 0,
+        _ => DEEP,
+    };
     let mut i = 0;
     while i < bucket.len() {
         // Warm the texts of an upcoming run of equal names, which are compared.
@@ -521,8 +566,7 @@ fn dedupe_bucket(
         {
             for r in ahead {
                 prefetch_read(
-                    lists[usize::from(r.list)]
-                        .text
+                    texts[usize::from(r.list)]
                         .as_ptr()
                         .wrapping_add(r.offset as usize),
                 );
@@ -530,6 +574,7 @@ fn dedupe_bucket(
         }
         let key = bucket[i].key;
         let group_start = out.len();
+        hashes.clear();
         while i < bucket.len() && bucket[i].key == key {
             let hash = bucket[i].hash;
             let mut j = i + 1;
@@ -551,89 +596,77 @@ fn dedupe_bucket(
                 };
                 out.push(Unique {
                     key,
-                    hash,
                     offset: r.offset,
                     set,
                     list: r.list,
                     len: r.len,
-                    flags: match r.labels {
-                        1 => SINGLE,
-                        2 => 0,
-                        _ => DEEP,
-                    },
+                    flags: flags(r),
                 });
+                hashes.push(hash);
                 i = j;
                 continue;
             }
             for (k, r) in run.iter().enumerate() {
                 scratch.fill(0);
-                if run.len() > 1 {
-                    let t = text(r);
-                    if run[..k].iter().any(|e| text(e).eq_ignore_ascii_case(t)) {
-                        continue;
+                let t = text(r);
+                if run[..k].iter().any(|e| text(e).eq_ignore_ascii_case(t)) {
+                    continue;
+                }
+                for e in &run[k..] {
+                    if text(e).eq_ignore_ascii_case(t) {
+                        scratch[usize::from(e.list) / 64] |= 1 << (e.list % 64);
                     }
-                    for e in &run[k..] {
-                        if text(e).eq_ignore_ascii_case(t) {
-                            scratch[usize::from(e.list) / 64] |= 1 << (e.list % 64);
-                        }
-                    }
-                } else {
-                    scratch[usize::from(r.list) / 64] |= 1 << (r.list % 64);
                 }
                 out.push(Unique {
                     key,
-                    hash,
                     offset: r.offset,
                     set: sets.intern(&scratch, 1),
                     list: r.list,
                     len: r.len,
-                    flags: match r.labels {
-                        1 => SINGLE,
-                        2 => 0,
-                        _ => DEEP,
-                    },
+                    flags: flags(r),
                 });
+                hashes.push(hash);
             }
             i = j;
         }
         if out.len() - group_start > GROUP_MAX {
-            split_heavy_group(lists, out, group_start);
+            split_heavy_group(texts, out, group_start, hashes);
         }
     }
 }
 
-/// Gives the deep names of a heavy group their own hash as key and marks every distinct
-/// two-label suffix of the group (adding a marker entry when the suffix is not listed itself).
-fn split_heavy_group(lists: &[ListInput<'_>], out: &mut Vec<Unique>, start: usize) {
+/// Gives the deep names of a heavy group (from `start`, with name hashes `hashes`) their own hash
+/// as key and marks every distinct two-label suffix of the group (adding a marker entry when the
+/// suffix is not listed itself).
+fn split_heavy_group(texts: &[&[u8]], out: &mut Vec<Unique>, start: usize, hashes: &[u64]) {
     let end = out.len();
     let group_key = out[start].key;
     // Distinct suffixes as (list, offset, len); a group almost always has exactly one.
     let mut suffixes: Vec<(u16, u32, u8)> = Vec::new();
-    for u in &mut out[start..end] {
-        let t = text_at(lists, u.list, u.offset, u.len);
+    for (u, &hash) in out[start..end].iter_mut().zip(hashes) {
+        let t = text_at(texts, u.list, u.offset, u.len);
         let s = two_label_suffix(t);
         let known = suffixes
             .iter()
-            .any(|&(l, o, n)| text_at(lists, l, o, n).eq_ignore_ascii_case(s));
+            .any(|&(l, o, n)| text_at(texts, l, o, n).eq_ignore_ascii_case(s));
         if !known {
             let offset = u.offset + (t.len() - s.len()) as u32;
             suffixes.push((u.list, offset, s.len() as u8));
         }
         if u.flags & DEEP != 0 {
-            u.key = u.hash;
+            u.key = hash;
         }
     }
     for (list, offset, len) in suffixes {
-        let s = text_at(lists, list, offset, len);
+        let s = text_at(texts, list, offset, len);
         let listed = out[start..end].iter_mut().find(|u| {
-            u.flags & DEEP == 0 && text_at(lists, u.list, u.offset, u.len).eq_ignore_ascii_case(s)
+            u.flags & DEEP == 0 && text_at(texts, u.list, u.offset, u.len).eq_ignore_ascii_case(s)
         });
         match listed {
             Some(u) => u.flags |= MARKER,
             None => {
                 out.push(Unique {
                     key: group_key,
-                    hash: group_key,
                     offset,
                     set: 0,
                     list,
@@ -701,21 +734,28 @@ fn pick(slots: &[Slot], b1: u32, b2: u32, size: u8) -> Option<u32> {
         .find(|&b| slots[b as usize].fits(size))
 }
 
-/// Places items `(key, unique, size)` (in the given order) into `slots`, threading each block's
-/// members through `next`; returns the chosen block per unique (`STASHED` for none) and the
-/// uniques that did not fit.
-fn place(order: &[(u64, u32, u8)], slots: &mut [Slot], next: &mut [u32]) -> (Vec<u32>, Vec<u32>) {
+/// Places uniques `order` (in that order) into `slots`, threading each block's members through
+/// `next`; returns the chosen block per unique (`STASHED` for none) and the uniques that did not
+/// fit.
+fn place(
+    order: &[u32],
+    keys: &[u64],
+    sizes: &[u8],
+    slots: &mut [Slot],
+    next: &mut [u32],
+) -> (Vec<u32>, Vec<u32>) {
     let blocks = slots.len() as u32;
     let mut chosen = huge_vec(next.len());
     chosen.resize(next.len(), STASHED);
     let mut overflow = Vec::new();
-    for (p, &(key, i, size)) in order.iter().enumerate() {
-        if let Some(&(ahead, _, _)) = order.get(p + 16) {
-            let (a1, a2) = names::candidates(ahead, blocks);
+    for (p, &i) in order.iter().enumerate() {
+        if let Some(&ahead) = order.get(p + 16) {
+            let (a1, a2) = names::candidates(keys[ahead as usize], blocks);
             prefetch_read((&slots[a1 as usize] as *const Slot).cast());
             prefetch_read((&slots[a2 as usize] as *const Slot).cast());
         }
-        let (b1, b2) = names::candidates(key, blocks);
+        let (b1, b2) = names::candidates(keys[i as usize], blocks);
+        let size = sizes[i as usize];
         match pick(slots, b1, b2, size) {
             Some(b) => {
                 let slot = &mut slots[b as usize];
@@ -734,7 +774,7 @@ fn place(order: &[(u64, u32, u8)], slots: &mut [Slot], next: &mut [u32]) -> (Vec
 /// Places overflow names by moving one entry of a candidate block to that entry's other candidate
 /// (one cuckoo step); returns the names that still do not fit.
 fn relocate(
-    uniques: &[Unique],
+    keys: &[u64],
     sizes: &[u8],
     chosen: &mut [u32],
     slots: &mut [Slot],
@@ -745,12 +785,12 @@ fn relocate(
     let mut still = Vec::new();
     'names: for i in overflow {
         let size = sizes[i as usize];
-        let (b1, b2) = names::candidates(uniques[i as usize].key, blocks);
+        let (b1, b2) = names::candidates(keys[i as usize], blocks);
         for b in [b1, b2] {
             let (mut prev, mut v) = (u32::MAX, slots[b as usize].head);
             while v != u32::MAX {
                 let v_size = sizes[v as usize];
-                let (a1, a2) = names::candidates(uniques[v as usize].key, blocks);
+                let (a1, a2) = names::candidates(keys[v as usize], blocks);
                 let alt = if a1 == b { a2 } else { a1 };
                 let here = slots[b as usize];
                 let fits_here = usize::from(here.used - v_size) + usize::from(size) <= CAPACITY;
@@ -803,7 +843,7 @@ fn heavy_table(keys: &[u64]) -> Box<[u64]> {
 
 /// Places the overflow names into a stash of blocks, doubling it on failure.
 fn place_stash(
-    uniques: &[Unique],
+    keys: &[u64],
     sizes: &[u8],
     overflow: &[u32],
 ) -> Result<(u32, Vec<u32>), IndexError> {
@@ -817,7 +857,7 @@ fn place_stash(
         let mut slots = vec![Slot::EMPTY; count];
         let mut chosen = Vec::with_capacity(overflow.len());
         for &i in overflow {
-            let (b1, b2) = names::candidates(uniques[i as usize].key, n);
+            let (b1, b2) = names::candidates(keys[i as usize], n);
             let size = sizes[i as usize];
             let Some(b) = pick(&slots, b1, b2, size) else {
                 break;
@@ -842,241 +882,406 @@ fn pack_text_into(text: &[u8], dst: &mut [u8]) -> usize {
     n
 }
 
-struct BlockWriter<'a, 'b> {
-    uniques: &'a [Unique],
-    lists: &'a [ListInput<'b>],
-    long_at: &'a [(u32, u32)],
+/// Where the entries of the items to write are in [`Encoded::entries`].
+#[derive(Clone, Copy)]
+enum Items<'a> {
+    /// Every unique in order, with its size.
+    All(&'a [u8]),
+    /// `(offset, size)` of each listed unique.
+    Listed(&'a [(usize, u8)]),
 }
 
-impl BlockWriter<'_, '_> {
-    /// Encodes the entry of unique `m` into `out`; returns its length.
-    fn encode(&self, out: &mut [u8; 72], m: u32) -> usize {
-        let u = &self.uniques[m as usize];
-        let marker = u.flags & MARKER != 0;
-        let symbols = u.len + 1;
-        if usize::from(symbols) > LONG_SYMBOLS {
-            out[0] = if marker { LONG_MARKER } else { LONG };
-            let mut pos = 1 + names::write_varint(&mut out[1..], u.set);
-            out[pos] = symbols;
-            pos += 1;
-            let at = self
-                .long_at
-                .binary_search_by_key(&m, |&(i, _)| i)
-                .expect("long names are in the arena");
-            out[pos..pos + 4].copy_from_slice(&self.long_at[at].1.to_le_bytes());
-            pos + 4
-        } else {
-            out[0] = symbols | if marker { MARKER } else { 0 };
-            let pos = 1 + names::write_varint(&mut out[1..], u.set);
-            let text = text_at(self.lists, u.list, u.offset, u.len);
-            pos + pack_text_into(text, &mut out[pos..])
+/// Writes `count` blocks from `entries` (per unique: its fingerprint octet, then its entry). Item
+/// `p` goes to block `chosen[p]`. Each of `threads` threads owns a contiguous block range: it
+/// counts its blocks' entries, then copies its items in item order in batches (prefetching blocks
+/// ahead), so entry order inside a block is item order whatever the thread count.
+fn write_blocks(
+    entries: &[u8],
+    count: usize,
+    chosen: &[u32],
+    items: Items<'_>,
+    tags: &[u8],
+    threads: usize,
+) -> AlignedBytes {
+    const BATCH: usize = 1024;
+    // One spare block keeps word comparisons of the last block's entries inside the table.
+    let mut bytes = AlignedBytes::zeroed((count + 1) * BLOCK);
+    let dst = SharedMut(bytes.as_mut_slice().as_mut_ptr());
+    let per = count.div_ceil(threads.max(1)).max(1);
+    run_parallel(count.div_ceil(per), threads, |t| {
+        let (lo, hi) = ((t * per) as u32, ((t + 1) * per).min(count) as u32);
+        // Per block of the range: next entry octet and next fingerprint slot.
+        let mut cursor = vec![(0u8, 0u8); (hi - lo) as usize];
+        for &b in chosen {
+            if (lo..hi).contains(&b) {
+                cursor[(b - lo) as usize].1 += 1;
+            }
         }
-    }
-
-    /// Writes `count` blocks. Item `p` (unique `item(p)`) goes to block `chosen[p]`. Each of
-    /// `threads` threads owns a contiguous block range: it lists its items in item order, counts
-    /// its blocks' entries, then encodes and writes the entries (prefetching texts and blocks
-    /// ahead), so entry order inside a block is item order whatever the thread count.
-    fn write_all(
-        &self,
-        count: usize,
-        chosen: &[u32],
-        item: impl Fn(usize) -> u32 + Sync,
-        tags: &[u8],
-        threads: usize,
-    ) -> AlignedBytes {
-        // One spare block keeps word comparisons of the last block's entries inside the table.
-        let mut bytes = AlignedBytes::zeroed((count + 1) * BLOCK);
-        let dst = SharedMut(bytes.as_mut_slice().as_mut_ptr());
-        let per = count.div_ceil(threads.max(1)).max(1);
-        run_parallel(count.div_ceil(per), threads, |t| {
-            let (lo, hi) = ((t * per) as u32, ((t + 1) * per).min(count) as u32);
-            let mine: Vec<u32> = (0..chosen.len() as u32)
-                .filter(|&p| (lo..hi).contains(&chosen[p as usize]))
-                .collect();
-            // Per block of the range: next entry octet and next fingerprint slot.
-            let mut cursor = vec![(0u8, 0u8); (hi - lo) as usize];
-            for &p in &mine {
-                cursor[(chosen[p as usize] - lo) as usize].1 += 1;
+        for (i, c) in cursor.iter_mut().enumerate() {
+            let b = lo as usize + i;
+            // SAFETY: the header octets of blocks lo..hi belong to this thread.
+            unsafe {
+                dst.at(b * BLOCK).write(c.1);
+                dst.at(b * BLOCK + 1)
+                    .write(tags.get(b).copied().unwrap_or(0));
             }
-            for (i, c) in cursor.iter_mut().enumerate() {
-                let b = lo as usize + i;
-                // SAFETY: the header octets of blocks lo..hi belong to this thread.
-                unsafe {
-                    dst.at(b * BLOCK).write(c.1);
-                    dst.at(b * BLOCK + 1)
-                        .write(tags.get(b).copied().unwrap_or(0));
+            *c = ((HEADER + usize::from(c.1)) as u8, 0);
+        }
+        let mut flush = |batch: &mut Vec<(u32, usize, u8)>| {
+            for (j, &(b, at, size)) in batch.iter().enumerate() {
+                if let Some(&(ahead, _, _)) = batch.get(j + 8) {
+                    prefetch_read(dst.at(ahead as usize * BLOCK));
                 }
-                *c = ((HEADER + usize::from(c.1)) as u8, 0);
-            }
-            let mut entry = [0u8; 72];
-            for (j, &p) in mine.iter().enumerate() {
-                if let Some(&ahead) = mine.get(j + 8) {
-                    let u = &self.uniques[item(ahead as usize) as usize];
-                    let text = self.lists[usize::from(u.list)].text;
-                    prefetch_read(text.as_ptr().wrapping_add(u.offset as usize));
-                    prefetch_read(dst.at(chosen[ahead as usize] as usize * BLOCK));
-                }
-                let b = chosen[p as usize];
-                let m = item(p as usize);
-                let u = &self.uniques[m as usize];
                 let c = &mut cursor[(b - lo) as usize];
-                let n = self.encode(&mut entry, m);
+                let n = usize::from(size) - 1;
+                let entry = &entries[at..at + usize::from(size)];
                 let base = b as usize * BLOCK;
                 // SAFETY: the cursor gives every entry of block b (owned by this thread) its own
                 // octets, which fit the block because placement counted their sizes, and its own
                 // fingerprint slot; all inside the table.
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        entry.as_ptr(),
+                        entry[1..].as_ptr(),
                         dst.at(base + usize::from(c.0)),
                         n,
                     );
-                    dst.at(base + HEADER + usize::from(c.1))
-                        .write(entry_fingerprint(u.key, u.len + 1));
+                    dst.at(base + HEADER + usize::from(c.1)).write(entry[0]);
                 }
                 *c = (c.0 + n as u8, c.1 + 1);
             }
-        });
-        bytes
+            batch.clear();
+        };
+        let mut batch = Vec::with_capacity(BATCH);
+        let mut at = 0;
+        for (p, &b) in chosen.iter().enumerate() {
+            let (offset, size) = match items {
+                Items::All(sizes) => {
+                    at += usize::from(sizes[p]);
+                    (at - usize::from(sizes[p]), sizes[p])
+                }
+                Items::Listed(listed) => listed[p],
+            };
+            if (lo..hi).contains(&b) {
+                batch.push((b, offset, size));
+                if batch.len() == BATCH {
+                    flush(&mut batch);
+                }
+            }
+        }
+        flush(&mut batch);
+    });
+    bytes
+}
+
+/// Every unique name of a build encoded for placement; the list texts are no longer needed.
+struct Encoded {
+    /// Per unique in order: its fingerprint octet, then its entry.
+    entries: Vec<u8>,
+    keys: Vec<u64>,
+    /// Octets per unique in `entries`.
+    sizes: Vec<u8>,
+    long: Vec<u8>,
+    sets: SetTable,
+    single_mask: [u64; 4],
+    heavy: Box<[u64]>,
+    invalid: Vec<u64>,
+    /// Uniques that are names (not markers).
+    names: u64,
+    block_count: usize,
+    /// Index bytes without the stash.
+    needed: u64,
+}
+
+/// Build memory beyond the list texts for `lines` list lines: one record per line (scan, scatter
+/// and deduplication each release the buffer they consume, as encoding releases the deduplicated
+/// names), plus per-thread release lag and huge-page rounding. Encoding needs more only when the
+/// entries with their keys outgrow the deduplicated names; its own reservation checks that.
+fn estimate_build_bytes(lines: usize, threads: usize) -> u64 {
+    let per_line = size_of::<Record>().max(size_of::<Unique>());
+    (lines * per_line + (4 * threads.max(1) + 4) * RELEASE_BYTES) as u64
+}
+
+/// Scans, deduplicates and encodes every name of `texts`, checking the index cap and reserving
+/// the memory of each step.
+fn encode_entries(
+    texts: &[&[u8]],
+    opts: &IndexOptions,
+    memory: &BuildMemory,
+) -> Result<Encoded, IndexError> {
+    let threads = opts.threads.max(1);
+    // Per thread: release granularity plus huge-page rounding of the buffers it fills.
+    let lag = (4 * threads * RELEASE_BYTES) as u64;
+    let chunks = chunk_lists(texts, threads);
+    let lines: usize = chunks.iter().map(|c| c.3).sum();
+    memory.reserve("records", estimate_build_bytes(lines, threads))?;
+    let (parts, invalid) = scan_lists(texts, &chunks, opts);
+    drop(chunks);
+    memory.reserve("scatter", lag)?;
+    let (mut records, bucket_sizes) = scatter(parts, threads);
+
+    // Sort and dedupe the key buckets in parallel, each thread with its own set table, releasing
+    // the records of every bucket once it is sorted.
+    let largest = bucket_sizes.iter().max().copied().unwrap_or(0);
+    memory.reserve(
+        "dedupe",
+        lag + (threads * largest * size_of::<Record>()) as u64,
+    )?;
+    let mut buckets: Vec<&mut [Record]> = Vec::with_capacity(256);
+    let mut rest = records.as_mut_slice();
+    for n in bucket_sizes {
+        let (head, tail) = rest.split_at_mut(n);
+        buckets.push(head);
+        rest = tail;
     }
+    let per = 256usize.div_ceil(threads);
+    let groups: Vec<parking_lot::Mutex<&mut [&mut [Record]]>> = buckets
+        .chunks_mut(per)
+        .map(parking_lot::Mutex::new)
+        .collect();
+    let deduped = run_parallel(groups.len(), threads, |g| {
+        let mut group = groups[g].lock();
+        let start = group.first().map_or(0, |b| b.as_ptr() as usize);
+        let mut sets = SetTable::new(texts.len());
+        let mut out = huge_vec(group.iter().map(|b| b.len()).sum());
+        let (mut sorted, mut hashes) = (Vec::new(), Vec::new());
+        for bucket in group.iter_mut() {
+            sort_bucket(bucket, &mut sorted);
+            let end = bucket.as_mut_ptr() as usize + size_of_val(&**bucket);
+            // SAFETY: the records of this group up to the end of this bucket are copied into
+            // `sorted` or deduplicated; this thread owns them, never reads them again, and they
+            // are integers.
+            unsafe { release(start as *const u8, end - start) };
+            dedupe_bucket(texts, &sorted, &mut sets, &mut out, &mut hashes);
+        }
+        (sets, out)
+    });
+    drop(groups);
+    drop(records);
+    // Intern every thread's sets (counts complete them) and renumber them.
+    let mut sets = SetTable::new(texts.len());
+    let (locals, parts): (Vec<SetTable>, Vec<Vec<Unique>>) = deduped.into_iter().unzip();
+    let to_global: Vec<Vec<u32>> = locals
+        .iter()
+        .map(|local| {
+            (0..local.len() as u32)
+                .map(|id| match id {
+                    0 => 0,
+                    _ => sets.intern(local.get(id), local.counts[id as usize]),
+                })
+                .collect()
+        })
+        .collect();
+    drop(locals);
+    let renumbered = sets.renumber();
+
+    // Final set ids and the entry octets of every part, in parallel.
+    let uniques: usize = parts.iter().map(Vec::len).sum();
+    let mut starts = Vec::with_capacity(parts.len());
+    parts.iter().fold(0, |at, part| {
+        starts.push(at);
+        at + part.len()
+    });
+    let parts: Vec<parking_lot::Mutex<Vec<Unique>>> =
+        parts.into_iter().map(parking_lot::Mutex::new).collect();
+    let totals = run_parallel(parts.len(), threads, |i| {
+        let mut part = parts[i].lock();
+        let (mut single_mask, mut heavy_keys) = ([0u64; 4], Vec::new());
+        let (mut bytes, mut long_bytes, mut names) = (0usize, 0usize, 0u64);
+        for u in part.iter_mut() {
+            u.set = renumbered[to_global[i][u.set as usize] as usize];
+            let symbols = usize::from(u.len) + 1;
+            // The entry and its fingerprint octet.
+            let size = entry_len(symbols, u.set) + 1;
+            bytes += size;
+            if symbols > LONG_SYMBOLS {
+                long_bytes += (7 * symbols).div_ceil(8);
+            }
+            names += u64::from(u.set != 0);
+            // A single-label name's placement key is its own hash.
+            if u.flags & SINGLE != 0 {
+                single_mask[(u.key >> 6) as usize & 3] |= 1 << (u.key & 63);
+            }
+            if u.flags & MARKER != 0 {
+                heavy_keys.push(u.key);
+            }
+        }
+        (bytes, long_bytes, names, single_mask, heavy_keys)
+    });
+    drop(to_global);
+    let (mut entry_starts, mut long_starts) = (Vec::new(), Vec::new());
+    let (mut sum, mut long_bytes, mut names) = (0usize, 0usize, 0u64);
+    let mut single_mask = [0u64; 4];
+    let mut heavy_keys = Vec::new();
+    for (bytes, long, n, mask, heavy) in totals {
+        entry_starts.push(sum);
+        long_starts.push(long_bytes);
+        (sum, long_bytes, names) = (sum + bytes, long_bytes + long, names + n);
+        for (m, w) in single_mask.iter_mut().zip(mask) {
+            *m |= w;
+        }
+        heavy_keys.extend(heavy);
+    }
+    let heavy = heavy_table(&heavy_keys);
+    drop(heavy_keys);
+    let block_count = ((sum as f64 / (CAPACITY as f64 * opts.fill)).ceil() as usize).max(1);
+    let needed =
+        ((block_count + 1) * BLOCK + long_bytes + 8 + 8 * sets.bits.len() + 2 * BLOCK) as u64;
+    if needed > opts.max_bytes || block_count > u32::MAX as usize {
+        return Err(IndexError::OverCap {
+            needed,
+            cap: opts.max_bytes,
+        });
+    }
+
+    // Encode every unique with its placement key and size, part by part in parallel into disjoint
+    // ranges, releasing each part's pages as it is consumed.
+    let parts_bytes = uniques * size_of::<Unique>();
+    memory.reserve(
+        "encode",
+        lag + (sum + long_bytes + 9 * uniques).saturating_sub(parts_bytes) as u64,
+    )?;
+    let mut entries: Vec<u8> = huge_vec(sum);
+    let mut long = vec![0u8; long_bytes + 8];
+    let mut keys: Vec<u64> = huge_vec(uniques);
+    let mut sizes: Vec<u8> = huge_vec(uniques);
+    let (ed, ld) = (
+        SharedMut(entries.as_mut_ptr()),
+        SharedMut(long.as_mut_ptr()),
+    );
+    let (kd, sd) = (SharedMut(keys.as_mut_ptr()), SharedMut(sizes.as_mut_ptr()));
+    let step = RELEASE_BYTES / 2 / size_of::<Unique>();
+    run_parallel(parts.len(), threads, |i| {
+        let mut part = std::mem::take(&mut *parts[i].lock());
+        let (mut at, mut long_at) = (entry_starts[i], long_starts[i]);
+        let mut entry = [0u8; 72];
+        let mut packer = names::Packer::new();
+        for k in 0..part.len() {
+            if let Some(ahead) = part.get(k + 8) {
+                prefetch_read(
+                    texts[usize::from(ahead.list)]
+                        .as_ptr()
+                        .wrapping_add(ahead.offset as usize),
+                );
+            }
+            let u = part[k];
+            let text = text_at(texts, u.list, u.offset, u.len);
+            let symbols = u.len + 1;
+            let marker = u.flags & MARKER != 0;
+            let n = if usize::from(symbols) > LONG_SYMBOLS {
+                entry[0] = if marker { LONG_MARKER } else { LONG };
+                let mut pos = 1 + names::write_varint(&mut entry[1..], u.set);
+                entry[pos] = symbols;
+                pos += 1;
+                entry[pos..pos + 4].copy_from_slice(&(long_at as u32).to_le_bytes());
+                names::pack_text(text, &mut packer);
+                let packed = packer.bytes();
+                assert_eq!(packed.len(), (7 * usize::from(symbols)).div_ceil(8));
+                // SAFETY: part i owns long octets long_starts[i]..long_starts[i + 1], counted
+                // with the same length; inside `long`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(packed.as_ptr(), ld.at(long_at), packed.len())
+                };
+                long_at += packed.len();
+                pos + 4
+            } else {
+                entry[0] = symbols | if marker { MARKER } else { 0 };
+                let pos = 1 + names::write_varint(&mut entry[1..], u.set);
+                pos + pack_text_into(text, &mut entry[pos..])
+            };
+            assert_eq!(n, entry_len(usize::from(symbols), u.set), "entry size");
+            // SAFETY: part i owns entry octets entry_starts[i]..entry_starts[i + 1], whose sizes
+            // were counted per unique exactly as asserted, and indexes starts[i]..starts[i] + len
+            // of the keys and sizes; all inside their capacity.
+            unsafe {
+                ed.at(at).write(entry_fingerprint(u.key, symbols));
+                std::ptr::copy_nonoverlapping(entry.as_ptr(), ed.at(at + 1), n);
+                kd.at(starts[i] + k).write(u.key);
+                sd.at(starts[i] + k).write((n + 1) as u8);
+            }
+            at += n + 1;
+            if (k + 1) % step == 0 {
+                // SAFETY: uniques 0..=k of the part this thread owns are encoded and never read
+                // again; they are integers.
+                unsafe { release(part.as_mut_ptr().cast(), (k + 1) * size_of::<Unique>()) };
+            }
+        }
+    });
+    // SAFETY: the parts wrote every octet below `sum` and every index below `uniques` exactly once.
+    unsafe {
+        entries.set_len(sum);
+        keys.set_len(uniques);
+        sizes.set_len(uniques);
+    }
+    drop(parts);
+    Ok(Encoded {
+        entries,
+        keys,
+        sizes,
+        long,
+        sets,
+        single_mask,
+        heavy,
+        invalid,
+        names,
+        block_count,
+        needed,
+    })
 }
 
 impl FilterIndex {
     /// Builds the index; never allocates blocks for an index above `opts.max_bytes`.
     pub fn build(lists: &[ListInput<'_>], opts: &IndexOptions) -> Result<FilterIndex, IndexError> {
-        let mut arena = TextArena::new(lists.iter().map(|l| l.text.len()).sum(), lists.len());
-        let ranges: Vec<_> = lists.iter().map(|l| arena.push(l.text)).collect();
-        let local: Vec<ListInput<'_>> = lists
+        let mut arena = TextArena::new();
+        for l in lists {
+            arena.push(l.text);
+        }
+        let metas = lists
             .iter()
-            .zip(ranges)
-            .map(|(l, r)| ListInput {
-                text: arena.text(r),
-                ..*l
+            .map(|l| ListMeta {
+                id: l.id.into(),
+                category: l.category.into(),
+                category_slot: l.category_slot,
+                kind: l.kind,
+                invalid_lines: 0,
             })
             .collect();
-        Self::build_in(&arena, &local, opts)
+        Self::build_in(arena, metas, opts, &BuildMemory::unlimited())
     }
 
-    /// [`FilterIndex::build`] over texts already in `arena` (no copy of the texts); panics when a
-    /// text is not one of the arena's.
+    /// [`FilterIndex::build`] over the texts of `arena` (text `i` is list `i` of `lists`), freed as
+    /// soon as every name is encoded; `memory` is checked before every build step.
     pub fn build_in(
-        arena: &TextArena,
-        lists: &[ListInput<'_>],
+        arena: TextArena,
+        mut lists: Vec<ListMeta>,
         opts: &IndexOptions,
+        memory: &BuildMemory,
     ) -> Result<FilterIndex, IndexError> {
         let started = Instant::now();
         if lists.len() > MAX_LISTS {
             return Err(IndexError::TooManyLists(lists.len()));
         }
-        for l in lists {
-            assert!(
-                arena.holds(l.text),
-                "list {} is not in the text arena",
-                l.id
-            );
-        }
-        let (parts, invalid) = scan_lists(lists, opts);
-        let (mut records, bucket_sizes) = scatter(parts, opts.threads);
-
-        // Sort and dedupe the key buckets in parallel, each thread with its own set table.
+        assert_eq!(arena.len(), lists.len(), "one text per list");
+        let encoded = {
+            let texts: Vec<&[u8]> = (0..arena.len()).map(|i| arena.text(i)).collect();
+            encode_entries(&texts, opts, memory)?
+        };
+        drop(arena);
+        let Encoded {
+            entries,
+            keys,
+            sizes,
+            long,
+            sets,
+            single_mask,
+            heavy,
+            invalid,
+            names,
+            block_count,
+            needed,
+        } = encoded;
         let threads = opts.threads.max(1);
-        let mut buckets: Vec<&mut [Record]> = Vec::with_capacity(256);
-        let mut rest = records.as_mut_slice();
-        for n in bucket_sizes {
-            let (head, tail) = rest.split_at_mut(n);
-            buckets.push(head);
-            rest = tail;
-        }
-        let per = 256usize.div_ceil(threads);
-        let groups: Vec<parking_lot::Mutex<&mut [&mut [Record]]>> = buckets
-            .chunks_mut(per)
-            .map(parking_lot::Mutex::new)
-            .collect();
-        let deduped = run_parallel(groups.len(), threads, |g| {
-            let mut group = groups[g].lock();
-            let mut sets = SetTable::new(lists.len());
-            let mut out = huge_vec(group.iter().map(|b| b.len()).sum());
-            let mut sorted = Vec::new();
-            for bucket in group.iter_mut() {
-                dedupe_bucket(lists, bucket, &mut sorted, &mut sets, &mut out);
-            }
-            (sets, out)
-        });
-        drop(groups);
-        drop(records);
-        // Intern every thread's sets (counts complete them), renumber, then write the uniques with
-        // their final set ids in parallel into disjoint ranges of one allocation.
-        let mut sets = SetTable::new(lists.len());
-        let (locals, parts): (Vec<SetTable>, Vec<Vec<Unique>>) = deduped.into_iter().unzip();
-        let to_global: Vec<Vec<u32>> = locals
-            .iter()
-            .map(|local| {
-                (0..local.len() as u32)
-                    .map(|id| match id {
-                        0 => 0,
-                        _ => sets.intern(local.get(id), local.counts[id as usize]),
-                    })
-                    .collect()
-            })
-            .collect();
-        drop(locals);
-        let renumbered = sets.renumber();
-        let mut starts = Vec::with_capacity(parts.len());
-        let total = parts.iter().fold(0, |at, part| {
-            starts.push(at);
-            at + part.len()
-        });
-        let mut uniques: Vec<Unique> = huge_vec(total);
-        let dst = SharedMut(uniques.as_mut_ptr());
-        let marks = run_parallel(parts.len(), threads, |i| {
-            let (mut single_mask, mut heavy_keys) = ([0u64; 4], Vec::new());
-            for (k, u) in parts[i].iter().enumerate() {
-                let set = renumbered[to_global[i][u.set as usize] as usize];
-                if u.flags & SINGLE != 0 {
-                    single_mask[(u.hash >> 6) as usize & 3] |= 1 << (u.hash & 63);
-                }
-                if u.flags & MARKER != 0 {
-                    heavy_keys.push(u.key);
-                }
-                // SAFETY: part i owns indexes starts[i]..starts[i] + len, inside the capacity.
-                unsafe { dst.at(starts[i] + k).write(Unique { set, ..*u }) };
-            }
-            (single_mask, heavy_keys)
-        });
-        // SAFETY: the parts wrote every index below `total` exactly once.
-        unsafe { uniques.set_len(total) };
-        drop(parts);
-        let mut single_mask = [0u64; 4];
-        let mut heavy_keys = Vec::new();
-        for (mask, keys) in marks {
-            for (m, w) in single_mask.iter_mut().zip(mask) {
-                *m |= w;
-            }
-            heavy_keys.extend(keys);
-        }
-        let heavy = heavy_table(&heavy_keys);
-
-        let mut sizes = huge_vec(uniques.len());
-        let (mut sum, mut long_bytes) = (0usize, 0usize);
-        for u in &uniques {
-            // The entry and its fingerprint octet.
-            let size = entry_len(usize::from(u.len) + 1, u.set) + 1;
-            sum += size;
-            if usize::from(u.len) + 1 > LONG_SYMBOLS {
-                long_bytes += (7 * (usize::from(u.len) + 1)).div_ceil(8);
-            }
-            sizes.push(size as u8);
-        }
-        let block_count = ((sum as f64 / (CAPACITY as f64 * opts.fill)).ceil() as usize).max(1);
-        let needed =
-            ((block_count + 1) * BLOCK + long_bytes + 8 + 8 * sets.bits.len() + 2 * BLOCK) as u64;
-        if needed > opts.max_bytes || block_count > u32::MAX as usize {
-            return Err(IndexError::OverCap {
-                needed,
-                cap: opts.max_bytes,
-            });
-        }
+        let uniques = keys.len();
+        memory.reserve("placement", (12 * uniques + 8 * block_count) as u64)?;
 
         // Largest entries first (key order within a size) leaves the least unusable slack.
         let mut size_starts = [0usize; 256];
@@ -1087,36 +1292,39 @@ impl FilterIndex {
         for start in size_starts.iter_mut().rev() {
             (*start, at) = (at, at + *start);
         }
-        let mut order = huge_vec(uniques.len());
-        order.resize(uniques.len(), (0u64, 0u32, 0u8));
-        for (i, (u, &size)) in uniques.iter().zip(&sizes).enumerate() {
-            order[size_starts[usize::from(size)]] = (u.key, i as u32, size);
+        let mut order: Vec<u32> = huge_vec(uniques);
+        order.resize(uniques, 0);
+        for (i, &size) in sizes.iter().enumerate() {
+            order[size_starts[usize::from(size)]] = i as u32;
             size_starts[usize::from(size)] += 1;
         }
         let mut slots = vec![Slot::EMPTY; block_count];
-        let mut next = huge_vec(uniques.len());
-        next.resize(uniques.len(), u32::MAX);
-        let (mut chosen, overflow) = place(&order, &mut slots, &mut next);
+        let mut next = huge_vec(uniques);
+        next.resize(uniques, u32::MAX);
+        let (mut chosen, overflow) = place(&order, &keys, &sizes, &mut slots, &mut next);
         drop(order);
-        let overflow = relocate(
-            &uniques,
-            &sizes,
-            &mut chosen,
-            &mut slots,
-            &mut next,
-            overflow,
-        );
+        let mut overflow = relocate(&keys, &sizes, &mut chosen, &mut slots, &mut next, overflow);
         drop((slots, next));
+        overflow.sort_unstable();
+        // Offsets of the overflow names' entries, and their tag bits in both candidate blocks.
+        let mut stashed = Vec::with_capacity(overflow.len());
         let mut tags = vec![0u8; block_count];
+        let (mut at, mut from) = (0usize, 0usize);
         for &i in &overflow {
-            let u = &uniques[i as usize];
-            let (b1, b2) = names::candidates(u.key, block_count as u32);
-            let tag = 1 << (entry_fingerprint(u.key, u.len + 1) & 7);
+            let i = i as usize;
+            at += sizes[from..i]
+                .iter()
+                .map(|&s| usize::from(s))
+                .sum::<usize>();
+            from = i;
+            stashed.push((at, sizes[i]));
+            let (b1, b2) = names::candidates(keys[i], block_count as u32);
+            let tag = 1 << (entries[at] & 7);
             tags[b1 as usize] |= tag;
             tags[b2 as usize] |= tag;
         }
-        let (stash_count, stash_chosen) = place_stash(&uniques, &sizes, &overflow)?;
-        drop(sizes);
+        let (stash_count, stash_chosen) = place_stash(&keys, &sizes, &overflow)?;
+        drop(keys);
         let needed = needed - 2 * BLOCK as u64 + u64::from(stash_count + 1) * BLOCK as u64;
         if needed > opts.max_bytes {
             return Err(IndexError::OverCap {
@@ -1125,44 +1333,33 @@ impl FilterIndex {
             });
         }
 
-        let mut long = Vec::with_capacity(long_bytes + 8);
-        let mut long_at = Vec::new();
-        let mut packer = names::Packer::new();
-        for (i, u) in uniques.iter().enumerate() {
-            if usize::from(u.len) + 1 > LONG_SYMBOLS {
-                long_at.push((i as u32, long.len() as u32));
-                names::pack_text(text_at(lists, u.list, u.offset, u.len), &mut packer);
-                long.extend_from_slice(packer.bytes());
-            }
-        }
-        long.extend_from_slice(&[0; 8]);
-
-        let writer = BlockWriter {
-            uniques: &uniques,
-            lists,
-            long_at: &long_at,
-        };
-        let blocks = writer.write_all(block_count, &chosen, |p| p as u32, &tags, threads);
-        let stash = writer.write_all(
+        memory.reserve(
+            "blocks",
+            ((block_count + stash_count as usize + 2) * BLOCK) as u64,
+        )?;
+        let blocks = write_blocks(
+            &entries,
+            block_count,
+            &chosen,
+            Items::All(&sizes),
+            &tags,
+            threads,
+        );
+        drop((chosen, sizes, tags));
+        let stash = write_blocks(
+            &entries,
             stash_count as usize,
             &stash_chosen,
-            |p| overflow[p],
+            Items::Listed(&stashed),
             &[],
             threads,
         );
+        drop(entries);
 
-        let metas: Vec<ListMeta> = lists
-            .iter()
-            .zip(&invalid)
-            .map(|(l, &bad)| ListMeta {
-                id: l.id.into(),
-                category: l.category.into(),
-                category_slot: l.category_slot,
-                kind: l.kind,
-                invalid_lines: bad,
-            })
-            .collect();
-        let by_id = metas
+        for (meta, bad) in lists.iter_mut().zip(&invalid) {
+            meta.invalid_lines = *bad;
+        }
+        let by_id = lists
             .iter()
             .enumerate()
             .map(|(i, m)| (m.id.clone(), i as u16))
@@ -1172,7 +1369,7 @@ impl FilterIndex {
             + long.len()
             + 8 * sets.bits.len()
             + 4 * sets.counts.len()
-            + 64 * metas.len()) as u64;
+            + 64 * lists.len()) as u64;
         Ok(FilterIndex {
             seed: opts.seed,
             blocks,
@@ -1185,9 +1382,9 @@ impl FilterIndex {
             set_words: sets.words,
             set_count: sets.len(),
             set_bits: sets.bits,
-            lists: metas,
+            lists,
             by_id,
-            entries: uniques.iter().filter(|u| u.set != 0).count() as u64,
+            entries: names,
             invalid_lines: invalid.iter().sum(),
             stash_entries: overflow.len() as u64,
             memory_bytes,

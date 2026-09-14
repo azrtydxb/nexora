@@ -184,7 +184,9 @@ mod tests {
 
     #[test]
     fn measures_listed_and_clean_names() {
-        let text: String = (0..5_000).map(|i| format!("n{i}.calibrate.test\n")).collect();
+        let text: String = (0..5_000)
+            .map(|i| format!("n{i}.calibrate.test\n"))
+            .collect();
         let input = [ListInput {
             id: "l",
             category: "",

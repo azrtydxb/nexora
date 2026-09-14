@@ -247,12 +247,7 @@ fn main() {
     let v1 = args.v1.then(|| {
         let before = rss_bytes();
         let t = Instant::now();
-        let (set, _) = FilterSet::build(
-            &texts,
-            &[],
-            nexora_engine::filter::BlockMode::NullIp,
-            60,
-        );
+        let (set, _) = FilterSet::build(&texts, &[], nexora_engine::filter::BlockMode::NullIp, 60);
         let seconds = t.elapsed().as_secs_f64();
         (set, rss_bytes().saturating_sub(before), seconds)
     });
@@ -288,7 +283,8 @@ fn main() {
         cold_clean.len()
     );
     let rounds = args.rounds.max(1);
-    let per_round = |mut f: Box<dyn FnMut() -> f64 + '_>| median((0..rounds).map(|_| f()).collect());
+    let per_round =
+        |mut f: Box<dyn FnMut() -> f64 + '_>| median((0..rounds).map(|_| f()).collect());
     let mut report = Report {
         unique_names: index.entries(),
         invalid_lines: index.invalid_lines(),
@@ -396,8 +392,7 @@ fn main() {
                 std::hint::black_box(cache.decide(&view, q));
             })
         }));
-        report.zipf_hit_rate =
-            (cache.hits() - hits_before) as f64 / (rounds * timed.len()) as f64;
+        report.zipf_hit_rate = (cache.hits() - hits_before) as f64 / (rounds * timed.len()) as f64;
         let hits_before = cache.hits();
         report.zipf_repeated_ns = per_round(Box::new(|| {
             repeated.time(|q| {

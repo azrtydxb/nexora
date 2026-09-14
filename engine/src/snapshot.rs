@@ -1,5 +1,6 @@
 //! Snapshot validation, blob verification, persistence and atomic application.
 
+use crate::filter::memory::{self, BuildMemory};
 use crate::proto::{BlobRef, ConfigSnapshot, UpstreamProtocol};
 use crate::runtime::Runtime;
 use arc_swap::ArcSwap;
@@ -183,17 +184,35 @@ pub enum ApplyOutcome {
 
 /// Validates and builds `s`, swaps it in, then persists it. A rejected
 /// snapshot leaves `current` untouched; a persist failure is reported but the
-/// new runtime stays applied.
+/// new runtime stays applied. The filter index build is guarded by the engine's
+/// own cgroup memory limit.
 pub fn apply(
     current: &ArcSwap<Runtime>,
     s: ConfigSnapshot,
     blobs: &dyn BlobSource,
     state_dir: Option<&Path>,
 ) -> ApplyOutcome {
+    apply_with(
+        current,
+        s,
+        blobs,
+        state_dir,
+        &BuildMemory::cgroup(memory::CGROUP_DIR),
+    )
+}
+
+/// [`apply`] with the filter index build memory guard `memory`.
+pub fn apply_with(
+    current: &ArcSwap<Runtime>,
+    s: ConfigSnapshot,
+    blobs: &dyn BlobSource,
+    state_dir: Option<&Path>,
+    memory: &BuildMemory,
+) -> ApplyOutcome {
     let version = s.version;
     let previous = current.load_full();
-    let built =
-        validate(&s, previous.version).and_then(|()| Runtime::build(&s, blobs, Some(&previous)));
+    let built = validate(&s, previous.version)
+        .and_then(|()| Runtime::build_with(&s, blobs, Some(&previous), memory));
     let rt = match built {
         Ok(rt) => rt,
         Err(e) => {

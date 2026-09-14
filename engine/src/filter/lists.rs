@@ -1,15 +1,14 @@
 //! Every filter list of a snapshot with its identity, the index key, category counter slots and the
 //! index memory cap.
 
-use super::index::{FilterIndex, IndexOptions, ListInput, ListKind, MAX_LISTS, TextArena};
+use super::index::{FilterIndex, IndexOptions, ListKind, ListMeta, MAX_LISTS, TextArena};
+use super::memory::BuildMemory;
 use crate::proto::{BlobRef, ConfigSnapshot, FilterListRef};
 use crate::snapshot::{BlobSource, SnapshotError};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Mutex;
 
-pub const CGROUP_MEMORY_MAX: &str = "/sys/fs/cgroup/memory.max";
 /// The cap when the engine has no cgroup memory limit.
 pub const DEFAULT_MAX_BYTES: u64 = 512 << 20;
 /// Per-category block counters: slot 0 is `custom`, 1..=62 named categories, 63 `other`.
@@ -191,82 +190,71 @@ impl SnapshotLists {
         blobs: &dyn BlobSource,
         max_bytes: u64,
         threads: usize,
+        memory: &BuildMemory,
     ) -> Result<FilterIndex, SnapshotError> {
-        // Blobs whose frame declares its content size (mgmt writes them so) decode straight into
-        // the build arena, so the build holds one copy of every text.
-        enum Loaded<'a> {
-            Frame(&'a BlobRef, Vec<u8>, usize),
-            Text(std::borrow::Cow<'a, [u8]>),
-        }
+        map_large_allocations();
+        let invalid = |e: super::index::IndexError| SnapshotError::Invalid(e.to_string());
         let zstd_error = |r: &BlobRef, reason: String| SnapshotError::Blob {
             sha256: r.sha256.clone(),
             reason: format!("zstd: {reason}"),
         };
-        let loaded = self
-            .lists
-            .iter()
-            .map(|l| match &l.source {
+        // One blob at a time: a frame that declares its content size (mgmt writes them so) is
+        // decoded straight into its arena text, so the build holds one copy of every text and one
+        // compressed blob.
+        let mut arena = TextArena::new();
+        for l in &self.lists {
+            match &l.source {
                 ListSource::Blob(r) => {
                     let data = blobs.read(r)?;
-                    Ok(match super::blob_content_size(&data) {
-                        Some(n) => Loaded::Frame(r, data, n),
-                        None => Loaded::Text(
-                            super::decode_blob(&data)
-                                .map_err(|e| zstd_error(r, e.to_string()))?
-                                .into(),
-                        ),
-                    })
-                }
-                ListSource::Inline(text) => Ok(Loaded::Text(text.as_slice().into())),
-            })
-            .collect::<Result<Vec<_>, SnapshotError>>()?;
-        let total = loaded
-            .iter()
-            .map(|t| match t {
-                Loaded::Frame(_, _, n) => *n,
-                Loaded::Text(t) => t.len(),
-            })
-            .sum();
-        let mut arena = TextArena::new(total, loaded.len());
-        let mut ranges = Vec::with_capacity(loaded.len());
-        for t in loaded {
-            ranges.push(match t {
-                Loaded::Frame(r, data, n) => {
-                    match zstd::bulk::decompress_to_buffer(&data, &mut arena.spare()[..n]) {
-                        Ok(got) if got == n => arena.commit(n),
-                        Ok(got) => {
-                            return Err(zstd_error(
-                                r,
-                                format!("frame declares {n} bytes, holds {got}"),
-                            ));
+                    match super::blob_content_size(&data) {
+                        Some(n) => {
+                            memory.reserve("texts", n as u64).map_err(invalid)?;
+                            arena.push_with(n, |text| {
+                                match zstd::bulk::decompress_to_buffer(&data, text) {
+                                    Ok(got) if got == n => Ok(()),
+                                    Ok(got) => Err(zstd_error(
+                                        r,
+                                        format!("frame declares {n} bytes, holds {got}"),
+                                    )),
+                                    Err(e) => Err(zstd_error(r, e.to_string())),
+                                }
+                            })?;
                         }
-                        Err(e) => return Err(zstd_error(r, e.to_string())),
+                        None => {
+                            let text = super::decode_blob(&data)
+                                .map_err(|e| zstd_error(r, e.to_string()))?;
+                            drop(data);
+                            memory
+                                .reserve("texts", text.len() as u64)
+                                .map_err(invalid)?;
+                            arena.push(&text);
+                        }
                     }
                 }
-                Loaded::Text(text) => arena.push(&text),
-            });
+                ListSource::Inline(text) => arena.push(text),
+            }
         }
-        let inputs: Vec<ListInput<'_>> = self
+        let metas = self
             .lists
             .iter()
-            .zip(ranges)
-            .map(|(l, range)| ListInput {
-                id: &l.id,
-                category: &l.category,
+            .map(|l| ListMeta {
+                id: l.id.as_str().into(),
+                category: l.category.as_str().into(),
                 category_slot: category_slot(&l.category),
                 kind: l.kind,
-                text: arena.text(range),
+                invalid_lines: 0,
             })
             .collect();
         FilterIndex::build_in(
-            &arena,
-            &inputs,
+            arena,
+            metas,
             &IndexOptions {
                 threads,
                 ..IndexOptions::new(max_bytes)
             },
+            memory,
         )
-        .map_err(|e| SnapshotError::Invalid(e.to_string()))
+        .map_err(invalid)
     }
 
     /// The index positions of `ids`.
@@ -295,13 +283,9 @@ impl SnapshotLists {
     }
 }
 
-/// Half the cgroup v2 memory limit in `memory_max`, else [`DEFAULT_MAX_BYTES`] (no limit, no file,
-/// or unreadable).
-pub fn default_max_bytes(memory_max: &Path) -> u64 {
-    std::fs::read_to_string(memory_max)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map_or(DEFAULT_MAX_BYTES, |limit| limit / 2)
+/// Half the cgroup memory limit, else [`DEFAULT_MAX_BYTES`].
+pub fn default_max_bytes(limit: Option<u64>) -> u64 {
+    limit.map_or(DEFAULT_MAX_BYTES, |limit| limit / 2)
 }
 
 /// Returns the heap pages a build freed to the kernel. glibc keeps freed medium allocations in its
@@ -313,6 +297,17 @@ pub fn release_freed_memory() {
     // SAFETY: malloc_trim only releases free heap memory; it has no preconditions.
     unsafe {
         libc::malloc_trim(0);
+    }
+}
+
+/// Fixes glibc's mmap threshold at 1 MiB (it otherwise grows with every large block freed), so
+/// every large build buffer is its own mapping and returns to the kernel when it is freed instead
+/// of staying in a per-thread arena and adding to the next buffer's peak. Off the query path.
+pub fn map_large_allocations() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: mallopt only changes allocator tuning; it has no preconditions.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
     }
 }
 
@@ -485,7 +480,11 @@ mod tests {
             ("a".repeat(64), sized.clone()),
             ("b".repeat(64), unsized_frame),
         ]));
-        let index = std::sync::Arc::new(lists.build_index(&blobs, 16 << 20, 1).unwrap());
+        let index = std::sync::Arc::new(
+            lists
+                .build_index(&blobs, 16 << 20, 1, &BuildMemory::unlimited())
+                .unwrap(),
+        );
         assert_eq!(
             index.entries(),
             3,
@@ -520,7 +519,11 @@ mod tests {
                 zstd::encode_all(&b"unsized.test\n"[..], 3).unwrap(),
             ),
         ]));
-        assert!(lists.build_index(&blobs, 16 << 20, 1).is_err());
+        assert!(
+            lists
+                .build_index(&blobs, 16 << 20, 1, &BuildMemory::unlimited())
+                .is_err()
+        );
     }
 
     #[test]
@@ -586,16 +589,15 @@ mod tests {
     fn default_max_bytes_reads_the_cgroup_v2_limit() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("memory.max");
+        let limit = || BuildMemory::cgroup(dir.path()).limit();
         std::fs::write(&f, "1073741824\n").unwrap();
-        assert_eq!(default_max_bytes(&f), 536_870_912);
+        assert_eq!(default_max_bytes(limit()), 536_870_912);
         std::fs::write(&f, "max\n").unwrap();
-        assert_eq!(default_max_bytes(&f), DEFAULT_MAX_BYTES);
+        assert_eq!(default_max_bytes(limit()), DEFAULT_MAX_BYTES);
         std::fs::write(&f, "garbage").unwrap();
-        assert_eq!(default_max_bytes(&f), DEFAULT_MAX_BYTES);
-        assert_eq!(
-            default_max_bytes(&dir.path().join("absent")),
-            DEFAULT_MAX_BYTES
-        );
+        assert_eq!(default_max_bytes(limit()), DEFAULT_MAX_BYTES);
+        std::fs::remove_file(&f).unwrap();
+        assert_eq!(default_max_bytes(limit()), DEFAULT_MAX_BYTES);
         assert!((1..=4).contains(&build_threads()));
     }
 

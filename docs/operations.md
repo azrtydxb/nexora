@@ -809,15 +809,29 @@ The perf gate (`.github/workflows/perf-gate.yml`, tool in `bench/cmd/perfgate`):
   when non-zero (at least 16 MiB), else 50% of the container's cgroup memory
   limit (`/sys/fs/cgroup/memory.max`), else 512 MiB. A snapshot whose index
   exceeds the cap is rejected (the engine keeps serving the previous version
-  and reports the apply error). The cap bounds the finished index, not the
-  build: a rebuild briefly needs about five times the new index (texts, name
-  records, deduplication) on top of the previous index, which keeps serving
-  until the new one is live. Set an explicit engine memory limit of at least
-  eight times the expected index; the default catalog selection needs about
-  76 MB of index and every catalog category about 112 MB (kw: 1 GiB limit,
-  peak 830 MiB). Watch
-  `nexora_filter_index_bytes` against `nexora_filter_index_max_bytes`, and
-  `filter_index` in `GET /api/v1/engines/{id}/stats`.
+  and reports the apply error). Watch `nexora_filter_index_bytes` against
+  `nexora_filter_index_max_bytes`, and `filter_index` in
+  `GET /api/v1/engines/{id}/stats`.
+- **Rebuild memory**: a rebuild runs while the previous index keeps serving,
+  so for a moment the engine holds the previous index, the decoded list texts
+  and the build buffers. On the 5.1M-name corpus (118 MB index, 123 MB of
+  list text) the rebuild peaks at about 2.5 times the new index above the
+  engine's memory with the previous index (280 MiB with 2 build threads,
+  290 MiB with 4; see [Filter index rebuild memory](#filter-index-rebuild-memory)).
+  The engine enforces the limit instead of relying on sizing: before decoding
+  each list, and before every build step, the cgroup working set
+  (`memory.current` less `inactive_file`) plus what that step needs must stay
+  below `memory.max` less a margin of 24 MiB plus 1/32 of the limit. Once the
+  texts are decoded the engine reserves the whole build estimate at once (24
+  bytes per list line, plus 8 MiB per build thread and 8 MiB). A build that
+  would not fit stops before that step allocates, and the snapshot is rejected with
+  `filter index build stopped before <step>: <in use> bytes in use plus
+<needed> bytes needed exceed the engine memory limit of <limit> bytes less a
+<margin> byte margin`; the previous index stays active instead of the kernel
+  OOM-killing the engine. Engines without a memory limit are not checked. Size the limit
+  at about the engine's memory without filtering (response cache included)
+  plus 3.5 times the largest index you expect, plus the margin: 1 GiB covers
+  every catalog category (112–118 MB of index) with a 64 MiB response cache.
 - **Staleness**: `nexora_mgmt_filter_category_stale{category}` is 1 when an
   enabled category has an enabled source whose last refresh failed or is
   older than two refresh intervals; the GUI marks the category stale. Blocking
@@ -871,6 +885,40 @@ engine memory limit, 2 build threads) reported through `GET /api/v1/engines/{id}
 Engine memory on kw (`kubectl top pod`): 28 MiB without categories; 111–116 MiB with the default
 selection (3,446,913 names, 76 MiB index); cgroup `memory.peak` 697–826 MiB over the whole
 `TestKwFilterCategories` run (repeated rebuilds up to 5.1M names), no OOM events.
+
+### Filter index rebuild memory
+
+Measured with `engine/examples/filter_rebuild_memory.rs` in the kw dev pod on the same corpus: the
+lists are stored as zstd blobs, an old index is built through `Runtime::build_with`, then a second
+snapshot rebuilds next to it. Values are the highest process RSS during each build step, in MiB
+above the RSS with the old index live (the old index took 115 MiB of RSS, 152 MiB at `6020ca1`);
+steps follow the `BuildMemory` reservations. 2026-09-14, uncommitted on `6020ca1`; build threads
+set with `taskset`.
+
+| step                                       | `6020ca1`, 4 threads | now, 2 threads | now, 4 threads |
+| ------------------------------------------ | -------------------- | -------------- | -------------- |
+| decode texts                               | 156                  | 130            | 130            |
+| scan lines into records                    | 301                  | 269            | 270            |
+| scatter records                            | 453                  | 280            | 289            |
+| sort and deduplicate                       | 490                  | 279            | 286            |
+| copy names (before) / encode entries (now) | 494                  | 271            | 288            |
+| placement                                  | 425                  | 209            | 211            |
+| write blocks                               | 470                  | 236            | 238            |
+| rebuild peak in new index sizes (118 MB)   | 4.39                 | 2.48           | 2.56           |
+
+At `6020ca1` every compressed blob was held while decoding, the scatter held two copies of the
+records, deduplication held the records next to its 32-byte names, the names were copied once more
+before placement, and the texts stayed until the blocks were written; freed buffers stayed in glibc's
+per-thread arenas. Now each consumed buffer is returned to the kernel as the next fills, names are
+24 bytes, every name is encoded (fingerprint and entry) before the texts are freed, placement and
+the block copy work on the encoded entries only, and glibc's mmap threshold is fixed at 1 MiB. What
+remains is the texts next to one record per line (scan, deduplication) or next to the encoded
+entries and their placement keys (encoding).
+
+```
+scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example filter_rebuild_memory &&
+  taskset -c 4-5 "${CARGO_TARGET_DIR:-target}/release/examples/filter_rebuild_memory" /work/lists/clean-*.txt'
+```
 
 `scripts/filter-corpus.sh <dir>` downloads the default catalog selection
 (`bench/filter/corpus-5m.tsv`) as one normalised list per source for the same command.

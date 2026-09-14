@@ -4,6 +4,7 @@ pub mod calibrate;
 pub mod decisions;
 pub mod index;
 pub mod lists;
+pub mod memory;
 pub mod names;
 #[doc(hidden)]
 pub mod oracle;
@@ -583,7 +584,12 @@ mod policy_tests {
         let lists = SnapshotLists::collect(&s)?;
         let index = Arc::new(
             lists
-                .build_index(&blobs(), 64 << 20, 1)
+                .build_index(
+                    &blobs(),
+                    64 << 20,
+                    1,
+                    &crate::filter::memory::BuildMemory::unlimited(),
+                )
                 .map_err(|e| e.to_string())?,
         );
         let global = Arc::new(index.view(

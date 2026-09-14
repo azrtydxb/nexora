@@ -156,7 +156,11 @@ fn name_wire(name: &Name) -> Vec<u8> {
 }
 
 /// The block records and rcode of `block`'s mode for `(owner, qtype)`.
-fn block_records(block: BlockReply, owner: &Name, qtype: RecordType) -> (ResponseCode, Vec<Record>) {
+fn block_records(
+    block: BlockReply,
+    owner: &Name,
+    qtype: RecordType,
+) -> (ResponseCode, Vec<Record>) {
     match block.mode {
         BlockMode::NxDomain => (ResponseCode::NXDomain, Vec::new()),
         BlockMode::Refused => (ResponseCode::Refused, Vec::new()),
@@ -382,7 +386,16 @@ mod tests {
         };
         let blobs = OneBlob(zstd::encode_all(blocked.as_bytes(), 3).unwrap());
         let lists = SnapshotLists::collect(&snap).unwrap();
-        let index = Arc::new(lists.build_index(&blobs, 16 << 20, 1).unwrap());
+        let index = Arc::new(
+            lists
+                .build_index(
+                    &blobs,
+                    16 << 20,
+                    1,
+                    &crate::filter::memory::BuildMemory::unlimited(),
+                )
+                .unwrap(),
+        );
         let global = Arc::new(index.view(&lists.indexes(&index, &lists.global_block), &[]));
         let block = BlockReply {
             mode: BlockMode::NullIp,
