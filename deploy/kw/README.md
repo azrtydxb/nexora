@@ -168,15 +168,23 @@ dig @192.168.10.136 www.bind-demo.kw. A                 # aa, 192.0.2.53
 
 ## Resolution settings
 
-`bootstrap.sh` keeps kw in forward mode (upstreams 1.1.1.1 and 9.9.9.9) with DNSSEC validation and
-`validate_forwarded` on, and uploads the RPZ file zone `rpz.kw.nexora.` (`example.net CNAME .`) once.
+`bootstrap.sh` keeps kw in recursive mode (iterative resolution from the root servers) with DNSSEC
+validation and `validate_forwarded` on (upstreams 1.1.1.1 and 9.9.9.9 stay configured for forward
+mode, which `TestKwSmoke/dnssec-forwarded` switches to temporarily), and uploads the RPZ file zone
+`rpz.kw.nexora.` (`example.net CNAME .`) once.
+
+Recursion needs direct outbound UDP/TCP 53 to the internet. The UniFi gateway (192.168.10.1) had a
+DNS content filter that redirected all outbound port-53 traffic to its own resolver; it is disabled
+(issue #1). `TestKwSmoke/recursion` fails with a clear message if that redirect comes back.
+
+Node resolvers: the kw nodes' netplan (`/etc/netplan/netcfg.yaml`, backup `netcfg.yaml.bak-nexora`)
+uses `192.168.10.1` as nameserver so CoreDNS resolves UniFi-local names such as `nexora.kw.local`;
+they previously listed 8.8.8.8/1.1.1.1, which only worked while the gateway intercepted DNS.
 
 ## Known limits
 
-- No recursion from the root servers: kw's network transparently redirects every outbound UDP/TCP
-  53 query to a resolver (`dig +norec @198.41.0.4 example.com` and even `@192.0.2.1` get recursive
-  answers), so kw runs forward mode and `TestKwSmoke/recursion` skips itself when it detects the
-  redirect. DNSSEC-validating forward mode works through it (the redirect passes DNSSEC records).
+- Inside the cluster, the DNS LoadBalancer IPs spread queries over all engines of the group (each with
+  its own cache); `externalTrafficPolicy` only applies to clients outside the cluster.
 - Engine state is hostPath `/var/lib/nexora/<workload>`; a restarted pod keeps its engine id; removing
   that directory and the pod re-enrolls it as a new engine (delete the old engine record).
 - kube-vip (ARP) holds `192.168.10.136` on one control-plane node; with `externalTrafficPolicy: Local`

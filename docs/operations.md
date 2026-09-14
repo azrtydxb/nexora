@@ -817,17 +817,19 @@ the live release. The admin password is in the secret `nexora-admin`
 | Traces                                              | Jaeger `jaeger.observability:4317`                                                                 |
 | Metrics                                             | kube-prometheus-stack; ServiceMonitor and PrometheusRule in `monitoring` with `release: kps`       |
 
-kw runs forward mode (upstreams 1.1.1.1 and 9.9.9.9) with DNSSEC validation of
-forwarded answers, because of the egress redirect described below.
+kw runs recursive mode (from the root servers) with DNSSEC validation, including
+validation of forwarded answers.
 
 ## Known limitations
 
-- **Recursion on networks that intercept DNS**: kw redirects every outbound
-  UDP/TCP 53 query to another resolver, so recursion from the root servers
-  cannot work there (even non-recursive queries get recursive answers). kw
-  runs forward mode; recursion is verified only against the private DNS
-  hierarchy in the end-to-end tests. Any network with the same interception
-  needs forward mode.
+- **Recursion on networks that intercept DNS**: recursion needs direct outbound
+  UDP/TCP 53. Gateways with DNS content filtering or "DNS shield" features
+  (for example UniFi's DNS content filter) redirect every outbound port-53 query
+  to their own resolver, so even non-recursive queries to root servers get
+  recursive answers. Check with `dig +norec @198.41.0.4 example.com A`: a real
+  root server returns a referral without the `ra` flag. Exempt the engines'
+  egress from the filter, or run forward mode on such networks (forward mode
+  with DNSSEC validation works through the redirect).
 - **Client addresses behind `externalTrafficPolicy: Cluster`**: engines see node
   addresses, so per-client policy groups and the query log's client address do
   not work. On kw this applies to engine group `edge-b` (`192.168.10.137`):

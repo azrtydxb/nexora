@@ -74,13 +74,13 @@ call -X POST "$api/api/v1/filter-lists/$list_id/refresh" | jq -e '.entry_count >
 		exit 1
 	}
 
-# Resolution: forward mode with DNSSEC validation of the forwarded answers. kw's network transparently
-# redirects every outbound UDP/TCP 53 query to a local resolver (even 192.0.2.1 and the root servers
-# answer recursively), so recursion from the real root servers cannot work there.
+# Resolution: full recursion from the root servers, with DNSSEC validation. The UniFi gateway's DNS
+# content filter used to redirect every outbound UDP/TCP 53 query (issue #1); with it disabled the
+# engines reach the root servers directly. Forwarded answers (forward zones, fallback) are validated too.
 res=$(call "$api/api/v1/resolution")
-if [ "$(jq -r .mode <<<"$res")" != forward ]; then
-	jq '.mode = "forward"' <<<"$res" | call -X PUT -d @- "$api/api/v1/resolution" >/dev/null
-	echo "resolution mode set to forward"
+if [ "$(jq -r .mode <<<"$res")" != recursive ]; then
+	jq '.mode = "recursive"' <<<"$res" | call -X PUT -d @- "$api/api/v1/resolution" >/dev/null
+	echo "resolution mode set to recursive"
 fi
 ds=$(call "$api/api/v1/dnssec/settings")
 if [ "$(jq -r '.validation and .validate_forwarded' <<<"$ds")" != true ]; then

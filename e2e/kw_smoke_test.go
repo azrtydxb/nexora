@@ -36,9 +36,13 @@ const kwSmokeGroup = "kw-smoke-client"
 // kwEnv is TestKwSmoke's environment, printed by scripts/kw-deploy.sh (see deploy/kw/README.md).
 type kwEnv struct {
 	dnsAddr, apiURL, encAddr, tlsName, mgmtLBIP string
-	engines                                     int
-	dnsRoots, apiRoots                          *x509.CertPool
-	password                                    string
+	// engineAddr is one default-group engine pod (ip:53). Checks that depend on a single engine's
+	// cache use it: inside the cluster the DNS LoadBalancer IP spreads queries over all engines,
+	// each with its own cache (externalTrafficPolicy: Local only applies to external clients).
+	engineAddr         string
+	engines            int
+	dnsRoots, apiRoots *x509.CertPool
+	password           string
 }
 
 func loadKwEnv(t *testing.T) kwEnv {
@@ -46,7 +50,7 @@ func loadKwEnv(t *testing.T) kwEnv {
 	e := kwEnv{
 		dnsAddr: os.Getenv("NEXORA_KW_DNS_ADDR"), apiURL: strings.TrimSuffix(os.Getenv("NEXORA_KW_API_URL"), "/"),
 		encAddr: os.Getenv("NEXORA_KW_ENCRYPTED_ADDR"), tlsName: os.Getenv("NEXORA_KW_DNS_TLS_NAME"),
-		mgmtLBIP: os.Getenv("NEXORA_KW_MGMT_LB_IP"),
+		mgmtLBIP: os.Getenv("NEXORA_KW_MGMT_LB_IP"), engineAddr: os.Getenv("NEXORA_KW_ENGINE_ADDR"),
 	}
 	if e.dnsAddr == "" || e.apiURL == "" {
 		t.Skip("NEXORA_KW_DNS_ADDR and NEXORA_KW_API_URL are not set")
@@ -54,7 +58,7 @@ func loadKwEnv(t *testing.T) kwEnv {
 	for k, v := range map[string]string{
 		"NEXORA_KW_ENCRYPTED_ADDR": e.encAddr, "NEXORA_KW_DNS_TLS_NAME": e.tlsName, "NEXORA_KW_MGMT_LB_IP": e.mgmtLBIP,
 		"NEXORA_KW_ENGINES": os.Getenv("NEXORA_KW_ENGINES"), "NEXORA_KW_CA_FILE": os.Getenv("NEXORA_KW_CA_FILE"),
-		"NEXORA_KW_ADMIN_PASSWORD_FILE": os.Getenv("NEXORA_KW_ADMIN_PASSWORD_FILE"),
+		"NEXORA_KW_ADMIN_PASSWORD_FILE": os.Getenv("NEXORA_KW_ADMIN_PASSWORD_FILE"), "NEXORA_KW_ENGINE_ADDR": e.engineAddr,
 	} {
 		if v == "" {
 			t.Fatalf("%s is required (printed by scripts/kw-deploy.sh; see deploy/kw/README.md)", k)
@@ -186,12 +190,17 @@ func TestKwSmoke(t *testing.T) {
 		c := &dns.Client{Net: network, Timeout: 3 * time.Second}
 		m := new(dns.Msg)
 		m.SetQuestion("example.com.", dns.TypeA)
-		first, _, err := c.Exchange(m, env.dnsAddr)
+		if r, _, err := c.Exchange(m, env.dnsAddr); err != nil || r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 {
+			t.Fatalf("%s query via the DNS LoadBalancer: %v %v", network, r, err)
+		}
+		// The cached TTL counts down on one engine; the LoadBalancer IP may reach a different engine
+		// (and cache) for each query, so the countdown is checked against a single engine pod.
+		first, _, err := c.Exchange(m, env.engineAddr)
 		if err != nil || first.Rcode != dns.RcodeSuccess || len(first.Answer) == 0 {
 			t.Fatalf("%s query: %v %v", network, first, err)
 		}
 		time.Sleep(1100 * time.Millisecond)
-		second, _, err := c.Exchange(m, env.dnsAddr)
+		second, _, err := c.Exchange(m, env.engineAddr)
 		if err != nil || second.Rcode != dns.RcodeSuccess || len(second.Answer) == 0 {
 			t.Fatalf("%s second query: %v %v", network, second, err)
 		}
@@ -337,9 +346,9 @@ func TestKwSmoke(t *testing.T) {
 // uploads.
 const kwRPZBlocked = "example.net."
 
-// kwSmokeM3 checks M3 on kw: forward mode with DNSSEC validation of forwarded answers (the kw
-// deployment's settings), recursion from the root servers where kw's network allows it, the root
-// trust anchor state, RPZ and the M3 engine metrics. It restores the resolution settings it changes.
+// kwSmokeM3 checks M3 on kw: recursion from the real root servers with DNSSEC validation (the kw
+// deployment's settings), forward mode with validation of forwarded answers, the root trust anchor
+// state, RPZ and the M3 engine metrics. It restores the resolution settings it changes.
 func kwSmokeM3(t *testing.T, env kwEnv, api *harness.API) {
 	ask := func(name string, qtype uint16, o qopt) (*dns.Msg, error) {
 		return queryErr(env.dnsAddr, name, qtype, o)
@@ -359,12 +368,39 @@ func kwSmokeM3(t *testing.T, env kwEnv, api *harness.API) {
 	t.Cleanup(func() { setMode(original["mode"].(string)) })
 
 	// Runs first, in the deployed mode, before any other M3 query can fill the caches.
-	t.Run("dnssec-forwarded", func(t *testing.T) {
+	t.Run("recursion", func(t *testing.T) {
 		var ds map[string]any
 		api.Must(http.MethodGet, "/dnssec/settings", nil, &ds, http.StatusOK)
-		if original["mode"] != "forward" || ds["validation"] != true || ds["validate_forwarded"] != true {
-			t.Fatalf("kw must run forward mode with validation and validate_forwarded on: mode=%v dnssec=%v", original["mode"], ds)
+		if original["mode"] != "recursive" || ds["validation"] != true || ds["validate_forwarded"] != true {
+			t.Fatalf("kw must run recursive mode with validation and validate_forwarded on: mode=%v dnssec=%v", original["mode"], ds)
 		}
+		// A root server answers a non-recursive query for a TLD name with a referral; an answer means
+		// something on the path redirects outbound DNS to a resolver (the UniFi DNS content filter did,
+		// see issue #1), which breaks recursion on kw.
+		probe := new(dns.Msg)
+		probe.SetQuestion("example.com.", dns.TypeA)
+		probe.RecursionDesired = false
+		if r, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(probe, "198.41.0.4:53"); err != nil {
+			t.Fatalf("no reply from a.root-servers.net: %v", err)
+		} else if len(r.Answer) > 0 || r.RecursionAvailable {
+			t.Fatal("outbound DNS from the cluster is redirected to a resolver (a.root-servers.net answered recursively): recursion from the real root servers cannot work on kw — check the gateway's DNS filtering (issue #1)")
+		}
+		harness.Eventually(t, 60*time.Second, func() error {
+			r, err := ask("www.isc.org.", dns.TypeA, qopt{DO: true})
+			if err != nil {
+				return err
+			}
+			if r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 || !r.AuthenticatedData {
+				return fmt.Errorf("www.isc.org: rcode %s answers %d AD=%v", dns.RcodeToString[r.Rcode], len(r.Answer), r.AuthenticatedData)
+			}
+			return nil
+		})
+		kwWantBogus(t, env.dnsAddr, "sigfail.verteiltesysteme.net.")
+	})
+
+	t.Run("dnssec-forwarded", func(t *testing.T) {
+		setMode("forward")
+		defer setMode(original["mode"].(string))
 		for _, name := range []string{"www.iana.org.", "cloudflare.com."} {
 			harness.Eventually(t, 30*time.Second, func() error {
 				r, err := ask(name, dns.TypeA, qopt{DO: true})
@@ -378,32 +414,6 @@ func kwSmokeM3(t *testing.T, env kwEnv, api *harness.API) {
 			})
 		}
 		kwWantBogus(t, env.dnsAddr, "dnssec-failed.org.")
-	})
-
-	t.Run("recursion", func(t *testing.T) {
-		// A root server answers a non-recursive query for a TLD name with a referral; an answer means
-		// something on the path redirects outbound DNS to a resolver (kw's network does).
-		probe := new(dns.Msg)
-		probe.SetQuestion("example.com.", dns.TypeA)
-		probe.RecursionDesired = false
-		if r, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(probe, "198.41.0.4:53"); err != nil {
-			t.Fatalf("no reply from a.root-servers.net: %v", err)
-		} else if len(r.Answer) > 0 || r.RecursionAvailable {
-			t.Skip("outbound DNS from the cluster is redirected to a resolver (a.root-servers.net answered recursively), so recursion from the real root servers cannot be checked on kw")
-		}
-		setMode("recursive")
-		defer setMode(original["mode"].(string))
-		harness.Eventually(t, 60*time.Second, func() error {
-			r, err := ask("www.isc.org.", dns.TypeA, qopt{DO: true})
-			if err != nil {
-				return err
-			}
-			if r.Rcode != dns.RcodeSuccess || len(r.Answer) == 0 || !r.AuthenticatedData {
-				return fmt.Errorf("www.isc.org: rcode %s answers %d AD=%v", dns.RcodeToString[r.Rcode], len(r.Answer), r.AuthenticatedData)
-			}
-			return nil
-		})
-		kwWantBogus(t, env.dnsAddr, "sigfail.verteiltesysteme.net.")
 	})
 
 	t.Run("trust-anchors", func(t *testing.T) {
