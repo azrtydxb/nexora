@@ -18,15 +18,16 @@ const (
 )
 
 var (
-	descQPS         = prometheus.NewDesc("nexora_fleet_qps", "Queries per second of the engine between its two newest stats samples", []string{"engine"}, nil)
-	descQueries     = prometheus.NewDesc("nexora_fleet_queries_total", "DNS replies sent by the engine", []string{"engine"}, nil)
-	descDuration    = prometheus.NewDesc("nexora_fleet_query_duration_seconds", "Engine time from query arrival to reply", []string{"engine"}, nil)
-	descCacheRatio  = prometheus.NewDesc("nexora_fleet_cache_hit_ratio", "Cache hits over cache lookups of the engine", []string{"engine"}, nil)
-	descUpstreamUp  = prometheus.NewDesc("nexora_fleet_upstream_up", "Whether the engine considers the upstream healthy", []string{"engine", "upstream"}, nil)
-	descConnected   = prometheus.NewDesc("nexora_fleet_engines_connected", "Enrolled engines with a live control stream", nil, nil)
-	descVersion     = prometheus.NewDesc("nexora_mgmt_config_version", "Newest published config version", nil, nil)
-	descListStale   = prometheus.NewDesc("nexora_mgmt_filter_list_stale", "Whether the filter list failed its last refresh or is older than two intervals", []string{"list"}, nil)
-	descListSuccess = prometheus.NewDesc("nexora_mgmt_filter_list_last_success_timestamp_seconds", "Time of the filter list's last successful refresh", []string{"list"}, nil)
+	descQPS           = prometheus.NewDesc("nexora_fleet_qps", "Queries per second of the engine between its two newest stats samples", []string{"engine"}, nil)
+	descQueries       = prometheus.NewDesc("nexora_fleet_queries_total", "DNS replies sent by the engine", []string{"engine"}, nil)
+	descDuration      = prometheus.NewDesc("nexora_fleet_query_duration_seconds", "Engine time from query arrival to reply", []string{"engine"}, nil)
+	descCacheRatio    = prometheus.NewDesc("nexora_fleet_cache_hit_ratio", "Cache hits over cache lookups of the engine", []string{"engine"}, nil)
+	descUpstreamUp    = prometheus.NewDesc("nexora_fleet_upstream_up", "Whether the engine considers the upstream healthy", []string{"engine", "upstream"}, nil)
+	descConnected     = prometheus.NewDesc("nexora_fleet_engines_connected", "Enrolled engines with a live control stream", nil, nil)
+	descVersion       = prometheus.NewDesc("nexora_mgmt_config_version", "Newest published config version", nil, nil)
+	descListStale     = prometheus.NewDesc("nexora_mgmt_filter_list_stale", "Whether the filter list failed its last refresh or is older than two intervals", []string{"list"}, nil)
+	descListSuccess   = prometheus.NewDesc("nexora_mgmt_filter_list_last_success_timestamp_seconds", "Time of the filter list's last successful refresh", []string{"list"}, nil)
+	descCategoryStale = prometheus.NewDesc("nexora_mgmt_filter_category_stale", "Whether an enabled filter category has an enabled source that failed its last refresh or is older than two intervals", []string{"category"}, nil)
 )
 
 type collector struct{ st *store.Store }
@@ -37,7 +38,7 @@ func NewCollector(st *store.Store) prometheus.Collector { return collector{st: s
 
 func (collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{descQPS, descQueries, descDuration, descCacheRatio, descUpstreamUp,
-		descConnected, descVersion, descListStale, descListSuccess} {
+		descConnected, descVersion, descListStale, descListSuccess, descCategoryStale} {
 		ch <- d
 	}
 }
@@ -52,6 +53,9 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 	}
 	if err := c.collectMgmt(ctx, ch); err != nil {
 		slog.Warn("management metrics", "err", err)
+	}
+	if err := c.collectCategories(ctx, ch); err != nil {
+		slog.Warn("filter category metrics", "err", err)
 	}
 }
 
@@ -171,6 +175,31 @@ func (c collector) collectMgmt(ctx context.Context, ch chan<- prometheus.Metric)
 		if success != nil {
 			ch <- prometheus.MustNewConstMetric(descListSuccess, prometheus.GaugeValue, float64(success.Unix()), name)
 		}
+	}
+	return store.MapError(rows.Err())
+}
+
+// collectCategories exports one staleness sample per catalog category; a disabled category is never
+// stale, and an enabled source that never refreshed counts as stale.
+func (c collector) collectCategories(ctx context.Context, ch chan<- prometheus.Metric) error {
+	rows, err := c.st.Pool.Query(ctx, `select c.key, c.enabled and coalesce(bool_or(f.enabled and (f.last_error <> ''
+			or f.last_success_at is null or f.last_success_at < now() - 2 * f.refresh_interval_seconds * interval '1 second')), false)
+		from filter_categories c left join filter_lists f on f.category_key = c.key group by c.key, c.enabled`)
+	if err != nil {
+		return store.MapError(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var stale bool
+		if err := rows.Scan(&key, &stale); err != nil {
+			return store.MapError(err)
+		}
+		v := 0.0
+		if stale {
+			v = 1
+		}
+		ch <- prometheus.MustNewConstMetric(descCategoryStale, prometheus.GaugeValue, v, key)
 	}
 	return store.MapError(rows.Err())
 }

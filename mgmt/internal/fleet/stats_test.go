@@ -46,3 +46,33 @@ func TestSeriesDerivesRatesAndSkipsCounterResets(t *testing.T) {
 		t.Fatalf("window excludes old samples: %+v %v", points, err)
 	}
 }
+
+func TestLatestFilterIndexReadsNewestSample(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New(t)
+	id := storetest.InsertEngine(t, st, "filter-index", store.DefaultEngineGroupID)
+	if fi, _, err := fleet.LatestFilterIndex(ctx, st.Pool, id); err != nil || fi != nil {
+		t.Fatalf("no samples: %v %v, want nil", fi, err)
+	}
+	start := time.Now().Add(-time.Minute).Truncate(time.Millisecond)
+	for i, s := range []*controlv1.Stats{
+		{FilterIndex: &controlv1.FilterIndexStats{Entries: 1}},
+		{FilterIndex: &controlv1.FilterIndexStats{Entries: 3, Bytes: 4096, Cpu: "cortex-a76"}},
+	} {
+		raw, _ := proto.Marshal(s)
+		if _, err := st.Pool.Exec(ctx, "insert into engine_stats (engine_id, at, stats) values ($1, $2, $3)", id, start.Add(time.Duration(i)*10*time.Second), raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fi, at, err := fleet.LatestFilterIndex(ctx, st.Pool, id)
+	if err != nil || fi == nil || fi.Entries != 3 || fi.Cpu != "cortex-a76" || !at.Equal(start.Add(10*time.Second)) {
+		t.Fatalf("newest sample: %v at %v err %v", fi, at, err)
+	}
+	raw, _ := proto.Marshal(&controlv1.Stats{QueriesTotal: 5})
+	if _, err := st.Pool.Exec(ctx, "insert into engine_stats (engine_id, at, stats) values ($1, $2, $3)", id, start.Add(20*time.Second), raw); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _, err := fleet.LatestFilterIndex(ctx, st.Pool, id); err != nil || fi != nil {
+		t.Fatalf("newest sample without an index (older engine): %v %v, want nil", fi, err)
+	}
+}

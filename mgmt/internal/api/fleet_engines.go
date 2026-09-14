@@ -109,6 +109,16 @@ func (h *handlers) GetEngineStats(ctx context.Context, req GetEngineStatsRequest
 		s := &out.Samples[i]
 		s.At, s.Qps, s.CacheHitRatio, s.ServfailRatio, s.P99Ms = p.At, float32(p.QPS), float32(p.CacheHitRatio), float32(p.ServfailRatio), float32(p.P99Ms)
 	}
+	fi, at, err := fleet.LatestFilterIndex(ctx, h.d.Store.Pool, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if fi != nil {
+		f := newOf(out.FilterIndex)
+		f.At, f.Entries, f.Bytes, f.MaxBytes, f.Cpu = at, int64(fi.Entries), int64(fi.Bytes), int64(fi.MaxBytes), fi.Cpu
+		f.BuildSeconds, f.DecisionNsBlocked, f.DecisionNsClean = float32(fi.BuildSeconds), float32(fi.DecisionNsBlocked), float32(fi.DecisionNsClean)
+		out.FilterIndex = f
+	}
 	return GetEngineStats200JSONResponse(out), nil
 }
 

@@ -10,8 +10,11 @@ import (
 
 	"github.com/piwi3910/nexora/e2e/harness"
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/catalog"
+	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
 	"github.com/piwi3910/nexora/mgmt/internal/stats"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 )
 
 func TestCollectorExportsFleetMetrics(t *testing.T) {
@@ -67,5 +70,48 @@ func TestCollectorExportsFleetMetrics(t *testing.T) {
 	}
 	if q := got["nexora_fleet_qps"].GetMetric()[0].GetGauge().GetValue(); q != 200 {
 		t.Fatalf("qps = %v", q)
+	}
+}
+
+func TestCollectorExportsCategoryStaleness(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.New(t)
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Sync(ctx, st, snapshot.BuildConfig{}, cat, catalog.Raw()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, "update filter_categories set enabled = true where key = 'gambling'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, "update filter_lists set last_error = 'boom' where source_key = 'hagezi-gambling'"); err != nil {
+		t.Fatal(err)
+	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(stats.NewCollector(st))
+	fams, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]float64{}
+	for _, f := range fams {
+		if f.GetName() != "nexora_mgmt_filter_category_stale" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "category" {
+					values[l.GetValue()] = m.GetGauge().GetValue()
+				}
+			}
+		}
+	}
+	if v, ok := values["gambling"]; !ok || v != 1 {
+		t.Fatalf("gambling stale = %v (present %v), want 1: %v", v, ok, values)
+	}
+	if v, ok := values["adult"]; !ok || v != 0 {
+		t.Fatalf("adult (disabled) stale = %v (present %v), want 0: %v", v, ok, values)
 	}
 }

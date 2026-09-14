@@ -23,10 +23,25 @@ var rewriteTypes = map[string]controlv1.RewriteType{
 	"CNAME": controlv1.RewriteType_REWRITE_TYPE_CNAME,
 }
 
+// CustomListPosition is the attribution position of the first list that no catalog category
+// manages; catalog lists keep their catalog position (from 1), custom lists follow by name.
+const CustomListPosition = 1_000_000
+
+// PolicyList is a fetched blocklist a policy group can use: its current blob and identity.
+type PolicyList struct {
+	ID               uuid.UUID
+	Ref              *controlv1.BlobRef
+	CategoryKey      string
+	Position         uint32
+	Enabled, Managed bool
+}
+
 // BuildPolicySection turns stored groups, rewrites and global safe search into snapshot messages.
-// listBlobs holds the current blob of every fetched blocklist, enabled or not; a group's list
-// without a blob is skipped. Safe-search sets are emitted once however many scopes use them.
-func BuildPolicySection(groups []store.PolicyGroup, listBlobs map[uuid.UUID]*controlv1.BlobRef, rewrites []store.Rewrite, global store.SafeSearch) PolicySection {
+// lists holds every fetched blocklist, enabled or not, in attribution order (catalog lists first).
+// A group blocks the enabled catalog lists of its categories, then its own lists in the group's
+// order; a list without a blob is skipped. Safe-search sets are emitted once however many scopes
+// use them.
+func BuildPolicySection(groups []store.PolicyGroup, lists []PolicyList, rewrites []store.Rewrite, global store.SafeSearch) PolicySection {
 	groups = slices.Clone(groups)
 	slices.SortFunc(groups, func(a, b store.PolicyGroup) int { return cmp.Compare(a.Name, b.Name) })
 	rewrites = slices.Clone(rewrites)
@@ -85,9 +100,18 @@ func BuildPolicySection(groups []store.PolicyGroup, listBlobs map[uuid.UUID]*con
 		for _, c := range g.CIDRs {
 			pg.Cidrs = append(pg.Cidrs, c.String())
 		}
+		add := func(l *PolicyList) {
+			pg.Blocklists = append(pg.Blocklists, l.Ref)
+			pg.BlocklistRefs = append(pg.BlocklistRefs, &controlv1.FilterListRef{ListId: l.ID.String(), Category: l.CategoryKey, Position: l.Position, Blob: l.Ref})
+		}
+		for i := range lists {
+			if l := &lists[i]; l.Managed && l.Enabled && slices.Contains(g.CategoryKeys, l.CategoryKey) {
+				add(l)
+			}
+		}
 		for _, id := range g.FilterListIDs {
-			if ref := listBlobs[id]; ref != nil {
-				pg.Blocklists = append(pg.Blocklists, ref)
+			if i := slices.IndexFunc(lists, func(l PolicyList) bool { return l.ID == id }); i >= 0 {
+				add(&lists[i])
 			}
 		}
 		sec.Groups = append(sec.Groups, pg)

@@ -2,9 +2,11 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/proto"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
@@ -45,6 +47,25 @@ func Series(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID, wind
 		prev, prevAt = s, at
 	}
 	return points, store.MapError(rows.Err())
+}
+
+// LatestFilterIndex returns the filter index statistics of the engine's newest engine_stats sample
+// and its time; nil when the engine has no sample or its newest sample carries none.
+func LatestFilterIndex(ctx context.Context, q store.PolicyQuerier, engineID uuid.UUID) (*controlv1.FilterIndexStats, time.Time, error) {
+	var at time.Time
+	var raw []byte
+	err := q.QueryRow(ctx, `select at, stats from engine_stats where engine_id = $1 order by at desc limit 1`, engineID).Scan(&at, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, time.Time{}, nil
+	}
+	if err != nil {
+		return nil, time.Time{}, store.MapError(err)
+	}
+	s := &controlv1.Stats{}
+	if proto.Unmarshal(raw, s) != nil || s.FilterIndex == nil {
+		return nil, time.Time{}, nil
+	}
+	return s.FilterIndex, at, nil
 }
 
 func point(a, b *controlv1.Stats, at time.Time, seconds float64) Point {

@@ -1568,6 +1568,8 @@ export interface components {
             engine_id: string;
             /** Format: int64 */
             duration_us: number;
+            list_id: string;
+            category: string;
         };
         QueryLogPage: {
             backend: string;
@@ -2317,6 +2319,20 @@ export interface components {
                 servfail_ratio: number;
                 p99_ms: number;
             }[];
+            filter_index?: {
+                /** Format: date-time */
+                at: string;
+                /** Format: int64 */
+                entries: number;
+                /** Format: int64 */
+                bytes: number;
+                /** Format: int64 */
+                max_bytes: number;
+                build_seconds: number;
+                decision_ns_blocked: number;
+                decision_ns_clean: number;
+                cpu: string;
+            } | null;
         };
         FleetSummary: {
             engines_total: number;
@@ -3402,6 +3418,7 @@ export interface operations {
                 rcode?: string;
                 cache?: string;
                 filter?: string;
+                category?: string;
                 limit?: number;
                 cursor?: string;
             };

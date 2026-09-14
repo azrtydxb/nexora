@@ -99,6 +99,8 @@ message ConfigSnapshot {
   bool dnssec_validate_forwarded = 105;
   // M4: hosted zones.
   repeated AuthZone auth_zones = 200;
+  // Filter categories.
+  uint64 filter_index_max_bytes = 600; // 0 = engine default (50% of the cgroup memory limit, else 512 MiB)
 }
 
 enum UpstreamStrategy {
@@ -156,6 +158,9 @@ message FilterConfig {
   repeated BlobRef allowlists = 2;
   BlockMode block_mode = 3;
   uint32 block_ttl = 4;
+  // Filter categories.
+  repeated FilterListRef blocklist_refs = 600; // blocklists with identity; engines prefer these over blocklists
+  repeated FilterListRef allowlist_refs = 601;
 }
 
 message TelemetryConfig {
@@ -201,6 +206,8 @@ message Stats {
   RecursionStats recursion = 100;
   DnssecStats dnssec = 101;
   repeated RpzZoneStatus rpz_zones = 102;
+  // Filter categories.
+  FilterIndexStats filter_index = 600;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +224,8 @@ message PolicyGroup {
   repeated BlobRef blocklists = 4;      // normalised list blobs (same format as FilterConfig.blocklists), fetched via GetBlob
   repeated string allowlist = 5;        // lowercase punycode domains, no trailing dot; matches subdomains
   repeated string rewrite_set_ids = 6;  // RewriteSet.id values, in precedence order
+  // Filter categories.
+  repeated FilterListRef blocklist_refs = 600;
 }
 
 enum RewriteType {
@@ -503,4 +512,28 @@ message CertificateIssued {
 // Server -> engine: an operator requested rotation; send a CertificateRequest.
 message RenewCertificate {
   CertificateRequest.Reason reason = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Filter categories: fields added to existing messages use 600-699.
+// ---------------------------------------------------------------------------
+
+// A filter list blob with its identity. Management also fills the M1 BlobRef fields with the same
+// blobs so engines without this message keep filtering.
+message FilterListRef {
+  string list_id = 1;   // filter_lists.id; "allowlist" for the global allowlist blob
+  string category = 2;  // catalog category key ([a-z0-9-]{1,32}); empty for custom lists
+  uint32 position = 3;  // attribution order: catalog position from 1, custom lists from 1000000 by name
+  BlobRef blob = 4;
+}
+
+message FilterIndexStats {
+  uint64 entries = 1;
+  uint64 bytes = 2;                 // index plus views
+  uint64 max_bytes = 3;             // cap in force
+  double build_seconds = 4;         // last build (0 when the index was reused from the first build)
+  double decision_ns_blocked = 5;   // median per decision, measured after the last build
+  double decision_ns_clean = 6;
+  string cpu = 7;                   // core of that measurement: cortex-a76, cortex-a55, x86_64, ...
+  map<string, uint64> blocked_by_category = 8; // "custom" for lists without a category
 }

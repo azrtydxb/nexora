@@ -6,9 +6,14 @@ import (
 	"net/http"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
+	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/api"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/snapshot"
+	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 )
 
 type categoryOut struct {
@@ -162,5 +167,30 @@ func TestEngineGroupFilterIndexMaxBytes(t *testing.T) {
 	}
 	if code := op.do(http.MethodPost, "/engine-groups", map[string]any{"name": "edge", "filter_index_max_bytes": 64 << 20}, &g); code != http.StatusCreated || g.Max != 64<<20 {
 		t.Fatalf("64 MiB cap -> %d %+v", code, g)
+	}
+}
+
+func TestEngineStatsFilterIndex(t *testing.T) {
+	_, viewer, e := categoryClients(t)
+	id := storetest.InsertEngine(t, e.st, "fi-1", store.DefaultEngineGroupID)
+	var out struct {
+		FilterIndex *struct {
+			At       string  `json:"at"`
+			Entries  int64   `json:"entries"`
+			MaxBytes int64   `json:"max_bytes"`
+			Blocked  float64 `json:"decision_ns_blocked"`
+			CPU      string  `json:"cpu"`
+		} `json:"filter_index"`
+	}
+	if code := viewer.do(http.MethodGet, "/engines/"+id.String()+"/stats", nil, &out); code != http.StatusOK || out.FilterIndex != nil {
+		t.Fatalf("no samples -> %d %+v", code, out.FilterIndex)
+	}
+	raw, _ := proto.Marshal(&controlv1.Stats{FilterIndex: &controlv1.FilterIndexStats{Entries: 5, MaxBytes: 64 << 20, DecisionNsBlocked: 250, Cpu: "cortex-a76"}})
+	if _, err := e.st.Pool.Exec(context.Background(), "insert into engine_stats (engine_id, at, stats) values ($1, now(), $2)", id, raw); err != nil {
+		t.Fatal(err)
+	}
+	if code := viewer.do(http.MethodGet, "/engines/"+id.String()+"/stats", nil, &out); code != http.StatusOK || out.FilterIndex == nil ||
+		out.FilterIndex.Entries != 5 || out.FilterIndex.MaxBytes != 64<<20 || out.FilterIndex.Blocked != 250 || out.FilterIndex.CPU != "cortex-a76" || out.FilterIndex.At == "" {
+		t.Fatalf("newest sample -> %d %+v", code, out.FilterIndex)
 	}
 }

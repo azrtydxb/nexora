@@ -549,6 +549,8 @@ components:
           transport,
           engine_id,
           duration_us,
+          list_id,
+          category,
         ]
       properties:
         time: { type: string, format: date-time }
@@ -562,6 +564,8 @@ components:
         transport: { type: string }
         engine_id: { type: string }
         duration_us: { type: integer, format: int64 }
+        list_id: { type: string }
+        category: { type: string }
     QueryLogPage:
       type: object
       required: [backend, records, next_cursor]
@@ -1745,6 +1749,28 @@ components:
               cache_hit_ratio: { type: number }
               servfail_ratio: { type: number }
               p99_ms: { type: number }
+        filter_index:
+          type: [object, "null"]
+          required:
+            [
+              at,
+              entries,
+              bytes,
+              max_bytes,
+              build_seconds,
+              decision_ns_blocked,
+              decision_ns_clean,
+              cpu,
+            ]
+          properties:
+            at: { type: string, format: date-time }
+            entries: { type: integer, format: int64 }
+            bytes: { type: integer, format: int64 }
+            max_bytes: { type: integer, format: int64 }
+            build_seconds: { type: number }
+            decision_ns_blocked: { type: number }
+            decision_ns_clean: { type: number }
+            cpu: { type: string }
     FleetSummary:
       type: object
       required:
@@ -2700,6 +2726,7 @@ paths:
         - { name: rcode, in: query, schema: { type: string } }
         - { name: cache, in: query, schema: { type: string } }
         - { name: filter, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
         - {
             name: limit,
             in: query,

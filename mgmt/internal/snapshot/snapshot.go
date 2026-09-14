@@ -274,9 +274,11 @@ func Build(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig) (*co
 func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConfig, groupID uuid.UUID) (*controlv1.ConfigSnapshot, error) {
 	var upstreamMode, groupOTLP string
 	var extraACL []string
+	var indexMaxBytes int64
 	if err := tx.QueryRow(ctx, `select upstream_mode,
-		array(select host(c) || '/' || masklen(c) from unnest(extra_acl_cidrs) with ordinality as u(c, n) order by n), otlp_endpoint
-		from engine_groups where id = $1`, groupID).Scan(&upstreamMode, &extraACL, &groupOTLP); err != nil {
+		array(select host(c) || '/' || masklen(c) from unnest(extra_acl_cidrs) with ordinality as u(c, n) order by n), otlp_endpoint,
+		filter_index_max_bytes
+		from engine_groups where id = $1`, groupID).Scan(&upstreamMode, &extraACL, &groupOTLP, &indexMaxBytes); err != nil {
 		return nil, fmt.Errorf("engine group %s: %w", groupID, err)
 	}
 	snap := &controlv1.ConfigSnapshot{
@@ -286,6 +288,8 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 		Cache:         &controlv1.CacheConfig{},
 		Filter:        &controlv1.FilterConfig{},
 		Telemetry:     &controlv1.TelemetryConfig{QuerylogToManagement: cfg.QueryLogToManagement},
+
+		FilterIndexMaxBytes: uint64(indexMaxBytes),
 	}
 	var strategy, blockMode, otlp string
 	var maxBytes int64
@@ -335,6 +339,7 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 			return nil, err
 		}
 		snap.Filter.Allowlists = append(snap.Filter.Allowlists, ref)
+		snap.Filter.AllowlistRefs = append(snap.Filter.AllowlistRefs, &controlv1.FilterListRef{ListId: "allowlist", Position: CustomListPosition + 999_999, Blob: ref})
 	}
 	if err := buildPolicy(ctx, tx, snap, groupID); err != nil {
 		return nil, err
@@ -352,7 +357,7 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 
 // buildPolicy loads the policy groups of engine group groupID (global or its own), their rewrites
 // and the global rewrites of the group, global safe search and the current blob of every fetched
-// blocklist (enabled or not, since groups may select disabled lists).
+// blocklist (enabled or not, since groups may select disabled lists) in attribution order.
 func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, groupID uuid.UUID) error {
 	all, err := store.ListPolicyGroups(ctx, tx)
 	if err != nil {
@@ -381,27 +386,34 @@ func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot,
 	if err != nil {
 		return fmt.Errorf("global safe search: %w", err)
 	}
-	rows, err := tx.Query(ctx, `select f.id, f.name, b.sha256, b.size from filter_lists f
-		join blobs b on b.sha256 = f.current_blob_sha256 where f.kind = 'block'`)
+	rows, err := tx.Query(ctx, `select f.id, f.name, b.sha256, b.size, coalesce(f.category_key, ''),
+			coalesce(f.catalog_position, 0), f.enabled, f.managed_by_catalog
+		from filter_lists f join blobs b on b.sha256 = f.current_blob_sha256 where f.kind = 'block'
+		order by f.managed_by_catalog desc, f.catalog_position, f.name`)
 	if err != nil {
 		return fmt.Errorf("policy blocklists: %w", err)
 	}
 	defer rows.Close()
-	listBlobs := map[uuid.UUID]*controlv1.BlobRef{}
+	var lists []PolicyList
+	custom := uint32(0)
 	for rows.Next() {
-		var id uuid.UUID
 		var size int64
-		ref := &controlv1.BlobRef{}
-		if err := rows.Scan(&id, &ref.Name, &ref.Sha256, &size); err != nil {
+		var pos int32
+		l := PolicyList{Ref: &controlv1.BlobRef{}}
+		if err := rows.Scan(&l.ID, &l.Ref.Name, &l.Ref.Sha256, &size, &l.CategoryKey, &pos, &l.Enabled, &l.Managed); err != nil {
 			return fmt.Errorf("policy blocklists: %w", err)
 		}
-		ref.Size = uint64(size)
-		listBlobs[id] = ref
+		l.Ref.Size, l.Position = uint64(size), uint32(pos)
+		if !l.Managed {
+			l.Position = CustomListPosition + custom
+			custom++
+		}
+		lists = append(lists, l)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("policy blocklists: %w", err)
 	}
-	sec := BuildPolicySection(groups, listBlobs, rewrites, global.SafeSearch)
+	sec := BuildPolicySection(groups, lists, rewrites, global.SafeSearch)
 	snap.PolicyGroups, snap.RewriteSets, snap.GlobalRewriteSetIds = sec.Groups, sec.RewriteSets, sec.GlobalRewriteSetIDs
 	return nil
 }
@@ -450,28 +462,46 @@ func buildUpstreams(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapsh
 	return rows.Err()
 }
 
+// buildFilterLists adds the enabled lists of the global filter with their identity: catalog lists
+// only while their category is enabled (in catalog order), then custom lists by name. Each blob
+// goes to the M1 BlobRef fields too, so engines without FilterListRef keep filtering.
 func buildFilterLists(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot, groupID uuid.UUID) error {
-	rows, err := tx.Query(ctx, `select f.name, f.kind, f.current_blob_sha256, b.size
-		from filter_lists f join blobs b on b.sha256 = f.current_blob_sha256
-		where f.enabled and f.current_blob_sha256 is not null and (f.engine_group_id is null or f.engine_group_id = $1)
-		order by f.name`, groupID)
+	rows, err := tx.Query(ctx, `select f.id::text, f.name, f.kind, f.current_blob_sha256, b.size, coalesce(f.category_key, ''),
+			coalesce(f.catalog_position, 0), f.managed_by_catalog
+		from filter_lists f
+		join blobs b on b.sha256 = f.current_blob_sha256
+		left join filter_categories c on c.key = f.category_key
+		where f.enabled and f.current_blob_sha256 is not null
+			and (f.engine_group_id is null or f.engine_group_id = $1)
+			and (not f.managed_by_catalog or c.enabled)
+		order by f.managed_by_catalog desc, f.catalog_position, f.name`, groupID)
 	if err != nil {
 		return fmt.Errorf("filter lists: %w", err)
 	}
 	defer rows.Close()
+	custom := uint32(0)
 	for rows.Next() {
 		ref := &controlv1.BlobRef{}
+		lr := &controlv1.FilterListRef{Blob: ref}
 		var kind string
 		var size int64
-		if err := rows.Scan(&ref.Name, &kind, &ref.Sha256, &size); err != nil {
+		var pos int32
+		var managed bool
+		if err := rows.Scan(&lr.ListId, &ref.Name, &kind, &ref.Sha256, &size, &lr.Category, &pos, &managed); err != nil {
 			return fmt.Errorf("filter lists: %w", err)
 		}
-		ref.Size = uint64(size)
+		ref.Size, lr.Position = uint64(size), uint32(pos)
+		if !managed {
+			lr.Position = CustomListPosition + custom
+			custom++
+		}
 		switch kind {
 		case "block":
 			snap.Filter.Blocklists = append(snap.Filter.Blocklists, ref)
+			snap.Filter.BlocklistRefs = append(snap.Filter.BlocklistRefs, lr)
 		case "allow":
 			snap.Filter.Allowlists = append(snap.Filter.Allowlists, ref)
+			snap.Filter.AllowlistRefs = append(snap.Filter.AllowlistRefs, lr)
 		default:
 			return errors.New("filter list " + ref.Name + ": unknown kind " + kind)
 		}

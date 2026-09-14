@@ -13,7 +13,7 @@ import (
 func TestBuildPolicySection(t *testing.T) {
 	groupOnly := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	unfetched := uuid.MustParse("44444444-4444-4444-4444-444444444444")
-	listBlobs := map[uuid.UUID]*controlv1.BlobRef{groupOnly: {Sha256: "ab12", Size: 42, Name: "ads"}}
+	lists := []snapshot.PolicyList{{ID: groupOnly, Ref: &controlv1.BlobRef{Sha256: "ab12", Size: 42, Name: "ads"}, Position: snapshot.CustomListPosition}}
 	kidsID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	kids := store.PolicyGroup{
 		ID: kidsID, Name: "kids",
@@ -26,7 +26,7 @@ func TestBuildPolicySection(t *testing.T) {
 		{Name: "nas.home.test", Type: "A", Value: "192.168.1.50", TTL: 120},
 		{GroupID: &kidsID, Name: "www.google.com", Type: "A", Value: "192.0.2.99", TTL: 60},
 	}
-	sec := snapshot.BuildPolicySection([]store.PolicyGroup{kids}, listBlobs, rewrites, store.SafeSearch{Bing: true, YouTube: "moderate"})
+	sec := snapshot.BuildPolicySection([]store.PolicyGroup{kids}, lists, rewrites, store.SafeSearch{Bing: true, YouTube: "moderate"})
 
 	if bl := sec.Groups[0].Blocklists; len(bl) != 1 || bl[0].Sha256 != "ab12" || bl[0].Size != 42 {
 		t.Fatalf("group blocklists = %v (a list without a fetched blob is skipped)", bl)

@@ -33,7 +33,7 @@ func TestM5ContractFieldNumbers(t *testing.T) {
 		(&controlv1.ConfigSnapshot{}).ProtoReflect().Descriptor(), (&controlv1.Stats{}).ProtoReflect().Descriptor(),
 	} {
 		for i := 0; i < m.Fields().Len(); i++ {
-			if n := m.Fields().Get(i).Number(); n >= 500 {
+			if n := m.Fields().Get(i).Number(); n >= 500 && n < 600 { // 600-699: filter categories
 				t.Errorf("%s has an M5 field %d; M5 adds none there", m.FullName(), n)
 			}
 		}

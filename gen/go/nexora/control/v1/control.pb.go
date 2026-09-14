@@ -1280,9 +1280,11 @@ type ConfigSnapshot struct {
 	// DS/DNSKEY through the forwarder. Requires dnssec.validation. Management defaults it to true.
 	DnssecValidateForwarded bool `protobuf:"varint,105,opt,name=dnssec_validate_forwarded,json=dnssecValidateForwarded,proto3" json:"dnssec_validate_forwarded,omitempty"`
 	// M4: hosted zones.
-	AuthZones     []*AuthZone `protobuf:"bytes,200,rep,name=auth_zones,json=authZones,proto3" json:"auth_zones,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AuthZones []*AuthZone `protobuf:"bytes,200,rep,name=auth_zones,json=authZones,proto3" json:"auth_zones,omitempty"`
+	// Filter categories.
+	FilterIndexMaxBytes uint64 `protobuf:"varint,600,opt,name=filter_index_max_bytes,json=filterIndexMaxBytes,proto3" json:"filter_index_max_bytes,omitempty"` // 0 = engine default (50% of the cgroup memory limit, else 512 MiB)
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ConfigSnapshot) Reset() {
@@ -1439,6 +1441,13 @@ func (x *ConfigSnapshot) GetAuthZones() []*AuthZone {
 		return x.AuthZones
 	}
 	return nil
+}
+
+func (x *ConfigSnapshot) GetFilterIndexMaxBytes() uint64 {
+	if x != nil {
+		return x.FilterIndexMaxBytes
+	}
+	return 0
 }
 
 type ResolverConfig struct {
@@ -1722,11 +1731,14 @@ func (x *BlobRef) GetName() string {
 }
 
 type FilterConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Blocklists    []*BlobRef             `protobuf:"bytes,1,rep,name=blocklists,proto3" json:"blocklists,omitempty"`
-	Allowlists    []*BlobRef             `protobuf:"bytes,2,rep,name=allowlists,proto3" json:"allowlists,omitempty"`
-	BlockMode     BlockMode              `protobuf:"varint,3,opt,name=block_mode,json=blockMode,proto3,enum=nexora.control.v1.BlockMode" json:"block_mode,omitempty"`
-	BlockTtl      uint32                 `protobuf:"varint,4,opt,name=block_ttl,json=blockTtl,proto3" json:"block_ttl,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Blocklists []*BlobRef             `protobuf:"bytes,1,rep,name=blocklists,proto3" json:"blocklists,omitempty"`
+	Allowlists []*BlobRef             `protobuf:"bytes,2,rep,name=allowlists,proto3" json:"allowlists,omitempty"`
+	BlockMode  BlockMode              `protobuf:"varint,3,opt,name=block_mode,json=blockMode,proto3,enum=nexora.control.v1.BlockMode" json:"block_mode,omitempty"`
+	BlockTtl   uint32                 `protobuf:"varint,4,opt,name=block_ttl,json=blockTtl,proto3" json:"block_ttl,omitempty"`
+	// Filter categories.
+	BlocklistRefs []*FilterListRef `protobuf:"bytes,600,rep,name=blocklist_refs,json=blocklistRefs,proto3" json:"blocklist_refs,omitempty"` // blocklists with identity; engines prefer these over blocklists
+	AllowlistRefs []*FilterListRef `protobuf:"bytes,601,rep,name=allowlist_refs,json=allowlistRefs,proto3" json:"allowlist_refs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1787,6 +1799,20 @@ func (x *FilterConfig) GetBlockTtl() uint32 {
 		return x.BlockTtl
 	}
 	return 0
+}
+
+func (x *FilterConfig) GetBlocklistRefs() []*FilterListRef {
+	if x != nil {
+		return x.BlocklistRefs
+	}
+	return nil
+}
+
+func (x *FilterConfig) GetAllowlistRefs() []*FilterListRef {
+	if x != nil {
+		return x.AllowlistRefs
+	}
+	return nil
 }
 
 type TelemetryConfig struct {
@@ -2046,9 +2072,11 @@ type Stats struct {
 	CacheEntries           uint64                 `protobuf:"varint,13,opt,name=cache_entries,json=cacheEntries,proto3" json:"cache_entries,omitempty"`
 	CacheBytes             uint64                 `protobuf:"varint,14,opt,name=cache_bytes,json=cacheBytes,proto3" json:"cache_bytes,omitempty"`
 	// M3
-	Recursion     *RecursionStats  `protobuf:"bytes,100,opt,name=recursion,proto3" json:"recursion,omitempty"`
-	Dnssec        *DnssecStats     `protobuf:"bytes,101,opt,name=dnssec,proto3" json:"dnssec,omitempty"`
-	RpzZones      []*RpzZoneStatus `protobuf:"bytes,102,rep,name=rpz_zones,json=rpzZones,proto3" json:"rpz_zones,omitempty"`
+	Recursion *RecursionStats  `protobuf:"bytes,100,opt,name=recursion,proto3" json:"recursion,omitempty"`
+	Dnssec    *DnssecStats     `protobuf:"bytes,101,opt,name=dnssec,proto3" json:"dnssec,omitempty"`
+	RpzZones  []*RpzZoneStatus `protobuf:"bytes,102,rep,name=rpz_zones,json=rpzZones,proto3" json:"rpz_zones,omitempty"`
+	// Filter categories.
+	FilterIndex   *FilterIndexStats `protobuf:"bytes,600,opt,name=filter_index,json=filterIndex,proto3" json:"filter_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2202,6 +2230,13 @@ func (x *Stats) GetRpzZones() []*RpzZoneStatus {
 	return nil
 }
 
+func (x *Stats) GetFilterIndex() *FilterIndexStats {
+	if x != nil {
+		return x.FilterIndex
+	}
+	return nil
+}
+
 // A client group selected by source CIDR. Most specific CIDR across all groups wins;
 // a client in a group gets only the group's blocklists, allowlist and rewrite sets
 // (the global FilterConfig and global rewrite sets do not apply to it).
@@ -2213,6 +2248,8 @@ type PolicyGroup struct {
 	Blocklists    []*BlobRef             `protobuf:"bytes,4,rep,name=blocklists,proto3" json:"blocklists,omitempty"`                              // normalised list blobs (same format as FilterConfig.blocklists), fetched via GetBlob
 	Allowlist     []string               `protobuf:"bytes,5,rep,name=allowlist,proto3" json:"allowlist,omitempty"`                                // lowercase punycode domains, no trailing dot; matches subdomains
 	RewriteSetIds []string               `protobuf:"bytes,6,rep,name=rewrite_set_ids,json=rewriteSetIds,proto3" json:"rewrite_set_ids,omitempty"` // RewriteSet.id values, in precedence order
+	// Filter categories.
+	BlocklistRefs []*FilterListRef `protobuf:"bytes,600,rep,name=blocklist_refs,json=blocklistRefs,proto3" json:"blocklist_refs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2285,6 +2322,13 @@ func (x *PolicyGroup) GetAllowlist() []string {
 func (x *PolicyGroup) GetRewriteSetIds() []string {
 	if x != nil {
 		return x.RewriteSetIds
+	}
+	return nil
+}
+
+func (x *PolicyGroup) GetBlocklistRefs() []*FilterListRef {
+	if x != nil {
+		return x.BlocklistRefs
 	}
 	return nil
 }
@@ -4379,6 +4423,176 @@ func (x *RenewCertificate) GetReason() CertificateRequest_Reason {
 	return CertificateRequest_REASON_UNSPECIFIED
 }
 
+// A filter list blob with its identity. Management also fills the M1 BlobRef fields with the same
+// blobs so engines without this message keep filtering.
+type FilterListRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ListId        string                 `protobuf:"bytes,1,opt,name=list_id,json=listId,proto3" json:"list_id,omitempty"` // filter_lists.id; "allowlist" for the global allowlist blob
+	Category      string                 `protobuf:"bytes,2,opt,name=category,proto3" json:"category,omitempty"`           // catalog category key ([a-z0-9-]{1,32}); empty for custom lists
+	Position      uint32                 `protobuf:"varint,3,opt,name=position,proto3" json:"position,omitempty"`          // attribution order: catalog position from 1, custom lists from 1000000 by name
+	Blob          *BlobRef               `protobuf:"bytes,4,opt,name=blob,proto3" json:"blob,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilterListRef) Reset() {
+	*x = FilterListRef{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilterListRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilterListRef) ProtoMessage() {}
+
+func (x *FilterListRef) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilterListRef.ProtoReflect.Descriptor instead.
+func (*FilterListRef) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *FilterListRef) GetListId() string {
+	if x != nil {
+		return x.ListId
+	}
+	return ""
+}
+
+func (x *FilterListRef) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *FilterListRef) GetPosition() uint32 {
+	if x != nil {
+		return x.Position
+	}
+	return 0
+}
+
+func (x *FilterListRef) GetBlob() *BlobRef {
+	if x != nil {
+		return x.Blob
+	}
+	return nil
+}
+
+type FilterIndexStats struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Entries           uint64                 `protobuf:"varint,1,opt,name=entries,proto3" json:"entries,omitempty"`
+	Bytes             uint64                 `protobuf:"varint,2,opt,name=bytes,proto3" json:"bytes,omitempty"`                                                     // index plus views
+	MaxBytes          uint64                 `protobuf:"varint,3,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`                               // cap in force
+	BuildSeconds      float64                `protobuf:"fixed64,4,opt,name=build_seconds,json=buildSeconds,proto3" json:"build_seconds,omitempty"`                  // last build (0 when the index was reused from the first build)
+	DecisionNsBlocked float64                `protobuf:"fixed64,5,opt,name=decision_ns_blocked,json=decisionNsBlocked,proto3" json:"decision_ns_blocked,omitempty"` // median per decision, measured after the last build
+	DecisionNsClean   float64                `protobuf:"fixed64,6,opt,name=decision_ns_clean,json=decisionNsClean,proto3" json:"decision_ns_clean,omitempty"`
+	Cpu               string                 `protobuf:"bytes,7,opt,name=cpu,proto3" json:"cpu,omitempty"`                                                                                                                                   // core of that measurement: cortex-a76, cortex-a55, x86_64, ...
+	BlockedByCategory map[string]uint64      `protobuf:"bytes,8,rep,name=blocked_by_category,json=blockedByCategory,proto3" json:"blocked_by_category,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"` // "custom" for lists without a category
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *FilterIndexStats) Reset() {
+	*x = FilterIndexStats{}
+	mi := &file_nexora_control_v1_control_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilterIndexStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilterIndexStats) ProtoMessage() {}
+
+func (x *FilterIndexStats) ProtoReflect() protoreflect.Message {
+	mi := &file_nexora_control_v1_control_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilterIndexStats.ProtoReflect.Descriptor instead.
+func (*FilterIndexStats) Descriptor() ([]byte, []int) {
+	return file_nexora_control_v1_control_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *FilterIndexStats) GetEntries() uint64 {
+	if x != nil {
+		return x.Entries
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetBytes() uint64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetMaxBytes() uint64 {
+	if x != nil {
+		return x.MaxBytes
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetBuildSeconds() float64 {
+	if x != nil {
+		return x.BuildSeconds
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetDecisionNsBlocked() float64 {
+	if x != nil {
+		return x.DecisionNsBlocked
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetDecisionNsClean() float64 {
+	if x != nil {
+		return x.DecisionNsClean
+	}
+	return 0
+}
+
+func (x *FilterIndexStats) GetCpu() string {
+	if x != nil {
+		return x.Cpu
+	}
+	return ""
+}
+
+func (x *FilterIndexStats) GetBlockedByCategory() map[string]uint64 {
+	if x != nil {
+		return x.BlockedByCategory
+	}
+	return nil
+}
+
 var File_nexora_control_v1_control_proto protoreflect.FileDescriptor
 
 const file_nexora_control_v1_control_proto_rawDesc = "" +
@@ -4428,7 +4642,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x11renew_certificate\x18\xf5\x03 \x01(\v2#.nexora.control.v1.RenewCertificateH\x00R\x10renewCertificateB\x05\n" +
 	"\x03msg\"5\n" +
 	"\fVersionAhead\x12%\n" +
-	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\xa2\b\n" +
+	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\xd8\b\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12&\n" +
 	"\x0fcreated_unix_ms\x18\x02 \x01(\x03R\rcreatedUnixMs\x12=\n" +
@@ -4448,7 +4662,8 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\trpz_zones\x18h \x03(\v2\x1a.nexora.control.v1.RpzZoneR\brpzZones\x12:\n" +
 	"\x19dnssec_validate_forwarded\x18i \x01(\bR\x17dnssecValidateForwarded\x12;\n" +
 	"\n" +
-	"auth_zones\x18\xc8\x01 \x03(\v2\x1b.nexora.control.v1.AuthZoneR\tauthZones\"Q\n" +
+	"auth_zones\x18\xc8\x01 \x03(\v2\x1b.nexora.control.v1.AuthZoneR\tauthZones\x124\n" +
+	"\x16filter_index_max_bytes\x18\xd8\x04 \x01(\x04R\x13filterIndexMaxBytes\"Q\n" +
 	"\x0eResolverConfig\x12?\n" +
 	"\bstrategy\x18\x01 \x01(\x0e2#.nexora.control.v1.UpstreamStrategyR\bstrategy\"\xa9\x01\n" +
 	"\vCacheConfig\x12\x1b\n" +
@@ -4470,7 +4685,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\aBlobRef\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\"\xe0\x01\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\xf4\x02\n" +
 	"\fFilterConfig\x12:\n" +
 	"\n" +
 	"blocklists\x18\x01 \x03(\v2\x1a.nexora.control.v1.BlobRefR\n" +
@@ -4480,7 +4695,9 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"allowlists\x12;\n" +
 	"\n" +
 	"block_mode\x18\x03 \x01(\x0e2\x1c.nexora.control.v1.BlockModeR\tblockMode\x12\x1b\n" +
-	"\tblock_ttl\x18\x04 \x01(\rR\bblockTtl\"\xd2\x01\n" +
+	"\tblock_ttl\x18\x04 \x01(\rR\bblockTtl\x12H\n" +
+	"\x0eblocklist_refs\x18\xd8\x04 \x03(\v2 .nexora.control.v1.FilterListRefR\rblocklistRefs\x12H\n" +
+	"\x0eallowlist_refs\x18\xd9\x04 \x03(\v2 .nexora.control.v1.FilterListRefR\rallowlistRefs\"\xd2\x01\n" +
 	"\x0fTelemetryConfig\x12#\n" +
 	"\rotlp_endpoint\x18\x01 \x01(\tR\fotlpEndpoint\x12-\n" +
 	"\x13trace_sample_one_in\x18\x02 \x01(\rR\x10traceSampleOneIn\x125\n" +
@@ -4496,7 +4713,7 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\x02up\x18\x03 \x01(\bR\x02up\x12\x15\n" +
 	"\x06rtt_us\x18\x04 \x01(\rR\x05rttUs\x12#\n" +
 	"\rqueries_total\x18\x05 \x01(\x04R\fqueriesTotal\x12%\n" +
-	"\x0efailures_total\x18\x06 \x01(\x04R\rfailuresTotal\"\xb2\a\n" +
+	"\x0efailures_total\x18\x06 \x01(\x04R\rfailuresTotal\"\xfb\a\n" +
 	"\x05Stats\x12\x17\n" +
 	"\aunix_ms\x18\x01 \x01(\x03R\x06unixMs\x12#\n" +
 	"\rqueries_total\x18\x02 \x01(\x04R\fqueriesTotal\x12(\n" +
@@ -4516,10 +4733,11 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"cacheBytes\x12?\n" +
 	"\trecursion\x18d \x01(\v2!.nexora.control.v1.RecursionStatsR\trecursion\x126\n" +
 	"\x06dnssec\x18e \x01(\v2\x1e.nexora.control.v1.DnssecStatsR\x06dnssec\x12=\n" +
-	"\trpz_zones\x18f \x03(\v2 .nexora.control.v1.RpzZoneStatusR\brpzZones\x1aE\n" +
+	"\trpz_zones\x18f \x03(\v2 .nexora.control.v1.RpzZoneStatusR\brpzZones\x12G\n" +
+	"\ffilter_index\x18\xd8\x04 \x01(\v2#.nexora.control.v1.FilterIndexStatsR\vfilterIndex\x1aE\n" +
 	"\x17ExportDroppedTotalEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\xc9\x01\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\x93\x02\n" +
 	"\vPolicyGroup\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
@@ -4528,7 +4746,8 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"blocklists\x18\x04 \x03(\v2\x1a.nexora.control.v1.BlobRefR\n" +
 	"blocklists\x12\x1c\n" +
 	"\tallowlist\x18\x05 \x03(\tR\tallowlist\x12&\n" +
-	"\x0frewrite_set_ids\x18\x06 \x03(\tR\rrewriteSetIds\"}\n" +
+	"\x0frewrite_set_ids\x18\x06 \x03(\tR\rrewriteSetIds\x12H\n" +
+	"\x0eblocklist_refs\x18\xd8\x04 \x03(\v2 .nexora.control.v1.FilterListRefR\rblocklistRefs\"}\n" +
 	"\vRewriteRule\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x122\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1e.nexora.control.v1.RewriteTypeR\x04type\x12\x14\n" +
@@ -4695,7 +4914,24 @@ const file_nexora_control_v1_control_proto_rawDesc = "" +
 	"\bcert_der\x18\x01 \x01(\fR\acertDer\x12\x15\n" +
 	"\x06ca_der\x18\x02 \x01(\fR\x05caDer\"X\n" +
 	"\x10RenewCertificate\x12D\n" +
-	"\x06reason\x18\x01 \x01(\x0e2,.nexora.control.v1.CertificateRequest.ReasonR\x06reason*s\n" +
+	"\x06reason\x18\x01 \x01(\x0e2,.nexora.control.v1.CertificateRequest.ReasonR\x06reason\"\x90\x01\n" +
+	"\rFilterListRef\x12\x17\n" +
+	"\alist_id\x18\x01 \x01(\tR\x06listId\x12\x1a\n" +
+	"\bcategory\x18\x02 \x01(\tR\bcategory\x12\x1a\n" +
+	"\bposition\x18\x03 \x01(\rR\bposition\x12.\n" +
+	"\x04blob\x18\x04 \x01(\v2\x1a.nexora.control.v1.BlobRefR\x04blob\"\xa4\x03\n" +
+	"\x10FilterIndexStats\x12\x18\n" +
+	"\aentries\x18\x01 \x01(\x04R\aentries\x12\x14\n" +
+	"\x05bytes\x18\x02 \x01(\x04R\x05bytes\x12\x1b\n" +
+	"\tmax_bytes\x18\x03 \x01(\x04R\bmaxBytes\x12#\n" +
+	"\rbuild_seconds\x18\x04 \x01(\x01R\fbuildSeconds\x12.\n" +
+	"\x13decision_ns_blocked\x18\x05 \x01(\x01R\x11decisionNsBlocked\x12*\n" +
+	"\x11decision_ns_clean\x18\x06 \x01(\x01R\x0fdecisionNsClean\x12\x10\n" +
+	"\x03cpu\x18\a \x01(\tR\x03cpu\x12j\n" +
+	"\x13blocked_by_category\x18\b \x03(\v2:.nexora.control.v1.FilterIndexStats.BlockedByCategoryEntryR\x11blockedByCategory\x1aD\n" +
+	"\x16BlockedByCategoryEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01*s\n" +
 	"\x10UpstreamStrategy\x12!\n" +
 	"\x1dUPSTREAM_STRATEGY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19UPSTREAM_STRATEGY_ORDERED\x10\x01\x12\x1d\n" +
@@ -4762,7 +4998,7 @@ func file_nexora_control_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_nexora_control_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_nexora_control_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_nexora_control_v1_control_proto_goTypes = []any{
 	(UpstreamStrategy)(0),          // 0: nexora.control.v1.UpstreamStrategy
 	(UpstreamProtocol)(0),          // 1: nexora.control.v1.UpstreamProtocol
@@ -4825,7 +5061,10 @@ var file_nexora_control_v1_control_proto_goTypes = []any{
 	(*CertificateRequest)(nil),     // 58: nexora.control.v1.CertificateRequest
 	(*CertificateIssued)(nil),      // 59: nexora.control.v1.CertificateIssued
 	(*RenewCertificate)(nil),       // 60: nexora.control.v1.RenewCertificate
-	nil,                            // 61: nexora.control.v1.Stats.ExportDroppedTotalEntry
+	(*FilterListRef)(nil),          // 61: nexora.control.v1.FilterListRef
+	(*FilterIndexStats)(nil),       // 62: nexora.control.v1.FilterIndexStats
+	nil,                            // 63: nexora.control.v1.Stats.ExportDroppedTotalEntry
+	nil,                            // 64: nexora.control.v1.FilterIndexStats.BlockedByCategoryEntry
 }
 var file_nexora_control_v1_control_proto_depIdxs = []int32{
 	13, // 0: nexora.control.v1.EngineMessage.hello:type_name -> nexora.control.v1.Hello
@@ -4862,47 +5101,53 @@ var file_nexora_control_v1_control_proto_depIdxs = []int32{
 	22, // 31: nexora.control.v1.FilterConfig.blocklists:type_name -> nexora.control.v1.BlobRef
 	22, // 32: nexora.control.v1.FilterConfig.allowlists:type_name -> nexora.control.v1.BlobRef
 	2,  // 33: nexora.control.v1.FilterConfig.block_mode:type_name -> nexora.control.v1.BlockMode
-	27, // 34: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
-	61, // 35: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
-	45, // 36: nexora.control.v1.Stats.recursion:type_name -> nexora.control.v1.RecursionStats
-	47, // 37: nexora.control.v1.Stats.dnssec:type_name -> nexora.control.v1.DnssecStats
-	48, // 38: nexora.control.v1.Stats.rpz_zones:type_name -> nexora.control.v1.RpzZoneStatus
-	22, // 39: nexora.control.v1.PolicyGroup.blocklists:type_name -> nexora.control.v1.BlobRef
-	3,  // 40: nexora.control.v1.RewriteRule.type:type_name -> nexora.control.v1.RewriteType
-	30, // 41: nexora.control.v1.RewriteSet.rules:type_name -> nexora.control.v1.RewriteRule
-	34, // 42: nexora.control.v1.RecursionConfig.root_hints:type_name -> nexora.control.v1.RootHint
-	37, // 43: nexora.control.v1.DnssecConfig.trust_anchors:type_name -> nexora.control.v1.TrustAnchor
-	38, // 44: nexora.control.v1.DnssecConfig.negative_trust_anchors:type_name -> nexora.control.v1.NegativeTrustAnchor
-	22, // 45: nexora.control.v1.RpzFileSource.blob:type_name -> nexora.control.v1.BlobRef
-	6,  // 46: nexora.control.v1.RpzTransferSource.tsig_algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	40, // 47: nexora.control.v1.RpzZone.file:type_name -> nexora.control.v1.RpzFileSource
-	41, // 48: nexora.control.v1.RpzZone.transfer:type_name -> nexora.control.v1.RpzTransferSource
-	5,  // 49: nexora.control.v1.RpzZone.policy_override:type_name -> nexora.control.v1.RpzPolicyOverride
-	6,  // 50: nexora.control.v1.RpzTsigKey.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	43, // 51: nexora.control.v1.RpzTsigKeys.keys:type_name -> nexora.control.v1.RpzTsigKey
-	7,  // 52: nexora.control.v1.TrustAnchorStatus.state:type_name -> nexora.control.v1.TrustAnchorState
-	46, // 53: nexora.control.v1.DnssecStats.trust_anchors:type_name -> nexora.control.v1.TrustAnchorStatus
-	22, // 54: nexora.control.v1.ZoneDelta.blob:type_name -> nexora.control.v1.BlobRef
-	8,  // 55: nexora.control.v1.AuthZone.kind:type_name -> nexora.control.v1.AuthZoneKind
-	22, // 56: nexora.control.v1.AuthZone.image:type_name -> nexora.control.v1.BlobRef
-	49, // 57: nexora.control.v1.AuthZone.deltas:type_name -> nexora.control.v1.ZoneDelta
-	50, // 58: nexora.control.v1.AuthZone.transfer:type_name -> nexora.control.v1.TransferPolicy
-	51, // 59: nexora.control.v1.AuthZone.notify:type_name -> nexora.control.v1.NotifyTarget
-	6,  // 60: nexora.control.v1.TsigSecret.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
-	53, // 61: nexora.control.v1.KeyMaterial.tsig_keys:type_name -> nexora.control.v1.TsigSecret
-	9,  // 62: nexora.control.v1.CertificateRequest.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
-	9,  // 63: nexora.control.v1.RenewCertificate.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
-	10, // 64: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
-	12, // 65: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
-	25, // 66: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
-	11, // 67: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
-	16, // 68: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
-	26, // 69: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
-	67, // [67:70] is the sub-list for method output_type
-	64, // [64:67] is the sub-list for method input_type
-	64, // [64:64] is the sub-list for extension type_name
-	64, // [64:64] is the sub-list for extension extendee
-	0,  // [0:64] is the sub-list for field type_name
+	61, // 34: nexora.control.v1.FilterConfig.blocklist_refs:type_name -> nexora.control.v1.FilterListRef
+	61, // 35: nexora.control.v1.FilterConfig.allowlist_refs:type_name -> nexora.control.v1.FilterListRef
+	27, // 36: nexora.control.v1.Stats.upstreams:type_name -> nexora.control.v1.UpstreamStatus
+	63, // 37: nexora.control.v1.Stats.export_dropped_total:type_name -> nexora.control.v1.Stats.ExportDroppedTotalEntry
+	45, // 38: nexora.control.v1.Stats.recursion:type_name -> nexora.control.v1.RecursionStats
+	47, // 39: nexora.control.v1.Stats.dnssec:type_name -> nexora.control.v1.DnssecStats
+	48, // 40: nexora.control.v1.Stats.rpz_zones:type_name -> nexora.control.v1.RpzZoneStatus
+	62, // 41: nexora.control.v1.Stats.filter_index:type_name -> nexora.control.v1.FilterIndexStats
+	22, // 42: nexora.control.v1.PolicyGroup.blocklists:type_name -> nexora.control.v1.BlobRef
+	61, // 43: nexora.control.v1.PolicyGroup.blocklist_refs:type_name -> nexora.control.v1.FilterListRef
+	3,  // 44: nexora.control.v1.RewriteRule.type:type_name -> nexora.control.v1.RewriteType
+	30, // 45: nexora.control.v1.RewriteSet.rules:type_name -> nexora.control.v1.RewriteRule
+	34, // 46: nexora.control.v1.RecursionConfig.root_hints:type_name -> nexora.control.v1.RootHint
+	37, // 47: nexora.control.v1.DnssecConfig.trust_anchors:type_name -> nexora.control.v1.TrustAnchor
+	38, // 48: nexora.control.v1.DnssecConfig.negative_trust_anchors:type_name -> nexora.control.v1.NegativeTrustAnchor
+	22, // 49: nexora.control.v1.RpzFileSource.blob:type_name -> nexora.control.v1.BlobRef
+	6,  // 50: nexora.control.v1.RpzTransferSource.tsig_algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	40, // 51: nexora.control.v1.RpzZone.file:type_name -> nexora.control.v1.RpzFileSource
+	41, // 52: nexora.control.v1.RpzZone.transfer:type_name -> nexora.control.v1.RpzTransferSource
+	5,  // 53: nexora.control.v1.RpzZone.policy_override:type_name -> nexora.control.v1.RpzPolicyOverride
+	6,  // 54: nexora.control.v1.RpzTsigKey.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	43, // 55: nexora.control.v1.RpzTsigKeys.keys:type_name -> nexora.control.v1.RpzTsigKey
+	7,  // 56: nexora.control.v1.TrustAnchorStatus.state:type_name -> nexora.control.v1.TrustAnchorState
+	46, // 57: nexora.control.v1.DnssecStats.trust_anchors:type_name -> nexora.control.v1.TrustAnchorStatus
+	22, // 58: nexora.control.v1.ZoneDelta.blob:type_name -> nexora.control.v1.BlobRef
+	8,  // 59: nexora.control.v1.AuthZone.kind:type_name -> nexora.control.v1.AuthZoneKind
+	22, // 60: nexora.control.v1.AuthZone.image:type_name -> nexora.control.v1.BlobRef
+	49, // 61: nexora.control.v1.AuthZone.deltas:type_name -> nexora.control.v1.ZoneDelta
+	50, // 62: nexora.control.v1.AuthZone.transfer:type_name -> nexora.control.v1.TransferPolicy
+	51, // 63: nexora.control.v1.AuthZone.notify:type_name -> nexora.control.v1.NotifyTarget
+	6,  // 64: nexora.control.v1.TsigSecret.algorithm:type_name -> nexora.control.v1.TsigAlgorithm
+	53, // 65: nexora.control.v1.KeyMaterial.tsig_keys:type_name -> nexora.control.v1.TsigSecret
+	9,  // 66: nexora.control.v1.CertificateRequest.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
+	9,  // 67: nexora.control.v1.RenewCertificate.reason:type_name -> nexora.control.v1.CertificateRequest.Reason
+	22, // 68: nexora.control.v1.FilterListRef.blob:type_name -> nexora.control.v1.BlobRef
+	64, // 69: nexora.control.v1.FilterIndexStats.blocked_by_category:type_name -> nexora.control.v1.FilterIndexStats.BlockedByCategoryEntry
+	10, // 70: nexora.control.v1.EngineControl.Enroll:input_type -> nexora.control.v1.EnrollRequest
+	12, // 71: nexora.control.v1.EngineControl.Connect:input_type -> nexora.control.v1.EngineMessage
+	25, // 72: nexora.control.v1.EngineControl.GetBlob:input_type -> nexora.control.v1.GetBlobRequest
+	11, // 73: nexora.control.v1.EngineControl.Enroll:output_type -> nexora.control.v1.EnrollResponse
+	16, // 74: nexora.control.v1.EngineControl.Connect:output_type -> nexora.control.v1.ServerMessage
+	26, // 75: nexora.control.v1.EngineControl.GetBlob:output_type -> nexora.control.v1.BlobChunk
+	73, // [73:76] is the sub-list for method output_type
+	70, // [70:73] is the sub-list for method input_type
+	70, // [70:70] is the sub-list for extension type_name
+	70, // [70:70] is the sub-list for extension extendee
+	0,  // [0:70] is the sub-list for field type_name
 }
 
 func init() { file_nexora_control_v1_control_proto_init() }
@@ -4940,7 +5185,7 @@ func file_nexora_control_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nexora_control_v1_control_proto_rawDesc), len(file_nexora_control_v1_control_proto_rawDesc)),
 			NumEnums:      10,
-			NumMessages:   52,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
