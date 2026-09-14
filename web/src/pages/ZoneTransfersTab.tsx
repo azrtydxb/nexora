@@ -36,11 +36,13 @@ type TsigKey = Schemas["TsigKey"];
 type Endpoint = { address: string; key: string };
 
 type Form = {
+  allowQuery: string;
   allow: string;
   transferKey: string;
   notify: Endpoint[];
   primaries: Endpoint[];
   updateKeys: string[];
+  updateAllow: string;
 };
 
 const none = "none";
@@ -58,11 +60,13 @@ const endpointsOut = (eps: Endpoint[]): Schemas["ZoneEndpoint"][] =>
 
 function toForm(z: Zone): Form {
   return {
+    allowQuery: z.allow_query_cidrs.join(", "),
     allow: z.transfer.allow_cidrs.join(", "),
     transferKey: z.transfer.tsig_key_id ?? none,
     notify: endpointsIn(z.notify),
     primaries: endpointsIn(z.primaries),
     updateKeys: [...z.update.tsig_key_ids].sort(),
+    updateAllow: (z.update.allow_cidrs ?? []).join(", "),
   };
 }
 
@@ -85,6 +89,7 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
     save.mutate(
       {
         revision: zone.revision,
+        allow_query_cidrs: splitList(form.allowQuery),
         transfer: {
           allow_cidrs: splitList(form.allow),
           tsig_key_id: form.transferKey === none ? null : form.transferKey,
@@ -92,7 +97,12 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
         notify: endpointsOut(form.notify),
         ...(secondary
           ? { primaries: endpointsOut(form.primaries) }
-          : { update: { tsig_key_ids: form.updateKeys } }),
+          : {
+              update: {
+                tsig_key_ids: form.updateKeys,
+                allow_cidrs: splitList(form.updateAllow),
+              },
+            }),
       },
       { onSuccess: (saved) => setForm(toForm(saved)) },
     );
@@ -127,6 +137,25 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
                 />
               </Section>
             )}
+            <Section
+              title="Query access"
+              help="Who may query this zone. A list here replaces the global authoritative query access for this zone."
+            >
+              <div className="grid content-start gap-1.5">
+                <Label htmlFor="zone-allow-query">Allowed query networks</Label>
+                <Input
+                  id="zone-allow-query"
+                  data-testid="zone-allow-query"
+                  className="font-mono"
+                  placeholder="192.0.2.0/24, 2001:db8::/32"
+                  value={form.allowQuery}
+                  onChange={(e) => set("allowQuery", e.target.value)}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Empty uses the global authoritative query access.
+                </p>
+              </div>
+            </Section>
             <Section
               title="Outgoing transfers"
               help="Who may transfer this zone (AXFR/IXFR). An empty list refuses every transfer; a TSIG key additionally requires signed requests."
@@ -206,6 +235,22 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
                     </label>
                   ))}
                 </fieldset>
+                <div className="mt-4 grid content-start gap-1.5">
+                  <Label htmlFor="zone-update-allow">
+                    Allowed update sources
+                  </Label>
+                  <Input
+                    id="zone-update-allow"
+                    data-testid="zone-update-allow"
+                    className="font-mono"
+                    placeholder="192.0.2.0/24, 2001:db8::/32"
+                    value={form.updateAllow}
+                    onChange={(e) => set("updateAllow", e.target.value)}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Empty allows any source; a TSIG key is always required.
+                  </p>
+                </div>
               </Section>
             )}
           </fieldset>

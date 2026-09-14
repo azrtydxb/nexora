@@ -7,6 +7,9 @@ test("access control list edit", async ({ page }) => {
     env("NEXORA_E2E_ADMIN_PASSWORD"),
   );
   await page.getByTestId("nav-access-control").click();
+  await expect(
+    page.getByRole("heading", { name: "Recursion and resolver access" }),
+  ).toBeVisible();
   await expect(page.getByTestId("acl-row-127.0.0.0/8")).toBeVisible();
   await page.getByTestId("acl-cidr-input").fill("198.51.100.0/24");
   await page.getByTestId("acl-add").click();
