@@ -115,9 +115,11 @@ if k get deployment nexora-mgmt >/dev/null 2>&1 &&
 		configmap/nexora-engine-config --ignore-not-found
 fi
 
+# --force-conflicts: the chart is the source of truth, so fields last changed by hand with kubectl
+# (kubectl set image, kubectl apply) do not block Helm 4's server-side apply.
 release() {
 	helm --kube-context "$ctx" -n "$ns" upgrade --install nexora "$root/deploy/helm/nexora" \
-		-f "$kw/values-kw.yaml" --set image.tag="$tag" --wait --timeout 15m "$@"
+		-f "$kw/values-kw.yaml" --set image.tag="$tag" --force-conflicts --wait --timeout 15m "$@"
 }
 
 # A redeploy is one helm upgrade: mgmt rolls (two replicas, PodDisruptionBudget) while the engines keep
