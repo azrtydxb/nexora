@@ -80,7 +80,6 @@ type subscriber struct {
 	keyMaterialDigest string    // digest of the last KeyMaterial queued ("" = none)
 	updateTokens      float64
 	updateRefilled    time.Time
-	lastIssued        time.Time // last certificate issued on this stream
 }
 
 const (

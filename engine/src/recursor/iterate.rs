@@ -22,7 +22,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-// debt: fixed capacities (entries); revisit when memory limits become configurable (M5 sizing).
+// debt: fixed capacities (entries); revisit when memory limits become configurable (not in v1).
 const INFRA_CAPACITY: usize = 10_000;
 const RRSET_CAPACITY: usize = 100_000;
 /// Nameserver names without addresses resolved for one zone cut.

@@ -423,21 +423,14 @@ func (s *Server) certTTL() time.Duration {
 	return pki.EngineCertValidity
 }
 
-// renewInterval bounds certificate issuance to one per engine stream per interval.
+// renewInterval bounds certificate issuance over control streams to one per engine per interval,
+// checked against engines.cert_renewed_at under the engine row lock (reconnects share it).
 const renewInterval = 10 * time.Second
 
 // renew answers a CertificateRequest: a CSR for this engine's id gets a certificate of certTTL,
 // recorded (it becomes valid alongside the current one, which is superseded once the engine
 // connects with the new one) and sent back as CertificateIssued. Refused requests get no answer.
 func (s *Server) renew(ctx context.Context, sub *subscriber, req *controlv1.CertificateRequest) error {
-	now := time.Now()
-	sub.mu.Lock()
-	limited := !sub.lastIssued.IsZero() && now.Sub(sub.lastIssued) < renewInterval
-	sub.mu.Unlock()
-	if limited {
-		slog.Warn("certificate request ignored: rate limited", "engine", sub.engineID)
-		return nil
-	}
 	csr, err := x509.ParseCertificateRequest(req.CsrDer)
 	if err == nil && csr.Subject.CommonName != sub.engineID {
 		err = errors.New("CSR common name is not the engine id")
@@ -446,32 +439,41 @@ func (s *Server) renew(ctx context.Context, sub *subscriber, req *controlv1.Cert
 		slog.Warn("certificate request refused: "+err.Error(), "engine", sub.engineID)
 		return nil
 	}
-	der, _, err := s.ca.SignEngineCSR(req.CsrDer, sub.engineID, s.certTTL())
-	if err != nil {
-		slog.Warn("certificate request refused: "+err.Error(), "engine", sub.engineID)
-		return nil
-	}
+	var der []byte
+	var limited bool
+	var signErr error
 	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
-		var live bool
-		if err := tx.QueryRow(ctx, "select revoked_at is null and deleted_at is null from engines where id = $1 for update",
-			sub.id).Scan(&live); err != nil {
+		var live, recent bool
+		if err := tx.QueryRow(ctx, `select revoked_at is null and deleted_at is null,
+			cert_renewed_at is not null and cert_renewed_at > now() - make_interval(secs => $2)
+			from engines where id = $1 for update`, sub.id, renewInterval.Seconds()).Scan(&live, &recent); err != nil {
 			return err
 		}
 		if !live {
 			return status.Error(codes.PermissionDenied, fleet.ErrCertificateRevoked.Error())
 		}
+		if limited = recent; limited {
+			return nil
+		}
+		if der, _, signErr = s.ca.SignEngineCSR(req.CsrDer, sub.engineID, s.certTTL()); signErr != nil {
+			return signErr
+		}
 		if err := fleet.RecordCertificate(ctx, tx, sub.id, der); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "update engines set cert_rotate_requested_at = null where id = $1", sub.id)
+		_, err := tx.Exec(ctx, "update engines set cert_rotate_requested_at = null, cert_renewed_at = now() where id = $1", sub.id)
 		return err
 	})
-	if err != nil {
+	switch {
+	case signErr != nil:
+		slog.Warn("certificate request refused: "+signErr.Error(), "engine", sub.engineID)
+		return nil
+	case err != nil:
 		return err
+	case limited:
+		slog.Warn("certificate request ignored: rate limited", "engine", sub.engineID)
+		return nil
 	}
-	sub.mu.Lock()
-	sub.lastIssued = now
-	sub.mu.Unlock()
 	slog.Info("engine certificate issued", "engine", sub.engineID, "reason", req.Reason.String())
 	select {
 	case sub.control <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_CertIssued{CertIssued: &controlv1.CertificateIssued{

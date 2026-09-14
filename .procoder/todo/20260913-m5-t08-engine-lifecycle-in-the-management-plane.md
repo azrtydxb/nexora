@@ -28,3 +28,4 @@ is committed.
 - `TestIssueEngineCert` / `TestRevocationChecker`: not in the plan or repo (stale criteria); covered by TestCertificateRenewalRotationAndRevocation.
 - Not committed (lead commits).
 
+- Pre-release sweep (2026-09-14): issuance limit moved from per stream to per engine (`engines.cert_renewed_at`, migration 00501, checked under the engine row lock). Red: `go test -run TestCertificateIssuanceRateLimitIsPerEngine ./mgmt/internal/control/` -> `a reconnected stream got a second certificate within the renewal interval`; green: `go test -race -count=1 ./mgmt/internal/control/ ./mgmt/internal/store/ ./mgmt/internal/fleet/` -> ok; `TestEngineCertRevocation` (e2e, 60 s TTL renewals) -> PASS (103.25s).

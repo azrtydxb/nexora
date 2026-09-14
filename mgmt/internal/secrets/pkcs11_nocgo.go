@@ -10,9 +10,11 @@ import (
 // HSM is unavailable in builds without cgo: PKCS#11 modules are C shared libraries.
 type HSM struct{ kekID []byte }
 
+const hsmSigningLabelPrefix = "nexora-dnssec:"
+
 var errNoCgo = errors.New("NEXORA_PKCS11_MODULE: this nexora-mgmt build has no PKCS#11 support (built with CGO_ENABLED=0)")
 
-func openHSM(_, _, _ string) (*HSM, error) { return nil, errNoCgo }
+func openHSM(_, _, _, _ string) (*HSM, error) { return nil, errNoCgo }
 
 func (h *HSM) close() error                                         { return nil }
 func (h *HSM) ensureWrapKey() error                                 { return errNoCgo }

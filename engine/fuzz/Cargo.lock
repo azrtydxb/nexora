@@ -727,6 +727,7 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12b92608f679a6fa515dd1d15c1ff89443026e391200a2c840c7afcba482893d"
 dependencies = [
+ "bitflags",
  "data-encoding",
  "idna",
  "ipnet",
@@ -734,7 +735,9 @@ dependencies = [
  "once_cell",
  "rand 0.10.2",
  "ring",
+ "rustls-pki-types",
  "thiserror",
+ "time",
  "tinyvec",
  "tracing",
  "url",
@@ -1189,12 +1192,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "aws-lc-rs",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "crossbeam-queue",
  "crossbeam-utils",
+ "data-encoding",
  "hex",
  "hickory-proto",
+ "http",
+ "http-body",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "ipnet",
@@ -1202,26 +1211,33 @@ dependencies = [
  "nix",
  "opentelemetry-proto",
  "parking_lot",
+ "pem",
  "prometheus-client",
  "prost",
  "quick_cache",
+ "quinn",
  "rand 0.10.2",
  "rcgen",
  "reqwest",
+ "ring",
  "rustc-hash",
  "rustls",
  "serde",
+ "serde_json",
  "sha2",
  "siphasher",
  "socket2",
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
  "toml",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
  "webpki-roots",
+ "x509-parser",
+ "zeroize",
  "zstd",
 ]
 
@@ -2066,6 +2082,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.151"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -2978,6 +3007,12 @@ dependencies = [
  "quote",
  "syn 3.0.5",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zstd"

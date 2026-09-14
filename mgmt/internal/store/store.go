@@ -48,6 +48,15 @@ func Open(ctx context.Context, url string) (*Store, error) {
 	return &Store{Pool: pool}, nil
 }
 
+// InstallationID returns the id the installation's first migration generated.
+func (s *Store) InstallationID(ctx context.Context) (string, error) {
+	var id string
+	if err := s.Pool.QueryRow(ctx, "select id::text from installation").Scan(&id); err != nil {
+		return "", MapError(err)
+	}
+	return id, nil
+}
+
 // Close closes the pool.
 func (s *Store) Close() { s.Pool.Close() }
 

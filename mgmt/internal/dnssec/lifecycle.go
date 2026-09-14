@@ -72,12 +72,12 @@ func DestroyPending(ctx context.Context, st *store.Store, box *secrets.Box) erro
 	return errors.Join(errs...)
 }
 
-// SweepTokenOrphans destroys Nexora's DNSSEC key objects in the token (label "nexora-dnssec",
-// never other objects) that no live dnssec_keys row has referenced for grace, and returns how many
-// it destroyed. A key is timed from the first sweep that saw it unreferenced; a key referenced
-// again (its transaction committed) is forgotten. Without a token it does nothing.
-// debt: the token is assumed to be dedicated to one Nexora installation (one database); revisit
-// with an installation id in the object label if tokens are ever shared.
+// SweepTokenOrphans destroys this installation's DNSSEC key objects in the token (label
+// "nexora-dnssec:<installation id>", never other objects, so installations may share a token) that
+// no live dnssec_keys row has referenced for grace, and returns how many it destroyed. A key is
+// timed from the first sweep that saw it unreferenced; a key referenced again (its transaction
+// committed) is forgotten. Without a token it does nothing. A database restored into a second
+// installation keeps the installation id, so the two must not share a token.
 func SweepTokenOrphans(ctx context.Context, st *store.Store, box *secrets.Box, grace time.Duration) (int, error) {
 	if !box.HasBackend(secrets.BackendPKCS11) {
 		return 0, nil

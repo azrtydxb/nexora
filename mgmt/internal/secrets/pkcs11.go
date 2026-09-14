@@ -20,20 +20,22 @@ import (
 const (
 	hsmWrapKeyID    = "nexora-kek-v1"
 	hsmWrapKeyLabel = "nexora-kek"
-	// hsmSigningLabel labels every DNSSEC key object Nexora creates; orphan sweeps touch only these.
-	hsmSigningLabel = "nexora-dnssec"
-	hsmSessions     = 4
+	// hsmSigningLabelPrefix and the installation id label every DNSSEC key object an installation
+	// creates; its orphan sweeps touch only these, never another installation's keys in the token.
+	hsmSigningLabelPrefix = "nexora-dnssec:"
+	hsmSessions           = 4
 )
 
 // HSM is one logged-in PKCS#11 token with a small pool of read-write sessions.
 type HSM struct {
-	ctx   *pkcs11.Ctx
-	slot  uint
-	kekID []byte
-	pool  chan pkcs11.SessionHandle
+	ctx          *pkcs11.Ctx
+	slot         uint
+	kekID        []byte
+	signingLabel string // CKA_LABEL of this installation's DNSSEC key objects
+	pool         chan pkcs11.SessionHandle
 }
 
-func openHSM(module, label, pinFile string) (*HSM, error) {
+func openHSM(module, label, pinFile, signingLabel string) (*HSM, error) {
 	pinRaw, err := readSecretFile("NEXORA_PKCS11_PIN_FILE", pinFile)
 	if err != nil {
 		return nil, err
@@ -47,7 +49,7 @@ func openHSM(module, label, pinFile string) (*HSM, error) {
 		p.Destroy()
 		return nil, fmt.Errorf("pkcs11 initialize: %w", err)
 	}
-	h := &HSM{ctx: p, pool: make(chan pkcs11.SessionHandle, hsmSessions)}
+	h := &HSM{ctx: p, signingLabel: signingLabel, pool: make(chan pkcs11.SessionHandle, hsmSessions)}
 	fail := func(err error) (*HSM, error) {
 		_ = h.close()
 		return nil, err
@@ -190,7 +192,7 @@ var oidP256 = []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
 func (h *HSM) generate(alg uint8, id []byte) (publicKey string, err error) {
 	err = h.with(func(sh pkcs11.SessionHandle) error {
 		common := func() []*pkcs11.Attribute {
-			return []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true), pkcs11.NewAttribute(pkcs11.CKA_ID, id), pkcs11.NewAttribute(pkcs11.CKA_LABEL, hsmSigningLabel)}
+			return []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true), pkcs11.NewAttribute(pkcs11.CKA_ID, id), pkcs11.NewAttribute(pkcs11.CKA_LABEL, h.signingLabel)}
 		}
 		priv := append([]*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true), pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
 			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true), pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false)}, common()...)
@@ -278,13 +280,13 @@ func (h *HSM) destroy(id []byte) error {
 	})
 }
 
-// signingKeyIDs returns the distinct CKA_IDs of the private and public key objects labelled
-// hsmSigningLabel.
+// signingKeyIDs returns the distinct CKA_IDs of this installation's private and public key objects
+// (labelled h.signingLabel).
 func (h *HSM) signingKeyIDs() (ids [][]byte, err error) {
 	err = h.with(func(sh pkcs11.SessionHandle) error {
 		seen := map[string]bool{}
 		for _, class := range []uint{pkcs11.CKO_PRIVATE_KEY, pkcs11.CKO_PUBLIC_KEY} {
-			tmpl := []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_CLASS, class), pkcs11.NewAttribute(pkcs11.CKA_LABEL, hsmSigningLabel)}
+			tmpl := []*pkcs11.Attribute{pkcs11.NewAttribute(pkcs11.CKA_CLASS, class), pkcs11.NewAttribute(pkcs11.CKA_LABEL, h.signingLabel)}
 			if err := h.ctx.FindObjectsInit(sh, tmpl); err != nil {
 				return err
 			}

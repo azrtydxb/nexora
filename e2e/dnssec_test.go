@@ -47,6 +47,10 @@ func TestDNSSECValidation(t *testing.T) {
 		if m.AuthenticatedData {
 			t.Fatal("AD=1 with CD=1 on bogus data")
 		}
+		// The hierarchy's authoritative servers answer with AA=1; a recursor never relays it.
+		if m.Authoritative {
+			t.Fatal("AA=1 on a recursive CD pass-through answer")
+		}
 	})
 	t.Run("unsigned zone returns AD=0", func(t *testing.T) {
 		m := query(t, addr, "www.plain.test", dns.TypeA, qopt{DO: true})

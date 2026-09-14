@@ -19,7 +19,8 @@ import (
 func tokenBox(t *testing.T) *secrets.Box {
 	t.Helper()
 	tok := harness.InitSoftHSM(t, "nexora-lifecycle")
-	box, err := secrets.Open(secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile})
+	box, err := secrets.Open(secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile,
+		Installation: uuid.NewString()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +132,52 @@ func TestDisableDestroysTokenKeysOnlyAfterCommit(t *testing.T) {
 		if inToken(box, ref) {
 			t.Fatal("Service.Update disable left its key in the token")
 		}
+	}
+}
+
+// Catches: an orphan sweep that treats every Nexora-labelled token object as its own, so an
+// installation sharing the token destroys another installation's live DNSSEC keys.
+func TestSweepLeavesOtherInstallationsTokenKeys(t *testing.T) {
+	ctx := context.Background()
+	tok := harness.InitSoftHSM(t, "nexora-shared")
+	open := func() *secrets.Box {
+		box, err := secrets.Open(secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile,
+			Installation: uuid.NewString()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return box
+	}
+	foreign := open()
+	theirs, err := foreign.GenerateSigningKey(ctx, secrets.BackendPKCS11, dns.ECDSAP256SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := foreign.Close(); err != nil {
+		t.Fatal(err)
+	}
+	box := open()
+	t.Cleanup(func() { _ = box.Close() })
+	if err := box.EnsureHSMWrapKey(ctx); err != nil {
+		t.Fatal(err)
+	}
+	zs, _ := signedZone(t, box, dnssec.Settings{NSECMode: "nsec", KeyBackend: secrets.BackendPKCS11})
+	mine, err := box.GenerateSigningKey(ctx, secrets.BackendPKCS11, dns.ECDSAP256SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inToken(box, theirs.KeyRef) || !inToken(box, mine.KeyRef) {
+		t.Fatal("generated keys are not in the token: the test would prove nothing")
+	}
+	n, err := dnssec.SweepTokenOrphans(ctx, zs.Store, box, 0)
+	if err != nil || n != 1 {
+		t.Fatalf("sweep destroyed %d keys (%v), want only this installation's unreferenced key", n, err)
+	}
+	if inToken(box, mine.KeyRef) {
+		t.Fatal("this installation's orphaned key survived the sweep")
+	}
+	if !inToken(box, theirs.KeyRef) {
+		t.Fatal("the sweep destroyed a key another installation created in the shared token")
 	}
 }
 

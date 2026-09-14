@@ -11,8 +11,18 @@ fuzz_target!(|data: &[u8]| {
                 do_bit: o.do_bit,
                 ext_rcode: 0,
                 cookie: None,
+                ede: None,
             });
-            let _ = wire::write_rcode_reply(&q, wire::RCODE_SERVFAIL, &mut out, opt.as_ref());
+            // SERVFAIL carries an RFC 8914 EDE option (6, DNSSEC Bogus) as the validator writes it.
+            let servfail_opt = q.opt.as_ref().map(|o| edns::ReplyOpt {
+                udp_size: 1232,
+                do_bit: o.do_bit,
+                ext_rcode: 0,
+                cookie: None,
+                ede: Some(6),
+            });
+            let _ =
+                wire::write_rcode_reply(&q, wire::RCODE_SERVFAIL, &mut out, servfail_opt.as_ref());
             let _ = wire::write_synth_reply(
                 &q,
                 wire::RCODE_NOERROR,

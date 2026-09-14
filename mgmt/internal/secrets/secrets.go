@@ -57,7 +57,13 @@ const (
 )
 
 // Config names the key storage backends; empty fields leave a backend unconfigured.
-type Config struct{ KEKFile, PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string }
+type Config struct {
+	KEKFile, PKCS11Module, PKCS11TokenLabel, PKCS11PinFile string
+	// Installation is the database's installation id (store.InstallationID); required with PKCS#11.
+	// DNSSEC key objects carry it in their label, so orphan sweeps never touch another
+	// installation's keys in a shared token.
+	Installation string
+}
 
 // Box seals and unseals envelopes and holds signing keys. A nil or empty Box is unconfigured.
 type Box struct {
@@ -106,7 +112,10 @@ func Open(cfg Config) (*Box, error) {
 		b.kek, b.kekID = key, id[:8]
 	}
 	if set == 3 {
-		h, err := openHSM(cfg.PKCS11Module, cfg.PKCS11TokenLabel, cfg.PKCS11PinFile)
+		if cfg.Installation == "" {
+			return nil, errors.New("PKCS#11 key storage needs the installation id")
+		}
+		h, err := openHSM(cfg.PKCS11Module, cfg.PKCS11TokenLabel, cfg.PKCS11PinFile, hsmSigningLabelPrefix+cfg.Installation)
 		if err != nil {
 			return nil, err
 		}

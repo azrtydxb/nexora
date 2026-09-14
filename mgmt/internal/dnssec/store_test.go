@@ -274,7 +274,7 @@ func TestDynamicUpdateToSignedZoneIsResignedIncrementally(t *testing.T) {
 
 func TestPKCS11KeysSignInsideTheToken(t *testing.T) {
 	tok := harness.InitSoftHSM(t, "nexora-dnssec")
-	box, err := secrets.Open(secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile})
+	box, err := secrets.Open(secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile, Installation: "test-installation"})
 	if err != nil {
 		t.Fatal(err)
 	}

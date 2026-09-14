@@ -474,7 +474,13 @@ and refuses those features.
   Debian trixie (glibc) and ships no module: mount the vendor's module, built
   for glibc on the image's architecture, plus its configuration, and put the
   PIN in a secret. Keep `NEXORA_KEK_FILE` set if KEK-sealed secrets already
-  exist, so they stay readable.
+  exist, so they stay readable. DNSSEC key objects are labelled
+  `nexora-dnssec:<installation id>` (the id lives in the `installation` table),
+  and the clean-up of keys left by failed transactions (unreferenced for an
+  hour) only destroys
+  objects with its own label, so separate installations may share a token.
+  A database restored into a second installation carries the same id: give
+  that installation its own token (or partition).
 
 ## Upgrade
 

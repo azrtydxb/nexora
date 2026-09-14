@@ -167,3 +167,8 @@ dig @192.168.10.136 www.bind-demo.kw. A                 # aa, 192.0.2.53
   RFC 5011 trust-anchor state and RPZ last-good zone copies (M5 moves it to `hostPath`).
 - kube-vip (ARP) holds `192.168.10.136` on one control-plane node; with `externalTrafficPolicy: Local`
   external queries to the VIP are dropped while the engine on that node restarts.
+- Engine group `edge-b` (Helm release, `values-kw.yaml`) is served on `192.168.10.137` with
+  `externalTrafficPolicy: Cluster`: kube-vip may announce that VIP from a node without an `edge-b`
+  engine, where `Local` would drop the traffic, so `edge-b` engines see node addresses and per-client
+  policy does not apply there. Per-client policy on kw is verified on the `default` group
+  (`192.168.10.136`, `Local`).

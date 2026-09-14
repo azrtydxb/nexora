@@ -521,7 +521,9 @@ components ported from the first Nexora (`components/ui`), openapi-typescript
   unrevoked serials `superseded`.
 - Renewal: from 2/3 of the lifetime the engine sends
   `CertificateRequest{csr_der, reason: RENEWAL}` (CSR CN = engine id, new
-  P-256 key); the instance issues (at most once per engine per 10 s) and
+  P-256 key); the instance issues (at most once per engine per 10 s, checked
+  against `engines.cert_renewed_at` under the engine row lock, so reconnects
+  and parallel streams share the limit) and
   answers `CertificateIssued{cert_der, ca_der}`; the engine swaps
   `state_dir/identity` atomically (`identity.new` -> `identity`) and
   reconnects.

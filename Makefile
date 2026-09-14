@@ -46,6 +46,7 @@ e2e: e2e-build
 lint: webui-placeholder
 	cargo fmt --all -- --check
 	cargo clippy --locked -p nexora-engine --all-targets -- -D warnings
+	cargo +nightly check --locked --manifest-path engine/fuzz/Cargo.toml --bins
 	gofmt -l mgmt e2e bench | (! grep .)
 	go vet ./...
 	cd web && pnpm install --frozen-lockfile && pnpm run lint

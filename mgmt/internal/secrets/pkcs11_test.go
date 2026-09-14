@@ -17,7 +17,7 @@ import (
 func softhsmConfig(t *testing.T) secrets.Config {
 	t.Helper()
 	tok := harness.InitSoftHSM(t, "nexora-test")
-	return secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile}
+	return secrets.Config{PKCS11Module: tok.Module, PKCS11TokenLabel: tok.Label, PKCS11PinFile: tok.PinFile, Installation: "test-installation"}
 }
 
 func verifySignerMatchesDNSKEY(t *testing.T, box *secrets.Box, k secrets.StoredKey) {

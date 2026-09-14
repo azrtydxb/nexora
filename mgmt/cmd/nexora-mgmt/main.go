@@ -284,7 +284,12 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if _, err := snapshot.EnsureInitial(ctx, st, build); err != nil {
 		return err
 	}
-	box, err := secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel, PKCS11PinFile: cfg.PKCS11PinFile})
+	installation, err := st.InstallationID(ctx)
+	if err != nil {
+		return err
+	}
+	box, err := secrets.Open(secrets.Config{KEKFile: cfg.KEKFile, PKCS11Module: cfg.PKCS11Module, PKCS11TokenLabel: cfg.PKCS11TokenLabel,
+		PKCS11PinFile: cfg.PKCS11PinFile, Installation: installation})
 	if err != nil {
 		return err
 	}
