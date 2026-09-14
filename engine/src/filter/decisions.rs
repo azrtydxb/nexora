@@ -34,11 +34,15 @@ struct Slot {
     owner: u64,
     set: u32,
     list: u16,
+    /// `NONE`, `BLOCKED` or `ALLOWED` in the low two bits, the hit's suffix offset above them
+    /// (cached names are at most 48 octets, so the offset fits six bits).
     kind: u8,
     len: u8,
     /// The name, zero-padded, as little-endian words.
     words: [u64; WORDS],
 }
+
+const _: () = assert!(size_of::<Slot>() == 64);
 
 impl Slot {
     const EMPTY: Slot = Slot {
@@ -166,12 +170,14 @@ impl DecisionCache {
         );
         if diff == 0 {
             self.hits.set(self.hits.get() + 1);
-            return match slot.kind {
-                BLOCKED => FilterDecision::Blocked(ListHit {
-                    list: slot.list,
-                    set: slot.set,
-                }),
-                ALLOWED => FilterDecision::Allowed,
+            let hit = ListHit {
+                list: slot.list,
+                set: slot.set,
+                offset: slot.kind >> 2,
+            };
+            return match slot.kind & 3 {
+                BLOCKED => FilterDecision::Blocked(hit),
+                ALLOWED => FilterDecision::Allowed(hit),
                 _ => FilterDecision::None,
             };
         }
@@ -193,15 +199,23 @@ impl DecisionCache {
         let decision = uncached(view, name_wire);
         let (kind, hit) = match decision {
             FilterDecision::Blocked(hit) => (BLOCKED, hit),
-            FilterDecision::Allowed => (ALLOWED, ListHit { list: 0, set: 0 }),
-            FilterDecision::None => (NONE, ListHit { list: 0, set: 0 }),
+            FilterDecision::Allowed(hit) => (ALLOWED, hit),
+            FilterDecision::None => (
+                NONE,
+                ListHit {
+                    list: 0,
+                    set: 0,
+                    offset: 0,
+                },
+            ),
         };
         self.tags[at].set(tag);
         self.slots[at].set(Slot {
             owner,
             set: hit.set,
             list: hit.list,
-            kind,
+            // `name_wire.len() <= CACHED_NAME_MAX` (48), so `hit.offset < 64`.
+            kind: kind | hit.offset << 2,
             len: name_wire.len() as u8,
             words,
         });
@@ -255,7 +269,15 @@ mod tests {
             first[0],
             FilterDecision::Blocked(ListHit { list: 0, .. })
         ));
-        assert_eq!(first[1..], [FilterDecision::Allowed, FilterDecision::None]);
+        assert!(matches!(
+            first[1],
+            FilterDecision::Allowed(ListHit {
+                list: 1,
+                offset: 0,
+                ..
+            })
+        ));
+        assert_eq!(first[2], FilterDecision::None);
         let long = format!("{}.ads.test", "l".repeat(CACHED_NAME_MAX));
         let before = cache.hits();
         for _ in 0..2 {
@@ -359,11 +381,17 @@ mod tests {
             cache.decide(&blocking, &ads),
             FilterDecision::Blocked(_)
         ));
-        assert_eq!(cache.decide(&blocking, &ok), FilterDecision::Allowed);
+        assert!(matches!(
+            cache.decide(&blocking, &ok),
+            FilterDecision::Allowed(_)
+        ));
         assert!(matches!(
             cache.decide(&nothing, &ok),
             FilterDecision::Blocked(_)
         ));
-        assert_eq!(cache.decide(&blocking, &ok), FilterDecision::Allowed);
+        assert!(matches!(
+            cache.decide(&blocking, &ok),
+            FilterDecision::Allowed(_)
+        ));
     }
 }

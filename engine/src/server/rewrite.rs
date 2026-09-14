@@ -5,7 +5,7 @@ use super::{FastOutcome, Scope, WorkerCtx, handle_packet, resolve_miss};
 use crate::edns::Transport;
 use crate::filter::{BlockMode, BlockReply, EffectivePolicy, RewriteAnswer, Verdict};
 use crate::runtime::Runtime;
-use crate::telemetry::querylog::FilterOutcome;
+use crate::telemetry::querylog::{FilterOutcome, FilterSource};
 use crate::wire;
 use hickory_proto::op::{Edns, Message, OpCode, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, CNAME};
@@ -113,7 +113,7 @@ pub async fn rewrite_response<C: RewriteContext>(
                 let wire_name = name_wire(&lower);
                 seen.push(lower);
                 match ctx.policy().check(&wire_name) {
-                    Verdict::Rewrite(next) => {
+                    Verdict::Rewrite { answer: next, .. } => {
                         owner = target.clone();
                         current = next;
                     }
@@ -123,7 +123,7 @@ pub async fn rewrite_response<C: RewriteContext>(
                         resp.metadata.response_code = rcode;
                         break;
                     }
-                    Verdict::Pass | Verdict::Allowed => {
+                    Verdict::Pass | Verdict::Allowed(_) => {
                         match ctx.resolve(target, qtype).await {
                             Ok(up) => {
                                 resp.metadata.response_code = up.metadata.response_code;
@@ -276,7 +276,12 @@ pub async fn run_rewrite_job(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: RewriteJ
         return Vec::new();
     };
     let (policy, group) = rt.policy.select(job.client.ip());
-    let Verdict::Rewrite(first) = policy.check(q.key.as_wire()) else {
+    let Verdict::Rewrite {
+        answer: first,
+        offset,
+        wildcard,
+    } = policy.check(q.key.as_wire())
+    else {
         return Vec::new();
     };
     let rewrite_ctx = WorkerRewriteCtx {
@@ -298,6 +303,9 @@ pub async fn run_rewrite_job(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: RewriteJ
         };
         let mut rec = scope.record(q.key, q.qtype);
         rec.filter = FilterOutcome::Rewritten;
+        rec.filter_source = FilterSource::Rewrite;
+        rec.filter_rule_offset = offset;
+        rec.rewrite_wildcard = wildcard;
         rec.policy_group = group.unwrap_or(crate::telemetry::querylog::NO_POLICY_GROUP);
         scope.finish(rec, &reply);
     }
@@ -419,7 +427,7 @@ mod tests {
             .to_lowercase()
             .to_bytes()
             .unwrap();
-        let crate::filter::Verdict::Rewrite(first) = c.policy().check(&wire) else {
+        let crate::filter::Verdict::Rewrite { answer: first, .. } = c.policy().check(&wire) else {
             panic!("no rewrite for {name}")
         };
         Message::from_vec(&rewrite_response(c, &query(name, t), first).await).unwrap()

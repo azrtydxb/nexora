@@ -422,23 +422,33 @@ pub fn handle_packet(
     rec.filter_us = micros(scope.started.elapsed());
     match verdict {
         Verdict::Pass => {}
-        Verdict::Allowed => rec.filter = FilterOutcome::Allowed,
+        Verdict::Allowed(hit) => record_hit(ctx, policy, hit, true, &mut rec),
         Verdict::Blocked(hit) => {
-            record_block(ctx, policy, hit, &mut rec);
+            record_hit(ctx, policy, hit, false, &mut rec);
             let n = policy
                 .block_reply()
                 .write(&q, &mut out[..limit], opt.as_ref());
             return reply(&scope, rec, out, n);
         }
         // Rewrite replies never enter the cache.
-        Verdict::Rewrite(answer @ RewriteAnswer::Addrs { .. }) => {
+        Verdict::Rewrite {
+            answer: answer @ RewriteAnswer::Addrs { .. },
+            offset,
+            wildcard,
+        } => {
             rec.filter = FilterOutcome::Rewritten;
+            rec.filter_source = FilterSource::Rewrite;
+            rec.filter_rule_offset = offset;
+            rec.rewrite_wildcard = wildcard;
             let bytes = rewrite::answer_inline(policy, packet, answer).unwrap_or_default();
             let bytes = rewrite::fit_limit(bytes, limit);
             out[..bytes.len()].copy_from_slice(&bytes);
             return reply(&scope, rec, out, bytes.len());
         }
-        Verdict::Rewrite(RewriteAnswer::Cname { .. }) => {
+        Verdict::Rewrite {
+            answer: RewriteAnswer::Cname { .. },
+            ..
+        } => {
             return FastOutcome::Rewrite(rewrite::RewriteJob {
                 query: packet.into(),
                 client,
@@ -457,10 +467,12 @@ pub fn handle_packet(
             QueryPhase::Hit { zone, action } => match set.effective_action(zone, action) {
                 None => {
                     rec.rpz_action = dispatch::RPZ_DISABLED;
+                    note_rpz_zone(&mut rec, zone);
                     RpzPending::None
                 }
                 Some(RpzAction::Passthru) => {
                     rec.rpz_action = RpzAction::Passthru.log_code();
+                    note_rpz_zone(&mut rec, zone);
                     RpzPending::None
                 }
                 Some(action) => RpzPending::Apply { zone, action },
@@ -477,6 +489,7 @@ pub fn handle_packet(
                 // allocates only on an RPZ hit
                 let qname = Name::from_bytes(q.key.as_wire()).unwrap_or_else(|_| Name::root());
                 rec.rpz_action = action.log_code();
+                note_rpz_zone(&mut rec, zone);
                 let over_tcp = transport != Transport::Udp;
                 match apply_action(
                     &qname,
@@ -721,6 +734,16 @@ fn note_answer(rec: &mut QueryRecord, ans: &dispatch::MissAnswer, forward: &Work
     if ans.rpz_action != 0 {
         rec.rpz_action = ans.rpz_action;
     }
+    if ans.rpz_zone != NO_RPZ_ZONE {
+        rec.rpz_zone = ans.rpz_zone;
+        rec.filter_source = FilterSource::Rpz;
+    }
+}
+
+/// Records the RPZ zone (index into the RPZ set) that decided a query.
+fn note_rpz_zone(rec: &mut QueryRecord, zone: usize) {
+    rec.rpz_zone = u16::try_from(zone).unwrap_or(NO_RPZ_ZONE);
+    rec.filter_source = FilterSource::Rpz;
 }
 
 /// Checks a resolved response for CNAME cloaking against the client's
@@ -739,7 +762,12 @@ fn leader_answer(
 ) -> Option<Bytes> {
     let info = wire::walk_response(&response, q).ok()?;
     if let Some(hit) = policy.filter().cloaked(&info.cname_targets) {
-        record_block(ctx, policy, hit, rec);
+        // The hit's offset points into the CNAME target, not the query name: no rule.
+        let hit = ListHit {
+            offset: NO_RULE,
+            ..hit
+        };
+        record_hit(ctx, policy, hit, false, rec);
         let mut buf = vec![0u8; HEADER_LEN + q.qname.len() + 4 + 16 + 12];
         let n = policy.block_reply().write(q, &mut buf, None);
         buf.truncate(n);
@@ -751,15 +779,39 @@ fn leader_answer(
     Some(response)
 }
 
-/// Counts a blocked query (in total and per category of the matching lists) and records the
-/// blocking list for the query log. Allocation-free.
-fn record_block(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, rec: &mut QueryRecord) {
+/// Records a list decision for the query log: the deciding list, its index build and the matched
+/// suffix. A blocked query is also counted (in total and per category of the matching lists) and
+/// attributed to `category` when its list has one, else `blocklist`. Allocation-free.
+fn record_hit(
+    ctx: &WorkerCtx,
+    policy: &EffectivePolicy,
+    hit: ListHit,
+    allowed: bool,
+    rec: &mut QueryRecord,
+) {
+    let index = policy.filter().index();
+    rec.filter_list = hit.list;
+    rec.filter_generation = index.generation();
+    rec.filter_rule_offset = hit.offset;
+    if allowed {
+        rec.filter = FilterOutcome::Allowed;
+        rec.filter_source = FilterSource::Allowlist;
+        return;
+    }
     let c = ctx.counters();
     c.filter_blocked.fetch_add(1, Ordering::Relaxed);
     c.count_categories(policy.filter().categories(hit));
     rec.filter = FilterOutcome::Blocked;
-    rec.filter_list = hit.list;
-    rec.filter_generation = policy.filter().index().generation();
+    // Uncategorised lists also set category slot 0 (`custom`), so the list itself decides.
+    let categorised = index
+        .lists()
+        .get(usize::from(hit.list))
+        .is_some_and(|l| !l.category.is_empty());
+    rec.filter_source = if categorised {
+        FilterSource::Category
+    } else {
+        FilterSource::Blocklist
+    };
 }
 
 fn serve(

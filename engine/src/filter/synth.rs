@@ -2,6 +2,9 @@
 //! 19% three-label and 4% four-label names, about 18 characters on average; 10% of the names are
 //! also in a second list.
 
+use super::index::{FilterIndex, FilterView, IndexOptions, ListInput, ListKind};
+use std::sync::Arc;
+
 const TLDS: [&str; 16] = [
     "com", "net", "org", "de", "ru", "info", "xyz", "top", "io", "nl", "fr", "uk", "cn", "br",
     "online", "site",
@@ -58,4 +61,41 @@ pub fn synthetic_lists(names: usize, lists: usize, seed: u64) -> Vec<Vec<u8>> {
         }
     }
     out
+}
+
+/// A view over a fresh index of `(id, allow, names)` lists: every list selected, allow lists as
+/// allow lists, the others as block lists (tests).
+pub fn view_with(lists: &[(&str, bool, &[&str])]) -> FilterView {
+    let texts: Vec<Vec<u8>> = lists
+        .iter()
+        .map(|(_, _, names)| {
+            names
+                .iter()
+                .flat_map(|n| [n.as_bytes(), b"\n"])
+                .flatten()
+                .copied()
+                .collect()
+        })
+        .collect();
+    let inputs: Vec<ListInput<'_>> = lists
+        .iter()
+        .zip(&texts)
+        .map(|((id, allow, _), text)| ListInput {
+            id,
+            category: "",
+            category_slot: 0,
+            kind: if *allow {
+                ListKind::Allow
+            } else {
+                ListKind::Block
+            },
+            text,
+        })
+        .collect();
+    let index = Arc::new(
+        FilterIndex::build(&inputs, &IndexOptions::new(16 << 20)).expect("synthetic index"),
+    );
+    let (allow, block): (Vec<u16>, Vec<u16>) =
+        (0..lists.len() as u16).partition(|&i| lists[usize::from(i)].1);
+    index.view(&block, &allow)
 }

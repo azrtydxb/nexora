@@ -178,18 +178,21 @@ pub enum IndexError {
     },
 }
 
-/// A matched name: the first list of the view that lists it, and its list set.
+/// A matched name: the first list of the view that lists it, its list set, and the octet offset
+/// of the matched (listed) suffix in the queried wire name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListHit {
     pub list: u16,
     pub set: u32,
+    pub offset: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FilterDecision {
     None,
     Blocked(ListHit),
-    Allowed,
+    /// Allowed by the view's first allow list (position order) listing the matched suffix.
+    Allowed(ListHit),
 }
 
 /// One valid list line during the build (24 bytes).
@@ -1515,6 +1518,7 @@ impl FilterIndex {
         };
         let mut class = vec![0u8; self.set_count];
         let mut first_list = vec![u16::MAX; self.set_count];
+        let mut first_allow = vec![u16::MAX; self.set_count];
         let mut categories = vec![0u64; self.set_count];
         for id in 1..self.set_count {
             let set = &self.set_bits[id * words..][..words];
@@ -1525,6 +1529,9 @@ impl FilterIndex {
             {
                 if s & a != 0 {
                     class[id] |= 2;
+                    if first_allow[id] == u16::MAX {
+                        first_allow[id] = (w * 64) as u16 + (s & a).trailing_zeros() as u16;
+                    }
                 }
                 let mut hits = s & b;
                 if hits != 0 {
@@ -1545,9 +1552,10 @@ impl FilterIndex {
         FilterView {
             index: self.clone(),
             cache_owner,
-            memory_bytes: 11 * self.set_count as u64,
+            memory_bytes: 13 * self.set_count as u64,
             class: class.into_boxed_slice(),
             first_list: first_list.into_boxed_slice(),
+            first_allow: first_allow.into_boxed_slice(),
             categories: categories.into_boxed_slice(),
             has_allow: !allow.is_empty(),
             empty: block.is_empty() && allow.is_empty(),
@@ -1736,12 +1744,12 @@ impl FilterIndex {
         marker
     }
 
-    /// Calls `visit` with the set id of every listed suffix of a lowercase wire name, longest
-    /// first, until it returns true. Allocation-free. Only the one- and two-label suffixes are
+    /// Calls `visit` with the set id and wire offset of every listed suffix of a lowercase wire
+    /// name, longest first, until it returns true. Allocation-free. Only the one- and two-label suffixes are
     /// hashed (and every level under a heavy suffix); the blocks they select are prefetched as soon
     /// as their hash is known.
     #[inline]
-    fn for_each_match(&self, name_wire: &[u8], mut visit: impl FnMut(u32) -> bool) {
+    fn for_each_match(&self, name_wire: &[u8], mut visit: impl FnMut(u32, u8) -> bool) {
         if self.entries == 0 {
             return;
         }
@@ -1795,7 +1803,11 @@ impl FilterIndex {
             let level = 127 - found.leading_zeros() as usize;
             found &= !(1 << level);
             // SAFETY: `probe` initialises sets[level] whenever it sets bit `level` of `found`.
-            if visit(unsafe { sets[level].assume_init() }) {
+            // Wire names are at most 255 octets, so every offset fits a u8.
+            if visit(
+                unsafe { sets[level].assume_init() },
+                levels.start(level) as u8,
+            ) {
                 return;
             }
         }
@@ -1803,13 +1815,14 @@ impl FilterIndex {
 }
 
 /// One policy's verdicts over a shared [`FilterIndex`]: per list set, allow/block class, the first
-/// matching block list and category slot bits.
+/// matching block and allow lists and category slot bits.
 pub struct FilterView {
     index: Arc<FilterIndex>,
     /// Decision cache key part: `generation << 16 | view id`, 0 = not cached.
     cache_owner: u64,
     class: Box<[u8]>,
     first_list: Box<[u16]>,
+    first_allow: Box<[u16]>,
     categories: Box<[u64]>,
     has_allow: bool,
     empty: bool,
@@ -1823,16 +1836,21 @@ impl FilterView {
             return FilterDecision::None;
         }
         let mut decision = FilterDecision::None;
-        self.index.for_each_match(name_wire, |set| {
+        self.index.for_each_match(name_wire, |set, offset| {
             let class = self.class[set as usize];
             if class & 2 != 0 {
-                decision = FilterDecision::Allowed;
+                decision = FilterDecision::Allowed(ListHit {
+                    list: self.first_allow[set as usize],
+                    set,
+                    offset,
+                });
                 return true;
             }
             if class & 1 != 0 && decision == FilterDecision::None {
                 decision = FilterDecision::Blocked(ListHit {
                     list: self.first_list[set as usize],
                     set,
+                    offset,
                 });
                 return !self.has_allow;
             }
@@ -2044,7 +2062,7 @@ mod tests {
                     );
                     match (oracle.decide(&wire), decided) {
                         (Decision::None, FilterDecision::None)
-                        | (Decision::Allowed, FilterDecision::Allowed) => {}
+                        | (Decision::Allowed, FilterDecision::Allowed(_)) => {}
                         (Decision::Blocked, FilterDecision::Blocked(hit)) => {
                             assert_eq!(
                                 hit.list,

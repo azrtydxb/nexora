@@ -16,6 +16,7 @@ use super::transport::OutboundQuery;
 use super::{EDNS_BUFFER, LocalBoxFuture, RecursorState, poll_with};
 use crate::edns::Transport;
 use crate::snapshot::BlobSource;
+use crate::telemetry::querylog::NO_RPZ_ZONE;
 use crate::wire::QueryView;
 use crate::{clock, proto};
 use bytes::Bytes;
@@ -288,6 +289,13 @@ pub struct MissAnswer {
     pub security: SecurityTag,
     /// 0 none, else `RpzAction::log_code`.
     pub rpz_action: u8,
+    /// Index of the RPZ zone that decided into the RPZ set; `NO_RPZ_ZONE` when none did.
+    pub rpz_zone: u16,
+}
+
+/// The `MissAnswer::rpz_zone` of zone index `zone`.
+fn zone_index(zone: usize) -> u16 {
+    u16::try_from(zone).unwrap_or(NO_RPZ_ZONE)
 }
 
 /// Fetches the chain of trust on the route each name resolves through.
@@ -436,9 +444,9 @@ pub async fn resolve_miss(
             PolicyOutcome::Passthru => {}
             PolicyOutcome::ChaseCname { cname, target } => {
                 let ede = Ede::new(EDE_FORGED, format!("rpz {}", z.origin));
-                return chase(rt, state, upstream, q, *cname, &target, ede, action).await;
+                return chase(rt, state, upstream, q, *cname, &target, ede, action, *zone).await;
             }
-            outcome => return policy_answer(outcome, action, default_route),
+            outcome => return policy_answer(outcome, action, default_route, *zone),
         }
     }
     let mut r = match resolve_name(rt, state, upstream, q, &q.qname, true).await {
@@ -446,7 +454,7 @@ pub async fn resolve_miss(
         Err(f) => return failure_answer(state, q, f),
     };
     let deferred = matches!(q.rpz, RpzPending::Deferred { .. });
-    let mut rpz_action = 0;
+    let (mut rpz_action, mut rpz_zone) = (0, NO_RPZ_ZONE);
     if (set.has_response_triggers || deferred) && !set.zones.is_empty() && r.decode() {
         let upto = match &q.rpz {
             RpzPending::Deferred { zone, .. } => *zone,
@@ -464,26 +472,29 @@ pub async fn resolve_miss(
             && let Some(z) = set.zones.get(zone)
         {
             let Some(action) = set.effective_action(zone, &action) else {
-                rpz_action = RPZ_DISABLED;
-                return finish(q, r, rpz_action);
+                return finish(q, r, RPZ_DISABLED, zone_index(zone));
             };
             match apply_action(&q.qname, q.qtype, q.over_tcp, z, &action) {
-                PolicyOutcome::Passthru => rpz_action = action.log_code(),
+                PolicyOutcome::Passthru => {
+                    rpz_action = action.log_code();
+                    rpz_zone = zone_index(zone);
+                }
                 PolicyOutcome::ChaseCname { cname, target } => {
                     let ede = Ede::new(EDE_FORGED, format!("rpz {}", z.origin));
-                    return chase(rt, state, upstream, q, *cname, &target, ede, &action).await;
+                    return chase(rt, state, upstream, q, *cname, &target, ede, &action, zone)
+                        .await;
                 }
-                outcome => return policy_answer(outcome, &action, r.route),
+                outcome => return policy_answer(outcome, &action, r.route, zone),
             }
         }
     }
-    finish(q, r, rpz_action)
+    finish(q, r, rpz_action, rpz_zone)
 }
 
 /// `QueryRecord.rpz_action` of a hit in a zone whose policy override is DISABLED.
 pub const RPZ_DISABLED: u8 = 7;
 
-fn finish(q: &MissQuery<'_>, mut r: Resolved, rpz_action: u8) -> MissAnswer {
+fn finish(q: &MissQuery<'_>, mut r: Resolved, rpz_action: u8, rpz_zone: u16) -> MissAnswer {
     let wire = match r.raw.take() {
         Some(bytes) => bytes,
         None => Bytes::from(build_response(
@@ -504,6 +515,7 @@ fn finish(q: &MissQuery<'_>, mut r: Resolved, rpz_action: u8) -> MissAnswer {
         route: r.route,
         security: r.security,
         rpz_action,
+        rpz_zone,
     }
 }
 
@@ -518,12 +530,14 @@ async fn chase(
     target: &Name,
     ede: Ede,
     action: &RpzAction,
+    zone: usize,
 ) -> MissAnswer {
     let mut r = match resolve_name(rt, state, upstream, q, &target.to_lowercase(), false).await {
         Ok(r) => r,
         Err(f) => {
             let mut a = failure_answer(state, q, f);
             a.rpz_action = action.log_code();
+            a.rpz_zone = zone_index(zone);
             return a;
         }
     };
@@ -541,6 +555,7 @@ async fn chase(
         route: r.route,
         security: r.security,
         rpz_action: action.log_code(),
+        rpz_zone: zone_index(zone),
     }
 }
 
@@ -691,6 +706,7 @@ fn failure_answer(state: &RecursorState, q: &MissQuery<'_>, f: Failure) -> MissA
                 route,
                 security: SecurityTag::None,
                 rpz_action: 0,
+                rpz_zone: NO_RPZ_ZONE,
             }
         }
         Failure::Invalid(route, security, ede) => MissAnswer {
@@ -702,12 +718,18 @@ fn failure_answer(state: &RecursorState, q: &MissQuery<'_>, f: Failure) -> MissA
             route,
             security,
             rpz_action: 0,
+            rpz_zone: NO_RPZ_ZONE,
         },
     }
 }
 
 /// The answer of an RPZ action that needs no resolution.
-fn policy_answer(outcome: PolicyOutcome, action: &RpzAction, route: RouteTaken) -> MissAnswer {
+fn policy_answer(
+    outcome: PolicyOutcome,
+    action: &RpzAction,
+    route: RouteTaken,
+    zone: usize,
+) -> MissAnswer {
     let (wire, ede, drop) = match outcome {
         PolicyOutcome::Respond { wire, ede } => (Bytes::from(wire), Some(ede), false),
         PolicyOutcome::Truncate { wire } => (Bytes::from(wire), None, false),
@@ -722,6 +744,7 @@ fn policy_answer(outcome: PolicyOutcome, action: &RpzAction, route: RouteTaken) 
         route,
         security: SecurityTag::None,
         rpz_action: action.log_code(),
+        rpz_zone: zone_index(zone),
     }
 }
 

@@ -125,9 +125,15 @@ pub enum RewriteAnswer {
 
 pub enum Verdict<'a> {
     Pass,
-    Allowed,
+    Allowed(ListHit),
     Blocked(ListHit),
-    Rewrite(&'a RewriteAnswer),
+    /// `offset`: where the matched rule's key starts in the wire name (0 for an exact rule, the
+    /// base of a `*.base` rule); `wildcard`: the rule is `*.base`.
+    Rewrite {
+        answer: &'a RewriteAnswer,
+        offset: u8,
+        wildcard: bool,
+    },
 }
 
 /// Exact and `*.base` rewrites keyed by lowercase wire name (wildcards by base).
@@ -139,13 +145,14 @@ pub struct RewriteTable {
 
 impl RewriteTable {
     /// The exact rewrite for `wire_name`, else the wildcard with the longest
-    /// base that is a strict suffix of it.
-    pub fn lookup(&self, wire_name: &[u8]) -> Option<&RewriteAnswer> {
+    /// base that is a strict suffix of it; with the matched key's wire offset and whether it is a
+    /// wildcard.
+    pub fn lookup(&self, wire_name: &[u8]) -> Option<(&RewriteAnswer, u8, bool)> {
         if self.exact.is_empty() && self.wildcard.is_empty() {
             return None;
         }
         if let Some(a) = self.exact.get(wire_name) {
-            return Some(a);
+            return Some((a, 0, false));
         }
         if self.wildcard.is_empty() {
             return None;
@@ -161,7 +168,8 @@ impl RewriteTable {
                 return None;
             }
             if let Some(a) = self.wildcard.get(&wire_name[pos..]) {
-                return Some(a);
+                // Wire names are at most 255 octets.
+                return Some((a, pos as u8, true));
             }
         }
     }
@@ -223,12 +231,16 @@ impl EffectivePolicy {
         wire_name: &[u8],
         decide: impl FnOnce(&[u8]) -> FilterDecision,
     ) -> Verdict<'_> {
-        if let Some(r) = self.rewrites.lookup(wire_name) {
-            return Verdict::Rewrite(r);
+        if let Some((answer, offset, wildcard)) = self.rewrites.lookup(wire_name) {
+            return Verdict::Rewrite {
+                answer,
+                offset,
+                wildcard,
+            };
         }
         match decide(wire_name) {
             FilterDecision::Blocked(hit) => Verdict::Blocked(hit),
-            FilterDecision::Allowed => Verdict::Allowed,
+            FilterDecision::Allowed(hit) => Verdict::Allowed(hit),
             FilterDecision::None => Verdict::Pass,
         }
     }
@@ -674,7 +686,7 @@ mod policy_tests {
         assert!(matches!(p.check(&ads), Verdict::Blocked(_)));
         assert!(matches!(
             p.check(&wire("ok.ads.example.test")),
-            Verdict::Allowed
+            Verdict::Allowed(_)
         ));
         let (p, _) = t.select("10.1.3.4".parse::<IpAddr>().unwrap());
         assert_eq!(p.group_id(), "narrow");
@@ -696,7 +708,10 @@ mod policy_tests {
         let t = table(&snapshot()).unwrap();
         let (global, _) = t.select("192.0.2.1".parse::<IpAddr>().unwrap());
         match global.check(&wire("nas.home.test")) {
-            Verdict::Rewrite(RewriteAnswer::Addrs { a, aaaa }) => {
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Addrs { a, aaaa },
+                ..
+            } => {
                 assert_eq!(a.len(), 1);
                 assert_eq!(aaaa.len(), 1);
             }
@@ -704,34 +719,71 @@ mod policy_tests {
         }
         assert!(matches!(
             global.check(&wire("x.lab.home.test")),
-            Verdict::Rewrite(RewriteAnswer::Cname { .. })
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Cname { .. },
+                ..
+            }
         ));
         assert!(matches!(
             global.check(&wire("a.b.lab.home.test")),
-            Verdict::Rewrite(RewriteAnswer::Cname { .. })
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Cname { .. },
+                ..
+            }
         ));
         assert!(matches!(
             global.check(&wire("special.lab.home.test")),
-            Verdict::Rewrite(RewriteAnswer::Addrs { .. })
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Addrs { .. },
+                ..
+            }
         ));
         assert!(matches!(
             global.check(&wire("printer.home.test")),
-            Verdict::Rewrite(RewriteAnswer::Addrs { .. })
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Addrs { .. },
+                ..
+            }
         ));
         assert!(
             matches!(
                 global.check(&wire("lab.home.test")),
-                Verdict::Rewrite(RewriteAnswer::Addrs { .. })
+                Verdict::Rewrite {
+                    answer: RewriteAnswer::Addrs { .. },
+                    ..
+                }
             ),
             "*.home.test covers lab.home.test"
         );
+        assert!(
+            matches!(
+                global.check(&wire("a.b.lab.home.test")),
+                Verdict::Rewrite {
+                    offset: 4,
+                    wildcard: true,
+                    ..
+                }
+            ),
+            "the wildcard base lab.home.test starts after \\x01a\\x01b"
+        );
+        assert!(matches!(
+            global.check(&wire("special.lab.home.test")),
+            Verdict::Rewrite {
+                offset: 0,
+                wildcard: false,
+                ..
+            }
+        ));
         assert!(
             matches!(global.check(&wire("home.test")), Verdict::Pass),
             "wildcard never matches its base"
         );
         let (wide, _) = t.select("10.2.3.4".parse::<IpAddr>().unwrap());
         match wide.check(&wire("nas.home.test")) {
-            Verdict::Rewrite(RewriteAnswer::Addrs { a, .. }) => {
+            Verdict::Rewrite {
+                answer: RewriteAnswer::Addrs { a, .. },
+                ..
+            } => {
                 assert_eq!(a[0].0.to_string(), "10.9.9.9")
             }
             _ => panic!("expected group rewrite"),

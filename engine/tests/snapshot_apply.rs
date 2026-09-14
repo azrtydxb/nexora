@@ -322,11 +322,14 @@ fn filter_subdomains_allowlist_invalid_lines_and_cloaking() {
         f.decide(&w("x.y.ads.example")),
         FilterDecision::Blocked(_)
     ));
-    assert_eq!(f.decide(&w("good.ads.example")), FilterDecision::Allowed);
-    assert_eq!(
+    assert!(matches!(
+        f.decide(&w("good.ads.example")),
+        FilterDecision::Allowed(_)
+    ));
+    assert!(matches!(
         f.decide(&w("sub.good.ads.example")),
-        FilterDecision::Allowed
-    );
+        FilterDecision::Allowed(_)
+    ));
     assert_eq!(f.decide(&w("example")), FilterDecision::None);
     assert_eq!(f.decide(&w("notads.example")), FilterDecision::None);
     let target = NameKey::from_wire_lowercase(&w("cdn.tracker.example.net")).unwrap();
