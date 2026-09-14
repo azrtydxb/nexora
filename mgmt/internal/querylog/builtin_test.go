@@ -2,6 +2,7 @@ package querylog_test
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -51,7 +52,7 @@ func TestBuiltinCategoryAttribution(t *testing.T) {
 	attrs := &req.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Attributes
 	*attrs = append(*attrs, str("nexora.filter.list_id", "0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1"), str("nexora.filter.category", "gambling"))
 	b.Ingest("e1", req)
-	page, err := b.Search(context.Background(), querylog.Query{Category: "gambling", Limit: 10})
+	page, err := b.Search(context.Background(), querylog.Query{Categories: []string{"gambling"}, Limit: 10})
 	if err != nil || len(page.Records) != 1 || page.Records[0].Name != "casino.example." ||
 		page.Records[0].ListID != "0b6c3e2a-2d57-4a43-9a52-8f0e8bb3c1d1" || page.Records[0].Category != "gambling" {
 		t.Fatalf("category filter: %+v %v", page, err)
@@ -60,8 +61,53 @@ func TestBuiltinCategoryAttribution(t *testing.T) {
 	if len(all.Records) != 2 {
 		t.Fatalf("positive path: %d records", len(all.Records))
 	}
-	none, _ := b.Search(context.Background(), querylog.Query{Category: "adult", Limit: 10})
+	none, _ := b.Search(context.Background(), querylog.Query{Categories: []string{"adult"}, Limit: 10})
 	if len(none.Records) != 0 {
 		t.Fatalf("other category matched: %+v", none)
+	}
+}
+
+func TestBuiltinPartialNamesAndMultiValues(t *testing.T) {
+	b := querylog.NewBuiltin(10)
+	req := request("www.you-1.tube.test.", "you-1.test.", "x*y-1.test.", "other.test.")
+	lr := req.ResourceLogs[0].ScopeLogs[0].LogRecords
+	lr[1].Attributes[3] = str("dns.response.code", "NXDOMAIN")
+	lr[2].Attributes[2] = str("dns.question.type", "AAAA")
+	lr[0].Attributes = append(lr[0].Attributes, str("nexora.filter.source", "allowlist"), str("nexora.filter.rule", "tube.test"), str("nexora.policy.group", "g1"))
+	b.Ingest("e1", req)
+	names := func(q querylog.Query) []string {
+		q.Limit = 10
+		p, err := b.Search(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range p.Records {
+			out = append(out, r.Name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if got := names(querylog.Query{Name: "YOU-1."}); len(got) != 2 {
+		t.Fatalf("partial, case-insensitive, trailing dot: %v", got)
+	}
+	if got := names(querylog.Query{Name: "x*y"}); len(got) != 1 || got[0] != "x*y-1.test." {
+		t.Fatalf("literal *: %v", got)
+	}
+	if got := names(querylog.Query{Name: "x?y"}); len(got) != 0 {
+		t.Fatalf("? is literal: %v", got)
+	}
+	if got := names(querylog.Query{RCodes: []string{"NXDOMAIN", "NOERROR"}, QTypes: []string{"AAAA"}}); len(got) != 1 || got[0] != "x*y-1.test." {
+		t.Fatalf("OR within, AND across: %v", got)
+	}
+	if got := names(querylog.Query{Sources: []string{"allowlist"}, PolicyGroups: []string{"g1"}}); len(got) != 1 {
+		t.Fatalf("source and policy group: %v", got)
+	}
+	if got := names(querylog.Query{PolicyGroups: []string{"global"}}); len(got) != 3 {
+		t.Fatalf("global policy group: %v", got)
+	}
+	p, _ := b.Search(context.Background(), querylog.Query{Sources: []string{"allowlist"}, Limit: 1})
+	if p.Records[0].Rule != "tube.test" || p.Records[0].PolicyGroupID != "g1" {
+		t.Fatalf("reason fields: %+v", p.Records[0])
 	}
 }

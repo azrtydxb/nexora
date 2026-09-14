@@ -51,10 +51,17 @@ func TestUT1ArchiveMember(t *testing.T) {
 }
 
 type attributedRecord struct {
-	Name     string `json:"name"`
-	Filter   string `json:"filter"`
-	ListID   string `json:"list_id"`
-	Category string `json:"category"`
+	Name            string `json:"name"`
+	Filter          string `json:"filter"`
+	ListID          string `json:"list_id"`
+	Category        string `json:"category"`
+	Source          string `json:"source"`
+	ListName        string `json:"list_name"`
+	Rule            string `json:"rule"`
+	PolicyGroupID   string `json:"policy_group_id"`
+	PolicyGroupName string `json:"policy_group_name"`
+	RPZZoneName     string `json:"rpz_zone_name"`
+	RewriteAnswer   string `json:"rewrite_answer"`
 }
 
 func TestQueryLogCategoryAttribution(t *testing.T) {
@@ -72,7 +79,8 @@ func TestQueryLogCategoryAttribution(t *testing.T) {
 			casino := strings.TrimSuffix(harness.UniqueName("casino"), ".")
 			both := strings.TrimSuffix(harness.UniqueName("both"), ".")
 			clean := harness.UniqueName("clean")
-			s.lists.SetList(t, "hagezi-gambling", casino+"\n"+both+"\n")
+			// casino.attr.test is the suffix the allowlist checks carve exceptions from.
+			s.lists.SetList(t, "hagezi-gambling", casino+"\n"+both+"\ncasino.attr.test\n")
 			s.lists.SetList(t, "hagezi-pro", both+"\n")
 			if code, reason := s.api.SetFilterCategory("gambling", true, nil, false); code != http.StatusOK {
 				t.Fatalf("enable gambling -> %d %s", code, reason)
@@ -140,6 +148,82 @@ func TestQueryLogCategoryAttribution(t *testing.T) {
 			if _, err := find("category=ads-tracking&name="+url.QueryEscape(casino), casino); err == nil {
 				t.Fatal("the category filter returned a record of another category")
 			}
+
+			// Decision reasons (the engine attribution of M6 Task 12). Each check first asserts the
+			// DNS answer, then the record the query produced.
+			record := func(query, name string) attributedRecord {
+				t.Helper()
+				var r attributedRecord
+				harness.Eventually(t, 60*time.Second, func() error {
+					var err error
+					r, err = find(query+"name="+url.QueryEscape(strings.TrimSuffix(name, ".")), name)
+					return err
+				})
+				return r
+			}
+			if r := record("category=gambling&", casino); r.Source != "category" || r.ListName != sourceName(t, s.api, "gambling", "hagezi-gambling") {
+				t.Fatalf("category reason: %+v", r)
+			}
+
+			s.lists.SetList(t, "custom-attr", "custom.attr.test\n")
+			var fl struct {
+				ID string `json:"id"`
+			}
+			s.api.Must(http.MethodPost, "/filter-lists", map[string]any{"name": "custom-attr", "kind": "block", "url": s.lists.URL("custom-attr"), "refresh_interval_seconds": 3600, "enabled": true}, &fl, http.StatusCreated)
+			s.api.Must(http.MethodPost, "/filter-lists/"+fl.ID+"/refresh", nil, nil, http.StatusOK)
+			var allow struct {
+				Revision int64 `json:"revision"`
+			}
+			s.api.Must(http.MethodGet, "/allowlist", nil, &allow, http.StatusOK)
+			s.api.Must(http.MethodPut, "/allowlist", map[string]any{"domains": []string{"allow.casino.attr.test"}, "revision": allow.Revision}, nil, http.StatusOK)
+			var group struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}
+			s.api.Must(http.MethodPost, "/policy-groups", map[string]any{"name": "attr-group", "cidrs": []string{"127.0.0.2/32"}, "category_keys": []string{"gambling"}, "allowlist": []string{"grp.casino.attr.test"}}, &group, http.StatusCreated)
+			s.api.Must(http.MethodPost, "/rewrites", map[string]any{"group_id": nil, "name": "rw.attr.test", "type": "A", "value": "192.0.2.55"}, nil, http.StatusCreated)
+			waitLatestApplied(t, s.api, s.node)
+
+			s.want(t, "127.0.0.1", "www.custom.attr.test.", "0.0.0.0")
+			if r := record("", "www.custom.attr.test."); r.Source != "blocklist" || r.ListName != "custom-attr" || r.Rule != "custom.attr.test" {
+				t.Fatalf("custom list reason: %+v", r)
+			}
+			s.want(t, "127.0.0.1", "www.casino.attr.test.", "0.0.0.0")
+			s.want(t, "127.0.0.1", "allow.casino.attr.test.", unblocked)
+			if r := record("", "allow.casino.attr.test."); r.Source != "allowlist" || r.Rule != "allow.casino.attr.test" || r.PolicyGroupName != "" {
+				t.Fatalf("global allowlist reason: %+v", r)
+			}
+			s.want(t, "127.0.0.2", "www.casino.attr.test.", "0.0.0.0")
+			s.want(t, "127.0.0.2", "grp.casino.attr.test.", unblocked)
+			if r := record("", "grp.casino.attr.test."); r.Source != "allowlist" || r.PolicyGroupName != group.Name || r.PolicyGroupID != group.ID {
+				t.Fatalf("group allowlist reason: %+v", r)
+			}
+			s.want(t, "127.0.0.1", "rw.attr.test.", "192.0.2.55")
+			if r := record("", "rw.attr.test."); r.Source != "rewrite" || r.Rule != "rw.attr.test" || r.RewriteAnswer != "A 192.0.2.55" {
+				t.Fatalf("rewrite reason: %+v", r)
+			}
 		})
 	}
+}
+
+// sourceName is the catalog display name of a category source, as the API lists it.
+func sourceName(t *testing.T, api *harness.API, category, source string) string {
+	t.Helper()
+	var all []struct {
+		Key     string `json:"key"`
+		Sources []struct {
+			Key  string `json:"key"`
+			Name string `json:"name"`
+		} `json:"sources"`
+	}
+	api.Must(http.MethodGet, "/filter-categories", nil, &all, http.StatusOK)
+	for _, c := range all {
+		for _, src := range c.Sources {
+			if c.Key == category && src.Key == source {
+				return src.Name
+			}
+		}
+	}
+	t.Fatalf("source %s/%s missing", category, source)
+	return ""
 }

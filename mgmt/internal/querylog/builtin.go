@@ -2,6 +2,7 @@ package querylog
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,6 +114,22 @@ func recordFromAttributes(attrs []*commonpb.KeyValue) Record {
 			r.Transport = v.GetStringValue()
 		case "nexora.duration_us":
 			r.DurationUS = v.GetIntValue()
+		case "nexora.filter.source":
+			r.Source = v.GetStringValue()
+		case "nexora.filter.rule":
+			r.Rule = v.GetStringValue()
+		case "nexora.policy.group":
+			r.PolicyGroupID = v.GetStringValue()
+		case "nexora.rpz_zone":
+			r.RPZZoneID = v.GetStringValue()
+		case "nexora.rpz":
+			if a := v.GetStringValue(); a != "none" {
+				r.RPZAction = a
+			}
+		case "nexora.acl.refused":
+			r.ACLRefused = v.GetStringValue()
+		case "nexora.upstream_raced":
+			r.UpstreamsRaced = v.GetIntValue()
 		}
 	}
 	return r
@@ -134,7 +151,13 @@ func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
 		}
 		before = c
 	}
-	name := strings.ToLower(q.Name)
+	name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
+	groups := slices.Clone(q.PolicyGroups)
+	for i, g := range groups {
+		if g == GlobalPolicyGroup {
+			groups[i] = ""
+		}
+	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -146,7 +169,7 @@ func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
 		if before != 0 && e.seq >= before {
 			continue
 		}
-		if !matches(e.rec, q, name) {
+		if !matches(e.rec, q, name, groups) {
 			continue
 		}
 		if len(page.Records) == limit {
@@ -159,14 +182,15 @@ func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
 	return page, nil
 }
 
-func matches(r Record, q Query, lowerName string) bool {
+// matches reports whether r passes q; lowerName is the normalised name fragment and groups the
+// policy group ids with "global" mapped to "".
+func matches(r Record, q Query, lowerName string, groups []string) bool {
+	in := func(v string, set []string) bool { return len(set) == 0 || slices.Contains(set, v) }
 	return (q.From.IsZero() || !r.Time.Before(q.From)) &&
 		(q.To.IsZero() || !r.Time.After(q.To)) &&
 		(q.Client == "" || r.Client == q.Client) &&
 		(lowerName == "" || strings.Contains(strings.ToLower(r.Name), lowerName)) &&
-		(q.QType == "" || r.QType == q.QType) &&
-		(q.RCode == "" || r.RCode == q.RCode) &&
-		(q.Cache == "" || r.Cache == q.Cache) &&
-		(q.Filter == "" || r.Filter == q.Filter) &&
-		(q.Category == "" || r.Category == q.Category)
+		in(r.QType, q.QTypes) && in(r.RCode, q.RCodes) && in(r.Cache, q.Caches) &&
+		in(r.Filter, q.Filters) && in(r.Category, q.Categories) && in(r.Source, q.Sources) &&
+		in(r.ListID, q.ListIDs) && in(r.PolicyGroupID, groups) && in(r.EngineID, q.EngineIDs)
 }

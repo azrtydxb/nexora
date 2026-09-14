@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -139,6 +140,67 @@ func TestQueryLogBackends(t *testing.T) {
 				"NEXORA_E2E_QUERY_NAME":       strings.TrimSuffix(name, "."),
 				"NEXORA_E2E_QUERY_AT":         strconv.FormatInt(queryAt.UnixMilli(), 10),
 				"NEXORA_E2E_QUERYLOG_BACKEND": backend,
+			})
+			t.Run("partial-name", func(t *testing.T) {
+				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10)
+				for _, q := range []string{"www.you-" + n + ".tube.test.", "you-" + n + ".test.", "x*y-" + n + ".test."} {
+					harness.MustQuery(t, eng.DNS, q, dns.TypeA, harness.QueryOpts{})
+				}
+				search := func(frag string) []string {
+					var page struct {
+						Records []struct {
+							Name string `json:"name"`
+						} `json:"records"`
+					}
+					api.Must("GET", "/query-log?limit=50&name="+url.QueryEscape(frag), nil, &page, 200)
+					var out []string
+					for _, r := range page.Records {
+						out = append(out, r.Name)
+					}
+					sort.Strings(out)
+					return out
+				}
+				harness.EventuallyTrue(t, 30*time.Second, func() bool { return len(search("you-"+n)) == 2 }, "you-<n> finds both names")
+				if got := search("TUBE.TEST"); len(got) == 0 || got[len(got)-1] != "www.you-"+n+".tube.test." {
+					t.Fatalf("case-insensitive: %v", got)
+				}
+				if got := search("x*y-" + n); len(got) != 1 {
+					t.Fatalf("literal *: %v", got)
+				}
+				if got := search("x?y-" + n); len(got) != 0 {
+					t.Fatalf("? must be literal: %v", got)
+				}
+				if got := search("absent-" + n); len(got) != 0 {
+					t.Fatalf("negative: %v", got)
+				}
+			})
+			t.Run("multi-value", func(t *testing.T) {
+				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10)
+				harness.MustQuery(t, eng.DNS, "mv-a-"+n+".test.", dns.TypeA, harness.QueryOpts{})
+				harness.MustQuery(t, eng.DNS, "mv-aaaa-"+n+".test.", dns.TypeAAAA, harness.QueryOpts{})
+				harness.MustQuery(t, eng.DNS, "mv-mx-"+n+".test.", dns.TypeMX, harness.QueryOpts{})
+				count := func(query string) int {
+					var page struct {
+						Records []struct {
+							Name string `json:"name"`
+						} `json:"records"`
+					}
+					api.Must("GET", "/query-log?limit=50&name=mv-&"+query, nil, &page, 200)
+					c := 0
+					for _, r := range page.Records {
+						if strings.Contains(r.Name, n) {
+							c++
+						}
+					}
+					return c
+				}
+				harness.EventuallyTrue(t, 30*time.Second, func() bool { return count("qtype=A&qtype=AAAA") == 2 }, "OR within qtype")
+				if c := count("qtype=A&qtype=AAAA&rcode=NXDOMAIN"); c != 0 {
+					t.Fatalf("AND across fields: %d", c)
+				}
+				if c := count("qtype=MX"); c != 1 {
+					t.Fatalf("single value: %d", c)
+				}
 			})
 		})
 	}

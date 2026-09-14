@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -263,32 +264,74 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	if err != nil {
 		return nil, err
 	}
-	// Single-value filtering until the querylog backends take the lists (M6 Task 5).
-	q := querylog.Query{Client: deref(p.Client), Name: deref(p.Name), QType: firstParam(p.Qtype), RCode: firstParam(p.Rcode),
-		Cache: firstParam(p.Cache), Filter: firstParam(p.Filter), Category: firstParam(p.Category), Limit: limit, Cursor: deref(p.Cursor)}
+	q := querylog.Query{Client: deref(p.Client), Name: deref(p.Name), Limit: limit, Cursor: deref(p.Cursor)}
 	if p.From != nil {
 		q.From = *p.From
 	}
 	if p.To != nil {
 		q.To = *p.To
 	}
+	for _, f := range []struct {
+		name  string
+		dst   *[]string
+		src   []string
+		valid func(string) bool
+	}{
+		{"qtype", &q.QTypes, strs(p.Qtype), nil},
+		{"rcode", &q.RCodes, strs(p.Rcode), nil},
+		{"cache", &q.Caches, strs(p.Cache), func(v string) bool { return SearchQueryLogParamsCache(v).Valid() }},
+		{"filter", &q.Filters, strs(p.Filter), func(v string) bool { return SearchQueryLogParamsFilter(v).Valid() }},
+		{"category", &q.Categories, strs(p.Category), nil},
+		{"source", &q.Sources, strs(p.Source), func(v string) bool { return SearchQueryLogParamsSource(v).Valid() }},
+		{"list_id", &q.ListIDs, strs(p.ListId), nil},
+		{"policy_group", &q.PolicyGroups, strs(p.PolicyGroup), nil},
+		{"engine_id", &q.EngineIDs, strs(p.EngineId), nil},
+	} {
+		// The cap applies to the values as sent, before duplicates are dropped.
+		if len(f.src) > maxQueryLogValues {
+			return nil, invalid("at most %d values per parameter", maxQueryLogValues)
+		}
+		f.src = paramValues(f.src)
+		for _, v := range f.src {
+			if f.valid != nil && !f.valid(v) {
+				return nil, invalid("unknown %s value %q", f.name, v)
+			}
+		}
+		*f.dst = f.src
+	}
 	page, err := h.d.QueryLog.Search(ctx, q)
 	if err != nil {
 		return nil, err
 	}
-	out := QueryLogPage{Backend: h.d.QueryLog.Name(), NextCursor: page.NextCursor, Records: make([]QueryLogRecord, len(page.Records))}
-	for i, r := range page.Records {
-		out.Records[i] = QueryLogRecord{Time: r.Time, Client: r.Client, Name: r.Name, Qtype: r.QType, Rcode: r.RCode,
-			Cache: QueryLogRecordCache(r.Cache), Filter: QueryLogRecordFilter(r.Filter), Upstream: r.Upstream,
-			Transport: r.Transport, EngineId: r.EngineID, DurationUs: r.DurationUS, ListId: r.ListID, Category: r.Category}
+	records, err := resolveRecordNames(ctx, h.d.Store.Pool, h.d.Catalog, page.Records)
+	if err != nil {
+		return nil, err
 	}
-	return SearchQueryLog200JSONResponse(out), nil
+	return SearchQueryLog200JSONResponse(QueryLogPage{Backend: h.d.QueryLog.Name(), NextCursor: page.NextCursor, Records: records}), nil
 }
 
-// firstParam is the first value of a repeated query parameter, trimmed; "" when absent.
-func firstParam[T ~string](v *[]T) string {
-	if v == nil || len(*v) == 0 {
-		return ""
+// maxQueryLogValues caps the values of one repeated query-log parameter.
+const maxQueryLogValues = 32
+
+// strs is a repeated query parameter as strings; nil when absent.
+func strs[T ~string](v *[]T) []string {
+	if v == nil {
+		return nil
 	}
-	return strings.TrimSpace(string((*v)[0]))
+	out := make([]string, len(*v))
+	for i, s := range *v {
+		out[i] = string(s)
+	}
+	return out
+}
+
+// paramValues trims values and drops empty ones and duplicates.
+func paramValues(values []string) []string {
+	var out []string
+	for _, raw := range values {
+		if s := strings.TrimSpace(raw); s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }

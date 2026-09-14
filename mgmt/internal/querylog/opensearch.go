@@ -75,12 +75,20 @@ type osSource struct {
 		Transport    string `json:"nexora.transport"`
 		EngineID     string `json:"nexora.engine.id"`
 		DurationUS   int64  `json:"nexora.duration_us"`
+		Source       string `json:"nexora.filter.source"`
+		Rule         string `json:"nexora.filter.rule"`
+		PolicyGroup  string `json:"nexora.policy.group"`
+		RPZZone      string `json:"nexora.rpz_zone"`
+		RPZAction    string `json:"nexora.rpz"`
+		ACLRefused   string `json:"nexora.acl.refused"`
+		Raced        int64  `json:"nexora.upstream_raced"`
 	} `json:"attributes"`
 }
 
 // Search implements Backend. Exact filters use the `.keyword` sub-fields of OpenSearch's default
-// dynamic mapping (the analysed text fields lowercase values such as NOERROR); the name filter is
-// a phrase match. Transport failures and HTTP 5xx answers are ErrBackendUnavailable.
+// dynamic mapping (the analysed text fields lowercase values such as NOERROR); each multi-value
+// filter is one `terms` query and the name filter is a case-insensitive wildcard. Transport
+// failures and HTTP 5xx answers are ErrBackendUnavailable.
 func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 	limit := q.Limit
 	if limit <= 0 {
@@ -99,26 +107,48 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 		}
 		filters = append(filters, map[string]any{"range": map[string]any{"@timestamp": r}})
 	}
-	if q.Name != "" {
-		filters = append(filters, map[string]any{"match_phrase": map[string]any{"attributes.dns.question.name": q.Name}})
+	if name := strings.TrimSuffix(q.Name, "."); name != "" {
+		// debt: leading-wildcard on .keyword scans every term of the day's index; revisit with an n-gram sub-field when a daily index passes 50M documents or searches exceed the 5 s timeout on kw
+		filters = append(filters, map[string]any{"wildcard": map[string]any{"attributes.dns.question.name.keyword": map[string]any{
+			"value": "*" + EscapeWildcard(name) + "*", "case_insensitive": true,
+		}}})
 	}
-	for field, v := range map[string]string{
-		"client.address": q.Client, "dns.question.type": q.QType, "dns.response.code": q.RCode,
-		"nexora.cache": q.Cache, "nexora.filter.category": q.Category,
+	if q.Client != "" {
+		filters = append(filters, map[string]any{"term": map[string]any{"attributes.client.address.keyword": q.Client}})
+	}
+	for _, f := range []struct {
+		field  string
+		values []string
+	}{
+		{"dns.question.type", q.QTypes}, {"dns.response.code", q.RCodes}, {"nexora.cache", q.Caches},
+		{"nexora.filter.category", q.Categories}, {"nexora.filter.source", q.Sources},
+		{"nexora.filter.list_id", q.ListIDs}, {"nexora.engine.id", q.EngineIDs},
 	} {
-		if v != "" {
-			filters = append(filters, map[string]any{"term": map[string]any{"attributes." + field + ".keyword": v}})
+		if len(f.values) > 0 {
+			filters = append(filters, terms(f.field, f.values))
 		}
 	}
-	if q.Filter != "" {
+	if len(q.Filters) > 0 {
 		// nexora-querylog-v2 indices carry nexora.filter.result; older ones nexora.filter.
-		filters = append(filters, map[string]any{"bool": map[string]any{
-			"should": []map[string]any{
-				{"term": map[string]any{"attributes.nexora.filter.keyword": q.Filter}},
-				{"term": map[string]any{"attributes.nexora.filter.result.keyword": q.Filter}},
-			},
-			"minimum_should_match": 1,
-		}})
+		filters = append(filters, should(terms("nexora.filter", q.Filters), terms("nexora.filter.result", q.Filters)))
+	}
+	if len(q.PolicyGroups) > 0 {
+		var ids []string
+		var alternatives []map[string]any
+		for _, g := range q.PolicyGroups {
+			if g == GlobalPolicyGroup {
+				// Global clients carry no attribute or an empty one.
+				alternatives = append(alternatives,
+					map[string]any{"bool": map[string]any{"must_not": map[string]any{"exists": map[string]any{"field": "attributes.nexora.policy.group"}}}},
+					map[string]any{"term": map[string]any{"attributes.nexora.policy.group.keyword": ""}})
+			} else {
+				ids = append(ids, g)
+			}
+		}
+		if len(ids) > 0 {
+			alternatives = append(alternatives, terms("nexora.policy.group", ids))
+		}
+		filters = append(filters, should(alternatives...))
 	}
 	body := map[string]any{
 		"size":             limit + 1,
@@ -168,11 +198,27 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 		if filter == "" {
 			filter = a.FilterResult
 		}
+		rpzAction := a.RPZAction
+		if rpzAction == "none" {
+			rpzAction = ""
+		}
 		page.Records = append(page.Records, Record{
 			Time: src.Timestamp, Client: a.Client, Name: a.Name, QType: a.QType, RCode: a.RCode, Cache: a.Cache,
 			Filter: filter, Upstream: a.Upstream, Transport: a.Transport, EngineID: a.EngineID,
 			ListID: a.ListID, Category: a.Category, DurationUS: a.DurationUS,
+			Source: a.Source, Rule: a.Rule, PolicyGroupID: a.PolicyGroup, RPZZoneID: a.RPZZone, RPZAction: rpzAction,
+			ACLRefused: a.ACLRefused, UpstreamsRaced: a.Raced,
 		})
 	}
 	return page, nil
+}
+
+// terms matches documents whose attribute field equals one of values.
+func terms(field string, values []string) map[string]any {
+	return map[string]any{"terms": map[string]any{"attributes." + field + ".keyword": values}}
+}
+
+// should matches documents that match at least one of the queries.
+func should(queries ...map[string]any) map[string]any {
+	return map[string]any{"bool": map[string]any{"should": queries, "minimum_should_match": 1}}
 }

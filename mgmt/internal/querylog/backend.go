@@ -4,6 +4,7 @@ package querylog
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -13,21 +14,37 @@ var ErrBackendUnavailable = errors.New("query log backend unavailable")
 // ErrInvalidCursor is returned for a cursor the backend did not issue.
 var ErrInvalidCursor = errors.New("invalid query log cursor")
 
-// Query is a query-log search. Empty strings and zero times do not filter.
+// Query is a query-log search. Empty strings, empty slices and zero times do not filter. Values
+// within one slice are alternatives (OR); different fields all apply (AND). Name is a
+// case-insensitive substring of the query name with one trailing dot ignored, and PolicyGroups
+// value "global" matches records without a policy group.
 type Query struct {
-	From, To                                            time.Time
-	Client, Name, QType, RCode, Cache, Filter, Category string
-	Limit                                               int
-	Cursor                                              string
+	From, To                                                                               time.Time
+	Client, Name                                                                           string
+	QTypes, RCodes, Caches, Filters, Categories, Sources, ListIDs, PolicyGroups, EngineIDs []string
+	Limit                                                                                  int
+	Cursor                                                                                 string
 }
+
+// GlobalPolicyGroup is the PolicyGroups value that matches records without a policy group.
+const GlobalPolicyGroup = "global"
 
 // Record is one logged DNS query.
 type Record struct {
 	Time                                                                     time.Time
 	Client, Name, QType, RCode, Cache, Filter, Upstream, Transport, EngineID string
-	// ListID and Category attribute a blocked query to the matching list; empty otherwise.
+	// ListID and Category attribute a filter decision to the matching list; empty otherwise.
 	ListID, Category string
-	DurationUS       int64
+	// Source, Rule, PolicyGroupID, RPZZoneID, RPZAction and ACLRefused explain the decision; empty
+	// when the engine sent no attribution.
+	Source, Rule, PolicyGroupID, RPZZoneID, RPZAction, ACLRefused string
+	UpstreamsRaced                                                int64
+	DurationUS                                                    int64
+}
+
+// EscapeWildcard escapes \, * and ? for an OpenSearch wildcard value.
+func EscapeWildcard(s string) string {
+	return strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?").Replace(s)
 }
 
 // Page is one page of search results; NextCursor is empty on the last page.

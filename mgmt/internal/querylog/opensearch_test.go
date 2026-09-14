@@ -56,13 +56,44 @@ func TestOpenSearchCategoryAndFilterGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := os.Search(context.Background(), querylog.Query{Category: "gambling", Filter: "blocked", Limit: 5})
+	page, err := os.Search(context.Background(), querylog.Query{Categories: []string{"gambling"}, Filters: []string{"blocked"}, Limit: 5})
 	if err != nil || len(page.Records) != 1 || page.Records[0].Filter != "blocked" || page.Records[0].Category != "gambling" || page.Records[0].ListID != "l1" {
 		t.Fatalf("v2 document: %+v %v", page, err)
 	}
-	for _, want := range []string{`"attributes.nexora.filter.category.keyword":"gambling"`, `"attributes.nexora.filter.result.keyword":"blocked"`, `"attributes.nexora.filter.keyword":"blocked"`} {
+	for _, want := range []string{`"attributes.nexora.filter.category.keyword":["gambling"]`, `"attributes.nexora.filter.result.keyword":["blocked"]`, `"attributes.nexora.filter.keyword":["blocked"]`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("query lacks %s: %s", want, body)
 		}
+	}
+}
+
+func TestOpenSearchNameWildcardEscaped(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"hits":{"hits":[]}}`)
+	}))
+	defer srv.Close()
+	os, err := querylog.NewOpenSearch(config.OpenSearchConfig{URL: srv.URL, Index: "nexora-querylog-*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Search(context.Background(), querylog.Query{Name: "A*b?c\\.", Limit: 5,
+		QTypes: []string{"A", "AAAA"}, Sources: []string{"allowlist"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"wildcard":{"attributes.dns.question.name.keyword":{"case_insensitive":true,"value":"*A\\*b\\?c\\\\*"}}`,
+		`"terms":{"attributes.dns.question.type.keyword":["A","AAAA"]}`,
+		`"terms":{"attributes.nexora.filter.source.keyword":["allowlist"]}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body lacks %s:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "match_phrase") {
+		t.Fatalf("name still uses match_phrase: %s", body)
 	}
 }
