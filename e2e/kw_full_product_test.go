@@ -164,6 +164,14 @@ func TestKwFullProduct(t *testing.T) {
 			"rollout_strategy": "canary", "canary_count": 1, "health_window_seconds": 20, "ack_timeout_seconds": 60,
 			"max_servfail_ratio": 0.05, "min_health_queries": 20}, nil, http.StatusOK)
 		first := api.EngineByNode("edge-b-worker-24")
+		// The canary label is owned by this test: remove it afterwards, keeping any other labels.
+		restored := map[string]string{}
+		for k, v := range first.Labels {
+			if k != "nexora.io/canary" {
+				restored[k] = v
+			}
+		}
+		t.Cleanup(func() { api.PatchEngine(first.NodeName, map[string]any{"labels": restored}) })
 		api.PatchEngine(first.NodeName, map[string]any{"labels": map[string]string{"nexora.io/canary": "true"}})
 		stop := make(chan struct{})
 		var wg sync.WaitGroup
