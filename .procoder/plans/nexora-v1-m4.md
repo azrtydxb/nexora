@@ -1,6 +1,6 @@
 # nexora-v1-m4 — implementation plan
 
-Status: draft
+Status: implemented (2026-09-14)
 Spec: .procoder/specs/nexora-v1.md
 
 ## Goal
