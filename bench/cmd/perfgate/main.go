@@ -1,5 +1,6 @@
 // Command perfgate runs Nexora's dnsperf performance gate: a relative A/B regression check on
-// every pull request and an absolute throughput/latency check on the reference box.
+// every pull request and an absolute throughput/latency check on the reference box; filter-compare
+// is the pull request's relative filter index decision-time check over filter_bench results.
 package main
 
 import (
@@ -35,7 +36,8 @@ const usage = `usage:
   perfgate serve --engine PATH --fixture PATH --listen ADDR --workers N
   perfgate load --target ADDR --names N --seconds S --clients C --threads T --out FILE
   perfgate compare --base A1.json,A2.json,... --head B1.json,B2.json,... --max-drop 0.05  (Ai and Bi: round i)
-  perfgate absolute --result FILE --min-qps 1000000 --max-p99 500us`
+  perfgate absolute --result FILE --min-qps 1000000 --max-p99 500us
+  perfgate filter-compare --base A1.json,... --head B1.json,... --max-regress 0.05  (filter_bench --json, round i)`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,6 +58,8 @@ func main() {
 		err = cmdCompare(os.Args[2:])
 	case "absolute":
 		err = cmdAbsolute(os.Args[2:])
+	case "filter-compare":
+		err = cmdFilterCompare(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
