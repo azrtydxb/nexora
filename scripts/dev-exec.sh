@@ -9,6 +9,8 @@ set -euo pipefail
 }
 ctx="${NEXORA_DEV_CONTEXT:-kw}"
 ns="${NEXORA_DEV_NAMESPACE:-nexora-dev}"
+# NEXORA_DEV_DEPLOY selects another dev pod (e.g. toolbox-m7 for a parallel worktree).
+pod="${NEXORA_DEV_DEPLOY:-toolbox}"
 "$(dirname "$0")/dev-sync.sh"
 if [ $# -eq 1 ]; then cmd="$1"; else cmd=$(printf '%q ' "$@"); fi
-exec kubectl --context "$ctx" -n "$ns" exec -i deploy/toolbox -c toolbox -- bash -c "cd /work/nexora && $cmd"
+exec kubectl --context "$ctx" -n "$ns" exec -i deploy/$pod -c toolbox -- bash -c "cd /work/nexora && $cmd"

@@ -6,12 +6,13 @@
 set -euo pipefail
 ctx="${NEXORA_DEV_CONTEXT:-kw}"
 ns="${NEXORA_DEV_NAMESPACE:-nexora-dev}"
+pod="${NEXORA_DEV_DEPLOY:-toolbox}"
 root=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
-kubectl --context "$ctx" -n "$ns" exec deploy/toolbox -c toolbox -- mkdir -p /work/nexora
+kubectl --context "$ctx" -n "$ns" exec deploy/$pod -c toolbox -- mkdir -p /work/nexora
 rsync -a --delete --blocking-io \
 	--exclude /.git/ --exclude target/ --exclude node_modules/ --exclude /web/dist/ \
 	--exclude /bin/ --exclude /web/test-results/ --exclude /web/playwright-report/ \
 	--exclude /mgmt/internal/webui/dist/ \
 	--rsync-path= \
-	-e "kubectl --context $ctx -n $ns exec -i deploy/toolbox -c toolbox --" \
+	-e "kubectl --context $ctx -n $ns exec -i deploy/$pod -c toolbox --" \
 	"$root/" rsync:/work/nexora/
