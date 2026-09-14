@@ -40,6 +40,7 @@ func ApplyResolution(s *controlv1.ConfigSnapshot, rows store.ResolutionRows, now
 		MaxUpstreamQueries: uint32(res.MaxUpstreamQueries),
 		MaxDelegationDepth: uint32(res.MaxDelegationDepth),
 		AuthorityPort:      uint32(res.AuthorityPort),
+		CacheMaxBytes:      uint64(res.RecursorCacheMaxBytes),
 	}
 	for _, h := range res.RootHints {
 		s.Recursion.RootHints = append(s.Recursion.RootHints, &controlv1.RootHint{Name: h.Name, Addresses: append([]string(nil), h.Addresses...)})

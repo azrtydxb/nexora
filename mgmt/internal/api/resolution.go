@@ -14,7 +14,8 @@ func resolutionOut(s store.ResolutionSettings) ResolutionSettings {
 	out := ResolutionSettings{
 		Mode: ResolutionSettingsMode(s.Mode), QnameMinimisation: s.QnameMinimisation, AggressiveNsec: s.AggressiveNSEC,
 		MaxUpstreamQueries: int(s.MaxUpstreamQueries), MaxDelegationDepth: int(s.MaxDelegationDepth),
-		AuthorityPort: int(s.AuthorityPort), Revision: s.Revision, RootHints: make([]RootHint, 0, len(s.RootHints)),
+		AuthorityPort: int(s.AuthorityPort), RecursorCacheMaxBytes: s.RecursorCacheMaxBytes, Revision: s.Revision,
+		RootHints: make([]RootHint, 0, len(s.RootHints)),
 	}
 	for _, h := range s.RootHints {
 		out.RootHints = append(out.RootHints, RootHint{Name: h.Name, Addresses: append([]string{}, h.Addresses...)})
@@ -67,6 +68,8 @@ func validateResolution(b ResolutionSettings) (store.ResolutionSettings, error) 
 		return store.ResolutionSettings{}, invalid("max_delegation_depth must be 1..64")
 	case b.AuthorityPort < 1 || b.AuthorityPort > 65535:
 		return store.ResolutionSettings{}, invalid("authority_port must be 1..65535")
+	case b.RecursorCacheMaxBytes < 4<<20 || b.RecursorCacheMaxBytes > 16<<30:
+		return store.ResolutionSettings{}, invalid("recursor_cache_max_bytes must be 4194304..17179869184")
 	}
 	hints := make([]store.RootHint, 0, len(b.RootHints))
 	for _, rh := range b.RootHints {
@@ -85,7 +88,7 @@ func validateResolution(b ResolutionSettings) (store.ResolutionSettings, error) 
 	return store.ResolutionSettings{
 		Mode: string(b.Mode), QnameMinimisation: b.QnameMinimisation, AggressiveNSEC: b.AggressiveNsec,
 		MaxUpstreamQueries: int32(b.MaxUpstreamQueries), MaxDelegationDepth: int32(b.MaxDelegationDepth),
-		AuthorityPort: int32(b.AuthorityPort), RootHints: hints, Revision: b.Revision,
+		AuthorityPort: int32(b.AuthorityPort), RecursorCacheMaxBytes: b.RecursorCacheMaxBytes, RootHints: hints, Revision: b.Revision,
 	}, nil
 }
 

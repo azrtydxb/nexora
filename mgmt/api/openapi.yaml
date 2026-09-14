@@ -928,6 +928,7 @@ components:
           max_upstream_queries,
           max_delegation_depth,
           authority_port,
+          recursor_cache_max_bytes,
           root_hints,
           revision,
         ]
@@ -938,6 +939,14 @@ components:
         max_upstream_queries: { type: integer, minimum: 1, maximum: 1000 }
         max_delegation_depth: { type: integer, minimum: 1, maximum: 64 }
         authority_port: { type: integer, minimum: 1, maximum: 65535 }
+        recursor_cache_max_bytes:
+          {
+            type: integer,
+            format: int64,
+            minimum: 4194304,
+            maximum: 17179869184,
+            description: "Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes.",
+          }
         root_hints:
           { type: array, items: { $ref: "#/components/schemas/RootHint" } }
         revision: { type: integer, format: int64 }

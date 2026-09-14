@@ -1250,7 +1250,7 @@ Interfaces: store field `ResolutionSettings.RecursorCacheMaxBytes int64`; API fi
 Files: `mgmt/internal/control/server.go`, `mgmt/internal/control/control_test.go`, `mgmt/migrations/00801_blobs_storage_external.sql` (new)
 Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most `BlobChunkSize`, `codes.NotFound` for unknown blobs).
 
-- [ ] Add to `control_test.go` (imports `runtime`, `time`, `crypto/sha256`):
+- [ ] Add to `control_test.go` (imports `runtime`, `time`, `crypto/sha256`). The 64 MiB insert runs on a closed dedicated connection: on a pooled connection pgx v5.11 keeps the encoded parameter referenced until that connection's next query, which made the heap check read 75 MiB in 2 of 26 runs after the rewrite:
   ```go
   func TestGetBlobDoesNotHoldWholeBlob(t *testing.T) {
   	f := setup(t, 1)
@@ -1258,7 +1258,16 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   	data := make([]byte, 64<<20)
   	_, _ = rand.Read(data)
   	sha := sha256Hex(data)
-  	if _, err := f.st.Pool.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3)", sha, len(data), data); err != nil {
+  	// A pgx connection keeps its last parameters referenced (ExtendedQueryBuilder.ParamValues), so
+  	// the insert runs on a connection that is closed afterwards: only the server's heap is measured.
+  	conn, err := f.st.Pool.Acquire(f.ctx)
+  	if err != nil {
+  		t.Fatal(err)
+  	}
+  	if _, err := conn.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3)", sha, len(data), data); err != nil {
+  		t.Fatal(err)
+  	}
+  	if err := conn.Hijack().Close(f.ctx); err != nil {
   		t.Fatal(err)
   	}
   	data = nil

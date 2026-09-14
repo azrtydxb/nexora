@@ -188,3 +188,24 @@ func TestResolutionAndRPZLifecycleWithKeyStorage(t *testing.T) {
 		t.Fatalf("delete forward zone = %d", code)
 	}
 }
+
+func TestResolutionSettingsRecursorCacheMaxBytes(t *testing.T) {
+	op, _, env := roleClientsWith(t, nil)
+	var res map[string]any
+	if code := op.do(http.MethodGet, "/resolution", nil, &res); code != 200 || res["recursor_cache_max_bytes"] != float64(64<<20) {
+		t.Fatalf("default recursor_cache_max_bytes = %d %v", code, res["recursor_cache_max_bytes"])
+	}
+	var e apiErr
+	res["recursor_cache_max_bytes"] = (4 << 20) - 1
+	if code := op.do(http.MethodPut, "/resolution", res, &e); code != 400 || e.Code != "invalid_request" {
+		t.Fatalf("below 4 MiB = %d %+v", code, e)
+	}
+	res["recursor_cache_max_bytes"] = 128 << 20
+	if code := op.do(http.MethodPut, "/resolution", res, &res); code != 200 || res["recursor_cache_max_bytes"] != float64(128<<20) {
+		t.Fatalf("update = %d %v", code, res)
+	}
+	_, snap, err := snapshot.Latest(env.ctx, env.st.Pool)
+	if err != nil || snap.GetRecursion().GetCacheMaxBytes() != 128<<20 {
+		t.Fatalf("snapshot recursion.cache_max_bytes = %d (%v)", snap.GetRecursion().GetCacheMaxBytes(), err)
+	}
+}

@@ -1898,6 +1898,11 @@ export interface components {
             max_upstream_queries: number;
             max_delegation_depth: number;
             authority_port: number;
+            /**
+             * Format: int64
+             * @description Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes.
+             */
+            recursor_cache_max_bytes: number;
             root_hints: components["schemas"]["RootHint"][];
             /** Format: int64 */
             revision: number;

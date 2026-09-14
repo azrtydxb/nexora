@@ -17,6 +17,7 @@ test("operator edits resolution settings and forward zones", async ({
   await card
     .getByLabel("Maximum upstream queries per client query")
     .fill("150");
+  await card.getByLabel("Recursor cache memory (MiB)").fill("128");
   await card.getByRole("button", { name: "Add root hint" }).click();
   await card.getByLabel("Root hint name 1").fill("a.root.test.");
   await card.getByLabel("Root hint addresses 1").fill("127.0.53.1:53");
@@ -31,6 +32,11 @@ test("operator edits resolution settings and forward zones", async ({
       .getByRole("region", { name: "Resolution" })
       .getByLabel("Maximum upstream queries per client query"),
   ).toHaveValue("150");
+  await expect(
+    page
+      .getByRole("region", { name: "Resolution" })
+      .getByLabel("Recursor cache memory (MiB)"),
+  ).toHaveValue("128");
 
   const zones = page.getByRole("region", { name: "Forward zones" });
   const domain = `corp-${Date.now()}.example`;

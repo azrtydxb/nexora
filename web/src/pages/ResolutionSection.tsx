@@ -30,6 +30,7 @@ type Form = {
   max_upstream_queries: string;
   max_delegation_depth: string;
   authority_port: string;
+  recursor_cache_mib: string;
   root_hints: { name: string; addresses: string }[];
 };
 
@@ -41,6 +42,7 @@ function toForm(s: Settings): Form {
     max_upstream_queries: String(s.max_upstream_queries),
     max_delegation_depth: String(s.max_delegation_depth),
     authority_port: String(s.authority_port),
+    recursor_cache_mib: String(s.recursor_cache_max_bytes / 1048576),
     root_hints: s.root_hints.map((h) => ({
       name: h.name,
       addresses: h.addresses.join(", "),
@@ -103,6 +105,7 @@ function ResolutionForm({ settings }: { settings: Settings }) {
         max_upstream_queries: Number(form.max_upstream_queries),
         max_delegation_depth: Number(form.max_delegation_depth),
         authority_port: Number(form.authority_port),
+        recursor_cache_max_bytes: Number(form.recursor_cache_mib) * 1048576,
         root_hints: form.root_hints.map((h) => ({
           name: h.name.trim(),
           addresses: splitList(h.addresses),
@@ -186,6 +189,20 @@ function ResolutionForm({ settings }: { settings: Settings }) {
                 max={65535}
                 value={form.authority_port}
                 onChange={(e) => set("authority_port", e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Recursor cache memory (MiB)"
+              htmlFor="resolution-recursor-cache"
+              hint="Memory for the RRset, aggressive NSEC and server caches of recursive resolution"
+            >
+              <Input
+                id="resolution-recursor-cache"
+                type="number"
+                min={4}
+                max={16384}
+                value={form.recursor_cache_mib}
+                onChange={(e) => set("recursor_cache_mib", e.target.value)}
               />
             </Field>
           </div>
