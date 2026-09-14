@@ -797,6 +797,7 @@ impl Metrics {
                     rtt_us: h.ewma_rtt_us.load(Ordering::Relaxed),
                     queries_total: h.queries.load(Ordering::Relaxed),
                     failures_total: h.failures.load(Ordering::Relaxed),
+                    ..Default::default()
                 })
                 .collect(),
             export_dropped_total: SIGNALS
@@ -818,6 +819,7 @@ impl Metrics {
                 cpu: rt.filter_calibration.cpu.clone(),
                 blocked_by_category: self.blocked_by_category().into_iter().collect(),
             }),
+            ..Default::default()
         }
     }
 }
@@ -837,6 +839,7 @@ fn recursion_stats(recursor: &RecursorState) -> RecursionStats {
             + load(&m.limit_cname_depth),
         infra_entries: u32::try_from(recursor.recursor.infra.len()).unwrap_or(u32::MAX),
         lame_marked: load(&m.lame_marked),
+        ..Default::default()
     }
 }
 

@@ -194,8 +194,11 @@ host concerns and are not part of the snapshot.
   address/port enforced by the kernel), has QR=1, a pending ID, and a question
   equal (case-insensitively) to the query's. Anything else is dropped and
   counted in `nexora_upstream_mismatched_replies_total`.
-- Strategy `ordered` (first healthy by position) or `fastest` (lowest EWMA RTT
-  among healthy, alpha 0.2).
+- Strategy `ordered` (first healthy by position), `fastest` (lowest EWMA RTT among healthy, alpha
+  0.2) or `parallel` (the admitted candidates in fastest order, at most `parallel_max` or 8, are
+  queried at once; the first NOERROR/NXDOMAIN reply wins, other rcodes and errors win only when
+  every attempt failed; unfinished attempts are drained off the reply path and still update
+  health; `nexora_upstream_race_wins_total{upstream}`, `nexora_upstream_race_duration_seconds`).
 - Per-attempt timeout = upstream `timeout_ms` (default 250). Overall deadline
   2000 ms. Three consecutive failures mark an upstream down for 5 s, then one
   probe query is allowed through.
@@ -281,9 +284,17 @@ host concerns and are not part of the snapshot.
 
 ### ACL
 
-Queries from addresses outside `acl_allow_cidrs` get REFUSED. The management
-plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-100.64.0.0/10, fc00::/7, fe80::/10.
+Two client ACLs. Recursion access: queries for names that are not hosted (cache, forwarding,
+recursion, rewrites, filtering, RPZ) from addresses outside `acl_allow_cidrs` (the management
+plane's `access_control.allow_cidrs` followed by the engine group's `extra_acl_cidrs`) get
+REFUSED. Authoritative access: a query matching a hosted zone is checked against the zone's
+`allow_query_cidrs`, or when empty `authoritative_allow_cidrs`, and refused outside it; a
+snapshot without `authoritative_acl_set` allows every client. RA is set only for clients the
+recursion ACL allows. Transfers keep `TransferPolicy`; UPDATE additionally requires the sender in
+`update_allow_cidrs` when non-empty. Refusals count in `nexora_acl_refused_total{acl}` and carry
+`nexora.acl.refused` in the query log. The management plane seeds recursion access with
+127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7,
+fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
 
 ### Snapshot application
 
@@ -337,7 +348,14 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   empty for global clients), `nexora.filter.list_id` and
   `nexora.filter.category` (blocked queries only: the first list, in position
   order, of the longest blocked suffix), `nexora.upstream`, `nexora.duration_us`,
-  `nexora.transport`, `nexora.engine.id`. Resource `service.name=nexora-engine`.
+  `nexora.transport`, `nexora.engine.id`, `nexora.filter.source`, `nexora.filter.rule`
+  (blocked, allowed, rewritten, RPZ and ACL outcomes), `nexora.filter.list_id` also for allowed
+  queries, `nexora.rpz_zone`, `nexora.acl.refused`, `nexora.upstream_raced`. Resource
+  `service.name=nexora-engine`.
+- Engine log: every `eprintln!` in the engine crate also appends to a ring of 2,000 lines (512
+  octets each, 100 lines/s with a burst of 200, dropped lines counted in
+  `nexora_log_lines_dropped_total`), with join tokens, API tokens, PEM blocks and
+  `secret=`/`password=` values masked. Nothing on the query path logs.
 - Traces: a query becomes a trace when `trace_sample_one_in` selects it, or
   its duration exceeds `trace_slow_threshold_us`, or its rcode is SERVFAIL.
   Spans (`dns.query` root; children `nexora.filter`, `nexora.cache`,
@@ -359,8 +377,8 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
 - Engine identity: ECDSA P-256 key generated locally; CSR in `Enroll`; the
   certificate CN is the engine UUID. Stored under `state_dir/identity/`.
 - Field numbering: fields a milestone adds to an existing message use its
-  own range — M2 300-399, M3 100-199, M4 200-299, M5 500 and up; new messages
-  number from 1. M2 fields added to M1 messages use numbers 300-399;
+  own range — M2 300-399, M3 100-199, M4 200-299, M5 500-599, filter
+  categories 600-699, M6 700-799; new messages number from 1. M2 fields added to M1 messages use numbers 300-399;
   `TlsMaterial` travels only on `Connect` and is held in engine memory.
 - M2: `ConfigSnapshot.policy_groups` / `rewrite_sets` /
   `global_rewrite_set_ids` carry per-client policy (safe search is expanded by
@@ -387,6 +405,15 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   (600), `Stats.filter_index` (600); new messages `FilterListRef` and
   `FilterIndexStats`. Management keeps filling the M1 `blocklists`/`allowlists`
   blob fields for older engines; engines prefer the refs.
+- M6 operator UX: fields added to existing messages use 700-799:
+  `ConfigSnapshot.authoritative_allow_cidrs` (700) and `authoritative_acl_set` (701),
+  `AuthZone.allow_query_cidrs` (700) and `update_allow_cidrs` (701), `UPSTREAM_STRATEGY_PARALLEL`
+  and `ResolverConfig.parallel_max` (700), `Stats` 700-714 (per-rcode, per-transport, uncached
+  latency buckets, rewrites, answers by route, resolution failures, process CPU and memory,
+  open connections, start time, ACL refusals, certificate expiry, dropped log lines, race
+  latency buckets), `RecursionStats.upstream_timeouts` and `UpstreamStatus.race_wins_total`
+  (700). `ServerMessage.log_request` / `EngineMessage.log_batch` (700) read the engine's log
+  ring buffer on demand (`LogRequest`, `LogBatch`, `LogLine`, `LogLevel`).
 
 ## Management plane
 
@@ -464,17 +491,30 @@ plane seeds 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
   because OpenSearch cannot map `nexora.filter` as both a value and the parent
   of `nexora.filter.category`) and writes `nexora-querylog-v2-YYYY.MM.DD`; the
   adapter matches the `filter` parameter on either field.
+- M6: engine logs are read through `pg_notify('nexora_engine_logs', request)`; the instance
+  holding the engine's stream sends `LogRequest` and stores the `LogBatch` in the unlogged table
+  `engine_log_replies` (notify `nexora_engine_logs_done`). `engine_stats_rollup` keeps the newest
+  sample per engine per 5 minutes for 8 days. `auth_failures` counts failed logins and password
+  changes per username and client address (more than 10 in 15 minutes: 429; the key includes the
+  client IP so a remote attacker cannot lock out the admin). `NEXORA_REPOSITORY_URL` is shown in
+  the GUI version details.
 
 ## GUI
 
 Vite 8, React 19, react-router 7, TanStack Query 5, Tailwind 4, Radix-based
-components ported from the first Nexora (`components/ui`), openapi-typescript
+components ported from the first Nexora (`components/ui`), an openapi-typescript and
+openapi-fetch client generated from `mgmt/api/openapi.yaml`, Recharts.
 
-- openapi-fetch client generated from `mgmt/api/openapi.yaml`, Recharts.
-  Routes: `/login`, `/setup`, `/` (dashboard), `/query-log`, `/upstreams`,
-  `/access-control`, `/filtering`, `/policies` (M2), `/rewrites` (M2), `/zones`
-  (M4), `/rpz` (M3), `/dnssec` (M3/M4), `/engines`, `/users`, `/api-tokens`,
-  `/audit`, `/settings`. The build is embedded into `nexora-mgmt`.
+Routes: `/login`, `/setup`, `/` (dashboard), `/query-log`, `/resolution` ("Forwarding &
+recursion"; `/upstreams` redirects), `/access-control`, `/filtering` ("Blocklist / allowlist"),
+`/filtering/categories`, `/policies`, `/rewrites`, `/zones`, `/zones/tsig-keys`,
+`/zones/:zoneId`, `/rpz`, `/dnssec`, `/engines` (`?engine=<id>` opens the engine modal),
+`/engines/groups/:id`, `/engines/nodes/:id`, `/engines/rollouts/:id`, `/users`, `/api-tokens`,
+`/audit`, `/settings`, `/account`, `/help`, `/help/:topic`. Help text lives in
+`web/src/help/catalog/` and `web/src/help/topics/`; `pnpm lint` fails on a form control without
+help.
+
+The build is embedded into `nexora-mgmt`.
 
 ## End-to-end harness
 

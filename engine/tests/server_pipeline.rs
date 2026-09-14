@@ -77,6 +77,7 @@ fn start_engine(
         version: 1,
         resolver: Some(ResolverConfig {
             strategy: UpstreamStrategy::Ordered as i32,
+            ..Default::default()
         }),
         cache: Some(CacheConfig {
             max_bytes: 8 << 20,

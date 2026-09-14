@@ -823,7 +823,9 @@ async fn session(
                     }
                 }
             }
-            None => {}
+            // debt: no engine log ring buffer yet, so the request goes unanswered and management
+            // times out; revisit when the ring buffer answers LogRequest with a LogBatch.
+            Some(ServerMsg::LogRequest(_)) | None => {}
         }
     };
     ticker.abort();

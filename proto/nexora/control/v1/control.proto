@@ -36,6 +36,7 @@ message EngineMessage {
     NotifyReceived notify_received = 200;        // M4
     UpdateRequest update_request = 201;          // M4
     CertificateRequest cert_request = 500;       // M5
+    LogBatch log_batch = 700;                    // M6: reply to ServerMessage.log_request
   }
 }
 
@@ -67,6 +68,7 @@ message ServerMessage {
     UpdateResult update_result = 201;  // M4: reply to EngineMessage.update_request
     CertificateIssued cert_issued = 500;       // M5: reply to EngineMessage.cert_request
     RenewCertificate renew_certificate = 501; // M5: send a CertificateRequest now
+    LogRequest log_request = 700;              // M6: read the engine log ring buffer
   }
 }
 
@@ -101,16 +103,21 @@ message ConfigSnapshot {
   repeated AuthZone auth_zones = 200;
   // Filter categories.
   uint64 filter_index_max_bytes = 600; // 0 = engine default (50% of the cgroup memory limit, else 512 MiB)
+  // M6: authoritative access.
+  repeated string authoritative_allow_cidrs = 700; // M6: hosted-zone query ACL default; used only when authoritative_acl_set
+  bool authoritative_acl_set = 701;                // M6: false (pre-M6 management): hosted zones answer every client
 }
 
 enum UpstreamStrategy {
   UPSTREAM_STRATEGY_UNSPECIFIED = 0;
   UPSTREAM_STRATEGY_ORDERED = 1;
   UPSTREAM_STRATEGY_FASTEST = 2;
+  UPSTREAM_STRATEGY_PARALLEL = 3; // M6
 }
 
 message ResolverConfig {
   UpstreamStrategy strategy = 1;
+  uint32 parallel_max = 700; // M6: 0 = every candidate; engines cap at 8
 }
 
 message CacheConfig {
@@ -185,6 +192,7 @@ message UpstreamStatus {
   uint32 rtt_us = 4;
   uint64 queries_total = 5;
   uint64 failures_total = 6;
+  uint64 race_wins_total = 700; // M6
 }
 
 message Stats {
@@ -208,6 +216,22 @@ message Stats {
   repeated RpzZoneStatus rpz_zones = 102;
   // Filter categories.
   FilterIndexStats filter_index = 600;
+  // M6
+  map<string, uint64> queries_by_rcode = 700;        // M6: NOERROR FORMERR SERVFAIL NXDOMAIN NOTIMP REFUSED other
+  map<string, uint64> queries_by_transport = 701;    // M6: udp tcp dot doh doq
+  repeated uint64 miss_duration_bucket_counts = 702; // M6: cumulative, bounds = duration_bucket_bounds_us, cache miss/stale only
+  uint64 filter_rewritten_total = 703;               // M6
+  map<string, uint64> answers_by_route = 704;        // M6: cache authoritative blocked rewritten rpz forwarded recursive forward_zone
+  uint64 resolution_failures_total = 705;            // M6
+  double process_cpu_seconds_total = 706;            // M6
+  uint64 process_resident_bytes = 707;               // M6
+  uint64 memory_limit_bytes = 708;                   // M6: 0 = no cgroup limit
+  map<string, uint64> open_connections = 709;        // M6: tcp dot doh doq
+  int64 started_unix_ms = 710;                       // M6
+  map<string, uint64> acl_refused = 711;             // M6: recursion authoritative
+  int64 tls_certificate_not_after_unix = 712;        // M6: 0 = no DNS serving certificate
+  uint64 log_lines_dropped_total = 713;              // M6
+  repeated uint64 race_duration_bucket_counts = 714; // M6: cumulative, same bounds
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +394,7 @@ message RecursionStats {
   uint64 work_limit_exceeded = 4;
   uint32 infra_entries = 5;
   uint64 lame_marked = 6;
+  uint64 upstream_timeouts = 700; // M6
 }
 
 enum TrustAnchorState {
@@ -454,6 +479,8 @@ message AuthZone {
   // Parallel to primaries (empty, or one entry per primary): the TSIG key name a NOTIFY from that
   // primary must be signed with; "" accepts unsigned NOTIFY (or any valid key) from its address.
   repeated string primary_tsig_keys = 200;
+  repeated string allow_query_cidrs = 700;  // M6: empty = ConfigSnapshot.authoritative_allow_cidrs
+  repeated string update_allow_cidrs = 701; // M6: empty = any source (TSIG still required)
 }
 
 message TsigSecret {
@@ -536,4 +563,40 @@ message FilterIndexStats {
   double decision_ns_clean = 6;
   string cpu = 7;                   // core of that measurement: cortex-a76, cortex-a55, x86_64, ...
   map<string, uint64> blocked_by_category = 8; // "custom" for lists without a category
+}
+
+// ---------------------------------------------------------------------------
+// M6 operator UX: fields added to existing messages use 700-799.
+// ---------------------------------------------------------------------------
+
+enum LogLevel { // M6
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_ERROR = 1; // most severe
+  LOG_LEVEL_WARN = 2;
+  LOG_LEVEL_INFO = 3;
+  LOG_LEVEL_DEBUG = 4;
+}
+
+// Server -> engine: read the engine log ring buffer.
+message LogRequest { // M6
+  string request_id = 1;
+  uint64 after_seq = 2;   // lines with seq > after_seq
+  LogLevel min_level = 3; // lines with level <= min_level
+  uint32 limit = 4;       // at most this many lines; 0 = 1000
+  string contains = 5;    // ASCII case-insensitive substring; empty = every line
+}
+
+message LogLine { // M6
+  uint64 seq = 1;
+  int64 unix_ms = 2;
+  LogLevel level = 3;
+  string message = 4;
+}
+
+// Engine -> server: reply to LogRequest.
+message LogBatch { // M6
+  string request_id = 1;
+  repeated LogLine lines = 2;
+  uint64 last_seq = 3;   // newest seq in the ring
+  uint64 oldest_seq = 4; // oldest seq still in the ring
 }

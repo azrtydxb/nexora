@@ -13,6 +13,7 @@ fn base(version: u64) -> ConfigSnapshot {
         version,
         resolver: Some(ResolverConfig {
             strategy: UpstreamStrategy::Ordered as i32,
+            ..Default::default()
         }),
         cache: Some(CacheConfig {
             max_bytes: 4 << 20,

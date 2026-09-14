@@ -238,6 +238,9 @@ Files:
 - `engine/src/telemetry/metrics.rs`: only `..Default::default()` in the `Stats`, `UpstreamStatus` and
   `RecursionStats` literals.
 - `mgmt/internal/control/contract_m6_test.go`: created; the round-trip test.
+- `engine/src/control.rs`: only a `Some(ServerMsg::LogRequest(_)) | None => {}` arm with a `debt:`
+  comment, because the `ServerMessage.msg` match is exhaustive and the new oneof variant breaks the
+  build; Task 13 replaces the arm with the real reply.
 
 Interfaces: produces the proto names used by Tasks 4, 6, 10, 12–18 (Rust `nexora_engine::proto::*`, Go
 `controlv1.*`):
@@ -357,6 +360,8 @@ message LogBatch { string request_id = 1; repeated LogLine lines = 2; uint64 las
       engine test files listed under Files. Add it too to the `Stats { .. }`, `UpstreamStatus { .. }` and
       `RecursionStats { .. }` literals in `engine/src/telemetry/metrics.rs` (lines 769, 793, 828 before the
       edit).
+      In `engine/src/control.rs`, merge the `None => {}` arm of the `ServerMessage` match into
+      `Some(ServerMsg::LogRequest(_)) | None => {}` with a `debt:` comment (no ring buffer until Task 13).
 - [ ] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/control -run TestContractM6FieldsRoundTrip -count=1 && cargo build --locked -p nexora-engine --all-targets'`
       and expect PASS and a clean build.
