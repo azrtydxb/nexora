@@ -24,6 +24,9 @@ pub const OVERALL_DEADLINE: Duration = Duration::from_millis(2000);
 const DOWN_AFTER_FAILURES: u32 = 3;
 const DOWN_SECS: u32 = 5;
 const FLAG_TC: u8 = 0x02;
+const RCODE_NXDOMAIN: u8 = 3;
+/// The most upstreams one parallel race queries.
+pub const PARALLEL_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Question {
@@ -44,7 +47,6 @@ pub enum Protocol {
 pub enum Strategy {
     Ordered,
     Fastest,
-    // debt: `Parallel` is served as `Fastest` until the race lands (M6 Task 15).
     /// Races up to `max` of the fastest candidates (0 = every candidate, capped at 8).
     Parallel {
         max: u8,
@@ -294,6 +296,10 @@ impl Waiters {
         self.map.borrow().is_empty()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.map.borrow().len()
+    }
+
     /// Drops every waiter; their receivers see the channel closed.
     pub(crate) fn clear(&self) {
         self.map.borrow_mut().clear();
@@ -475,16 +481,28 @@ impl WorkerUpstreams {
         map.insert(spec.id.clone(), (spec.clone(), t.clone()));
         Ok(t)
     }
+
+    /// UDP exchanges still waiting for a reply across this worker's pools.
+    pub fn pending_waiters(&self) -> usize {
+        self.transports
+            .borrow()
+            .values()
+            .map(|(_, t)| match &**t {
+                Transport::Udp(pool) => pool.pending(),
+                _ => 0,
+            })
+            .sum()
+    }
 }
 
 /// Records a failure if an admitted attempt is dropped before it resolves, so a
 /// cancelled probe cannot hold the probe slot forever.
-struct AttemptGuard<'a> {
-    health: &'a Health,
+struct AttemptGuard<H: std::ops::Deref<Target = Health>> {
+    health: H,
     done: bool,
 }
 
-impl Drop for AttemptGuard<'_> {
+impl<H: std::ops::Deref<Target = Health>> Drop for AttemptGuard<H> {
     fn drop(&mut self) {
         if !self.done {
             self.health.record_failure(clock::now_secs());
@@ -498,6 +516,22 @@ fn remaining(start: Instant) -> Option<Duration> {
         .filter(|d| !d.is_zero())
 }
 
+/// Records one completed attempt: its RTT on success, a failure otherwise.
+pub fn settle(health: &Health, result: Result<Duration, &UpstreamError>, now: u32) {
+    health.queries.fetch_add(1, Ordering::Relaxed);
+    match result {
+        Ok(rtt) => health.record_success(rtt),
+        Err(_) => health.record_failure(now),
+    }
+}
+
+/// A reply that wins a race: rcode NOERROR or NXDOMAIN with TC clear.
+fn acceptable(response: &[u8]) -> bool {
+    response.len() >= 4
+        && response[2] & FLAG_TC == 0
+        && matches!(response[3] & 0x0f, 0 | RCODE_NXDOMAIN)
+}
+
 /// Sends `query` to the set's upstreams in strategy order until one answers.
 pub async fn forward(
     set: &UpstreamSet,
@@ -505,6 +539,9 @@ pub async fn forward(
     query: &[u8],
     question: &Question,
 ) -> Result<Forwarded, UpstreamError> {
+    if let Strategy::Parallel { max } = set.strategy {
+        return race(set, worker, query, question, usize::from(max)).await;
+    }
     let start = Instant::now();
     let now = clock::now_secs();
     let mut order = Vec::with_capacity(set.specs.len());
@@ -512,13 +549,27 @@ pub async fn forward(
     if order.is_empty() {
         return Err(UpstreamError::NoneAvailable);
     }
+    sequential(set, worker, query, question, &order, start, Some(now)).await
+}
+
+/// Tries `order` one by one; `admit_at` checks admission first, `None` means
+/// the candidates were admitted already.
+async fn sequential(
+    set: &UpstreamSet,
+    worker: &WorkerUpstreams,
+    query: &[u8],
+    question: &Question,
+    order: &[usize],
+    start: Instant,
+    admit_at: Option<u32>,
+) -> Result<Forwarded, UpstreamError> {
     let mut last = UpstreamError::NoneAvailable;
-    for index in order {
+    for &index in order {
         if remaining(start).is_none() {
             return Err(UpstreamError::Deadline);
         }
         let (spec, health) = (&set.specs[index], &*set.health[index]);
-        if !health.admit(now) {
+        if admit_at.is_some_and(|now| !health.admit(now)) {
             continue;
         }
         let mut guard = AttemptGuard {
@@ -526,13 +577,15 @@ pub async fn forward(
             done: false,
         };
         let attempt_start = Instant::now();
-        let result = attempt(worker, spec, query, question, start).await;
+        let result = match worker.transport(spec) {
+            Ok(transport) => exchange(&transport, query, question, spec.timeout, start).await,
+            Err(e) => Err(e),
+        };
         guard.done = true;
+        let rtt = attempt_start.elapsed();
+        settle(health, result.as_ref().map(|_| rtt), clock::now_secs());
         match result {
             Ok(response) => {
-                let rtt = attempt_start.elapsed();
-                health.record_success(rtt);
-                health.queries.fetch_add(1, Ordering::Relaxed);
                 return Ok(Forwarded {
                     response,
                     upstream_index: index,
@@ -540,10 +593,7 @@ pub async fn forward(
                     raced: 1,
                 });
             }
-            Err(e) => {
-                health.record_failure(clock::now_secs());
-                last = e;
-            }
+            Err(e) => last = e,
         }
     }
     Err(if remaining(start).is_none() {
@@ -553,27 +603,120 @@ pub async fn forward(
     })
 }
 
-async fn attempt(
+/// Queries up to `max` (0 = [`PARALLEL_LIMIT`]) admitted candidates at once, fastest first, and
+/// returns the first acceptable reply. Each attempt is its own local task that settles its
+/// upstream's health even after the race returned; a loser's reply is dropped with the channel.
+/// Without an acceptable reply the first other reply is returned, else the last error.
+async fn race(
+    set: &UpstreamSet,
     worker: &WorkerUpstreams,
-    spec: &UpstreamSpec,
     query: &[u8],
     question: &Question,
+    max: usize,
+) -> Result<Forwarded, UpstreamError> {
+    let start = Instant::now();
+    let now = clock::now_secs();
+    let limit = if max == 0 {
+        PARALLEL_LIMIT
+    } else {
+        max.min(PARALLEL_LIMIT)
+    };
+    let mut order = Vec::with_capacity(set.specs.len());
+    set.order(now, &mut order);
+    // `admit` takes a down upstream's probe slot, so only candidates that will be sent are admitted.
+    let mut admitted = 0;
+    order.retain(|&i| {
+        let send = admitted < limit && set.health[i].admit(now);
+        admitted += usize::from(send);
+        send
+    });
+    match order.len() {
+        0 => return Err(UpstreamError::NoneAvailable),
+        1 => return sequential(set, worker, query, question, &order, start, None).await,
+        _ => {}
+    }
+    let mut last = UpstreamError::NoneAvailable;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(PARALLEL_LIMIT);
+    let shared = Bytes::copy_from_slice(query);
+    for &index in &order {
+        let spec = &set.specs[index];
+        let mut guard = AttemptGuard {
+            health: set.health[index].clone(),
+            done: false,
+        };
+        let transport = match worker.transport(spec) {
+            Ok(t) => t,
+            Err(e) => {
+                guard.done = true;
+                settle(&guard.health, Err(&e), now);
+                last = e;
+                continue;
+            }
+        };
+        let (query, question, timeout, tx) = (shared.clone(), *question, spec.timeout, tx.clone());
+        tokio::task::spawn_local(async move {
+            let mut guard = guard;
+            let t0 = Instant::now();
+            let result = exchange(&transport, &query, &question, timeout, start).await;
+            guard.done = true;
+            let rtt = t0.elapsed();
+            settle(
+                &guard.health,
+                result.as_ref().map(|_| rtt),
+                clock::now_secs(),
+            );
+            let _ = tx.send((index, result, rtt)).await;
+        });
+    }
+    drop(tx);
+    let raced = order.len() as u8; // at most PARALLEL_LIMIT
+    let mut best = None;
+    while let Some((index, result, rtt)) = rx.recv().await {
+        match result {
+            Ok(response) => {
+                let won = acceptable(&response);
+                let forwarded = Forwarded {
+                    response,
+                    upstream_index: index,
+                    rtt,
+                    raced,
+                };
+                if won {
+                    set.health[index].race_wins.fetch_add(1, Ordering::Relaxed);
+                    RACE.observe(start.elapsed());
+                    return Ok(forwarded);
+                }
+                best.get_or_insert(forwarded);
+            }
+            Err(e) => last = e,
+        }
+    }
+    match best {
+        Some(forwarded) => Ok(forwarded),
+        None if remaining(start).is_none() => Err(UpstreamError::Deadline),
+        None => Err(last),
+    }
+}
+
+async fn exchange(
+    transport: &Transport,
+    query: &[u8],
+    question: &Question,
+    timeout: Duration,
     start: Instant,
 ) -> Result<Bytes, UpstreamError> {
     let timeout = || {
         remaining(start)
-            .map(|r| spec.timeout.min(r))
+            .map(|r| timeout.min(r))
             .ok_or(UpstreamError::Deadline)
     };
-    let transport = worker.transport(spec)?;
-    match &*transport {
+    match transport {
         Transport::Udp(pool) => {
             let reply = pool.exchange(query, question, timeout()?).await?;
             if reply[2] & FLAG_TC == 0 {
                 return Ok(reply);
             }
-            let addr = spec.addr.ok_or(UpstreamError::Malformed)?;
-            tcp::exchange_tcp(addr, query, question, timeout()?).await
+            tcp::exchange_tcp(pool.addr(), query, question, timeout()?).await
         }
         Transport::Tcp(addr) => tcp::exchange_tcp(*addr, query, question, timeout()?).await,
         Transport::Dot(client) => client.exchange(query, question, timeout()?).await,

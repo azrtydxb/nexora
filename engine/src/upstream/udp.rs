@@ -168,6 +168,15 @@ impl UdpPool {
             .collect()
     }
 
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Exchanges waiting for a reply across the pool's current sockets.
+    pub fn pending(&self) -> usize {
+        self.slots.borrow().iter().map(|s| s.waiters.len()).sum()
+    }
+
     pub fn sockets_created(&self) -> u64 {
         self.created.get()
     }

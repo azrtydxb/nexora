@@ -91,10 +91,10 @@ Feature work then splits by layer:
     replacing the stored sample, and prunes rows older than 8 days on the existing prune tick.
   - Ranges 15m/1h/6h/24h read `engine_stats` with steps of 10 s/30 s/3 min/10 min. The 7d range reads
     the rollup with a 1 h step.
-- **Account lockout:** `auth_failures` rows are counted in the same statement that inserts them.
-  More than 10 rows for the lower-cased username in 15 minutes gives `auth.ErrTooManyAttempts`.
-  Rows older than 15 minutes are deleted on every insert. A successful login does not clear the
-  counter.
+- **Account lockout:** `auth_failures` rows are keyed on the lower-cased username and the client
+  address (the TCP peer, without port; forwarding headers are ignored). More than 10 rows for that
+  pair in 15 minutes gives `auth.ErrTooManyAttempts`, checked before the password. Rows older than
+  15 minutes are deleted on every insert. A successful login does not clear the counter.
 - **Help coverage:** `web/scripts/check-help.mjs` checks the files listed in each area catalogue's
   exported `pages` array. From Task 33 on, it also fails when any `web/src/pages/*.tsx` or
   `web/src/components/**/*.tsx` file with a form control is in no area. Each control is matched by
@@ -765,6 +765,7 @@ Files:
 - `engine/src/server/mod.rs`: `Scope::finish` counts by route, uncached latency and ACL refusals;
   `note_answer` copies `raced`.
 - `engine/src/server/tcp.rs`: TCP connection guard.
+- `engine/src/recursor/mod.rs`: the trust-anchor refresh `WorkerForward` literal gains `raced`.
 - `engine/src/upstream/mod.rs`: `Strategy::Parallel { max }` (served as `Fastest` until Task 15),
   `Forwarded.raced`, `Health.race_wins`, `RACE` histogram.
 - `engine/src/runtime.rs`: map `UPSTREAM_STRATEGY_PARALLEL` and `parallel_max`.
@@ -798,7 +799,7 @@ pub fn cpu_seconds() -> f64; pub fn resident_bytes() -> u64; pub fn memory_limit
 pub enum Strategy { Ordered, Fastest, Parallel { max: u8 } }
 pub struct Forwarded { pub response: Bytes, pub upstream_index: usize, pub rtt: Duration, pub raced: u8 }
 pub struct Health { /* existing */ pub race_wins: AtomicU64 }
-pub static RACE: RaceHistogram; // observe(Duration), cumulative(&self) -> Vec<u64>
+pub static RACE: RaceHistogram; // observe(Duration), counts() -> [u64; 16], sum_us() -> u64, cumulative(&self) -> Vec<u64>
 // crate
 pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
 ```
@@ -867,7 +868,7 @@ pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
       the six fields. Update every `QueryRecord { .. }` construction, found with
       `grep -rn "filter_generation:" engine/src`, so the new fields start as
       `FilterSource::None, NO_RULE, false, NO_RPZ_ZONE, ACL_NONE, 1` (`Scope::record` in
-      `engine/src/server/mod.rs`, `engine/src/server/rewrite.rs`).
+      `engine/src/server/mod.rs` is the only one; `rewrite.rs` builds no record literal).
 - [ ] Implement `log_record` in `engine/src/telemetry/otlp.rs` with the new parameter. After the
       existing attributes:
   - when `r.filter_source != FilterSource::None`, push `nexora.filter.source`;
@@ -930,14 +931,16 @@ pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
     `acl_refused: [Counter; 2]`, `filter_rewritten: Counter`.
   - Implement `observe_record`:
     1. The route slot is 0 for cache `Hit|Stale`, 1 for `Auth`, 2 for filter `Blocked`, 3 for
-       `Rewritten`, 4 when `rpz_action` is not 0 and not the passthru or disabled code, and otherwise
-       `5 + route`.
+       `Rewritten`, 4 when `rpz_action` is not 0 and not the passthru or disabled code, `5 + route`
+       for cache `Miss`, and otherwise no route (ACL refusals and malformed or unsupported queries
+       were produced by no route).
     2. Add to `miss_duration_buckets` when cache is `Miss|Stale`.
     3. Add to `acl_refused[acl_refused - 1]` when non-zero.
     4. Add to `filter_rewritten` for `Rewritten`.
   - Sum the counters in `Totals`.
   - Add `tcp` as a fourth slot of `ENCRYPTED.connections`, with `ConnectionGuard::new(Transport::Tcp)`
-    mapped to slot 3.
+    mapped to slot 3 by `conn_slot` (the `nexora_encrypted_connections` family keeps its three
+    encrypted transports).
   - Register `nexora_acl_refused{acl}`, `nexora_upstream_race_wins{upstream}` (from
     `Health::race_wins`), `nexora_upstream_race_duration_seconds` (histogram from `upstream::RACE`),
     and `nexora_answers{route}`.
@@ -945,8 +948,9 @@ pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
     `m.upstream_timeouts`, `UpstreamStatus.race_wins_total`, `tls_certificate_not_after_unix` from
     `ENCRYPTED.tls_not_after`, and `log_lines_dropped_total: 0` (Task 13 fills it).
 - [ ] In `engine/src/server/mod.rs` `Scope::finish`, call `self.ctx.counters().observe_record(&r)`
-      after `observe`. In `note_answer`, set `rec.upstream_raced = ans.raced`, and extend the answer type
-      from the forward call so `WorkerForward` stores `raced: Cell<u8>` copied from `Forwarded.raced`. In
+      after `observe`. `WorkerForward` stores `raced: Cell<u8>` (initially 1) copied from
+      `Forwarded.raced` in its `forward`, and `note_answer` sets `rec.upstream_raced = forward.raced.get()`
+      (`MissAnswer` is unchanged). In
       `engine/src/server/tcp.rs`, hold `ConnectionGuard::new(Transport::Tcp)` inside the spawned stream
       task.
 - [ ] In `engine/src/upstream/mod.rs`:
@@ -954,7 +958,8 @@ pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
   - Add `raced: 1` in `forward`'s `Forwarded`.
   - Add `race_wins: AtomicU64` to `Health`.
   - Add `pub static RACE: RaceHistogram` with the `DURATION_BOUNDS_US` buckets (non-cumulative
-    `AtomicU64` array, `cumulative()` for `Stats`).
+    `AtomicU64` array plus a microsecond sum for the Prometheus histogram, `cumulative()` for
+    `Stats`).
 
   In `engine/src/runtime.rs` map `Some(UpstreamStrategy::Parallel)` to
   `Strategy::Parallel { max: resolver.parallel_max.min(8) as u8 }`, and keep the strategy with `max`
@@ -971,10 +976,15 @@ pub const COMMIT: &str; // option_env!("NEXORA_COMMIT") or ""
   Add `println!("cargo:rerun-if-env-changed=NEXORA_VERSION");` and
   `println!("cargo:rerun-if-env-changed=NEXORA_COMMIT");` to `engine/build.rs`. In
   `engine/src/main.rs`, keep `#[command(version = nexora_engine::VERSION)]` and set the long version
-  on the built command in `main`:
-  `Cli::command().long_version(format!("{} {}", nexora_engine::VERSION, nexora_engine::COMMIT).trim_end().to_owned())`
-  before parsing with `Cli::from_arg_matches`. `-V` keeps printing `nexora-engine <VERSION>`, and
+  on the built command in `parse_args`:
+  `Args::command().long_version(<"VERSION COMMIT" trimmed, leaked once to &'static str>)` before
+  parsing with `Args::from_arg_matches` (clap is built without its `string` feature). `-V` keeps printing `nexora-engine <VERSION>`, and
   `--version` also shows the commit.
+- [ ] Also add `m6_observe_record_counts_route_miss_latency_acl_and_rewrites` (route slots, the
+      no-route refusal, miss buckets, ACL and rewrite counters) and
+      `m6_parallel_strategy_maps_with_capped_max` (`parallel_max: 20` maps to `Parallel { max: 8 }`) to
+      `engine/tests/telemetry_export.rs`. `upstreams_key` hashes `parallel_max` only for the parallel
+      strategy, so existing cache keys do not change.
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export && cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --test upstream_udp_tcp'`
       and expect PASS, with `cache_hit_path_does_not_allocate` still passing.
@@ -995,7 +1005,8 @@ Files:
 - `mgmt/internal/api/handlers_admin.go`: `SearchQueryLog` parameters and name resolution.
 - `mgmt/internal/api/querylog_resolve.go`: created; list, policy group, RPZ zone and rewrite name
   resolution.
-- `mgmt/internal/api/querylog_test.go`: created.
+- `mgmt/internal/api/querylog_test.go`: created (`TestSearchQueryLogRepeatedParameters` and
+  `TestSearchQueryLogResolvesNames`, which proves every name lookup against Postgres).
 - `e2e/gui_test.go`: `TestQueryLogBackends` subtests only.
 - `e2e/filter_attribution_test.go`: extend `TestQueryLogCategoryAttribution` (its engine parts pass
   after Task 12; the assertions are written here and marked with the Task 12 dependency in the report).
@@ -1019,6 +1030,8 @@ type Record struct {
 	UpstreamsRaced int64
 	DurationUS int64
 }
+// GlobalPolicyGroup ("global") is the PolicyGroups value for records without a policy group.
+const GlobalPolicyGroup = "global"
 // EscapeWildcard escapes \, * and ? for an OpenSearch wildcard value.
 func EscapeWildcard(s string) string
 // package api
@@ -1225,11 +1238,16 @@ Policy group filter value `global` matches records with an empty `PolicyGroupID`
     3. Adding `allow.casino.attr.test` to the global allowlist (the existing allowlist operation used
        by `web/e2e/screens/04-filtering.spec.ts`) makes `allow.casino.attr.test.` yield
        `Source=="allowlist"`, `Rule=="allow.casino.attr.test"` and `PolicyGroupName==""`.
-    4. A policy group for `127.0.0.2/32` with allowlist `grp.casino.attr.test`, queried with
+    4. A policy group for `127.0.0.2/32` with `category_keys: [gambling]` (so the group blocks the
+       suffix) and allowlist `grp.casino.attr.test`, queried with
        `udpFrom(t, net.ParseIP("127.0.0.2"), ...)`, yields `Source=="allowlist"` and
        `PolicyGroupName` equal to the group name.
-    5. A global rewrite `rw.attr.test A 192.0.2.55` yields `Source=="rewrite"`, `Rule=="rw.attr.test"`
-       and `RewriteAnswer=="A 192.0.2.55"`.
+
+    The `hagezi-gambling` fixture list also serves `casino.attr.test`, so checks 3 and 4 are real
+    allowlist exceptions (`www.casino.attr.test.` is asserted blocked first). The catalog display name
+    comes from `GET /filter-categories` through a local `sourceName` helper, because the harness
+    `CategorySource` view has no `name` field. 5. A global rewrite `rw.attr.test A 192.0.2.55` yields `Source=="rewrite"`, `Rule=="rw.attr.test"`
+    and `RewriteAnswer=="A 192.0.2.55"`.
 
   Each check first asserts the DNS answer (positive path).
 
@@ -1258,11 +1276,13 @@ Policy group filter value `global` matches records with an empty `PolicyGroupID`
     `nexora.filter.result.keyword`).
   - `PolicyGroups` uses a `bool.should` of `terms` on `nexora.policy.group.keyword` for the non-global
     ids and, for `global`, `{"bool":{"must_not":{"exists":{"field":"attributes.nexora.policy.group"}}}}`
-    or an empty term.
+    or an empty term (both alternatives are emitted).
+  - The client stays a single `term`.
   - Extend `osSource.Attributes` with the new keys.
 - [ ] Implement `SearchQueryLog` in `mgmt/internal/api/handlers_admin.go`:
+  - Return `invalid("at most 32 values per parameter")` when more than 32 values are sent (counted
+    before deduplication, so 33 repeated `qtype=A` are refused).
   - Trim and drop empty values, and deduplicate each slice.
-  - Return `invalid("at most 32 values per parameter")` above 32.
   - Validate `source`, `cache` and `filter` values against their enums with 400 `invalid_request`.
   - Map records through `resolveRecordNames`.
 
@@ -1274,9 +1294,12 @@ Policy group filter value `global` matches records with an empty `PolicyGroupID`
   - `group-allow:<sha>` → `<policy group name> allowlist`.
   - `select id::text, name from policy_groups where id::text = any($1)`.
   - `select id::text, name from rpz_zones where id::text = any($1)`.
-  - For `source == "rewrite"`:
-    `select type || ' ' || value from rewrites where name = $1 and group_id is not distinct from nullif($2,'')::uuid order by type, value limit 1`.
-  - Each lookup runs once per page.
+  - For `source == "rewrite"`: one query over `unnest($1::text[], $2::text[]) as k(name, grp)` (rule
+    and policy group id of every rewrite record) joined to `rewrites` on the name and
+    `coalesce(group_id::text,'') in (k.grp, '')`, `distinct on (k.name, k.grp)` ordered by
+    `group_id is null, type, value`: the group's own rewrite wins, otherwise the global one the group
+    client also matches, and the answer is `type || ' ' || value`.
+  - Each lookup runs once per page; ids are compared as text so a non-uuid id never fails the page.
 
 - [ ] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/querylog -count=1 && make webui-placeholder && go test ./mgmt/internal/api -run "TestSearchQueryLogRepeatedParameters|TestPermissionsCoverEveryOperation" -count=1'`
@@ -1304,8 +1327,10 @@ Files:
 Interfaces:
 
 - `zone.Zone.AllowQueryCIDRs []netip.Prefix` and `zone.Zone.UpdateAllowCIDRs []netip.Prefix`.
-- `zone.CreateZoneInput.AllowQueryCIDRs []string`, `zone.UpdateZoneInput.AllowQueryCIDRs *[]string`,
-  `zone.UpdateInput.AllowCIDRs []string`, following the existing input shape for updates.
+- `zone.CreateZoneInput.AllowQueryCIDRs []string` and `UpdateAllowCIDRs []string`;
+  `zone.UpdateZoneInput.AllowQueryCIDRs *[]string` and `UpdateAllowCIDRs *[]string` (nil keeps the stored list).
+- API: `Zone.update.allow_cidrs` is always an array in responses; `update.allow_cidrs` omitted on create or
+  PATCH stores `{}` or keeps the stored list.
 - Snapshot fields `AuthoritativeAllowCidrs` and `AuthoritativeAclSet=true` on every snapshot this
   management plane builds.
 - `AuthZone.AllowQueryCidrs` and `UpdateAllowCidrs` as canonical prefixes.
@@ -1416,7 +1441,7 @@ Interfaces:
   	if code := c.do("PATCH", "/zones/"+z.ID, map[string]any{"revision": z.Revision, "allow_query_cidrs": []string{"bad"}}, nil); code != http.StatusBadRequest {
   		t.Fatalf("invalid zone cidr -> %d", code)
   	}
-  	snap, err := snapshot.Latest(e.ctx, e.st)
+  	_, snap, err := snapshot.Latest(e.ctx, e.st.Pool)
   	if err != nil {
   		t.Fatal(err)
   	}
@@ -1432,10 +1457,12 @@ Interfaces:
   	if hosted == nil || len(hosted.AllowQueryCidrs) != 1 || hosted.UpdateAllowCidrs[0] != "127.0.0.1/32" {
   		t.Fatalf("snapshot zone: %+v", hosted)
   	}
-  	var audit struct{ Events []struct{ Action string } `json:"events"` }
-  	c.do("GET", "/audit?limit=20", nil, &audit)
+  	var audit []struct {
+  		Action string `json:"action"`
+  	}
+  	c.do("GET", "/audit", nil, &audit)
   	found := false
-  	for _, ev := range audit.Events {
+  	for _, ev := range audit {
   		found = found || ev.Action == "updateAccessControl"
   	}
   	if !found {
@@ -1446,6 +1473,8 @@ Interfaces:
   Check the zone creation body against `web/e2e/screens/18-zones.spec.ts` and `e2e/authoritative_test.go`
   `createPrimaryZone`, and the audit list response shape against `listAuditEvents` in
   `mgmt/api/openapi.yaml`, and adapt the literal field names to those.
+  As built, the test also asserts `update.allow_cidrs` in the create response and the exact
+  `AllowQueryCidrs`/`UpdateAllowCidrs` values in the snapshot.
 - [ ] Run
       `scripts/dev-exec.sh 'make webui-placeholder && go test ./mgmt/internal/api -run TestAccessControlSplitAPI -count=1; go test ./mgmt/internal/store -run TestAccessSplitMigrationKeepsBehaviour -count=1'`
       and expect FAIL: `default authoritative access: {...AuthCidrs:[]}` and
@@ -1474,7 +1503,9 @@ Interfaces:
   - Keep the audit action `updateAccessControl` with Before/After including both lists.
 - [ ] In `mgmt/internal/zone/model.go` and `mgmt/internal/zone/service.go`:
   - Add the fields.
-  - Parse both lists with `parseCIDRs` (error code `invalid_cidr`, which the API maps to 400).
+  - Parse both lists with `parseCIDRs(field, in)` (error code `invalid_cidr`; `zone.ValidationError`
+    maps to 422, so `zones.go` first validates both lists with the handler's `maskedCIDRs` helper,
+    which answers 400 `invalid_request` as the test expects).
   - Store them in `CreateZone` (insert columns) and `UpdateZone` (`set("allow_query_cidrs", cidrs)`
     and `set("update_allow_cidrs", cidrs)` when present).
   - Read them in the zone select.
@@ -1502,13 +1533,15 @@ Interfaces:
 Files:
 
 - `mgmt/migrations/00602_user_profile.sql`: created.
-- `mgmt/internal/auth/service.go`: `User` fields, `UserColumns`, `Login` throttling and
-  `last_login_at`.
+- `mgmt/internal/auth/service.go`: `User` fields, `UserColumns`, `Login` throttling (new `client`
+  argument) and `last_login_at`.
+- `mgmt/internal/auth/service_test.go`: the three `Login` calls pass a client address.
 - `mgmt/internal/auth/account.go`: created; profile update, password change, failure counter.
+- `mgmt/internal/auth/account_test.go`: created; `TestLoginThrottleIsPerUsernameAndClient`.
 - `mgmt/internal/api/account.go`: `UpdateCurrentUser`, `ChangeOwnPassword` (replacing the Task 2
   stubs).
-- `mgmt/internal/api/handlers_auth.go`: `apiUser` fills the new fields; `Login` maps
-  `ErrTooManyAttempts`.
+- `mgmt/internal/api/handlers_auth.go`: `apiUser` fills the new fields; `Login` passes the client
+  address (its `ErrTooManyAttempts` maps through `mapError`).
 - `mgmt/internal/api/server.go`: only the `mapError` case for `auth.ErrTooManyAttempts` → 429
   `too_many_attempts`.
 - `mgmt/internal/api/account_test.go`: created.
@@ -1520,14 +1553,16 @@ Interfaces (consumed by Task 21 through the API):
 var ErrTooManyAttempts = errors.New("too many failed attempts; try again later")
 var ErrInvalidCurrentPassword = errors.New("current password is wrong")
 var ErrManagedByIdentityProvider = errors.New("managed by your identity provider")
+type ValidationError string // 400 invalid_request, mapped in api/account.go
 type Preferences struct { Theme string `json:"theme"`; TimeZone string `json:"time_zone"`; Clock24h bool `json:"clock_24h"`; QuerylogLive bool `json:"querylog_live"` }
 // User gains: DisplayName string; LastLoginAt *time.Time; Preferences Preferences
 type ProfileUpdate struct { Revision int64; Email, DisplayName *string; Preferences *Preferences }
 func (s *Service) UpdateProfile(ctx context.Context, p Principal, in ProfileUpdate) (User, error)
-func (s *Service) ChangePassword(ctx context.Context, p Principal, sessionToken, current, next string, revokeOthers bool) error
+func (s *Service) ChangePassword(ctx context.Context, p Principal, client, sessionToken, current, next string, revokeOthers bool) error
+func (s *Service) Login(ctx context.Context, username, password, client string) (string, User, error)
 ```
 
-- [ ] Create `mgmt/internal/api/account_test.go`:
+- [x] Create `mgmt/internal/api/account_test.go`:
   ```go
   package api_test
 
@@ -1650,9 +1685,13 @@ func (s *Service) ChangePassword(ctx context.Context, p Principal, sessionToken,
   ```
   Check the `createApiToken` path and response field names in `mgmt/api/openapi.yaml` (`/api-tokens`),
   and adapt the literal to them.
-- [ ] Run `scripts/dev-exec.sh 'make webui-placeholder && go test ./mgmt/internal/api -run TestAccountSelfService -count=1'`
+- [x] Create `mgmt/internal/auth/account_test.go` with `TestLoginThrottleIsPerUsernameAndClient`: after
+      11 failed logins for `admin` from one address, `admin` from that address gets
+      `ErrTooManyAttempts`, while `admin` from another address and `bob` from the same address still
+      sign in (a positive login runs first).
+- [x] Run `scripts/dev-exec.sh 'make webui-placeholder && go test ./mgmt/internal/api -run TestAccountSelfService -count=1'`
       and expect FAIL: `last_login_at not set by login`.
-- [ ] Create `mgmt/migrations/00602_user_profile.sql`:
+- [x] Create `mgmt/migrations/00602_user_profile.sql`:
   ```sql
   -- +goose Up
   ALTER TABLE users
@@ -1661,47 +1700,55 @@ func (s *Service) ChangePassword(ctx context.Context, p Principal, sessionToken,
       ADD COLUMN preferences jsonb NOT NULL DEFAULT '{}';
   CREATE TABLE auth_failures (
       username text NOT NULL,
+      client   text NOT NULL,
       at       timestamptz NOT NULL DEFAULT now()
   );
-  CREATE INDEX auth_failures_username_at ON auth_failures (username, at);
+  CREATE INDEX auth_failures_username_client_at ON auth_failures (username, client, at);
 
   -- +goose Down
   DROP TABLE auth_failures;
   ALTER TABLE users DROP COLUMN preferences, DROP COLUMN last_login_at, DROP COLUMN display_name;
   ```
-- [ ] Implement `mgmt/internal/auth/account.go`:
-  - `recordFailure(ctx, username)` runs
-    `with d as (delete from auth_failures where at < now() - interval '15 minutes'), i as (insert into auth_failures(username) values (lower($1))) select 1`.
-  - `tooMany(ctx, username)` returns true when
-    `select count(*) from auth_failures where username = lower($1) and at > now() - interval '15 minutes'`
-    is above 10.
+- [x] Implement `mgmt/internal/auth/account.go`:
+  - `failed(ctx, username, client, cause)` runs
+    `with d as (delete from auth_failures where at < now() - interval '15 minutes') insert into auth_failures(username, client) values (lower(left($1, 64)), $2)`
+    and returns `cause`.
+  - `throttled(ctx, username, client)` returns `ErrTooManyAttempts` when
+    `select count(*) from auth_failures where username = lower(left($1, 64)) and client = $2 and at > now() - interval '15 minutes'`
+    is above 10. A `debt:` comment notes that behind a reverse proxy the peer is the proxy.
   - `UpdateProfile`:
     - it runs `select ... for update` and checks `revision`;
     - for `source='oidc'`, a changed email or display name returns `ErrManagedByIdentityProvider`;
-    - it validates the theme enum, `time_zone` through `time.LoadLocation` (empty allowed) and the
-      64-character display name, returning `validationError` (400);
+    - it validates the theme enum, `time_zone` through `time.LoadLocation` (empty allowed, `Local`
+      rejected, `time/tzdata` embedded) and the 64-character display name, returning
+      `auth.ValidationError` (400);
     - it runs `update users set email, display_name, preferences, revision = revision + 1`;
     - it writes the audit row `updateCurrentUser` with Before/After of email, display name and
       preferences only.
   - `ChangePassword`:
     - an API token principal gets `ErrForbidden`, and an OIDC user `ErrManagedByIdentityProvider`;
-    - `tooMany` gives `ErrTooManyAttempts`;
-    - a failing `VerifyPassword` records a failure and returns `ErrInvalidCurrentPassword`;
+    - `throttled` gives `ErrTooManyAttempts`;
+    - a failing `VerifyPassword` records a failure (same username and client key as login) and
+      returns `ErrInvalidCurrentPassword`;
     - a new password shorter than `MinPasswordLength` gives `ErrWeakPassword`, and one equal to the
       current password gives a `validationError`;
-    - it hashes and updates;
+    - it hashes and updates, conditional on the verified hash (`store.ErrConflict` otherwise);
     - with `revokeOthers`, it runs `delete from sessions where user_id = $1 and token_hash <> $2`
       with `hashToken(sessionToken)`;
     - it writes the audit row `changeOwnPassword` with `Before: nil, After: map[string]any{"revoked_other_sessions": revokeOthers}`.
 
-  In `Service.Login`, check `tooMany` first (`ErrTooManyAttempts`), record a failure on
-  `ErrInvalidCredentials`, and set `last_login_at = now()` on success. Extend `UserColumns` and
-  `ScanUser` with `display_name, last_login_at, preferences`.
+  In `Service.Login(ctx, username, password, client)`, check `throttled` first
+  (`ErrTooManyAttempts`), record a failure on `ErrInvalidCredentials`, and set
+  `last_login_at = now()` on success. Extend `UserColumns` and `ScanUser` with
+  `display_name, last_login_at, preferences`; `ScanUser` applies `DefaultPreferences()` for missing
+  keys.
 
-- [ ] Implement `mgmt/internal/api/account.go`:
+- [x] Implement `mgmt/internal/api/account.go`:
   - `UpdateCurrentUser` decodes only `revision`, `email`, `display_name` and `preferences` into
     `auth.ProfileUpdate`, and ignores every other body key.
-  - `ChangeOwnPassword` reads the session cookie through `requestFrom(ctx).Cookie(auth.SessionCookieName)`.
+  - `ChangeOwnPassword` reads the session cookie through `requestFrom(ctx).Cookie(auth.SessionCookieName)`
+    and the client address through `clientAddr(r)` (`net.SplitHostPort(r.RemoteAddr)`), also used by
+    `Login`. `revoke_other_sessions` defaults to true.
   - `ErrInvalidCurrentPassword` maps to `coded(403, "invalid_current_password", ...)`,
     `ErrManagedByIdentityProvider` to `coded(409, "managed_by_identity_provider", ...)`, and
     `ErrTooManyAttempts` to 429 `too_many_attempts` through `mapError` in
@@ -1710,10 +1757,10 @@ func (s *Service) ChangePassword(ctx context.Context, p Principal, sessionToken,
   `apiUser` in `mgmt/internal/api/handlers_auth.go` fills `DisplayName`, `LastLoginAt` and
   `Preferences`, with the defaults `system`, `""`, `false`, `true` for missing keys.
 
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'make webui-placeholder && go test ./mgmt/internal/api ./mgmt/internal/auth -count=1'`
       and expect PASS, including `TestSetupCRUDConflictAuditAndRBAC` and `TestSessionsTokensAndDisabledUsers`.
-- [ ] Report the paths. Commit message: `auth: self-service profile, password change, failure throttling`.
+- [x] Report the paths. Commit message: `auth: self-service profile, password change, failure throttling`.
 
 ## Task 8: Version endpoint and build stamping
 
@@ -1723,6 +1770,7 @@ Files:
 - `mgmt/internal/api/version_test.go`: created.
 - `mgmt/cmd/nexora-mgmt/main.go`: `commit`, `buildDate` vars and `NEXORA_REPOSITORY_URL`.
 - `mgmt/internal/config/config.go`: `RepositoryURL`.
+- `mgmt/internal/config/config_test.go`: a `TestLoadValidation` case rejecting a non-https `NEXORA_REPOSITORY_URL`.
 - `deploy/docker/mgmt.Dockerfile`, `deploy/docker/engine.Dockerfile`: build args.
 - `scripts/build-image.sh`: `COMMIT`, `BUILD_DATE`.
 - `.github/workflows/images.yml`: build args.
@@ -1905,7 +1953,9 @@ Interfaces:
   ```
   Keep the rest of the test, which toggles sources inside the expanded gambling category. Before the
   ads-tracking notice steps (which click a source toggle inside it), add
-  `await page.getByTestId("category-toggle-ads-tracking").click();`. Append a new test:
+  `await page.getByTestId("category-toggle-ads-tracking").click();`. In the viewer test, click
+  `category-toggle-malware` before asserting "abuse.ch" (a source name, rendered only when expanded).
+  Append a new test:
   ```ts
   test("categories expand all, collapse all, remember state, search and deep link", async ({
     page,
@@ -1948,19 +1998,22 @@ Interfaces:
       and expect FAIL in `22-filter-categories.spec.ts`: `category-summary-gambling` not found. A
       missing-operation failure for M6 operations is expected until Task 33.
 - [ ] Implement in `web/src/pages/FilterCategoriesPage.tsx`:
-  - `CategoryCard` renders a header row: a `<button data-testid="category-toggle-<key>" aria-expanded aria-controls="category-sources-<key>">`
-    with a chevron (`ChevronRight`, rotated when open), the name `h2` and the description; a
+  - `CategoryCard` renders a header row: an `h2` wrapping (accordion pattern, valid HTML) a
+    `<button data-testid="category-toggle-<key>" aria-expanded aria-controls="category-sources-<key>">`
+    with a chevron (`ChevronRight`, rotated when open), the name (the region's label) and the description; a
     `<span data-testid="category-summary-<key>">` with `N of M sources on` plus total entries when
     known; the stale/error `StatusDot`; the non-commercial marker when any source has
-    `commercial_use === false`; and the existing `Switch`, outside the button so it is reachable
-    separately.
-  - The source table renders only when expanded, inside `id="category-sources-<key>"`.
+    `commercial_use === false` (`category-noncommercial-<key>`); and the existing `Switch`, outside
+    the button so it is reachable separately.
+  - The source table renders only when expanded, inside `id="category-sources-<key>"` (the container
+    is always present so `aria-controls` resolves).
   - The page keeps `expanded: Set<string>` in state, initialised from localStorage key
     `nexora-categories-expanded` (`JSON.parse` in try/catch, ignoring non-arrays) plus the key from
     `location.hash` `#category-<key>`, and writes back on change in try/catch.
   - The toolbar has `categories-search` (an `Input` filtering by category name, key, source name or
     key, case-insensitive), `categories-expand-all` and `categories-collapse-all`.
-  - A search match expands the matching categories without persisting them.
+  - A search match expands the matching categories without persisting them; collapsing a match while
+    searching is transient too (reset when the query changes).
   - The header row uses `flex flex-wrap gap-2`, so it wraps at 400 px.
 - [ ] Run the same `TestGUICoverage` command and expect `22-filter-categories.spec.ts` to pass. Run
       `cd web && pnpm run typecheck && pnpm run lint`.
@@ -2064,7 +2117,10 @@ func Percentile(bounds, cumulativeA, cumulativeB []uint64, p float64) float64
       `EngineMetrics`.
 - [ ] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/fleet -count=1 && make webui-placeholder && go test ./mgmt/internal/api -count=1'`
-      and expect PASS.
+      and expect PASS, except `TestM6OperationsAreRoutedAndAuthenticated` (Task 2's
+      `m6_contract_test.go`): it treats any 404 as "not routed", and the real handler answers the
+      test's unknown engine id with 404 `not_found`. That test needs to tell a JSON `Error` 404 from
+      a route miss (or use an existing engine id); the fix belongs to the lead, not to this task.
 - [ ] Report the paths. Commit message: `fleet: engine metrics series`.
 
 ## Task 11: Help foundation: tooltip component, catalogue, help pages, lint check
@@ -2234,7 +2290,8 @@ The markdown topic files start with the line `<!-- operations: <heading text of 
       `/help`. At `/help/:topic` it renders the markdown through `react-markdown`, with a `components.h2`
       override that sets `id` to the slugified heading text, then scrolls to `location.hash` after render.
       It uses `prose`-free Tailwind classes (`max-w-prose text-sm leading-6 [&_h2]:mt-6 [&_h2]:text-lg [&_code]:font-mono`),
-      and an unknown topic shows `Navigate to="/help"`.
+      and an unknown topic shows `Navigate to="/help"`. The topic title is the page header, so the
+      markdown's own `# Title` is not rendered again (`components.h1` returns null).
 - [ ] Create `web/src/components/HelpTip.tsx` per Interfaces, using `Tooltip`, `TooltipTrigger` and
       `TooltipContent` from `@/components/ui/tooltip` and `Info` from `lucide-react`. Use a `useState`
       `open` with `onOpenChange`, plus `onClick={() => setOpen((o) => !o)}` for touch. The trigger is
@@ -2257,7 +2314,8 @@ The markdown topic files start with the line `<!-- operations: <heading text of 
   3. Require each id to be a catalogue key and to appear as `HelpTip id="x"` (or `help="x"` on
      `ListEditor`) in the same file.
   4. Print `check-help: <file>: control "<id>" has no help entry` or `... no HelpTip`, and exit 1 on
-     any failure.
+     any failure. It also fails on a `HelpTip`/`help=` id without an entry, a duplicate entry id
+     across areas, and a listed page file that does not exist.
   5. With `--all`, also require every `web/src/pages/*.tsx` and `web/src/components/**/*.tsx` file
      containing one of those control patterns to be listed in some area.
 
@@ -2270,7 +2328,8 @@ The markdown topic files start with the line `<!-- operations: <heading text of 
       `node scripts/check-help.mjs`. Expect exit 1 with `control "probe-field" has no help entry`. Then
       remove `src/pages/ProbeHelp.tsx` and restore `pages: []`.
 - [ ] In `web/src/components/ListEditor.tsx`, add the optional `help?: string` prop and render
-      `{help && <HelpTip id={help} label={inputLabel} />}` beside the input `Label`.
+      `{help && <HelpTip id={help} label={inputLabel} />}` beside the input (its `Label` is
+      `sr-only`, so the icon sits in a flex row with the `Input`).
 - [ ] Run
       `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestHelpTopicsReferenceOperationsDoc -count=1 && cd web && pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run lint && pnpm run build'`
       and expect PASS.
@@ -2290,8 +2349,9 @@ Files:
 - `engine/src/recursor/dispatch.rs`: RPZ zone index on response-phase hits.
 - `engine/src/filter/synth.rs`: `view_with` for tests.
 - `engine/tests/attribution.rs`, `engine/tests/pipeline/mod.rs`: created.
-- `engine/src/filter/oracle.rs`: only the `FilterDecision::Allowed` pattern updates the compiler
-  requires.
+- `engine/tests/snapshot_apply.rs`: only the two `FilterDecision::Allowed` assertions the compiler
+  requires (`engine/src/filter/oracle.rs` has its own `Decision` enum and needs no change; the
+  oracle comparison pattern lives in `index.rs` tests).
 
 Interfaces (consumed by Task 16):
 
@@ -2304,7 +2364,7 @@ pub enum Verdict<'a> { Pass, Allowed(ListHit), Blocked(ListHit), Rewrite { answe
 impl RewriteTable { pub fn lookup(&self, wire_name: &[u8]) -> Option<(&RewriteAnswer, u8, bool)> }
 // crate::server (private helper, same file)
 fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: bool, rec: &mut QueryRecord);
-// crate::recursor::dispatch  Answer gains  pub rpz_zone: u16  (NO_RPZ_ZONE when none)
+// crate::recursor::dispatch  MissAnswer gains  pub rpz_zone: u16  (NO_RPZ_ZONE when none)
 ```
 
 - [ ] Create `engine/tests/attribution.rs`, following the snapshot setup of
@@ -2344,7 +2404,7 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
   fn rewrite_and_rpz_attribution_in_query_records() {
       let rig = pipeline::Rig::start(pipeline::RigOptions {
           rewrites: &[("rw.attr.test", "A", "192.0.2.55"), ("*.wild.attr.test", "A", "192.0.2.56")],
-          rpz_file: Some("$ORIGIN rpz.attr.\nblocked.attr.test CNAME .\n"),
+          rpz_file: Some("$TTL 60\n@ SOA ns.rpz.attr. hostmaster.rpz.attr. 1 60 60 86400 60\nblocked.attr.test CNAME .\n"), // an RPZ zone needs its SOA
           ..Default::default()
       });
       rig.query_a("rw.attr.test.");
@@ -2368,15 +2428,16 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
 
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test attribution'` and expect FAIL: it
-      does not compile, with `no field offset on type ListHit`.
+      does not compile, with `struct ListHit does not have a field named offset`, `cannot find function
+      view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
 - [ ] Implement:
   - **`engine/src/filter/index.rs`:**
     - `for_each_match(name_wire, visit: impl FnMut(u32, u8) -> bool)` passes the level's start
       offset (`Levels::start(level)` as `u8`).
     - `FilterView::decide` builds `ListHit { list, set, offset }`. Allow hits use `first_allow[set]`.
-    - `FilterView::build` fills `first_allow` from the allow lists in position order, the same way
-      `first_list` uses block lists.
-    - `memory_bytes` includes `first_allow`.
+    - `FilterIndex::view` (which builds every `FilterView`) fills `first_allow` from the allow lists
+      in position order, the same way `first_list` uses block lists.
+    - `memory_bytes` includes `first_allow` (13 octets per set instead of 11).
   - **`engine/src/filter/decisions.rs`:**
     - The slot stores `kind: kind | offset << 2`, and `list` and `set` for both blocked and allowed.
     - The hit path rebuilds `Blocked` or `Allowed` from `slot.kind & 3` and `slot.kind >> 2`.
@@ -2390,17 +2451,20 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
     - `Verdict::Allowed(hit)` calls `record_hit(ctx, policy, hit, true, &mut rec)`, which sets
       `rec.filter = Allowed`, `filter_list`, `filter_generation`, `filter_rule_offset = hit.offset`
       and `filter_source = Allowlist`.
-    - `record_block` becomes `record_hit(.., false, ..)`, which also sets
-      `filter_source = if policy.filter().categories(hit) != 0 { Category } else { Blocklist }` and
-      the offset.
+    - `record_block` becomes `record_hit(.., false, ..)`, which also sets the offset and
+      `filter_source = Category` when the blocking list `hit.list` has a non-empty category, else
+      `Blocklist`. (`categories(hit) != 0` cannot be used: uncategorised lists set slot 0, `custom`.)
+    - The CNAME-cloaking block in `leader_answer` records `filter_rule_offset = NO_RULE`, because its
+      hit offset points into the CNAME target, not the query name.
     - The rewrite arms set `filter_source = Rewrite`, `filter_rule_offset = offset` and
       `rewrite_wildcard = wildcard`.
     - Every RPZ query-phase branch that sets `rpz_action` also sets
       `rec.rpz_zone = zone as u16` and `rec.filter_source = FilterSource::Rpz`. `note_answer` copies
       `ans.rpz_zone`, and sets `Rpz` when it is not `NO_RPZ_ZONE`.
   - **`engine/src/server/rewrite.rs`:** copy the offset and wildcard flag into its record.
-  - **`engine/src/recursor/dispatch.rs`:** store the zone index wherever `rpz_action` is assigned on
-    the response phase (lines 449-526).
+  - **`engine/src/recursor/dispatch.rs`:** store the zone index wherever `rpz_action` is assigned
+    (query-phase `Apply`, response phase, `chase`, `policy_answer`, `finish`); failures carry
+    `NO_RPZ_ZONE`.
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test attribution && cargo test --locked -p nexora-engine --lib filter:: && cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --test telemetry_export'`
       and expect PASS, with `cache_hit_path_does_not_allocate`, `filter_index_matches_filterset_semantics`
@@ -2482,7 +2546,7 @@ pub fn emit(level: Option<LogLevel>, args: std::fmt::Arguments<'_>); // writes t
       ] {
           let out = redact(input);
           assert!(!out.contains(secret), "{input:?} -> {out:?}");
-          assert!(out.contains("[redacted]"), "{out:?}");
+          assert!(out.contains("[redacted"), "{out:?}");
       }
       assert_eq!(redact("serving version 7"), "serving version 7");
   }
@@ -2514,11 +2578,11 @@ pub fn emit(level: Option<LogLevel>, args: std::fmt::Arguments<'_>); // writes t
     - `nxj1\.[A-Za-z0-9]+` with `nxj1.[redacted]`;
     - `nxt_[A-Za-z0-9]+` with `nxt_[redacted]`;
     - `-----BEGIN [^-]+-----.*?-----END [^-]+-----` (dot matches newline) with `[redacted PEM]`,
-      where the output keeps the `[redacted` prefix;
+      where the output keeps the `[redacted` prefix; a block with no END line is redacted to the end
+      of the message;
     - `(secret|password|key)=\S+` with `$1=[redacted]`.
 
-    Use the `regex` crate if it is already in `engine/Cargo.toml`; otherwise hand-written scanning,
-    with no new dependency.
+    `regex` is not in `engine/Cargo.toml`, so this is hand-written scanning, with no new dependency.
 
   - `classify` implements the rule in the plan decisions.
   - `emit` formats into a stack `String`, which is acceptable because this is never on the query path,
@@ -2543,7 +2607,10 @@ pub fn emit(level: Option<LogLevel>, args: std::fmt::Arguments<'_>); // writes t
     call such as `eprintln!("nexora-engine: tcp listener: {e}")` in `engine/src/server/tcp.rs` now
     reaches `GLOBAL`. Add the test `crate_eprintln_is_captured` in `engine/tests/logbuf.rs`, which
     calls `nexora_engine::eprintln!("nexora-engine: probe {}", 1)` and reads it back from
-    `nexora_engine::telemetry::logbuf::GLOBAL`.
+    `nexora_engine::telemetry::logbuf::GLOBAL` (redacted, `read` echoing `request_id`), plus the unit
+    test `plain_eprintln_inside_the_crate_reaches_the_ring` in `logbuf.rs`, which calls a plain
+    `eprintln!` from inside the crate as `server/tcp.rs` does. `read` treats `LOG_LEVEL_UNSPECIFIED`
+    as every level.
 - [ ] In `engine/src/control.rs` `session`, add the receive arm:
   ```rust
               Some(ServerMsg::LogRequest(req)) => {
@@ -2571,6 +2638,7 @@ Files:
 - `mgmt/internal/api/engine_logs.go`: `GetEngineLogs` (replacing the stub).
 - `mgmt/cmd/nexora-mgmt/main.go`: wire the broker into the hub, server and `api.Deps.EngineLogs`.
 - `mgmt/internal/control/logs_test.go`: created.
+- `mgmt/internal/api/engine_logs_test.go`: created; parameter, line and error mapping.
 
 Interfaces (consumed by Task 22 through `GET /engines/{id}/logs`):
 
@@ -2582,6 +2650,8 @@ type LogBroker struct { /* st *store.Store; mu; waiters map[string]chan *control
 func NewLogBroker(st *store.Store) *LogBroker
 func (b *LogBroker) Read(ctx context.Context, engineID uuid.UUID, req *controlv1.LogRequest) (*controlv1.LogBatch, error) // implements api.EngineLogReader
 var ErrEngineDisconnected, ErrEngineTimeout = errors.New("engine is not connected"), errors.New("engine did not answer in time")
+func (b *LogBroker) Deliver(ctx context.Context, batch *controlv1.LogBatch)
+func (b *LogBroker) Done(requestID string)
 func (h *Hub) SetLogBroker(b *LogBroker)
 func (s *Server) SetLogBroker(b *LogBroker)
 ```
@@ -2597,7 +2667,10 @@ func (s *Server) SetLogBroker(b *LogBroker)
    unmarshals.
 
 The hub, on `ChannelEngineLogs`, offers `LogRequest` to subscribers with `s.id == engine_id` through a
-non-blocking `logs` channel of capacity 4. On a `LogBatch`, the server calls `broker.Deliver(batch)`:
+non-blocking `logs` channel of capacity 4, and the subscriber remembers the request id (at most 64,
+forgotten after 10 s). On a `LogBatch` whose request id the stream's subscriber remembers (any other
+reply is dropped, so an engine cannot write rows it was not asked for), the server calls
+`broker.Deliver(ctx, batch)`:
 an in-process waiter gets it directly; otherwise the broker inserts
 `insert into engine_log_replies(request_id, batch) values ($1, $2) on conflict do nothing`, deletes
 rows older than 60 s, and notifies `ChannelEngineLogsDone`.
@@ -2692,20 +2765,27 @@ rows older than 60 s, and notifies `ChannelEngineLogsDone`.
       in the server's send goroutine that sends
       `&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_LogRequest{LogRequest: r}}`.
   - In `mgmt/internal/control/server.go` `receive`, add
-    `case *controlv1.EngineMessage_LogBatch: if s.logs != nil { s.logs.Deliver(ctx, m.LogBatch) }`.
+    `case *controlv1.EngineMessage_LogBatch: if s.logs != nil && sub.takeLogRequest(m.LogBatch.RequestId) { s.logs.Deliver(ctx, m.LogBatch) }`.
 - [ ] Implement `GetEngineLogs` in `mgmt/internal/api/engine_logs.go`:
   1. Parse `after`, `level` (default `debug`, mapped to `LOG_LEVEL_DEBUG`), `q` and `limit`
      (default 1000).
   2. Return 404 through `getEngine`.
   3. A nil `h.d.EngineLogs` gives `coded(501, "engine_unsupported", "this engine version cannot send logs")`.
   4. Map `control.ErrEngineDisconnected` to 409 `engine_disconnected` and `control.ErrEngineTimeout`
-     to 504 `engine_timeout`. When the engine's `engine_version` is non-empty and not `dev`, and its
-     Hello came from a build without log support (no reply within the timeout and the version sorts
-     below the first M6 tag), return 501 `engine_unsupported`.
+     to 504 `engine_timeout` (`api.ErrEngineDisconnected` and `api.ErrEngineTimeout` alias the
+     control sentinels). A timeout from an engine whose newest `engine_stats` sample has
+     `started_unix_ms` 0 (a build before M6: image tags `sha-<7>` do not order, so the version
+     string cannot tell) gives 501 `engine_unsupported` instead.
   5. Map lines to `EngineLogs` with `time.UnixMilli`.
 
   Wire it in `mgmt/cmd/nexora-mgmt/main.go`:
-  `logs := control.NewLogBroker(st); hub.SetLogBroker(logs); controlServer.SetLogBroker(logs); deps.EngineLogs = logs`.
+  `logs := control.NewLogBroker(st); hub.SetLogBroker(logs)` before `hub.Run`,
+  `controlServer.SetLogBroker(logs)` and `EngineLogs: logs` in `api.Deps`.
+
+- [ ] Create `mgmt/internal/api/engine_logs_test.go` (`TestGetEngineLogsMapsRequestsAndErrors`, with a
+      fake `EngineLogReader`): parameters reach the `LogRequest` (defaults `debug`, 1000), lines map
+      to `EngineLogs`, disconnected gives 409, timeout gives 504, and a timeout after a pre-M6 stats
+      sample gives 501; an unknown engine gives 404.
 
 - [ ] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/control -count=1 && make webui-placeholder && go test ./mgmt/internal/api -count=1'`
@@ -2716,23 +2796,22 @@ rows older than 60 s, and notifies `ChannelEngineLogsDone`.
 
 Files:
 
-- `engine/src/upstream/mod.rs`: `forward` dispatches `Strategy::Parallel` to `race`; `settle`, `owned_attempt`, `Waiters::len`.
-- `engine/src/upstream/udp.rs`: `UdpPool::pending`.
-- `engine/src/snapshot.rs`: reject `parallel_max > 8`.
+- `engine/src/upstream/mod.rs`: `forward` dispatches `Strategy::Parallel` to `race`; `settle`, `sequential`, `exchange`, `Waiters::len`, `WorkerUpstreams::pending_waiters`.
+- `engine/src/upstream/udp.rs`: `UdpPool::pending`, `UdpPool::addr`.
 - `engine/tests/upstream_parallel.rs`: created.
 
 Interfaces (consumed by Tasks 16, 17):
 
 ```rust
 pub const PARALLEL_LIMIT: usize = 8;
-pub fn settle(health: &Health, result: &Result<Duration, UpstreamError>, now: u32); // record_success/record_failure + queries counter
+pub fn settle(health: &Health, result: Result<Duration, &UpstreamError>, now: u32); // record_success/record_failure + queries counter
 async fn race(set: &UpstreamSet, worker: &WorkerUpstreams, query: &[u8], question: &Question, max: usize) -> Result<Forwarded, UpstreamError>;
-async fn owned_attempt(transport: Rc<Transport>, query: Bytes, question: Question, timeout: Duration) -> Result<Bytes, UpstreamError>; // 'static, used by race
+async fn exchange(transport: &Transport, query: &[u8], question: &Question, timeout: Duration, start: Instant) -> Result<Bytes, UpstreamError>; // one attempt incl. UDP TC fallback; race tasks call it over their owned Rc<Transport>/Bytes/Question
 impl WorkerUpstreams { pub fn pending_waiters(&self) -> usize } // sum of UDP pool waiters, for tests
 fn acceptable(response: &[u8]) -> bool; // rcode NOERROR (0) or NXDOMAIN (3), TC clear
 ```
 
-- [ ] Create `engine/tests/upstream_parallel.rs`. Copy the helpers `query`, `counter` and `local`
+- [x] Create `engine/tests/upstream_parallel.rs`. Copy the helpers `query`, `counter` and `local`
       from `engine/tests/upstream_udp_tcp.rs`, as test crates cannot share private helpers, and add:
   ```rust
   /// A UDP fake upstream: answers every query after `delay` with `rcode`, counting queries.
@@ -2819,19 +2898,26 @@ fn acceptable(response: &[u8]) -> bool; // rcode NOERROR (0) or NXDOMAIN (3), TC
       .await;
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test upstream_parallel'` and
-      expect FAIL:
-      `assertion left == right failed: left: 1, right: 3` on `got.raced`, because the variant still
-      forwards like `Fastest`.
-- [ ] Implement `race` in `engine/src/upstream/mod.rs`:
-  1. `set.order(now, &mut order)`, keep the indexes whose `health.admit(now)` is true, and truncate
-     to `if max == 0 { PARALLEL_LIMIT } else { max.min(PARALLEL_LIMIT) }`. An empty list returns
-     `NoneAvailable`, and a single candidate goes through the existing ordered path.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test upstream_parallel'` and
+      expect FAIL because the variant still forwards like `Fastest`: the first test stops at the
+      upstream id (`left: "slow"`, `right: "fast"`, asserted before `got.raced`), the second at
+      `got.raced` (`left: 1`, `right: 2`). `pending_waiters` and `pending` are added first so the
+      failure is an assertion, not a compile error.
+- [x] Implement `race` in `engine/src/upstream/mod.rs`:
+  1. `set.order(now, &mut order)`, then keep indexes in that order while fewer than
+     `if max == 0 { PARALLEL_LIMIT } else { max.min(PARALLEL_LIMIT) }` are kept and
+     `health.admit(now)` is true (admission is checked only for candidates that will be sent, so a
+     down upstream's probe slot is never taken by one cut off by the limit). An empty list returns
+     `NoneAvailable`, and a single candidate goes through `sequential` (the ordered loop) without
+     re-admitting.
   2. `let (tx, mut rx) = tokio::sync::mpsc::channel(PARALLEL_LIMIT);`. For each candidate, clone
      `worker.transport(spec)` (`Rc<Transport>`), `Bytes::copy_from_slice(query)` once shared by all,
-     `set.health[i].clone()` and the timeout `spec.timeout.min(remaining(start)?)`. Then
-     `tokio::task::spawn_local(async move { let t0 = Instant::now(); let r = owned_attempt(transport, q, question, timeout).await; settle(&health, &r.as_ref().map(|_| t0.elapsed()).map_err(Clone::clone), clock::now_secs()); let _ = tx.send((i, r, t0.elapsed())).await; })`.
-     Make `UpstreamError: Clone`, which its variants allow.
+     `set.health[i].clone()` inside an owned `AttemptGuard` (now generic over `Deref<Target = Health>`,
+     so a dropped task still releases a probe slot) and `spec.timeout`. A `worker.transport` error is
+     settled as a failure at once and kept as the last error. Then
+     `tokio::task::spawn_local(async move { let t0 = Instant::now(); let r = exchange(&transport, &q, &question, timeout, start).await; guard.done = true; let rtt = t0.elapsed(); settle(&guard.health, r.as_ref().map(|_| rtt), clock::now_secs()); let _ = tx.send((i, r, rtt)).await; })`.
+     `UpstreamError` stays non-`Clone` (`Io` wraps `std::io::Error`), so `settle` takes
+     `Result<Duration, &UpstreamError>`.
   3. Drop the original `tx`, then loop on `rx.recv()` until `None`:
      - `Ok(resp)` with `acceptable(&resp)`: add 1 to `set.health[i].race_wins`, observe the race
        duration into `RACE`, and return `Ok(Forwarded { response: resp, upstream_index: i, rtt, raced: n })`.
@@ -2842,26 +2928,28 @@ fn acceptable(response: &[u8]) -> bool; // rcode NOERROR (0) or NXDOMAIN (3), TC
      SERVFAIL or REFUSED as with ordered, otherwise `Err(last_err)`, or `Deadline` when the overall
      deadline passed.
 
-  4. `owned_attempt` is the body of today's `attempt` over an owned transport: UDP `pool.exchange`
-     with TC fallback to `tcp::exchange_tcp`, TCP, DoT and DoH. `attempt` calls it with a borrowed
-     `Rc` clone, so the ordered and fastest paths share the code.
+  4. `exchange(transport, query, question, timeout, start)` is the body of the former `attempt`
+     (UDP `pool.exchange` with TC fallback to `tcp::exchange_tcp` at `UdpPool::addr`, TCP, DoT and
+     DoH; each step's timeout is `timeout.min(remaining(start))`). `sequential` calls it with a
+     borrowed transport and the race tasks with their owned `Rc`, so every strategy shares the code
+     and ordered/fastest allocate nothing new.
 
   Refactor `forward`'s success and failure recording into `settle` without changing ordered or
   fastest behaviour. `settle` increments `queries` for every completed attempt, so
   `nexora_upstream_queries_total` counts every attempt, as the spec says. `pending_waiters` sums the
   waiter counts of the worker's UDP pools. Add `pub fn pending(&self) -> usize` to
   `engine/src/upstream/udp.rs`, returning the sum of `waiters.len()` over its sockets (add `len()` to
-  `Waiters` in `engine/src/upstream/mod.rs`), and add `engine/src/upstream/udp.rs` to this task's
-  files.
+  `Waiters` in `engine/src/upstream/mod.rs`).
 
-- [ ] In `engine/src/snapshot.rs` `validate`, add
-      `if s.resolver.as_ref().is_some_and(|r| r.parallel_max > 8) { return Err(SnapshotError::Invalid("parallel_max must be 0..=8".into())); }`,
-      and add a case in `engine/tests/snapshot_apply.rs` only if that file already has a table of invalid
-      snapshots. Otherwise add `parallel_max_above_eight_is_rejected` to `engine/tests/upstream_parallel.rs`.
-- [ ] Run
+- [x] Dropped: `engine/src/snapshot.rs` does **not** reject `parallel_max > 8`. The committed contract
+      says engines cap at 8 (`control.proto` field 700 comment, `openapi.yaml`), `runtime.rs` maps
+      `min(8)`, and Task 4's `m6_parallel_strategy_maps_with_capped_max` (`engine/tests/telemetry_export.rs`)
+      applies `parallel_max: 20` and expects `Parallel { max: 8 }`; a rejection turned that test red.
+      `race` also caps at `PARALLEL_LIMIT`. The management plane enforces 0..=8 (DB check, Task 17).
+- [x] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test upstream_parallel && cargo test --locked -p nexora-engine --test upstream_udp_tcp && cargo test --locked -p nexora-engine --test server_pipeline && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings'`
       and expect PASS.
-- [ ] Report the paths. Commit message: `engine: parallel upstream strategy`.
+- [x] Report the paths. Commit message: `engine: parallel upstream strategy`.
 
 ## Task 16: Access control split in the engine, hot-path proof and e2e
 
@@ -3218,7 +3306,7 @@ func DashboardSeries(ctx context.Context, q store.PolicyQuerier, r Range, now ti
 func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) (HealthData, error)
 ```
 
-- [ ] Create `mgmt/internal/querylog/top_test.go`:
+- [x] Create `mgmt/internal/querylog/top_test.go`:
   ```go
   func TestBuiltinTop(t *testing.T) {
   	b := querylog.NewBuiltin(20)
@@ -3246,11 +3334,11 @@ func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) 
   	}
   }
   ```
-  Add `TestOpenSearchTopAggregation` to the same file. It asserts the request body contains
-  `"aggs":{"top":{"terms":{"field":"attributes.dns.question.name.keyword","size":2}}}` and `"size":0`,
-  and decodes the `aggregations.top.buckets` of a fake response. A 500 response gives
-  `ErrBackendUnavailable`.
-- [ ] Create `mgmt/internal/stats/dashboard_test.go` with `TestDashboardAggregations`:
+  Add `TestOpenSearchTopAggregation` to the same file. With `Limit: 1` it asserts the request body
+  contains `"aggs":{"top":{"terms":{"field":"attributes.dns.question.name.keyword","size":2}}}` (one
+  extra bucket for the dropped empty key) and `"size":0`, and decodes the `aggregations.top.buckets` of
+  a fake response whose empty-key bucket is dropped. A 500 response gives `ErrBackendUnavailable`.
+- [x] Create `mgmt/internal/stats/dashboard_test.go` with `TestDashboardAggregations`:
   - Use `storetest.New`, two engines via `storetest.InsertEngine`, and one connected via
     `storetest.ConnectEngine`.
   - Insert raw `engine_stats` samples 10 s apart for the last 2 minutes, with `Stats` M6 maps set
@@ -3268,7 +3356,8 @@ func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) 
     `BlockedByCategory["ads-tracking"]` equal the rates computed by hand from the inserted deltas;
     `StepSeconds == 10`; and per-engine `CacheBytes`.
   - `DashboardSeries(7d)` reads the rollup, with `StepSeconds == 3600` and more than 100 points.
-  - `DashboardHealth` has alerts of every kind: `engine_disconnected` for the unconnected engine,
+  - `DashboardHealth` has alerts of every kind (the connected engine's status is `behind`, because the
+    catalog sync publishes config version 1): `engine_disconnected` for the unconnected engine,
     `category_stale`, `upstream_down` for `fx`, `certificate_expiring` with severity `critical` under
     7 days, `trust_anchor_refresh_failed` when a `TrustAnchorStatus.LastError` is set, and
     `export_dropped` when `ExportDroppedTotal` grew. Also check the groups table counts.
@@ -3281,10 +3370,10 @@ func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) 
   and `GET /dashboard/top?range=1h` must return 200 with `"available":false` and empty lists. A `Noop`
   backend also gives `available:false`, and `range=2d` gives 400.
 
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/querylog ./mgmt/internal/stats -run "Top|TestDashboardAggregations" -count=1; make webui-placeholder && go test ./mgmt/internal/api -run TestDashboardTopBackendUnavailable -count=1'`
       and expect FAIL: `b.Top undefined` and `undefined: stats.DashboardSeries`.
-- [ ] Create `mgmt/migrations/00604_engine_stats_rollup.sql`:
+- [x] Create `mgmt/migrations/00604_engine_stats_rollup.sql`:
   ```sql
   -- +goose Up
   -- The newest engine Stats sample per engine per 5 minutes, kept 8 days for the 7-day dashboard range.
@@ -3298,7 +3387,7 @@ func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) 
   -- +goose Down
   DROP TABLE engine_stats_rollup;
   ```
-- [ ] Implement:
+- [x] Implement:
   - **`stats.Record`:** in the same call, run
     `insert into engine_stats_rollup(engine_id, bucket, stats) values ($1, date_bin('5 minutes', now(), timestamptz 'epoch'), $2) on conflict (engine_id, bucket) do update set stats = excluded.stats`.
     On the existing prune tick, also delete rollup rows older than 8 days.
@@ -3315,21 +3404,26 @@ func DashboardHealth(ctx context.Context, q store.PolicyQuerier, now time.Time) 
       function), with QPS, p99 and hit ratio from `fleet.Series(ctx, q, id, 1*time.Minute)`'s last
       point.
     - Groups come from `engine_groups` with counts.
-    - The alert rules are listed in the test above.
+    - The alert rules are listed in the test above. `category_stale` repeats the rule of
+      `nexora_mgmt_filter_category_stale` in its own query (`collector.go` is not owned by this task).
+      The sample alerts read each engine's oldest and newest sample of the last 5 minutes;
+      `upstream_down` is critical when every reporting engine sees the upstream down, and
+      `engine_disconnected` is critical.
     - Certificate expiry: `warning` under 14 days, `critical` under 7.
   - **`Top`:**
-    - Builtin scans the ring newest first within From/To, counts with a map, and sorts by count desc
+    - Builtin scans the ring within From/To, counts with a map, and sorts by count desc
       then key.
     - OpenSearch runs `size:0` with a `terms` aggregation on the keyword field (name → `dns.question.name`,
-      client → `client.address`, category → `nexora.filter.category`), the same time and filter
-      clauses as `Search`, and `min_doc_count: 1`, dropping the empty key.
+      client → `client.address`, category → `nexora.filter.category`) and the same time and filter
+      clauses as `Search` (shared `filterClauses`). The aggregation asks for `Limit + 1` buckets (the
+      default `min_doc_count` is 1) and drops the empty key.
   - **`mgmt/internal/api/dashboard_m6.go`:** validate the range; `GetDashboardTop` runs four `Top`
     calls (domains, blocked domains, clients, categories). `available` is false when the backend is not
     a `querylog.Topper` or returns `ErrBackendUnavailable`.
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'go test ./mgmt/internal/querylog ./mgmt/internal/stats -count=1 && make webui-placeholder && go test ./mgmt/internal/api -count=1'`
       and expect PASS.
-- [ ] Report the paths. Commit message: `mgmt: dashboard series, top lists and health`.
+- [x] Report the paths. Commit message: `mgmt: dashboard series, top lists and health`.
 
 ## Task 19: Query log GUI: partial names, multi-select, URL state, Reason column
 
@@ -3647,8 +3741,15 @@ Interfaces:
   - In "Dynamic updates", `Input id="zone-update-allow" data-testid="zone-update-allow"` labelled
     "Allowed update sources", with help text "Empty allows any source; a TSIG key is always
     required." It is sent as `update.allow_cidrs`.
+    As built, the summary's Updates column shows the TSIG key names (or "Refused") and, for primary
+    zones, a "from <sources>" line whenever `update.allow_cidrs` is set, so the spec's `127.0.0.1/32`
+    shows even for a zone without update keys. Both access sections PUT both lists with the latest
+    revision, so saving one never resets the other.
 - [ ] Run the same command and expect `03`, `18`, `19` and `30` to pass. Run
-      `cd web && pnpm run typecheck && pnpm run lint`.
+      `cd web && pnpm run typecheck && pnpm run lint`. Spec 30 needs `NEXORA_E2E_ACL_ZONE` from Task 16's
+      `e2e/gui_seed_access_test.go` (wave 3); until that lands it fails with
+      `missing environment variable NEXORA_E2E_ACL_ZONE`. Task 20 was verified in a private pod copy
+      with that seed added as Task 16 specifies.
 - [ ] Report the paths. Commit message: `gui: separate recursion and authoritative access, zone allow-query`.
 
 ## Task 21: Account GUI: profile page, change password dialog, menu items
@@ -3677,7 +3778,7 @@ Interfaces:
 - Seed vars: `NEXORA_E2E_ACCOUNT_USER` (`pat`, viewer, password `pat-password-e2e-1`) and
   `NEXORA_E2E_ACCOUNT_PASSWORD`.
 
-- [ ] Create `e2e/gui_seed_account_test.go`:
+- [x] Create `e2e/gui_seed_account_test.go`:
   ```go
   package e2e
 
@@ -3735,6 +3836,11 @@ Interfaces:
   test("OIDC users cannot change their password here", async ({ page }) => {
     await page.goto("/login");
     await page.getByTestId("login-oidc").click();
+    await page
+      .getByRole("button", {
+        name: `Sign in as ${env("NEXORA_E2E_OIDC_USER")}`,
+      })
+      .click();
     await expect(page.getByTestId("user-menu")).toContainText(
       env("NEXORA_E2E_OIDC_USER"),
     );
@@ -3750,10 +3856,10 @@ Interfaces:
   ```
   Check the OIDC login steps against `web/e2e/screens/11-oidc.spec.ts` and copy its flow if the
   fixture needs more than the `login-oidc` click.
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run TestGUICoverage -count=1 -timeout 45m'`
       and expect FAIL in `33-account.spec.ts`: `menu-profile` not found.
-- [ ] Implement:
+- [x] Implement:
   - **`web/src/pages/AccountPage.tsx`:**
     - A `PageHeader` "Your account" with the description "Your sign-in details and how Nexora shows
       information to you."
@@ -3779,13 +3885,15 @@ Interfaces:
     before the theme toggle.
   - **`web/src/app/router.tsx`:** add `{ path: "account", element: <AccountPage /> }`.
   - **`web/src/lib/theme.ts`:** add `applyThemePreference(theme: "system" | "light" | "dark")`, called
-    from `AccountPage` after save and from `UserMenu` when `user.preferences.theme` changes. The
-    toggle also PUTs the preference when the user is loaded (best effort; a failed save keeps the
-    local toggle).
-- [ ] Run the same command and expect `33-account.spec.ts`, `06-users.spec.ts`, `11-oidc.spec.ts` and
+    from `AccountPage` after save and, through `useTheme()` (used by `UserMenu`), when
+    `user.preferences.theme` changes; `system` also follows later `prefers-color-scheme` changes.
+    `useTheme()` reads the theme from the root element's `dark` class through
+    `useSyncExternalStore`. The toggle also PUTs the preference when the user is loaded (best effort;
+    a failed save keeps the local toggle).
+- [x] Run the same command and expect `33-account.spec.ts`, `06-users.spec.ts`, `11-oidc.spec.ts` and
       `web/e2e/auth.spec.ts` (through `TestAuthRBACAuditOIDC`) to pass:
       `scripts/dev-exec.sh 'NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run "TestGUICoverage|TestAuthRBACAuditOIDC" -count=1 -timeout 60m'`.
-- [ ] Report the paths. Commit message: `gui: account profile and password change`.
+- [x] Report the paths. Commit message: `gui: account profile and password change`.
 
 ## Task 22: Engine modal with metrics, logs and queries
 
