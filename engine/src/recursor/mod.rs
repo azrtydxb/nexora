@@ -9,6 +9,7 @@ pub mod metrics;
 pub mod roothints;
 pub mod rpz;
 pub mod rrcache;
+pub mod trace;
 pub mod transport;
 
 #[cfg(test)]
@@ -52,6 +53,48 @@ const ANCHOR_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Resolution futures are `!Send` (they run on the per-worker `current_thread` runtimes).
 pub type LocalBoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+
+/// Polls `main` to completion while polling the `background` futures alongside it; `refill`
+/// runs after every poll of `main` and may add futures. Background futures still pending when
+/// `main` completes stay in `background` (drop them to cancel).
+pub async fn poll_with<'a, T>(
+    background: &mut Vec<LocalBoxFuture<'a, ()>>,
+    main: impl std::future::Future<Output = T>,
+    mut refill: impl FnMut(&mut Vec<LocalBoxFuture<'a, ()>>),
+) -> T {
+    let mut main = std::pin::pin!(main);
+    std::future::poll_fn(|cx| {
+        let out = main.as_mut().poll(cx);
+        refill(background);
+        if out.is_pending() {
+            background.retain_mut(|f| f.as_mut().poll(cx).is_pending());
+        }
+        out
+    })
+    .await
+}
+
+/// Runs `futures` concurrently on the current task; the outputs keep the input order.
+pub async fn join_all<'a, T>(futures: Vec<LocalBoxFuture<'a, T>>) -> Vec<T> {
+    let mut slots: Vec<(LocalBoxFuture<'a, T>, Option<T>)> =
+        futures.into_iter().map(|f| (f, None)).collect();
+    std::future::poll_fn(|cx| {
+        let mut done = true;
+        for (f, out) in slots.iter_mut().filter(|(_, out)| out.is_none()) {
+            match f.as_mut().poll(cx) {
+                std::task::Poll::Ready(v) => *out = Some(v),
+                std::task::Poll::Pending => done = false,
+            }
+        }
+        if done {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+    slots.into_iter().filter_map(|(_, out)| out).collect()
+}
 
 /// An RFC 8914 Extended DNS Error (DNSSEC, resolution failures and RPZ). Only the INFO-CODE goes
 /// on the wire; the text is for tests and logs.

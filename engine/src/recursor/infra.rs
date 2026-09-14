@@ -15,8 +15,21 @@ const BACKOFF_AFTER: u8 = 3;
 const BACKOFF_BASE_SECS: u64 = 5;
 const BACKOFF_MAX_SECS: u64 = 300;
 const LAME_SECS: u64 = 900;
-/// Servers whose RTO is within this band of the best one are chosen at random.
-const SELECT_BAND_MS: u32 = 400;
+/// A best measured server slower than this is raced against an unmeasured one.
+const EXPLORE_ABOVE_MS: f32 = 40.0;
+/// Servers raced against the primary when none of the candidates is measured yet (the first
+/// queries to a zone, such as the root at start).
+const COLD_RACERS: usize = 2;
+/// How long each further server of a race waits for the ones already asked to answer.
+pub const RACE_STAGGER: Duration = Duration::from_millis(20);
+
+/// The servers to ask for one step: `primary` at once, then each of `racers` `RACE_STAGGER`
+/// after the previous one unless a reply has arrived; the first valid reply wins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub primary: IpAddr,
+    pub racers: Vec<IpAddr>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct InfraEntry {
@@ -126,9 +139,24 @@ impl InfraCache {
         self.entry(ip).is_some_and(|e| e.no_edns)
     }
 
-    /// A server to ask for `zone`: lame servers never; backed-off servers only when every other
-    /// server is backed off too (the one whose backoff ends first is probed); otherwise a random
-    /// choice among the servers within `SELECT_BAND_MS` of the lowest RTO.
+    /// Records a server that lost a race after `elapsed` without answering: only an unmeasured
+    /// server is given an estimate (twice its wait), so it is not raced again at every step and
+    /// is measured properly once it looks fastest. The estimate is a lower bound, so the RTO stays
+    /// at least the unmeasured one.
+    pub fn record_lost(&self, ip: IpAddr, elapsed: Duration) {
+        let srtt = elapsed.as_secs_f32() * 2000.0;
+        self.update(ip, |e| {
+            if e.has_sample() {
+                return;
+            }
+            e.srtt_ms = srtt.max(0.001);
+            e.rttvar_ms = ((UNKNOWN_RTO_MS as f32 - e.srtt_ms) / 4.0).max(e.srtt_ms / 2.0);
+            let rto = (e.srtt_ms + 4.0 * e.rttvar_ms).round() as u32;
+            e.rto_ms = rto.clamp(MIN_RTO_MS, MAX_RTO_MS);
+        });
+    }
+
+    /// The server to ask for `zone` (see `plan`).
     pub fn select(
         &self,
         candidates: &[IpAddr],
@@ -136,28 +164,89 @@ impl InfraCache {
         now: u64,
         rng: &mut impl rand::Rng,
     ) -> Option<IpAddr> {
+        self.plan(candidates, zone, now, rng).map(|p| p.primary)
+    }
+
+    /// The servers to ask for `zone`. Lame servers never; backed-off servers only when every other
+    /// server is backed off too (the one whose backoff ends first is probed, alone). Otherwise the
+    /// fastest measured server (smoothed RTT, or the doubled RTO after a timeout); it is raced
+    /// against a random unmeasured server when it is slower than `EXPLORE_ABOVE_MS`, and with no
+    /// measured server two random unmeasured ones race.
+    pub fn plan(
+        &self,
+        candidates: &[IpAddr],
+        zone: &Name,
+        now: u64,
+        rng: &mut impl rand::Rng,
+    ) -> Option<Plan> {
         let usable: Vec<IpAddr> = candidates
             .iter()
             .copied()
             .filter(|ip| !self.is_lame(*ip, zone, now))
             .collect();
-        let up: Vec<(IpAddr, u32)> = usable
+        let mut measured: Vec<(IpAddr, f32)> = Vec::new();
+        let mut unmeasured: Vec<IpAddr> = Vec::new();
+        for &ip in &usable {
+            match self.entry(ip) {
+                Some(e) if now < e.backoff_until => {}
+                Some(e) if e.has_sample() && e.consecutive_timeouts > 0 => {
+                    measured.push((ip, e.rto_ms as f32))
+                }
+                Some(e) if e.has_sample() => measured.push((ip, e.srtt_ms)),
+                _ => unmeasured.push(ip),
+            }
+        }
+        // unmeasured servers that timed out are the last to be tried
+        unmeasured.sort_by_key(|ip| self.entry(*ip).map_or(0, |e| e.consecutive_timeouts));
+        let fresh = unmeasured
             .iter()
-            .copied()
-            .filter(|ip| !self.is_backed_off(*ip, now))
-            .map(|ip| (ip, self.rto(ip).as_millis() as u32))
-            .collect();
-        let Some(best) = up.iter().map(|(_, r)| *r).min() else {
-            return usable
+            .take_while(|ip| self.entry(**ip).is_none_or(|e| e.consecutive_timeouts == 0))
+            .count();
+        fn pick(rng: &mut impl rand::Rng, from: &[IpAddr]) -> Option<IpAddr> {
+            match from.len() {
+                0 => None,
+                n => Some(from[(rng.next_u32() as usize) % n]),
+            }
+        }
+        let best = measured.iter().copied().min_by(|a, b| a.1.total_cmp(&b.1));
+        match best {
+            Some((primary, key)) => {
+                let racers = if key > EXPLORE_ABOVE_MS {
+                    pick(rng, &unmeasured[..fresh]).into_iter().collect()
+                } else {
+                    Vec::new()
+                };
+                Some(Plan { primary, racers })
+            }
+            None if !unmeasured.is_empty() => {
+                let from = if fresh > 0 {
+                    &unmeasured[..fresh]
+                } else {
+                    &unmeasured[..]
+                };
+                let primary = pick(rng, from)?;
+                let mut rest: Vec<IpAddr> = unmeasured[..fresh]
+                    .iter()
+                    .copied()
+                    .filter(|ip| *ip != primary)
+                    .collect();
+                let mut racers = Vec::new();
+                while racers.len() < COLD_RACERS
+                    && let Some(ip) = pick(rng, &rest)
+                {
+                    rest.retain(|r| *r != ip);
+                    racers.push(ip);
+                }
+                Some(Plan { primary, racers })
+            }
+            None => usable
                 .into_iter()
-                .min_by_key(|ip| self.entry(*ip).map_or(0, |e| e.backoff_until));
-        };
-        let band: Vec<IpAddr> = up
-            .into_iter()
-            .filter(|(_, r)| *r <= best + SELECT_BAND_MS)
-            .map(|(ip, _)| ip)
-            .collect();
-        Some(band[(rng.next_u32() as usize) % band.len()])
+                .min_by_key(|ip| self.entry(*ip).map_or(0, |e| e.backoff_until))
+                .map(|primary| Plan {
+                    primary,
+                    racers: Vec::new(),
+                }),
+        }
     }
 
     pub fn len(&self) -> usize {
