@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/piwi3910/nexora/mgmt/internal/ai"
+	"github.com/piwi3910/nexora/mgmt/internal/ai/proposal"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
@@ -59,10 +60,13 @@ type Deps struct {
 	Catalog           *catalog.Catalog      // the embedded filter category catalog; nil serves an empty catalog
 	EngineLogs        EngineLogReader       // nil: getEngineLogs answers 501 engine_unsupported
 	AIDisabledReason  string                // "" when AI is on; getAiStatus reports it
+	AI                *AIRuntime            // nil while AI is off: AI operations answer 503 ai_disabled
 }
 
 // AIRuntime holds the AI collaborators of the handlers; later M11 tasks add its fields.
-type AIRuntime struct{}
+type AIRuntime struct {
+	Proposals *proposal.Validator
+}
 
 type handlers struct {
 	d    Deps
@@ -71,6 +75,9 @@ type handlers struct {
 
 // aiRuntime gates every AI operation except getAiStatus: 503 ai_disabled while AI is off.
 func (h *handlers) aiRuntime() (*AIRuntime, error) {
+	if h.d.AI != nil {
+		return h.d.AI, nil
+	}
 	return nil, apiError{status: http.StatusServiceUnavailable, code: "ai_disabled", msg: "AI is not configured: " + h.d.AIDisabledReason}
 }
 
@@ -79,6 +86,12 @@ var _ StrictServerInterface = (*handlers)(nil)
 // NewHandler routes /api/v1 to the API, /metrics to d.Metrics (when set) and everything else to
 // the embedded GUI.
 func NewHandler(d Deps) http.Handler {
+	_, r := newHandlers(d)
+	return r
+}
+
+// newHandlers is NewHandler that also returns the handlers, for in-package tests.
+func newHandlers(d Deps) (*handlers, http.Handler) {
 	if d.Catalog == nil {
 		d.Catalog = &catalog.Catalog{}
 	}
@@ -119,7 +132,7 @@ func NewHandler(d Deps) http.Handler {
 	}
 	r.Handle("/*", webui.Handler())
 	h.root = r
-	return r
+	return h, r
 }
 
 // jsonOnly bounds request bodies and rejects mutating requests that are not

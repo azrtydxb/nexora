@@ -846,6 +846,8 @@ Files:
 - `mgmt/internal/ai/scheduler.go`, `mgmt/internal/ai/scheduler_test.go`: created.
 - `mgmt/internal/ai/tasks.go`, `mgmt/internal/ai/tasks_test.go`: created.
 - `mgmt/internal/ai/prune.go`, `mgmt/internal/ai/prune_test.go`: created.
+- `mgmt/internal/ai/metrics.go`: `AgentRuns` and `AgentLastSuccess` (defined in `scheduler.go`) join the
+  collectors `ai.New` registers.
 
 Interfaces (consumed by Tasks 9, 12–21):
 
@@ -902,7 +904,9 @@ type Tasks struct{ /* store, instance id, handlers, ctx */ }
 func NewTasks(ctx context.Context, st *store.Store, instanceID string) *Tasks // ctx: the serve context
 func (t *Tasks) Register(kind TaskKind, f TaskFunc)
 func (t *Tasks) Start(kind TaskKind, p auth.Principal, input any) (Task, error) // inserts queued, runs f in a goroutine
-func GetTask(ctx context.Context, st *store.Store, id uuid.UUID) (Task, error)   // store.ErrNotFound
+func GetTask(ctx context.Context, st *store.Store, id uuid.UUID) (Task, error)   // store.ErrNotFound; closes a stopped instance's queued/running task first
+var AgentRuns *prometheus.CounterVec      // nexora_mgmt_ai_agent_runs_total{agent,outcome}
+var AgentLastSuccess *prometheus.GaugeVec // nexora_mgmt_ai_agent_last_success_timestamp_seconds{agent}
 func Prune(ctx context.Context, st *store.Store, now time.Time) error            // under pg_try_advisory_lock(hashtext('nexora:ai:prune'))
 ```
 
@@ -948,7 +952,8 @@ CREATE INDEX ai_tasks_created ON ai_tasks (created_at);
 DROP TABLE ai_tasks, ai_agent_requests, ai_agent_runs;
 ```
 
-- [ ] Create `mgmt/internal/ai/scheduler_test.go`:
+- [x] Create `mgmt/internal/ai/scheduler_test.go`:
+
   ```go
   type countAgent struct{ runs atomic.Int32; active atomic.Int32; overlap atomic.Bool }
 
@@ -987,15 +992,20 @@ DROP TABLE ai_tasks, ai_agent_requests, ai_agent_runs;
   	}
   }
   ```
+
   Add `TestSchedulerRespectsLastRunAndRequests` in the same file:
   - insert an `ai_agent_runs` row started now with interval 1 h, and a fresh scheduler does not run
     within 1 s;
   - `ai.RequestRun(ctx, st, "capacity_forecast", "tester")` makes it run within 1 s and deletes the
     request row;
   - an agent with `Enabled: false` never runs, even when requested.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai -run TestScheduler -count=1'` and expect FAIL:
+
+  As built, `countAgent` has an optional `name` (for the disabled agent), the first test waits for both
+  schedulers to return before counting, and the second test also asserts `ai.AgentStates`.
+
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai -run TestScheduler -count=1'` and expect FAIL:
       `undefined: ai.Scheduler`.
-- [ ] Implement `scheduler.go`. Per tick, per enabled agent:
+- [x] Implement `scheduler.go`. Per tick, per enabled agent:
   1. Due when a request row exists, or when the newest run is older than the interval, or when there is
      no run and `now - instanceStart >= AgentStartDelay`.
   2. Take a dedicated pool connection and `select pg_try_advisory_lock(hashtext('nexora:ai:agent:' || $1))`.
@@ -1010,7 +1020,7 @@ DROP TABLE ai_tasks, ai_agent_requests, ai_agent_runs;
 
   Run and expect PASS.
 
-- [ ] Create `mgmt/internal/ai/tasks_test.go` with `TestTasksLifecycle` and `TestTasksInstanceLoss`:
+- [x] Create `mgmt/internal/ai/tasks_test.go` with `TestTasksLifecycle` and `TestTasksInstanceLoss`:
   - a registered kind returning `map[string]int{"n": 1}` goes queued → succeeded with that result;
   - a kind returning `ai.ErrInvalidOutput` ends `failed`/`invalid_output`;
   - a `*ai.TaskError{"querylog_unavailable", "down"}` ends with that code;
@@ -1021,14 +1031,19 @@ DROP TABLE ai_tasks, ai_agent_requests, ai_agent_runs;
   `undefined: ai.NewTasks`. Implement `tasks.go`; check the `instances` table columns in
   `mgmt/migrations/00001_init.sql`. Run and expect PASS.
 
-- [ ] Create `mgmt/internal/ai/prune_test.go` with `TestPrune`. Seed one row older and one newer than
+- [x] Create `mgmt/internal/ai/prune_test.go` with `TestPrune`. Seed one row older and one newer than
       each retention for `ai_tasks` (24 h), `ai_agent_runs` (30 days), and `ai_usage` (400 days). Assert
       only the old rows go, and that an unfinished run whose `instance_id` heartbeat is stale is closed
       `failed` with error `instance_stopped`. The tables of Tasks 6, 7, 16 and 19 are pruned with
       `to_regclass` guards (`select to_regclass('ai_proposals') is not null`), so this task compiles and
       passes before they exist. Run, expect FAIL, implement `prune.go` with the spec's retentions, and
-      expect PASS.
-- [ ] Run `scripts/dev-exec.sh 'gofmt -l mgmt && go vet ./mgmt/... && go test ./mgmt/internal/ai/... -count=1'` and expect PASS.
+      expect PASS. As built, `ai_capacity_samples` (Task 20, 400 days) is pruned the same guarded way,
+      idle assistant sessions delete their messages first, and "stale instance" means an `instances`
+      row with a heartbeat older than 15 s (an instance without a row is not judged). `GetTask` also
+      closes its task when the instance stopped, so a poller does not wait for the hourly prune. A
+      task cut off by shutdown ends `failed`/`instance_stopped`; an error without a code ends
+      `internal_error` with the message `internal error`.
+- [x] Run `scripts/dev-exec.sh 'gofmt -l mgmt && go vet ./mgmt/... && go test ./mgmt/internal/ai/... -count=1'` and expect PASS.
 - [ ] Report the paths. Commit message: `M11 T5: AI agent scheduler, async tasks and retention`.
 
 ## Task 6: Proposals, action validation and replay apply
@@ -1044,9 +1059,10 @@ Files:
 - `mgmt/internal/api/replay.go`, `mgmt/internal/api/replay_test.go`: created.
 - `mgmt/internal/api/ai_proposals.go`: `ListAiProposals`, `GetAiProposal`, `ApplyAiProposals`,
   `DismissAiProposals` (replacing the stubs).
-- `mgmt/internal/api/ai_proposals_test.go`: created.
-- `mgmt/internal/api/server.go`: `Deps.AI *AIRuntime`, `AIRuntime.Proposals *proposal.Validator`, and
-  `aiRuntime()` returning `h.d.AI` when non-nil.
+- `mgmt/internal/api/ai_proposals_test.go`, `mgmt/internal/api/ai_proposals_internal_test.go`: created.
+- `mgmt/internal/api/server.go`: `Deps.AI *AIRuntime`, `AIRuntime.Proposals *proposal.Validator`,
+  `aiRuntime()` returning `h.d.AI` when non-nil, and `newHandlers(d) (*handlers, http.Handler)` behind
+  `NewHandler` for in-package tests.
 
 Interfaces (consumed by Tasks 9, 10, 15–21, 22):
 
@@ -1063,9 +1079,10 @@ type Action struct {
 	Body        json.RawMessage   `json:"body,omitempty"`
 	Explanation string            `json:"explanation,omitempty"`
 }
-type RPZRule struct {
+type RPZRule struct { // JSON: record, policy, category, reason, confidence
 	Record, Policy, Category, Reason string // policy nxdomain|nodata|drop|passthru
 	Confidence                       float64
+	ProposalID                       uuid.UUID `json:"-"` // set for applied rules; named in the zone comment
 }
 type Draft struct {
 	Source, Title, Description, Priority string
@@ -1118,8 +1135,18 @@ func (h *handlers) replay(ctx context.Context, c replayCall) (replayResult, erro
 ```
 
 - `Claim` runs `select ... for update skip locked` in a transaction held by the returned finish
-  function. A skipped or non-open row gives `ErrNotOpen`.
+  function. A skipped, missing or non-open row gives `ErrNotOpen`. `finish("open", ...)` records the
+  result and keeps the proposal open.
 - The allowlisted operations need at most 8 actions per proposal.
+- An `appendAiRpzRules` body is `{"rules":[{record, policy, category, reason, confidence}]}` (1–50 rules,
+  unknown fields rejected); a proposal with an `appendAiRpzRules` action holds only such actions.
+- Apply result for a non-open id: `status: "proposal_not_open"` and one action
+  `{operation_id: "applyAiProposals", http_status: 409, code: "proposal_not_open"}` (the `AiApplyResponse`
+  schema has no per-result `code`). Dismiss results carry `code: "proposal_not_open"`.
+- A replay answering `license_acknowledgement_required` (422) leaves the proposal `open` with its result
+  (spec edge case "the proposal stays open with the message").
+- `replay` clears the chi route context inherited from the original request so the router routes the
+  replayed request afresh. `getAiProposal` gives `current: null` when replay is refused (a replayed call).
 
 Migration `01202_ai_proposals.sql`:
 
@@ -1253,7 +1280,8 @@ DROP TABLE ai_rpz_rules, ai_proposals;
   - two `appendAiRpzRules` proposals applied in one request → one `createRpzZone` and one
     `uploadRpzZoneFile` audit row, `ai_rpz_rules` has both, and both proposals `applied`;
   - `acknowledge_license: true` is merged into `updateFilterCategory` and `updatePolicyGroup` bodies
-    before replay, and only for those;
+    before replay, and only for those (the "only" half is `TestLicenseAcknowledgementOnlyForCategoryOperations`
+    in `ai_proposals_internal_test.go`, since extra body fields are not observable over HTTP);
   - `GetAiProposal` fills `current` for `updatePolicyGroup` with the live group JSON.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run TestApplyAiProposalsHandler -count=1'` and
       expect FAIL: `ApplyAiProposals is not implemented yet`. Implement `ai_proposals.go`.
@@ -1311,12 +1339,14 @@ type Finding struct {
 	Detail                                  json.RawMessage
 	FirstSeen, LastSeen, UpdatedAt          time.Time
 }
-// Sync upserts open/acknowledged findings for cands (last_seen = now), marks open ones not in cands and
-// unseen for 30 min resolved, and skips candidates dismissed in the last 24 h unless the severity rose.
-// changed is true when a candidate id is new or its severity changed.
+// Sync upserts open/acknowledged findings for cands (last_seen = now), marks open or acknowledged ones
+// not in cands and unseen for 30 min resolved, and skips candidates dismissed in the last 24 h unless the
+// severity rose. changed is true when a candidate id is new or its severity changed. Severity is judged
+// on the detector's severity, kept in detail as "detector_severity" (Explain may re-grade the finding).
+// A severity change resets the finding to the detector text with explained=false.
 func Sync(ctx context.Context, st *store.Store, kind string, cands []Candidate, now time.Time) (changed bool, err error)
-func Explain(ctx context.Context, st *store.Store, kind string, ex []Explanation) error // sets explained=true
-type Filter struct{ Kind, Status string; Limit int }
+func Explain(ctx context.Context, st *store.Store, kind string, ex []Explanation) error // sets explained=true; ids without an active finding are ignored
+type Filter struct{ Kind, Status string; Limit int } // empty Kind/Status match all
 func List(ctx context.Context, q store.PolicyQuerier, f Filter) ([]Finding, error)
 func Update(ctx context.Context, st *store.Store, id uuid.UUID, status string, actor auth.Actor) (Finding, error) // audit updateAiFinding
 var SeverityRank = map[string]int{"info": 1, "warning": 2, "critical": 3}
@@ -1329,8 +1359,8 @@ type Forecast struct {
 	ProposalID              *uuid.UUID
 	GeneratedAt, ValidUntil time.Time
 }
-func Put(ctx context.Context, st *store.Store, f Forecast) error
-func Latest(ctx context.Context, q store.PolicyQuerier, kind string) ([]Forecast, error) // newest per (kind, subject)
+func Put(ctx context.Context, st *store.Store, f Forecast) error // replaces the row with the same (kind, subject, generated_at)
+func Latest(ctx context.Context, q store.PolicyQuerier, kind string) ([]Forecast, error) // newest per (kind, subject); "" = every kind
 ```
 
 Migration `01203_ai_findings_forecasts.sql`:
@@ -1416,6 +1446,9 @@ DROP TABLE ai_forecasts, ai_findings;
 - [ ] Create `mgmt/internal/ai/forecast/forecast_test.go` with `TestLatestPerSubject`: two forecasts for
       subject `u1` an hour apart and one for `u2` → `Latest` returns 2 rows, with the newer `u1`. Run,
       expect FAIL, implement, and expect PASS.
+- [ ] Add `TestExplainKeepsDetectorSeverity` to `finding_test.go`: `Explain` merges detail, sets
+      explained, severity, confidence and title, and a following `Sync` of the same detector severity
+      reports no change and keeps the explanation.
 - [ ] Create `mgmt/internal/api/ai_findings_test.go` with `TestFindingHandlers` over `NewHandler`, with
       `Deps.AI` non-nil and one seeded finding and forecast:
   - viewer `GET /api/v1/ai/findings?kind=anomaly` → 1 item;
@@ -1424,9 +1457,11 @@ DROP TABLE ai_forecasts, ai_findings;
   - `{"status":"open"}` → 400;
   - `GET /api/v1/ai/forecasts?kind=upstream` → the forecast with the `upstream` object decoded from
     `detail`;
+  - operator PATCH of a missing id → 404;
   - `Deps.AI` nil → 503 `ai_disabled`.
 
-  Run, expect FAIL, implement both handler files, and expect PASS.
+  The test sets `Deps.AI`, which Task 6 adds to `server.go` (with `aiRuntime()` returning it), so it
+  compiles and passes once Task 6 is in. Run, expect FAIL, implement both handler files, and expect PASS.
 
 - [ ] Run `scripts/dev-exec.sh 'gofmt -l mgmt && go vet ./mgmt/... && go test ./mgmt/internal/ai/... ./mgmt/internal/api/... -count=1'` and expect PASS.
 - [ ] Report the paths. Commit message: `M11 T7: AI findings and forecasts`.
@@ -1445,7 +1480,7 @@ Interfaces: values keys `mgmt.ai.existingSecret` (string, default `""`), `mgmt.m
 default `false`), `mgmt.mcp.readOnly` (bool, default `true`); alerts `NexoraAIAgentFailing`,
 `NexoraAIBudgetExhausted`.
 
-- [ ] Create `deploy/deploytest/ai_test.go` with `TestHelmAISecretWiring`, reusing the chart render helper
+- [x] Create `deploy/deploytest/ai_test.go` with `TestHelmAISecretWiring`, reusing the chart render helper
       of `deploy/deploytest` (find it with `grep -n "func render\|helm template" deploy/deploytest/*.go`).
   - Rendering with `--set mgmt.ai.existingSecret=nexora-ai --set mgmt.mcp.enabled=true` gives, in the
     mgmt container:
@@ -1465,7 +1500,11 @@ default `false`), `mgmt.mcp.readOnly` (bool, default `true`); alerts `NexoraAIAg
       value: "true"
     ```
     Compare as parsed YAML, not text.
-  - Default values give no env name starting with `NEXORA_AI_`.
+  - Default values give no env name starting with `NEXORA_AI_`. `NEXORA_MCP_ENABLED` and
+    `NEXORA_MCP_READ_ONLY` render always, from `mgmt.mcp`.
+  - Every render sets `mgmt.ca.existingSecret`, external database mode and a default engine group with a
+    `joinTokenSecret`, which the chart requires. The walk starts at `..` (the test runs in
+    `deploy/deploytest`) and skips chart templates that are not plain YAML; the renders cover them.
   - `filepath.WalkDir("deploy")` over every `.yaml`/`.yml` file finds no env entry named
     `NEXORA_AI_API_KEY` with a literal `value:` (parsed YAML, any depth).
   - The rendered PrometheusRule contains the alerts:
@@ -1477,12 +1516,12 @@ default `false`), `mgmt.mcp.readOnly` (bool, default `true`); alerts `NexoraAIAg
 
     Design choice: the 21600 s factor uses the 6 h default. The `agent` label is kept in the
     annotation, and the operations guide notes the threshold.
-- [ ] Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestHelmAISecretWiring -count=1'` and
+- [x] Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestHelmAISecretWiring -count=1'` and
       expect FAIL: missing env entries.
-- [ ] Implement the values, schema, template (inside `{{- with $m.ai }}{{- if .existingSecret }}`) and
-      rule. Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -count=1'` and expect PASS, with every
+- [x] Implement the values, schema, template (inside `{{- with $m.ai }}{{- if .existingSecret }}`) and
+      rule (a new `nexora-ai` rule group). Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -count=1'` and expect PASS, with every
       existing deploytest still passing.
-- [ ] Report the paths. Commit message: `M11 T8: Helm AI secret and MCP wiring, AI alerts`.
+- [x] Report the paths. Commit message: `M11 T8: Helm AI secret and MCP wiring, AI alerts`.
 
 ## Task 9: Management plane wiring, status, tasks and foundation e2e
 
