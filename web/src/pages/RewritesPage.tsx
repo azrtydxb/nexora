@@ -12,6 +12,7 @@ import {
 import { useCan } from "@/auth/AuthProvider";
 import { ConfirmDialog, ErrorAlert, MessageRow } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,7 @@ export function RewritesPage() {
             ))}
           </SelectContent>
         </Select>
+        <HelpTip id="rewrite-scope-filter" label="Scope filter" />
       </div>
       <ErrorAlert
         error={rewrites.error}
@@ -285,7 +287,10 @@ function RewriteDialog({
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid gap-1.5">
-            <Label htmlFor="rewrite-name">Name</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="rewrite-name">Name</Label>
+              <HelpTip id="rewrite-name" label="Name" />
+            </div>
             <Input
               id="rewrite-name"
               className="font-mono"
@@ -298,7 +303,10 @@ function RewriteDialog({
           </div>
           <div className="grid grid-cols-[8rem_1fr] gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="rewrite-type">Type</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rewrite-type">Type</Label>
+                <HelpTip id="rewrite-type" label="Type" />
+              </div>
               <Select
                 value={form.type}
                 onValueChange={(v) => set("type", v as RecordType)}
@@ -316,7 +324,10 @@ function RewriteDialog({
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="rewrite-value">Value</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rewrite-value">Value</Label>
+                <HelpTip id="rewrite-value" label="Value" />
+              </div>
               <Input
                 id="rewrite-value"
                 className="font-mono"
@@ -330,7 +341,10 @@ function RewriteDialog({
           </div>
           <div className="grid grid-cols-[8rem_1fr] gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="rewrite-ttl">TTL</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rewrite-ttl">TTL</Label>
+                <HelpTip id="rewrite-ttl" label="TTL" />
+              </div>
               <Input
                 id="rewrite-ttl"
                 type="number"
@@ -342,7 +356,10 @@ function RewriteDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="rewrite-scope">Scope</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rewrite-scope">Scope</Label>
+                <HelpTip id="rewrite-scope" label="Scope" />
+              </div>
               <Select value={form.scope} onValueChange={(v) => set("scope", v)}>
                 <SelectTrigger id="rewrite-scope" className="h-9">
                   <SelectValue />
@@ -360,7 +377,10 @@ function RewriteDialog({
           </div>
           {form.scope === "global" && (
             <div className="grid gap-1.5">
-              <Label htmlFor="rewrite-engine-group">Engine group</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rewrite-engine-group">Engine group</Label>
+                <HelpTip id="rewrite-engine-group" label="Engine group" />
+              </div>
               <EngineGroupSelect
                 id="rewrite-engine-group"
                 testId="rewrite-engine-group"

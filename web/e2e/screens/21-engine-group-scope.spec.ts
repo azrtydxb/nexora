@@ -12,10 +12,10 @@ test("operator scopes an upstream and a rewrite to an engine group", async ({
   await page.getByTestId("nav-rewrites").click();
   await page.getByRole("button", { name: "New rewrite" }).click();
   const dialog = page.getByRole("dialog", { name: "New rewrite" });
-  await dialog.getByLabel("Name").fill(host);
-  await dialog.getByLabel("Type").click();
+  await dialog.getByLabel("Name", { exact: true }).fill(host);
+  await dialog.getByLabel("Type", { exact: true }).click();
   await page.getByRole("option", { name: "A", exact: true }).click();
-  await dialog.getByLabel("Value").fill("192.168.1.77");
+  await dialog.getByLabel("Value", { exact: true }).fill("192.168.1.77");
   await dialog.getByTestId("rewrite-engine-group").click();
   await page.getByRole("option", { name: "gui-edge", exact: true }).click();
   await dialog.getByRole("button", { name: "Save" }).click();

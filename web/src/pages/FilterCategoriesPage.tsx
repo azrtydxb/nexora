@@ -13,6 +13,7 @@ import {
 import { useCan } from "@/auth/AuthProvider";
 import { ErrorAlert, formatAgo, StatusDot } from "@/components/common";
 import { LicenseNoticeDialog } from "@/components/categories";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -181,18 +182,22 @@ export function FilterCategoriesPage() {
       )}
       {categories.data && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <Input
-            data-testid="categories-search"
-            type="search"
-            aria-label="Search categories and sources"
-            placeholder="Search categories and sources"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSearchClosed(new Set());
-            }}
-            className="w-full sm:w-72"
-          />
+          <div className="flex w-full items-center gap-1.5 sm:w-auto">
+            <Input
+              data-testid="categories-search"
+              data-help="categories-search"
+              type="search"
+              aria-label="Search categories and sources"
+              placeholder="Search categories and sources"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSearchClosed(new Set());
+              }}
+              className="min-w-0 flex-1 sm:w-72 sm:flex-none"
+            />
+            <HelpTip id="categories-search" label="Search" />
+          </div>
           <Button
             data-testid="categories-expand-all"
             variant="outline"
@@ -330,8 +335,10 @@ function CategoryCard({
             Non-commercial
           </Badge>
         )}
+        <HelpTip id="category-toggle" label="Category switch" />
         <Switch
           aria-label={`Enable ${c.name}`}
+          data-help="category-toggle"
           checked={c.enabled}
           disabled={disabled}
           onCheckedChange={(v) =>
@@ -353,7 +360,12 @@ function CategoryCard({
                 <TableHead>Attribution</TableHead>
                 <TableHead className="text-right">Entries</TableHead>
                 <TableHead>Last refresh</TableHead>
-                <TableHead className="w-20 pr-5">Enabled</TableHead>
+                <TableHead className="w-24 pr-5">
+                  <span className="inline-flex items-center gap-1.5">
+                    Enabled
+                    <HelpTip id="source-toggle" label="Source switch" />
+                  </span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -452,6 +464,7 @@ function SourceRow({
       <TableCell className="py-3 pr-5 align-top">
         <Switch
           data-testid={`source-toggle-${s.key}`}
+          data-help="source-toggle"
           aria-label={`Enable source ${s.name}`}
           checked={s.enabled}
           disabled={disabled}

@@ -120,8 +120,10 @@ test("categories in policy groups", async ({ page }) => {
   const name = `cat-${Date.now()}`;
   await page.getByRole("button", { name: "New group" }).click();
   const dialog = page.getByRole("dialog", { name: "New policy group" });
-  await dialog.getByLabel("Name").fill(name);
-  await dialog.getByLabel("Client CIDRs").fill("192.168.252.0/24");
+  await dialog.getByLabel("Name", { exact: true }).fill(name);
+  await dialog
+    .getByLabel("Client CIDRs", { exact: true })
+    .fill("192.168.252.0/24");
   await dialog
     .getByRole("group", { name: "Categories" })
     .getByLabel("Gambling", { exact: true })

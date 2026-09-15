@@ -29,8 +29,8 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
 
   await page.getByRole("button", { name: "New zone" }).click();
   let dialog = page.getByRole("dialog", { name: "New RPZ zone" });
-  await dialog.getByLabel("Zone name").fill(fileName);
-  await dialog.getByLabel("Source").click();
+  await dialog.getByLabel("Zone name", { exact: true }).fill(fileName);
+  await dialog.getByLabel("Source", { exact: true }).click();
   await page.getByRole("option", { name: "File", exact: true }).click();
   await dialog.getByRole("button", { name: "Save" }).click();
   const fileRow = page.getByRole("row", { name: rowName(fileName) });
@@ -40,7 +40,7 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
     .getByRole("button", { name: `Upload file for ${fileName}` })
     .click();
   const upload = page.getByRole("dialog", { name: "Upload zone file" });
-  await upload.getByLabel("Zone file").setInputFiles({
+  await upload.getByLabel("Zone file", { exact: true }).setInputFiles({
     name: "bad.zone",
     mimeType: "text/plain",
     buffer: Buffer.from("$INCLUDE /etc/passwd\n"),
@@ -49,7 +49,7 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
   await expect(upload.getByRole("alert")).toContainText(
     "$INCLUDE is not allowed",
   );
-  await upload.getByLabel("Zone file").setInputFiles({
+  await upload.getByLabel("Zone file", { exact: true }).setInputFiles({
     name: "rpz.zone",
     mimeType: "text/plain",
     buffer: Buffer.from(ZONE),
@@ -59,21 +59,21 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
 
   await page.getByRole("button", { name: "New zone" }).click();
   dialog = page.getByRole("dialog", { name: "New RPZ zone" });
-  await dialog.getByLabel("Zone name").fill(axfrName);
-  await dialog.getByLabel("Source").click();
+  await dialog.getByLabel("Zone name", { exact: true }).fill(axfrName);
+  await dialog.getByLabel("Source", { exact: true }).click();
   await page
     .getByRole("option", { name: "Zone transfer", exact: true })
     .click();
-  await dialog.getByLabel("Primary").fill("127.0.0.1:5300");
-  await dialog.getByLabel("TSIG algorithm").click();
+  await dialog.getByLabel("Primary", { exact: true }).fill("127.0.0.1:5300");
+  await dialog.getByLabel("TSIG algorithm", { exact: true }).click();
   await page.getByRole("option", { name: "hmac-sha256", exact: true }).click();
-  await dialog.getByLabel("TSIG key name").fill("rpz-key.");
+  await dialog.getByLabel("TSIG key name", { exact: true }).fill("rpz-key.");
   await dialog
-    .getByLabel("TSIG secret (base64)")
+    .getByLabel("TSIG secret (base64)", { exact: true })
     .fill(btoa("fixture-tsig-key"));
   // TestGUICoverage's management plane has key storage since M4, so the TSIG secret is sealed and
   // saved; the 503 path without NEXORA_KEK_FILE stays covered by mgmt/internal/api/resolution_test.go.
-  await dialog.getByLabel("Policy override").click();
+  await dialog.getByLabel("Policy override", { exact: true }).click();
   await page.getByRole("option", { name: "NXDOMAIN", exact: true }).click();
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
@@ -89,8 +89,12 @@ test("operator manages RPZ zones: file upload, transfer zone, order, refresh, de
 
   await axfrRow.getByRole("button", { name: `Edit ${axfrName}` }).click();
   const edit = page.getByRole("dialog", { name: "Edit RPZ zone" });
-  await expect(edit.getByLabel("Primary")).toHaveValue("127.0.0.1:5300");
-  await edit.getByLabel("Minimum refresh (seconds)").fill("120");
+  await expect(edit.getByLabel("Primary", { exact: true })).toHaveValue(
+    "127.0.0.1:5300",
+  );
+  await edit
+    .getByLabel("Minimum refresh (seconds)", { exact: true })
+    .fill("120");
   await edit.getByRole("button", { name: "Save" }).click();
   await expect(edit).toBeHidden();
   await expect(axfrRow).toContainText("120 s");

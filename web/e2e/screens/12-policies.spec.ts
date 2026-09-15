@@ -27,11 +27,11 @@ test("operator edits global safe search and manages a policy group", async ({
   const name = `kids-${Date.now()}`;
   await page.getByRole("button", { name: "New group" }).click();
   const dialog = page.getByRole("dialog", { name: "New policy group" });
-  await dialog.getByLabel("Name").fill(name);
+  await dialog.getByLabel("Name", { exact: true }).fill(name);
   await dialog
-    .getByLabel("Client CIDRs")
+    .getByLabel("Client CIDRs", { exact: true })
     .fill("192.168.250.0/24\n192.168.251.1/24");
-  await dialog.getByLabel("Allowlist").fill("school.example");
+  await dialog.getByLabel("Allowlist", { exact: true }).fill("school.example");
   await dialog.getByRole("switch", { name: "Google" }).click();
   await dialog.getByRole("radio", { name: "Strict" }).click();
   await expect(
@@ -41,14 +41,18 @@ test("operator edits global safe search and manages a policy group", async ({
   await expect(
     dialog.getByText("cidr 192.168.251.1/24 has host bits set"),
   ).toBeVisible();
-  await dialog.getByLabel("Client CIDRs").fill("192.168.250.0/24");
+  await dialog
+    .getByLabel("Client CIDRs", { exact: true })
+    .fill("192.168.250.0/24");
   await dialog.getByRole("button", { name: "Save" }).click();
   const row = page.getByRole("row", { name: new RegExp(name) });
   await expect(row).toContainText("192.168.250.0/24");
 
   await row.getByRole("button", { name: `Edit ${name}` }).click();
   const edit = page.getByRole("dialog", { name: "Edit policy group" });
-  await expect(edit.getByLabel("Allowlist")).toHaveValue("school.example");
+  await expect(edit.getByLabel("Allowlist", { exact: true })).toHaveValue(
+    "school.example",
+  );
   // a concurrent edit through the API (page.request shares the session cookie) makes the dialog's revision stale
   const groups = await (await page.request.get("/api/v1/policy-groups")).json();
   const g = groups.find((x: { name: string }) => x.name === name);
@@ -57,7 +61,7 @@ test("operator edits global safe search and manages a policy group", async ({
     headers: { "Content-Type": "application/json" },
   });
   expect(res.status()).toBe(200);
-  await edit.getByLabel("Description").fill("my change");
+  await edit.getByLabel("Description", { exact: true }).fill("my change");
   await edit.getByRole("button", { name: "Save" }).click();
   await expect(
     edit.getByText(
@@ -65,8 +69,10 @@ test("operator edits global safe search and manages a policy group", async ({
     ),
   ).toBeVisible();
   await edit.getByRole("button", { name: "Reload" }).click();
-  await expect(edit.getByLabel("Description")).toHaveValue("changed elsewhere");
-  await edit.getByLabel("Description").fill("my change");
+  await expect(edit.getByLabel("Description", { exact: true })).toHaveValue(
+    "changed elsewhere",
+  );
+  await edit.getByLabel("Description", { exact: true }).fill("my change");
   await edit.getByRole("button", { name: "Save" }).click();
   await expect(edit).toBeHidden();
 

@@ -26,6 +26,7 @@ import {
 } from "@/components/common";
 import { LicenseNoticeDialog } from "@/components/categories";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -389,16 +390,25 @@ function SafeSearchFields({
           <div key={e.key} className="flex items-center gap-2.5">
             <Switch
               id={`${idPrefix}-${e.key}`}
+              data-help="safe-search-engine"
               checked={value[e.key]}
               disabled={disabled}
               onCheckedChange={(v) => onChange({ ...value, [e.key]: v })}
             />
             <Label htmlFor={`${idPrefix}-${e.key}`}>{e.label}</Label>
+            <HelpTip id="safe-search-engine" label={`${e.label} safe search`} />
           </div>
         ))}
       </div>
-      <fieldset disabled={disabled} className="grid content-start gap-2">
-        <legend className="mb-2 text-sm font-medium">YouTube</legend>
+      <fieldset
+        disabled={disabled}
+        data-help="safe-search-youtube"
+        className="grid content-start gap-2"
+      >
+        <legend className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+          YouTube
+          <HelpTip id="safe-search-youtube" label="YouTube restricted mode" />
+        </legend>
         <div className="flex flex-wrap gap-x-5 gap-y-2">
           {youtubeModes.map((m) => (
             <label
@@ -560,7 +570,10 @@ function PolicyGroupDialog({
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid gap-1.5">
-            <Label htmlFor="group-name">Name</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="group-name">Name</Label>
+              <HelpTip id="group-name" label="Name" />
+            </div>
             <Input
               id="group-name"
               required
@@ -570,7 +583,10 @@ function PolicyGroupDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="group-description">Description</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="group-description">Description</Label>
+              <HelpTip id="group-description" label="Description" />
+            </div>
             <Input
               id="group-description"
               maxLength={500}
@@ -579,7 +595,10 @@ function PolicyGroupDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="policygroup-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="policygroup-engine-group">Engine group</Label>
+              <HelpTip id="policygroup-engine-group" label="Engine group" />
+            </div>
             <EngineGroupSelect
               id="policygroup-engine-group"
               testId="policygroup-engine-group"
@@ -592,7 +611,10 @@ function PolicyGroupDialog({
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="group-cidrs">Client CIDRs</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="group-cidrs">Client CIDRs</Label>
+              <HelpTip id="group-cidrs" label="Client CIDRs" />
+            </div>
             <Textarea
               id="group-cidrs"
               className="min-h-20 font-mono text-[13px]"
@@ -605,8 +627,11 @@ function PolicyGroupDialog({
               One prefix per line.
             </p>
           </div>
-          <fieldset className="grid gap-2">
-            <legend className="mb-1.5 text-sm font-medium">Filter lists</legend>
+          <fieldset data-help="group-filter-lists" className="grid gap-2">
+            <legend className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+              Filter lists
+              <HelpTip id="group-filter-lists" label="Group filter lists" />
+            </legend>
             {blockLists.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No filter lists yet
@@ -632,8 +657,11 @@ function PolicyGroupDialog({
               </div>
             )}
           </fieldset>
-          <fieldset className="grid gap-2">
-            <legend className="mb-1.5 text-sm font-medium">Categories</legend>
+          <fieldset data-help="group-categories" className="grid gap-2">
+            <legend className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+              Categories
+              <HelpTip id="group-categories" label="Group categories" />
+            </legend>
             {(categories ?? []).length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No filter categories available
@@ -662,7 +690,10 @@ function PolicyGroupDialog({
             </p>
           </fieldset>
           <div className="grid gap-1.5">
-            <Label htmlFor="group-allowlist">Allowlist</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="group-allowlist">Allowlist</Label>
+              <HelpTip id="group-allowlist" label="Allowlist" />
+            </div>
             <Textarea
               id="group-allowlist"
               className="min-h-20 font-mono text-[13px]"

@@ -2,15 +2,20 @@
 
 # Filtering
 
-Filtering blocks or rewrites answers for names on lists. Every engine builds one filter index from
-all lists that apply to it and decides each query against that index.
+Filtering blocks or rewrites answers for names on lists. Every resolver builds one filter index from
+all lists that apply to it and decides each query against that index. Adding, removing or changing a
+list, or turning a category or source on or off, rebuilds that index on every resolver it applies to.
 
 ## Blocklists
 
+A blocklist is a list you subscribe to by URL, in hosts, domain-per-line or Adblock format. Nexora
+downloads it when you add it and again on its refresh interval (at least 300 seconds, one day by
+default). When a download fails, blocking continues with the last good copy of the list; a list that
+has not been refreshed within two intervals is marked stale.
+
 A blocklist entry blocks the domain and all of its subdomains. Blocked names get the configured block
-answer: a null address (0.0.0.0 or ::), NXDOMAIN or REFUSED. Lists are fetched by the management
-plane and refreshed on their interval; when a refresh fails, blocking continues with the last good
-copy of the list.
+answer: a null address (0.0.0.0 or ::), NXDOMAIN or REFUSED. A list of kind Allow adds its domains to
+the allowlist instead of blocking them.
 
 The filter index has a memory cap: the engine group's filter index maximum when set (at least 16 MiB),
 else half of the engine's container memory limit, else 512 MiB. A configuration whose index exceeds
@@ -20,36 +25,53 @@ of their normal use; 1 GiB covers every catalog category with a small response c
 
 ## Categories and licenses
 
-Categories group curated sources from the built-in catalog. Every category is off after install;
-turn a category and each of its sources on or off on the Categories page. Each source shows its
-license and attribution. Sources that do not allow commercial use (for example OISD and URLhaus) are
-only enabled after you acknowledge the license, and the acknowledgement is recorded in the audit log.
-A category is marked stale when an enabled source's last refresh failed or is older than two refresh
-intervals.
+Categories group curated sources from the built-in catalog, which ships with Nexora and cannot be
+edited. Every category is off after install; turn a category and each of its sources on or off on the
+Filter categories page. A category that is on blocks its enabled sources for clients in no policy
+group; a policy group can select a category for its own clients whether or not it is on globally.
+
+Each source shows its license and attribution. Sources that do not allow commercial use (for example
+OISD and URLhaus) are only enabled after you acknowledge the license, and the acknowledgement is
+recorded in the audit log. A category is marked stale when an enabled source's last refresh failed or
+is older than two refresh intervals; blocking continues with the last good copy.
 
 ## Allowlist
 
-The allowlist beats every blocklist: a name on it, or under a domain on it, is never blocked.
+Allowlist entries beat every blocklist, category and policy block. A name on the allowlist, or under
+a domain on it, is never blocked.
+
+The allowlist on the Blocklist / allowlist page, together with lists of kind Allow, applies to clients
+in no policy group. A policy group has its own allowlist for its clients.
 
 ## Policies
 
 Policy groups select clients by source address. A client in a policy group gets only the group's
-lists and rewrites, instead of the global ones. Safe search can be set for every client or per group.
+filter lists, categories, allowlist, safe search and rewrites, instead of the global ones. When a
+client's address is in several groups, the group with the most specific prefix wins.
+
+A policy group can be limited to one engine group; its filter lists must then apply to every engine
+group or to that one.
 
 ## Rewrites
 
 A rewrite answers a name locally with A, AAAA or CNAME records instead of resolving it. A rule is an
-exact name or a wildcard `*.domain` that matches the subdomains. A policy group's rewrites apply only
-to its clients.
+exact name or a wildcard `*.domain` that matches the subdomains; an exact rule beats a wildcard, and
+the longest wildcard wins. A CNAME rewrite cannot share its name with A or AAAA rewrites.
+
+Global rewrites answer clients in no policy group. A policy group's rewrites apply only to its
+clients.
 
 ## Safe search
 
-Safe search rewrites the major search engines and YouTube to their restricted endpoints, for every
-client or for the clients of one policy group.
+Safe search answers the domains of Google, Bing and DuckDuckGo with their safe search addresses, and
+YouTube with its moderate or strict restricted mode. Global safe search applies to clients in no
+policy group; each policy group has its own setting.
 
 ## RPZ
 
 Response policy zones rewrite or block answers by query name, answer address or name server. A zone is
 transferred from a primary (optionally signed with TSIG) or uploaded as a file. The first zone in the
-list whose trigger matches decides. Engines keep the last good copy of a transferred zone and keep
-using it when a refresh fails.
+list whose trigger matches decides. A zone's policy override can replace the action of every rule in
+it, or disable the zone so that matches are only logged.
+
+Resolvers keep the last good copy of a transferred zone and keep using it when a refresh fails.

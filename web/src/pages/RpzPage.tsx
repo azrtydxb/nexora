@@ -30,6 +30,7 @@ import {
   StatusDot,
 } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -452,7 +453,10 @@ function RpzZoneDialog({
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid grid-cols-[1fr_11rem] gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="rpz-name">Zone name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rpz-name">Zone name</Label>
+                <HelpTip id="rpz-name" label="Zone name" />
+              </div>
               <Input
                 id="rpz-name"
                 className="font-mono"
@@ -465,7 +469,10 @@ function RpzZoneDialog({
             </div>
             {!zone && (
               <div className="grid gap-1.5">
-                <Label htmlFor="rpz-source">Source</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="rpz-source">Source</Label>
+                  <HelpTip id="rpz-source" label="Source" />
+                </div>
                 <Select
                   value={form.source_type}
                   onValueChange={(v) => set("source_type", v as SourceType)}
@@ -482,7 +489,10 @@ function RpzZoneDialog({
             )}
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="rpz-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="rpz-engine-group">Engine group</Label>
+              <HelpTip id="rpz-engine-group" label="Engine group" />
+            </div>
             {/* The scope is fixed at creation; the update body has no engine group. */}
             <EngineGroupSelect
               id="rpz-engine-group"
@@ -495,7 +505,10 @@ function RpzZoneDialog({
           {transfer && (
             <>
               <div className="grid gap-1.5">
-                <Label htmlFor="rpz-primary">Primary</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="rpz-primary">Primary</Label>
+                  <HelpTip id="rpz-primary" label="Primary" />
+                </div>
                 <Input
                   id="rpz-primary"
                   className="font-mono"
@@ -506,7 +519,10 @@ function RpzZoneDialog({
               </div>
               <div className="grid grid-cols-[11rem_1fr] gap-4">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="rpz-tsig-algorithm">TSIG algorithm</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="rpz-tsig-algorithm">TSIG algorithm</Label>
+                    <HelpTip id="rpz-tsig-algorithm" label="TSIG algorithm" />
+                  </div>
                   <Select
                     value={form.tsig_algorithm}
                     onValueChange={(v) =>
@@ -525,7 +541,10 @@ function RpzZoneDialog({
                 </div>
                 {tsig && (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="rpz-tsig-key-name">TSIG key name</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="rpz-tsig-key-name">TSIG key name</Label>
+                      <HelpTip id="rpz-tsig-key-name" label="TSIG key name" />
+                    </div>
                     <Input
                       id="rpz-tsig-key-name"
                       className="font-mono"
@@ -538,7 +557,15 @@ function RpzZoneDialog({
               </div>
               {tsig && (
                 <div className="grid gap-1.5">
-                  <Label htmlFor="rpz-tsig-secret">TSIG secret (base64)</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="rpz-tsig-secret">
+                      TSIG secret (base64)
+                    </Label>
+                    <HelpTip
+                      id="rpz-tsig-secret"
+                      label="TSIG secret (base64)"
+                    />
+                  </div>
                   <Input
                     id="rpz-tsig-secret"
                     type="password"
@@ -561,7 +588,10 @@ function RpzZoneDialog({
           )}
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="rpz-override">Policy override</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rpz-override">Policy override</Label>
+                <HelpTip id="rpz-override" label="Policy override" />
+              </div>
               <Select
                 value={form.policy_override}
                 onValueChange={(v) => set("policy_override", v as Override)}
@@ -579,7 +609,15 @@ function RpzZoneDialog({
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="rpz-min-refresh">Minimum refresh (seconds)</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="rpz-min-refresh">
+                  Minimum refresh (seconds)
+                </Label>
+                <HelpTip
+                  id="rpz-min-refresh"
+                  label="Minimum refresh (seconds)"
+                />
+              </div>
               <Input
                 id="rpz-min-refresh"
                 type="number"
@@ -638,7 +676,10 @@ function UploadDialog({
         </DialogHeader>
         <form onSubmit={(e) => void submit(e)} className="grid gap-4">
           <div className="grid gap-1.5">
-            <Label htmlFor="rpz-file">Zone file</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="rpz-file">Zone file</Label>
+              <HelpTip id="rpz-file" label="Zone file" />
+            </div>
             <Input
               id="rpz-file"
               type="file"

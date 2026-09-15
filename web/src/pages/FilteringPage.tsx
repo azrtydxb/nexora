@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
@@ -16,6 +17,7 @@ import {
   useRevealRef,
 } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { ListEditor } from "@/components/ListEditor";
 import { Badge } from "@/components/ui/badge";
@@ -79,7 +81,7 @@ export function FilteringPage() {
     <>
       <PageHeader
         title="Blocklist / allowlist"
-        description="Blocklist subscriptions the management plane fetches and ships to every engine, and domains that are always allowed."
+        description="Block unwanted domains by subscribing to blocklists, which Nexora downloads and keeps up to date. Domains on the allowlist are never blocked, even when a blocklist or filter category contains them."
         actions={
           canCreate && (
             <Button data-testid="list-add" onClick={() => setEditing("new")}>
@@ -89,6 +91,25 @@ export function FilteringPage() {
           )
         }
       />
+      <p className="text-muted-foreground -mt-4 mb-6 max-w-prose text-sm">
+        Prefer ready-made lists? Turn on{" "}
+        <Link
+          to="/filtering/categories"
+          data-testid="filtering-link-categories"
+          className="text-primary font-medium underline-offset-2 hover:underline"
+        >
+          Filter categories
+        </Link>
+        . For different rules per device or network, use{" "}
+        <Link
+          to="/policies"
+          data-testid="filtering-link-policies"
+          className="text-primary font-medium underline-offset-2 hover:underline"
+        >
+          Policies
+        </Link>
+        .
+      </p>
       <ErrorAlert
         error={lists.error}
         prefix="Could not load filter lists"
@@ -219,6 +240,7 @@ export function FilteringPage() {
             loading={allowlist.isPending}
             canEdit={canUpdateAllowlist}
             inputLabel="Domain"
+            help="allowlist-input"
             placeholder="intranet.example.com"
             addLabel="Add domain"
             columnLabel="Domain"
@@ -507,7 +529,10 @@ function ListDialog({
           <ErrorAlert error={save.error} thing="This list" />
           <div className="grid grid-cols-[1fr_9rem] gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="list-name">Name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="list-name">Name</Label>
+                <HelpTip id="list-name" label="Name" />
+              </div>
               <Input
                 id="list-name"
                 data-testid="list-name"
@@ -518,7 +543,10 @@ function ListDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="list-kind">Kind</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="list-kind">Kind</Label>
+                <HelpTip id="list-kind" label="Kind" />
+              </div>
               <Select
                 value={form.kind}
                 onValueChange={(v) => set("kind", v as Kind)}
@@ -538,7 +566,10 @@ function ListDialog({
             </div>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="list-url">URL</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="list-url">URL</Label>
+              <HelpTip id="list-url" label="URL" />
+            </div>
             <Input
               id="list-url"
               data-testid="list-url"
@@ -552,7 +583,10 @@ function ListDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="list-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="list-engine-group">Engine group</Label>
+              <HelpTip id="list-engine-group" label="Engine group" />
+            </div>
             <EngineGroupSelect
               id="list-engine-group"
               testId="list-engine-group"
@@ -562,7 +596,15 @@ function ListDialog({
           </div>
           <div className="grid grid-cols-[1fr_auto] items-end gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="list-interval">Refresh interval (seconds)</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="list-interval">
+                  Refresh interval (seconds)
+                </Label>
+                <HelpTip
+                  id="list-interval"
+                  label="Refresh interval (seconds)"
+                />
+              </div>
               <Input
                 id="list-interval"
                 data-testid="list-interval"
@@ -583,14 +625,18 @@ function ListDialog({
                   ` Every ${formatSeconds(Number(form.interval))}.`}
               </p>
             </div>
-            <label className="flex h-9 items-center gap-2 self-start pt-6 text-sm">
-              <Switch
-                checked={form.enabled}
-                onCheckedChange={(v) => set("enabled", v)}
-                data-testid="list-enabled"
-              />
-              Enabled
-            </label>
+            <div className="flex h-9 items-center gap-1.5 self-start pt-6">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={form.enabled}
+                  onCheckedChange={(v) => set("enabled", v)}
+                  data-testid="list-enabled"
+                  data-help="list-enabled"
+                />
+                Enabled
+              </label>
+              <HelpTip id="list-enabled" label="Enabled" />
+            </div>
           </div>
           <DialogFooter className="gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
