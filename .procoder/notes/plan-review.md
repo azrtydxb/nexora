@@ -23,12 +23,24 @@ Findings (details in the plan, Task 10 "Findings from the kw runs"):
 - The operator's bodiless `DELETE`s reached the API without `Content-Type: application/json` and got
   `415`; every join token revoke and group delete failed. Fixed in `operator/internal/mgmtapi/client.go`
   with the rule enforced by `internal/mgmtapi/fake`.
-- With that failure the controller created ~2500 join tokens in nine minutes (rotate writes the Secret,
-  then fails revoking the predecessor, and rotates again on the Secret event). Not fixed; Task 7's files.
+- RESOLVED (Task 7 files, 2026-09-15): with that failure the controller created ~2500 join tokens in
+  nine minutes (rotate writes the Secret, then fails revoking the predecessor, and rotates again on the
+  Secret event). `rotate` now records the new token in status right after the Secret write, before
+  anything else can fail; `syncJoinToken` revokes every superseded and previous token _before_ it
+  creates one and stops with `JoinTokenReady=False`, reason `JoinTokenRevokeFailed`, when a revoke
+  fails (requeue 30 s, Secret untouched, `Synced` still `True`); `maxOwnedTokens` (3) is a hard ceiling
+  on the active tokens carrying the CR's marker, counted from the management plane, with reason
+  `JoinTokenLimit`. `TestEngineGroupNeverMultipliesTokensWhenRevokeFails` holds the count at 2 over 140
+  reconciles with every revoke answered 415.
 - `dnsperf` dies with `ECONNABORTED` when an engine leaves a ClusterIP's backends (Cilium 1.19.4 socket
   LB destroys connected UDP sockets). A fresh-socket probe at the same rate lost nothing.
-- A graceful primary deletion fails over in about 3 minutes because CNPG's `smartShutdownTimeout`
-  (180 s) waits for the management plane's sessions.
+- RESOLVED (Task 4 files, 2026-09-15): a graceful primary deletion fails over in about 3 minutes
+  because CNPG's `smartShutdownTimeout` (180 s) waits for the management plane's sessions. The chart
+  value `database.cnpg.smartShutdownTimeout` (default 30) now renders `Cluster.spec`, and the
+  management plane closes idle pooled sessions within 45 s (`MaxConnIdleTime` 30 s, `HealthCheckPeriod`
+  15 s, `MaxConnLifetime` 30 min). The kw production render is byte-identical (kw uses
+  `database.mode: external`); kw's own `deploy/kw/cnpg-cluster.yaml` is out of M9 scope and still
+  carries CNPG's 180 s default. OPEN: the 120 s target is re-measured by the next kw operator e2e.
 
 Production was untouched: `kubectl --context kw -n nexora get nexorainstallations` printed
 `No resources found` before and after, and `nexora-dns`/`nexora-dns-2` still hold 192.168.10.136 and

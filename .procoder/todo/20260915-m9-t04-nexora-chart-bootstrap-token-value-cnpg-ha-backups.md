@@ -35,3 +35,18 @@ Implements Task 4 of `.procoder/plans/nexora-m9-platform.md` (spec `.procoder/sp
 - `go vet ./deploy/deploytest` and `gofmt -l deploy/deploytest` → clean; `scripts/pc-format.sh` on `values.schema.json`.
 - kw render byte-identical (golden test). Not committed (lead commits).
 
+### CNPG failover slower than 120 s (kw operator e2e, 2026-09-15)
+
+- `database.cnpg.smartShutdownTimeout` added (default 30; CNPG's default 180 made a graceful primary
+  deletion take 3m6s) to `values.yaml`, `values.schema.json` and `templates/database-cnpg.yaml`;
+  documented in `docs/architecture.md` (CNPG values) and `docs/operations.md` (CloudNativePG).
+- `mgmt/internal/store.Open` now closes idle pooled sessions within 45 s (`MaxConnIdleTime` 30 s,
+  `HealthCheckPeriod` 15 s, `MaxConnLifetime` 30 min, jitter 5 min), so the smart shutdown has fewer
+  sessions to wait for. `TestOpenClosesIdleConnectionsQuickly`.
+- `NEXORA_DEV_DEPLOY=toolbox-m9 scripts/dev-exec.sh 'go test -count=1 ./deploy/...'` →
+  `ok github.com/piwi3910/nexora/deploy/deploytest 2.733s`, `TestHelmKwRenderUnchanged` included: the
+  kw render is unchanged and the golden was NOT regenerated (kw uses `database.mode: external`, so the
+  production render contains no CNPG `Cluster`).
+- `go test -count=1 -run 'TestMigrateSeedsAndMapsErrors|TestOpenClosesIdle' ./mgmt/internal/store/` →
+  `ok github.com/piwi3910/nexora/mgmt/internal/store 4.305s`.
+- kw production's own `deploy/kw/cnpg-cluster.yaml` was left alone: out of M9 scope per the spec.

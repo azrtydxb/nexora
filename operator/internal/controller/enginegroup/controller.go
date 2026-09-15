@@ -113,14 +113,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	eg.Status.Revision = group.Revision
 	eg.Status.EngineCount = int32(group.EngineCount)
 
-	conflict, err := r.syncJoinToken(ctx, api, &eg, group)
+	reason, msg, err := r.syncJoinToken(ctx, api, &eg, group)
 	if err != nil {
 		return r.apiFailure(ctx, &eg, base, err)
 	}
 	setCondition(&eg, v1alpha1.ConditionSynced, true, v1alpha1.ReasonReconciled, "")
-	if conflict != "" {
-		setCondition(&eg, v1alpha1.ConditionJoinTokenReady, false, v1alpha1.ReasonConflict, conflict)
-		setCondition(&eg, v1alpha1.ConditionReady, false, v1alpha1.ReasonConflict, conflict)
+	if reason != "" {
+		// The group is synced; the join token is not. The Secret keeps the token it holds, so engines
+		// that already have it keep enrolling while an operator reads the reason off the object.
+		setCondition(&eg, v1alpha1.ConditionJoinTokenReady, false, reason, msg)
+		setCondition(&eg, v1alpha1.ConditionReady, false, reason, msg)
 		return ctrl.Result{RequeueAfter: requeueBlocked}, r.patchStatus(ctx, &eg, base)
 	}
 	setCondition(&eg, v1alpha1.ConditionJoinTokenReady, true, v1alpha1.ReasonReconciled, "")

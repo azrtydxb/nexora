@@ -34,6 +34,9 @@ spec:
   # through the -rw Service behind <clusterName>-app.
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: {{ $c.primaryUpdateMethod }}
+  # A deleted or demoted primary shuts PostgreSQL down smartly for this long before CNPG asks for a fast
+  # shutdown: with CNPG's default (180) a failover waits for the management plane's pooled sessions.
+  smartShutdownTimeout: {{ $c.smartShutdownTimeout }}
   {{- with $c.resources }}
   resources: {{- toYaml . | nindent 4 }}
   {{- end }}

@@ -36,6 +36,7 @@ type Server struct {
 
 	ConflictOnce bool            // the next PUT /engine-groups/{id} answers 409 conflict
 	Status       int             // non-zero: every request answers this status
+	RevokeStatus int             // non-zero: every DELETE /join-tokens/{id} answers this status
 	NonEmpty     map[string]bool // group name -> DELETE answers 409 engine_group_not_empty
 	Requests     []string        // "METHOD /path" of every request, in order
 	LastUpdate   *mgmtapi.EngineGroupUpdate
@@ -387,6 +388,10 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
+	if s.RevokeStatus != 0 {
+		writeError(w, s.RevokeStatus, "fake_revoke_status", "revocation refused by the fake")
+		return
+	}
 	id, err := uuid.Parse(strings.TrimPrefix(r.URL.Path, "/api/v1/join-tokens/"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", "invalid id")

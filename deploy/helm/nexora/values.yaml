@@ -60,6 +60,11 @@ database:
     resources: {}
     antiAffinity: preferred # preferred | required
     primaryUpdateMethod: switchover # switchover | restart
+    # Seconds a shutting-down PostgreSQL waits for open client sessions before CNPG switches to a fast
+    # shutdown. CNPG's default (180) makes a primary deletion take about three minutes, because the
+    # management plane holds pooled sessions open; 30 keeps failover inside the 120 s target. Raise it
+    # only when long-running transactions must finish, and keep it well below stopDelay (CNPG: 1800).
+    smartShutdownTimeout: 30
     postgresql:
       parameters: {} # string map, e.g. { max_connections: "200" }
     backup:

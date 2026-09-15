@@ -3,6 +3,7 @@ package enginegroup_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,6 +415,71 @@ func TestEngineGroupRevokesUnrecordedToken(t *testing.T) {
 	for _, tok := range e.f.Tokens() {
 		if tok.Id == newer.JoinToken.Id && tok.State != "active" {
 			t.Fatal("a marked token newer than the recorded token was revoked")
+		}
+	}
+}
+
+// Catches: a join token revocation that keeps failing being answered with another join token on every
+// reconcile. On kw a 415 on every DELETE made the controller create ~2500 join tokens in nine minutes.
+func TestEngineGroupNeverMultipliesTokensWhenRevokeFails(t *testing.T) {
+	e := setup(t)
+	e.create(&v1alpha1.NexoraEngineGroup{ObjectMeta: metav1.ObjectMeta{Name: "edge"}, Spec: v1alpha1.NexoraEngineGroupSpec{
+		JoinToken: v1alpha1.JoinTokenSpec{TTL: dur("3h"), RenewBefore: dur("1h"), RevokeGracePeriod: dur("10m")}}})
+	_, g := e.reconcile("edge")
+	first := g.Status.JoinTokenID
+	if len(e.f.Tokens()) != 1 {
+		t.Fatalf("tokens after the first reconcile: %+v", e.f.Tokens())
+	}
+	e.f.RevokeStatus = 415 // every revoke fails, as the missing Content-Type did on kw
+
+	// A reconcile storm (Secret events) at a standstill clock, then many reconciles across renewals.
+	for i := range 40 {
+		if _, g = e.reconcile("edge"); len(e.f.Tokens()) > 4 {
+			t.Fatalf("%d join tokens after %d storm reconciles", len(e.f.Tokens()), i+1)
+		}
+	}
+	for i := range 100 {
+		e.now = e.now.Add(20 * time.Minute)
+		if _, g = e.reconcile("edge"); len(e.f.Tokens()) > 4 {
+			t.Fatalf("%d join tokens after %d reconciles (%s)", len(e.f.Tokens()), i+1, e.now)
+		}
+	}
+
+	// The failure is on the object, and the Secret still holds a token the API calls active.
+	c := cond(g, v1alpha1.ConditionJoinTokenReady)
+	if c == nil || c.Status != metav1.ConditionFalse || c.Reason != v1alpha1.ReasonJoinTokenRevokeFailed {
+		t.Fatalf("JoinTokenReady = %v", c)
+	}
+	if !strings.Contains(c.Message, first) {
+		t.Fatalf("the condition does not name the token it could not revoke: %q", c.Message)
+	}
+	var sec corev1.Secret
+	if err := e.c.Get(context.Background(), types.NamespacedName{Namespace: e.ns, Name: "edge-join-token"}, &sec); err != nil {
+		t.Fatal(err)
+	}
+	held := false
+	for _, tok := range e.f.Tokens() {
+		if e.f.TokenSecret(tok.Id) == string(sec.Data["join-token"]) && tok.State == "active" {
+			held = true
+		}
+	}
+	if !held {
+		t.Fatal("the Secret no longer holds an active join token")
+	}
+
+	// Once revocation works again the controller rotates and cleans up the token it was stuck on.
+	e.f.RevokeStatus = 0
+	e.now = e.now.Add(20 * time.Minute)
+	_, g = e.reconcile("edge")
+	if c := cond(g, v1alpha1.ConditionJoinTokenReady); c == nil || c.Status != metav1.ConditionTrue {
+		t.Fatalf("JoinTokenReady after recovery = %v", c)
+	}
+	for _, tok := range e.f.Tokens() {
+		if tok.Id.String() == first && tok.State != "revoked" {
+			t.Fatalf("the blocked token is %q after recovery, want revoked", tok.State)
+		}
+		if tok.Id.String() == g.Status.JoinTokenID && tok.State != "active" {
+			t.Fatalf("the recorded token is %q after recovery, want active", tok.State)
 		}
 	}
 }

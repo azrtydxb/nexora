@@ -26,3 +26,15 @@ Implements Task 7 of `.procoder/plans/nexora-m9-platform.md` (spec `.procoder/sp
 - Plan text of Task 7 updated with an "As built" list (merge-patched status, reasons for API refusals,
   controller-clock expiry, deletion by `status.groupID`).
 - Not yet committed (lead commits).
+
+### Runaway join token creation (kw operator e2e, 2026-09-15)
+
+- Red: `TestEngineGroupNeverMultipliesTokensWhenRevokeFails` (fake knob `RevokeStatus: 415`) →
+  `5 join tokens after 14 reconciles` — one new token per reconcile, the kw runaway reproduced.
+- Green: `NEXORA_DEV_DEPLOY=toolbox-m9 scripts/dev-exec.sh 'make operator-test'` → every package `ok`,
+  `ok .../operator/internal/controller/enginegroup 120.049s` (the token count stays at 2 over 140
+  reconciles, `JoinTokenReady=False` reason `JoinTokenRevokeFailed` names the token, and the controller
+  rotates again once revocation works).
+- `go vet ./...` (repo and `operator/`) → clean; `gofmt -l` → clean.
+- Plan Task 7 "As built" extended: revoke-before-create, status recorded before any revoke,
+  `maxOwnedTokens` ceiling, `JoinTokenRevokeFailed`/`JoinTokenLimit` reasons.

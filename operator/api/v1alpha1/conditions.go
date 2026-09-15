@@ -23,7 +23,12 @@ const (
 	ReasonConflict              = "Conflict"
 	ReasonDuplicateGroupName    = "DuplicateGroupName"
 	ReasonDeletionBlocked       = "DeletionBlocked"
-	ReasonReconciled            = "Reconciled"
+	// ReasonJoinTokenRevokeFailed: a join token this CR owns could not be revoked. No new token is
+	// created while that is true, so a failing revoke cannot multiply tokens.
+	ReasonJoinTokenRevokeFailed = "JoinTokenRevokeFailed"
+	// ReasonJoinTokenLimit: this CR already owns the maximum number of active join tokens.
+	ReasonJoinTokenLimit = "JoinTokenLimit"
+	ReasonReconciled     = "Reconciled"
 
 	FinalizerEngineGroup = "nexora.io/engine-group"
 	LabelInstallation    = "nexora.io/installation"

@@ -30,6 +30,12 @@ const (
 	defaultRevokeGracePeriod = 10 * time.Minute
 
 	tokenActive = "active"
+
+	// maxOwnedTokens caps the active join tokens one NexoraEngineGroup may own. Two is the working
+	// maximum (the current token and the previous one inside its grace period); the third is slack for a
+	// token a failed status write left unrecorded. Past it the controller stops creating tokens and says
+	// so on JoinTokenReady.
+	maxOwnedTokens = 3
 )
 
 func durationOr(d *metav1.Duration, def time.Duration) time.Duration {
@@ -95,32 +101,75 @@ func revokeAll(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup) err
 			ids = append(ids, t.Id.String())
 		}
 	}
+	_, err = revokeEach(ctx, api, ids)
+	return err
+}
+
+// revokeEach revokes every id once, in order, and stops at the first failure, returning the id it could
+// not revoke. Duplicates and empty ids cost nothing.
+func revokeEach(ctx context.Context, api API, ids []string) (string, error) {
+	done := make(map[string]bool, len(ids))
 	for _, id := range ids {
+		if id == "" || done[id] {
+			continue
+		}
+		done[id] = true
 		if err := revoke(ctx, api, id); err != nil {
-			return err
+			return id, err
 		}
 	}
-	return nil
+	return "", nil
+}
+
+// ownedActive lists the active join tokens of group carrying eg's marker: the tokens this CR is
+// responsible for, as the management plane sees them (status may be stale or unwritten).
+func ownedActive(tokens []mgmtapi.JoinToken, eg *v1alpha1.NexoraEngineGroup, group mgmtapi.EngineGroup) []mgmtapi.JoinToken {
+	var out []mgmtapi.JoinToken
+	for _, t := range tokens {
+		if t.State == tokenActive && t.EngineGroupId == group.Id && strings.HasPrefix(t.Name, tokenPrefix(eg)) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// superseded is the ids among owned that the recorded token replaces: the recorded token itself survives,
+// and so does a token created after it — that is what a reconcile reading a stale status sees as
+// unrecorded. With nothing recorded (a status write that never landed) every owned token is superseded.
+// The previous token is not included: inside its grace period it is still handed out to enrolling engines.
+func superseded(owned []mgmtapi.JoinToken, st *v1alpha1.NexoraEngineGroupStatus, currentCreated time.Time) []string {
+	var ids []string
+	for _, t := range owned {
+		id := t.Id.String()
+		if id == st.JoinTokenID || id == st.PreviousJoinTokenID {
+			continue
+		}
+		if currentCreated.IsZero() || t.CreatedAt.Before(currentCreated) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // syncJoinToken keeps an active join token of group in the CR-owned Secret, rotating it before expiry
 // and revoking the previous token after the grace period. It records the result in eg.Status. A non-empty
-// conflict means the Secret name is taken by an object this CR does not control; nothing was changed.
-func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup, group mgmtapi.EngineGroup) (conflict string, err error) {
+// reason means the token could not be brought to the wanted state and nothing was created: the Secret and
+// the token in it are left as they are, and the caller reports reason on JoinTokenReady.
+func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup, group mgmtapi.EngineGroup) (reason, msg string, err error) {
 	name := joinTokenSecretName(eg)
 	var sec corev1.Secret
 	err = r.Client.Get(ctx, types.NamespacedName{Namespace: eg.Namespace, Name: name}, &sec)
 	secretExists := err == nil
 	if err != nil && !apierrors.IsNotFound(err) {
-		return "", err
+		return "", "", err
 	}
 	if secretExists && !metav1.IsControlledBy(&sec, eg) {
-		return fmt.Sprintf("Secret %q exists and is not controlled by this NexoraEngineGroup", name), nil
+		return v1alpha1.ReasonConflict, fmt.Sprintf("Secret %q exists and is not controlled by this NexoraEngineGroup", name), nil
 	}
 
 	tokens, err := api.JoinTokens(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var currentCreated time.Time // API creation time of the recorded token; zero when it is not listed
 	for _, t := range tokens {
@@ -143,38 +192,57 @@ func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.Ne
 	// and tests use one clock; the API's expires_at is the same instant up to request latency.
 	current := st.JoinTokenID != "" && active(st.JoinTokenID) && secretExists && len(sec.Data[joinTokenKey]) > 0 &&
 		st.JoinTokenExpiresAt != nil && now.Before(st.JoinTokenExpiresAt.Add(-renewBefore(eg)))
-	if !current {
-		if currentCreated, err = r.rotate(ctx, api, eg, group, name, active(st.JoinTokenID), now); err != nil {
-			return "", err
-		}
-	}
-	if st.PreviousJoinTokenID != "" && st.PreviousJoinTokenRevokeAt != nil && !now.Before(st.PreviousJoinTokenRevokeAt.Time) {
-		if err := revoke(ctx, api, st.PreviousJoinTokenID); err != nil {
-			return "", err
-		}
-		st.PreviousJoinTokenID, st.PreviousJoinTokenRevokeAt = "", nil
-	}
+	owned := ownedActive(tokens, eg, group)
 	// A token carrying this CR's marker that status does not record, created before the recorded token,
 	// was created by a reconcile whose status write failed: revoke it instead of leaving it valid until its
 	// TTL. A newer unrecorded token is kept: it is the recorded one when this reconcile read a stale status
 	// from the cache.
-	for _, t := range tokens {
-		id := t.Id.String()
-		if t.State == tokenActive && t.EngineGroupId == group.Id && strings.HasPrefix(t.Name, tokenPrefix(eg)) &&
-			t.CreatedAt.Before(currentCreated) && id != st.JoinTokenID && id != st.PreviousJoinTokenID {
-			if err := revoke(ctx, api, id); err != nil {
-				return "", err
-			}
+	stale := superseded(owned, st, currentCreated)
+	if !current {
+		// Every token this CR still owns must be gone before another is created, the previous one
+		// included: a revoke that keeps failing is never answered with a new token. On kw a 415 on every
+		// DELETE made this controller create ~2500 join tokens in nine minutes.
+		if id, err := revokeEach(ctx, api, append(stale, st.PreviousJoinTokenID)); err != nil {
+			return v1alpha1.ReasonJoinTokenRevokeFailed,
+				fmt.Sprintf("join token %s could not be revoked (%v); no new join token is created until it is gone", id, err), nil
+		}
+		revoked := len(stale)
+		if st.PreviousJoinTokenID != "" {
+			revoked++
+		}
+		st.PreviousJoinTokenID, st.PreviousJoinTokenRevokeAt = "", nil
+		stale = nil
+		// Hard ceiling on the join tokens one CR may own, counted from the management plane rather than
+		// from status, so neither a reconcile storm nor a stale status can pass it.
+		if kept := len(owned) - revoked; kept+1 > maxOwnedTokens {
+			return v1alpha1.ReasonJoinTokenLimit,
+				fmt.Sprintf("engine group %q still has %d active join tokens of this NexoraEngineGroup (ceiling %d); no new join token is created",
+					group.Name, kept, maxOwnedTokens), nil
+		}
+		if err := r.rotate(ctx, api, eg, group, name, active(st.JoinTokenID), now); err != nil {
+			return "", "", err
 		}
 	}
+	graceOver := st.PreviousJoinTokenID != "" && st.PreviousJoinTokenRevokeAt != nil && !now.Before(st.PreviousJoinTokenRevokeAt.Time)
+	if graceOver {
+		stale = append(stale, st.PreviousJoinTokenID)
+	}
+	if id, err := revokeEach(ctx, api, stale); err != nil {
+		return v1alpha1.ReasonJoinTokenRevokeFailed, fmt.Sprintf("join token %s could not be revoked: %v", id, err), nil
+	}
+	if graceOver {
+		st.PreviousJoinTokenID, st.PreviousJoinTokenRevokeAt = "", nil
+	}
 	st.JoinTokenSecret = name
-	return "", nil
+	return "", "", nil
 }
 
 // rotate creates a join token, writes it to the Secret and records it; an old token that is still active
-// becomes the previous token, revoked after revokeGracePeriod. It returns the new token's API creation time.
+// becomes the previous token, revoked after revokeGracePeriod. The new token is recorded in status before
+// anything else can fail, so a later error can never leave it unrecorded and have the next reconcile
+// create another.
 func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup, group mgmtapi.EngineGroup,
-	secretName string, oldActive bool, now time.Time) (time.Time, error) {
+	secretName string, oldActive bool, now time.Time) error {
 	st := &eg.Status
 	spec := eg.Spec.JoinToken
 	ttl := durationOr(spec.TTL, defaultTTL)
@@ -187,7 +255,7 @@ func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEng
 	}
 	created, err := api.CreateJoinToken(ctx, in)
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: eg.Namespace, Name: secretName}}
@@ -197,20 +265,20 @@ func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEng
 		return controllerutil.SetControllerReference(eg, sec, r.Scheme)
 	})
 	if err != nil {
-		// The token never reached a Secret: revoke it so it cannot outlive this attempt.
+		// The token never reached a Secret: revoke it so it cannot outlive this attempt. A revoke that
+		// fails too leaves an unrecorded token of this CR, which the ceiling in syncJoinToken bounds.
 		_ = api.RevokeJoinToken(ctx, created.JoinToken.Id)
-		return time.Time{}, fmt.Errorf("write join token Secret %q: %w", secretName, err)
+		return fmt.Errorf("write join token Secret %q: %w", secretName, err)
 	}
 
 	if oldActive {
-		// A still-pending previous token loses its grace period: only one previous token is tracked.
-		if err := revoke(ctx, api, st.PreviousJoinTokenID); err != nil {
-			return time.Time{}, err
-		}
+		// The replaced token stays valid for revokeGracePeriod, so engines that read the Secret just
+		// before the rotation can still enrol. Only one previous token is tracked; the caller revoked any
+		// earlier one before this rotation.
 		st.PreviousJoinTokenID = st.JoinTokenID
 		st.PreviousJoinTokenRevokeAt = &metav1.Time{Time: now.Add(durationOr(spec.RevokeGracePeriod, defaultRevokeGracePeriod))}
 	}
 	st.JoinTokenID = created.JoinToken.Id.String()
 	st.JoinTokenExpiresAt = &metav1.Time{Time: now.Add(ttl)}
-	return created.JoinToken.CreatedAt, nil
+	return nil
 }

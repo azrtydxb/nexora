@@ -559,6 +559,17 @@ certificate and TSIG secrets are never written there.
 
 ### CloudNativePG
 
+A primary that is deleted, restarted or switched over shuts PostgreSQL down
+smartly first, waiting for open client sessions. The chart sets
+`database.cnpg.smartShutdownTimeout: 30` (CNPG's own default is 180), which
+keeps a failover inside the 120 s target: with 180 a graceful primary deletion
+took 3m6s, because the management plane's pooled sessions kept the old primary
+busy. The management plane closes an idle pooled session within 45 s, so few
+sessions remain to wait for. Raise the value only when long-running
+transactions must be allowed to finish, and keep it well below CNPG's
+`stopDelay` (1800). The management plane needs no failover handling of its own:
+it connects through the `-rw` Service and reconnects.
+
 For continuous backups configure `spec.backup.barmanObjectStore` on the CNPG
 cluster and a `ScheduledBackup` (see the CNPG documentation). For a logical
 dump:

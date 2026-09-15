@@ -41,6 +41,14 @@ func Open(ctx context.Context, url string) (*Store, error) {
 	}
 	cfg.MaxConns = 16
 	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	// A pooled session that sits idle holds up a PostgreSQL failover: CloudNativePG shuts the old primary
+	// down smartly first, waiting for client sessions to end. pgx's defaults keep an idle connection for
+	// 30 minutes and check every minute; these close it within 45 seconds, and recycle a long-lived one
+	// well inside a maintenance window. Reconnecting costs one TLS handshake on the next query.
+	cfg.MaxConnIdleTime = 30 * time.Second
+	cfg.HealthCheckPeriod = 15 * time.Second
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnLifetimeJitter = 5 * time.Minute
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, MapError(err)

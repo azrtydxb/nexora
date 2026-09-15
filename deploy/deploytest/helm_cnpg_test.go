@@ -41,12 +41,15 @@ func TestHelmCNPGHighAvailability(t *testing.T) {
 		"--set", "database.cnpg.postgresql.parameters.max_connections=200")...)
 	c := find(t, docs, "Cluster", "nexora-db")
 	checks := map[string][2]any{
-		"instances":       {c.path("spec", "instances"), 3},
-		"antiAffinity":    {c.path("spec", "affinity", "enablePodAntiAffinity"), true},
-		"topologyKey":     {c.path("spec", "affinity", "topologyKey"), "kubernetes.io/hostname"},
-		"type":            {c.path("spec", "affinity", "podAntiAffinityType"), "required"},
-		"updateStrategy":  {c.path("spec", "primaryUpdateStrategy"), "unsupervised"},
-		"updateMethod":    {c.path("spec", "primaryUpdateMethod"), "switchover"},
+		"instances":      {c.path("spec", "instances"), 3},
+		"antiAffinity":   {c.path("spec", "affinity", "enablePodAntiAffinity"), true},
+		"topologyKey":    {c.path("spec", "affinity", "topologyKey"), "kubernetes.io/hostname"},
+		"type":           {c.path("spec", "affinity", "podAntiAffinityType"), "required"},
+		"updateStrategy": {c.path("spec", "primaryUpdateStrategy"), "unsupervised"},
+		"updateMethod":   {c.path("spec", "primaryUpdateMethod"), "switchover"},
+		// CNPG's own default (180 s) makes a primary deletion fail over in about three minutes, past the
+		// 120 s target, because it waits for the management plane's pooled sessions.
+		"smartShutdown":   {c.path("spec", "smartShutdownTimeout"), 30},
 		"memory":          {c.path("spec", "resources", "requests", "memory"), "512Mi"},
 		"max_connections": {c.path("spec", "postgresql", "parameters", "max_connections"), "200"},
 	}
@@ -61,6 +64,10 @@ func TestHelmCNPGHighAvailability(t *testing.T) {
 	}
 	if has(docs, "ScheduledBackup") || c.path("spec", "backup") != nil {
 		t.Error("backup renders while disabled")
+	}
+	raised := find(t, render(t, with("--set", "database.cnpg.smartShutdownTimeout=120")...), "Cluster", "nexora-db")
+	if raised.path("spec", "smartShutdownTimeout") != 120 {
+		t.Errorf("smartShutdownTimeout not configurable: %v", raised.path("spec", "smartShutdownTimeout"))
 	}
 }
 

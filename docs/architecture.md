@@ -842,6 +842,15 @@ The build is embedded into `nexora-mgmt`.
   `primaryUpdateStrategy: unsupervised`), `resources`,
   `postgresql.parameters`. Failover needs no management-plane logic: mgmt
   connects through `<clusterName>-app` (the `-rw` Service).
+- `database.cnpg.smartShutdownTimeout` (default 30, CNPG's own default is 180)
+  is the seconds a shutting-down primary waits for open client sessions before
+  CNPG asks PostgreSQL for a fast shutdown. With 180 a graceful primary
+  deletion took 3m6s on kw, past the 120 s failover target, because the
+  management plane holds pooled sessions. The pool closes an idle session
+  within 45 s (`MaxConnIdleTime` 30 s, health check 15 s) and recycles a
+  connection after 30 minutes, so few sessions are left to wait for. Raise the
+  timeout only when long-running transactions must finish; keep it well below
+  CNPG's `stopDelay` (1800).
 - `database.cnpg.backup` renders `spec.backup.barmanObjectStore` and
   `retentionPolicy`, plus a `ScheduledBackup` `<clusterName>-scheduled`
   (`method: barmanObjectStore`). `database.cnpg.recovery` renders

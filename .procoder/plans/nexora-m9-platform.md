@@ -1192,9 +1192,26 @@ database:
 ```
 
 Rendered objects: `Cluster.spec.affinity`, `spec.primaryUpdateStrategy: unsupervised`,
-`spec.primaryUpdateMethod`, `spec.resources`, `spec.postgresql.parameters`, `spec.backup`,
-`bootstrap.recovery` and `externalClusters`. The ScheduledBackup is named `<clusterName>-scheduled`.
-Mgmt env `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume `bootstrap-token`.
+`spec.primaryUpdateMethod`, `spec.smartShutdownTimeout`, `spec.resources`,
+`spec.postgresql.parameters`, `spec.backup`, `bootstrap.recovery` and `externalClusters`. The
+ScheduledBackup is named `<clusterName>-scheduled`. Mgmt env
+`NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume `bootstrap-token`.
+
+As built (after the kw operator e2e, 2026-09-15):
+
+- `database.cnpg.smartShutdownTimeout` (added, default 30, integer `minimum: 0` in the schema) renders
+  `Cluster.spec.smartShutdownTimeout`. CNPG's own default (180) made a graceful primary deletion fail
+  over in 3m6s, past the 120 s target, because the smart shutdown waits for the management plane's
+  pooled sessions. The kw production render is unchanged (`deploy/kw/values-kw.yaml` uses
+  `database.mode: external`, so it renders no `Cluster`), and `TestHelmKwRenderUnchanged` still passes
+  against the unmodified golden. kw production's own `deploy/kw/cnpg-cluster.yaml` is out of scope for
+  M9 and still carries CNPG's default.
+- `TestHelmCNPGHighAvailability` checks the rendered default (30) and that a set value (120) reaches
+  the Cluster.
+- The management plane closes idle pooled sessions faster so fewer are left for the smart shutdown to
+  wait for: `store.Open` sets `MaxConnIdleTime` 30 s, `HealthCheckPeriod` 15 s, `MaxConnLifetime`
+  30 min and `MaxConnLifetimeJitter` 5 min (pgx's defaults are 30 min / 1 min / 1 h), so an idle
+  session is gone within 45 s. `TestOpenClosesIdleConnectionsQuickly` in `mgmt/internal/store`.
 
 - [x] Before editing any chart file, capture the golden render in the dev pod:
       `scripts/dev-exec.sh 'helm template nexora deploy/helm/nexora --namespace nexora -f deploy/kw/values-kw.yaml --api-versions monitoring.coreos.com/v1 --set image.tag=golden' > deploy/deploytest/testdata/kw-render.golden.yaml`,
@@ -2145,6 +2162,19 @@ As built (details the order above leaves open):
   is `now + ttl` on the controller clock at creation, so renewal uses one clock.
 - A rotation while a previous token is still in its grace period revokes that previous token at once
   (one previous token is tracked); a token whose Secret write fails is revoked immediately.
+- No new join token is created while a token this CR owns could not be revoked (kw operator e2e: with
+  every `DELETE` answered 415 the controller created ~2500 tokens in nine minutes). Before creating,
+  `syncJoinToken` revokes every superseded token and the previous one; the first failure ends the
+  reconcile with `JoinTokenReady=False`, reason `JoinTokenRevokeFailed`, naming the token, and requeues
+  after 30 s. `Synced` stays `True` (the group is synced) and the Secret keeps the token it holds, so
+  engines that already read it keep enrolling. A revoke failure is no longer returned as an error.
+  `rotate` records the new token in `status` right after the Secret write, before anything else can
+  fail, so no created token can stay unrecorded and make the next reconcile create another.
+  `maxOwnedTokens` (3) is a hard ceiling on the active tokens carrying this CR's marker, counted from
+  the management plane rather than from status, so neither a reconcile storm nor a stale status can
+  pass it; past it `JoinTokenReady=False` with reason `JoinTokenLimit` and nothing is created.
+  `TestEngineGroupNeverMultipliesTokensWhenRevokeFails` (fake knob `RevokeStatus`) holds the count at 2
+  over 140 reconciles across renewals and proves the controller recovers once revocation works again.
 - Token names start with the marker `op/<cr uid>/`. Each reconcile revokes an active token of the group
   that carries the marker, is neither `joinTokenID` nor `previousJoinTokenID`, and was created (API
   `created_at`) before the recorded token: a token left unrecorded by a failed status write. A newer

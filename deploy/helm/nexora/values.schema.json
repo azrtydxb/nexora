@@ -114,6 +114,7 @@
             "resources": { "type": "object" },
             "antiAffinity": { "enum": ["preferred", "required"] },
             "primaryUpdateMethod": { "enum": ["switchover", "restart"] },
+            "smartShutdownTimeout": { "type": "integer", "minimum": 0 },
             "postgresql": {
               "type": "object",
               "properties": {
