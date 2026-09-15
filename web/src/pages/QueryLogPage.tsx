@@ -1,6 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   FilterX,
@@ -9,8 +11,12 @@ import {
 } from "lucide-react";
 
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
+import type { paths } from "@/api/schema";
 import { useFilterCategories } from "@/api/filterCategories";
+import { useEngines } from "@/api/fleet";
+import { usePolicyGroups } from "@/api/policies";
 import { ErrorAlert, MessageRow } from "@/components/common";
+import { MultiSelect } from "@/components/MultiSelect";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,13 +25,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -33,14 +32,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatTimestamp, usePreferences } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 
 type QueryLogRecord = Schemas["QueryLogRecord"];
+type SearchQuery = NonNullable<
+  paths["/query-log"]["get"]["parameters"]["query"]
+>;
 
 const pageSize = 100;
-const any = "any";
+const columns = 11;
 
-const qtypes = [
+const opts = (values: string[]) => values.map((value) => ({ value }));
+const qtypes = opts([
   "A",
   "AAAA",
   "CNAME",
@@ -51,83 +55,101 @@ const qtypes = [
   "SOA",
   "SRV",
   "TXT",
-];
-const rcodes = ["NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED", "FORMERR"];
-const cacheStates = ["hit", "miss", "stale", "none"];
-const filterStates = ["none", "blocked", "allowed", "rewritten"];
-
-type Filters = {
-  name: string;
-  client: string;
-  qtype: string;
-  rcode: string;
-  cache: string;
-  filter: string;
-  category: string;
+]);
+const rcodes = opts(["NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED", "FORMERR"]);
+const cacheStates = opts(["hit", "miss", "stale", "none", "auth"]);
+const filterStates = opts(["none", "blocked", "allowed", "rewritten"]);
+const sourceLabels: Record<string, string> = {
+  blocklist: "Blocklist",
+  category: "Category",
+  allowlist: "Allowlist",
+  rpz: "RPZ",
+  rewrite: "Rewrite",
+  acl: "Refused",
 };
+const sources = Object.entries(sourceLabels).map(([value, label]) => ({
+  value,
+  label,
+}));
 
-const emptyFilters: Filters = {
-  name: "",
-  client: "",
-  qtype: any,
-  rcode: any,
-  cache: any,
-  filter: any,
-  category: any,
-};
+// URL parameters mirror the API's: the text fields once, the list fields repeated.
+const textKeys = ["name", "client"] as const;
+const listKeys = [
+  "qtype",
+  "rcode",
+  "cache",
+  "filter",
+  "category",
+  "source",
+  "list_id",
+  "policy_group",
+  "engine_id",
+] as const;
+type ListKey = (typeof listKeys)[number];
+type Filters = Record<(typeof textKeys)[number], string> &
+  Record<ListKey, string[]>;
 
-const timeFormat = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  fractionalSecondDigits: 3,
-});
+function readFilters(params: URLSearchParams): Filters {
+  const f = {} as Filters;
+  for (const k of textKeys) f[k] = params.get(k) ?? "";
+  for (const k of listKeys) f[k] = params.getAll(k);
+  return f;
+}
+
+function writeFilters(f: Filters): URLSearchParams {
+  const p = new URLSearchParams();
+  for (const k of textKeys) if (f[k].trim() !== "") p.set(k, f[k].trim());
+  for (const k of listKeys) for (const v of f[k]) p.append(k, v);
+  return p;
+}
 
 const liveIntervalMs = 5000;
 
-function param(v: string): string | undefined {
-  const t = v.trim();
-  return t === "" || t === any ? undefined : t;
-}
-
-/** A single-select filter as its repeated query parameter; multi-select arrives with M6 Task 19. */
-function listParam<T extends string>(v: string): T[] | undefined {
-  const t = param(v);
-  return t === undefined ? undefined : [t as T];
-}
-
 export function QueryLogPage() {
-  const [form, setForm] = useState<Filters>(emptyFilters);
-  const [applied, setApplied] = useState<Filters>(emptyFilters);
+  const [params, setParams] = useSearchParams();
+  const urlKey = params.toString();
+  const [form, setForm] = useState<Filters>(() => readFilters(params));
+  // Back, forward and a pasted link change the URL: show its filters from the first page. The
+  // state is adjusted while rendering (not in an effect) so the stale form never paints.
+  const [shownUrl, setShownUrl] = useState(urlKey);
   // Cursors of the pages before the current one; the current page's cursor is last.
   const [cursors, setCursors] = useState<string[]>([]);
   const cursor = cursors[cursors.length - 1];
   const categories = useFilterCategories();
+  const groups = usePolicyGroups();
+  const engines = useEngines();
+  const prefs = usePreferences();
   // Live mode reloads the newest page every liveIntervalMs; older pages stay put while browsing.
-  const [live, setLive] = useState(true);
+  const [live, setLive] = useState(prefs.querylog_live);
+
+  if (shownUrl !== urlKey) {
+    setShownUrl(urlKey);
+    setForm(readFilters(params));
+    setCursors([]);
+  }
 
   const q = useQuery({
-    queryKey: ["query-log", applied, cursor],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/query-log", {
-          params: {
-            query: {
-              name: param(applied.name),
-              client: param(applied.client),
-              qtype: listParam(applied.qtype),
-              rcode: listParam(applied.rcode),
-              cache: listParam(applied.cache),
-              filter: listParam(applied.filter),
-              category: listParam(applied.category),
-              limit: pageSize,
-              cursor,
-            },
-          },
-        }),
-      ),
+    queryKey: ["query-log", urlKey, cursor],
+    queryFn: async () => {
+      const f = readFilters(new URLSearchParams(urlKey));
+      const list = (k: ListKey) => (f[k].length > 0 ? f[k] : undefined);
+      const query: SearchQuery = {
+        name: f.name || undefined,
+        client: f.client || undefined,
+        qtype: list("qtype"),
+        rcode: list("rcode"),
+        cache: list("cache") as SearchQuery["cache"],
+        filter: list("filter") as SearchQuery["filter"],
+        category: list("category"),
+        source: list("source") as SearchQuery["source"],
+        list_id: list("list_id"),
+        policy_group: list("policy_group"),
+        engine_id: list("engine_id"),
+        limit: pageSize,
+        cursor,
+      };
+      return unwrap(await api.GET("/query-log", { params: { query } }));
+    },
     placeholderData: keepPreviousData,
     retry: false,
     refetchInterval: live && !cursor ? liveIntervalMs : false,
@@ -139,18 +161,19 @@ export function QueryLogPage() {
 
   function search(e: FormEvent) {
     e.preventDefault();
+    const next = writeFilters(form);
     setCursors([]);
-    if (JSON.stringify(form) === JSON.stringify(applied) && !cursor) {
-      void q.refetch();
+    if (next.toString() === urlKey) {
+      if (!cursor) void q.refetch();
     } else {
-      setApplied(form);
+      setParams(next);
     }
   }
 
   function reset() {
-    setForm(emptyFilters);
-    setApplied(emptyFilters);
+    setForm(readFilters(new URLSearchParams()));
     setCursors([]);
+    setParams(new URLSearchParams());
   }
 
   // Refresh reloads the page on screen now (a no-op filter change would not trigger a request).
@@ -161,6 +184,53 @@ export function QueryLogPage() {
   const unavailable =
     q.error instanceof ApiError && q.error.code === "querylog_unavailable";
   const records = q.data?.records ?? [];
+
+  const selects: {
+    key: Exclude<ListKey, "list_id">;
+    label: string;
+    id: string;
+    options: { value: string; label?: string }[];
+  }[] = [
+    { key: "qtype", label: "Type", id: "querylog-qtype", options: qtypes },
+    { key: "rcode", label: "Response", id: "querylog-rcode", options: rcodes },
+    {
+      key: "cache",
+      label: "Cache",
+      id: "querylog-cache",
+      options: cacheStates,
+    },
+    {
+      key: "filter",
+      label: "Filter",
+      id: "querylog-filter",
+      options: filterStates,
+    },
+    {
+      key: "category",
+      label: "Category",
+      id: "querylog-category",
+      options: (categories.data ?? []).map((c) => ({ value: c.key })),
+    },
+    { key: "source", label: "Source", id: "querylog-source", options: sources },
+    {
+      key: "policy_group",
+      label: "Policy group",
+      id: "querylog-policy-group",
+      options: [
+        { value: "global", label: "Global" },
+        ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name })),
+      ],
+    },
+    {
+      key: "engine_id",
+      label: "Engine",
+      id: "querylog-engine",
+      options: (engines.data ?? []).map((e) => ({
+        value: e.id,
+        label: e.node_name,
+      })),
+    },
+  ];
 
   return (
     <>
@@ -175,7 +245,7 @@ export function QueryLogPage() {
                 data-testid="querylog-updated"
                 aria-live="polite"
               >
-                Updated {new Date(q.dataUpdatedAt).toLocaleTimeString()}
+                Updated {formatTimestamp(new Date(q.dataUpdatedAt), prefs)}
               </span>
             )}
             <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5">
@@ -221,19 +291,15 @@ export function QueryLogPage() {
       <Card className="mb-4 p-4">
         <form
           onSubmit={search}
-          className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_repeat(5,minmax(0,1fr))_auto]"
+          className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6"
           role="search"
         >
-          <Field
-            label="Name"
-            htmlFor="querylog-name"
-            className="col-span-2 md:col-span-2 xl:col-span-1"
-          >
+          <Field label="Name" htmlFor="querylog-name" className="col-span-2">
             <Input
               id="querylog-name"
               data-testid="querylog-name"
               className="font-mono"
-              placeholder="example.com"
+              placeholder="Part of a name, e.g. youtube"
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
             />
@@ -241,7 +307,7 @@ export function QueryLogPage() {
           <Field
             label="Client"
             htmlFor="querylog-client"
-            className="col-span-2 md:col-span-2 xl:col-span-1"
+            className="col-span-2"
           >
             <Input
               id="querylog-client"
@@ -252,46 +318,22 @@ export function QueryLogPage() {
               onChange={(e) => set("client", e.target.value)}
             />
           </Field>
-          <FilterSelect
-            label="Type"
-            id="querylog-qtype"
-            value={form.qtype}
-            options={qtypes}
-            onChange={(v) => set("qtype", v)}
-          />
-          <FilterSelect
-            label="Response"
-            id="querylog-rcode"
-            value={form.rcode}
-            options={rcodes}
-            onChange={(v) => set("rcode", v)}
-          />
-          <FilterSelect
-            label="Cache"
-            id="querylog-cache"
-            value={form.cache}
-            options={cacheStates}
-            onChange={(v) => set("cache", v)}
-          />
-          <FilterSelect
-            label="Filter"
-            id="querylog-filter"
-            value={form.filter}
-            options={filterStates}
-            onChange={(v) => set("filter", v)}
-          />
-          <FilterSelect
-            label="Category"
-            id="querylog-category"
-            value={form.category}
-            options={(categories.data ?? []).map((c) => c.key)}
-            onChange={(v) => set("category", v)}
-          />
-          <div className="col-span-1 flex items-end gap-2 md:col-span-3 xl:col-span-1">
+          {selects.map((s) => (
+            <Field key={s.key} label={s.label} htmlFor={s.id}>
+              <MultiSelect
+                id={s.id}
+                label={s.label}
+                options={s.options}
+                value={form[s.key]}
+                onChange={(v) => set(s.key, v)}
+              />
+            </Field>
+          ))}
+          <div className="col-span-full flex items-end justify-end gap-2">
             <Button
               type="submit"
               data-testid="querylog-search"
-              className="h-9 flex-1 xl:flex-none"
+              className="h-9 flex-1 sm:flex-none"
             >
               <Search className="mr-1.5 h-4 w-4" />
               Search
@@ -337,6 +379,9 @@ export function QueryLogPage() {
         >
           <TableHeader>
             <TableRow className="hover:bg-transparent">
+              <TableHead className="h-10 w-8">
+                <span className="sr-only">Details</span>
+              </TableHead>
               <TableHead className="h-10">Time</TableHead>
               <TableHead className="h-10">Client</TableHead>
               <TableHead className="h-10">Name</TableHead>
@@ -344,7 +389,7 @@ export function QueryLogPage() {
               <TableHead className="h-10">Response</TableHead>
               <TableHead className="h-10">Cache</TableHead>
               <TableHead className="h-10">Filter</TableHead>
-              <TableHead className="h-10">Category</TableHead>
+              <TableHead className="h-10">Reason</TableHead>
               <TableHead className="h-10">Upstream</TableHead>
               <TableHead className="h-10 text-right">Duration</TableHead>
             </TableRow>
@@ -352,14 +397,14 @@ export function QueryLogPage() {
           <TableBody>
             {!unavailable &&
               records.map((r, i) => <RecordRow key={`${r.time}-${i}`} r={r} />)}
-            {q.isPending && <MessageRow colSpan={10}>Loading…</MessageRow>}
+            {q.isPending && <MessageRow colSpan={columns}>Loading…</MessageRow>}
             {q.isSuccess && records.length === 0 && (
-              <MessageRow colSpan={10}>
+              <MessageRow colSpan={columns}>
                 No queries match these filters.
               </MessageRow>
             )}
             {unavailable && (
-              <MessageRow colSpan={10}>
+              <MessageRow colSpan={columns}>
                 No results while the backend is down.
               </MessageRow>
             )}
@@ -400,57 +445,149 @@ export function QueryLogPage() {
   );
 }
 
+/** The decision reason: source label, then what matched, e.g. "Category · HaGeZi TIF · malware". */
+function reasonText(r: QueryLogRecord): string {
+  const parts = (...p: string[]) => p.filter((x) => x !== "").join(" · ");
+  switch (r.source) {
+    case "blocklist":
+    case "category":
+      return parts(sourceLabels[r.source], r.list_name || r.rule, r.category);
+    case "allowlist":
+      return parts("Allowlist", r.list_name, r.rule);
+    case "rpz":
+      return parts("RPZ", r.rpz_zone_name, r.rpz_action);
+    case "rewrite":
+      return parts(
+        "Rewrite",
+        r.rewrite_answer ? `${r.rule} → ${r.rewrite_answer}` : r.rule,
+      );
+    case "acl":
+      return `Refused · ${r.rule} access`;
+    default:
+      return "—";
+  }
+}
+
 function RecordRow({ r }: { r: QueryLogRecord }) {
+  const [open, setOpen] = useState(false);
+  const prefs = usePreferences();
   const failed = r.rcode === "SERVFAIL" || r.rcode === "REFUSED";
+  const reason = reasonText(r);
   return (
-    <TableRow data-testid="querylog-row">
-      <TableCell className="py-2 whitespace-nowrap tabular-nums">
-        <time dateTime={r.time}>{timeFormat.format(new Date(r.time))}</time>
-      </TableCell>
-      <TableCell className="py-2 font-mono text-[13px]">{r.client}</TableCell>
-      <TableCell
-        className="max-w-[28rem] truncate py-2 font-mono text-[13px]"
-        title={r.name}
-      >
-        {r.name}
-      </TableCell>
-      <TableCell className="py-2 font-mono text-[13px]">{r.qtype}</TableCell>
-      <TableCell
-        className={cn(
-          "py-2 font-mono text-[13px]",
-          failed && "text-destructive",
-          r.rcode === "NXDOMAIN" && "text-muted-foreground",
-        )}
-      >
-        {r.rcode}
-      </TableCell>
-      <TableCell className="text-muted-foreground py-2">
-        {r.cache === "none" ? "—" : r.cache}
-      </TableCell>
-      <TableCell className="py-2">
-        {r.filter === "blocked" ? (
-          <Badge variant="destructive">blocked</Badge>
-        ) : r.filter === "allowed" ? (
-          <Badge variant="secondary">allowed</Badge>
-        ) : r.filter === "rewritten" ? (
-          <Badge variant="outline">rewritten</Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell
-        className="py-2 whitespace-nowrap"
-        title={r.list_id || undefined}
-      >
-        {r.category || <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="py-2 whitespace-nowrap">
-        {r.upstream || <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">
-        {formatDuration(r.duration_us)}
-      </TableCell>
-    </TableRow>
+    <>
+      <TableRow data-testid="querylog-row">
+        <TableCell className="w-8 py-2 pr-0">
+          <button
+            type="button"
+            data-testid="querylog-row-toggle"
+            aria-expanded={open}
+            aria-label={open ? "Hide details" : "Show details"}
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-6 w-6 items-center justify-center rounded-sm focus-visible:ring-1 focus-visible:outline-none"
+            onClick={() => setOpen((o) => !o)}
+          >
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 transition-transform",
+                !open && "-rotate-90",
+              )}
+            />
+          </button>
+        </TableCell>
+        <TableCell className="py-2 whitespace-nowrap tabular-nums">
+          <time dateTime={r.time}>
+            {formatTimestamp(new Date(r.time), prefs)}
+          </time>
+        </TableCell>
+        <TableCell className="py-2 font-mono text-[13px]">{r.client}</TableCell>
+        <TableCell
+          className="max-w-[28rem] truncate py-2 font-mono text-[13px]"
+          title={r.name}
+        >
+          {r.name}
+        </TableCell>
+        <TableCell className="py-2 font-mono text-[13px]">{r.qtype}</TableCell>
+        <TableCell
+          className={cn(
+            "py-2 font-mono text-[13px]",
+            failed && "text-destructive",
+            r.rcode === "NXDOMAIN" && "text-muted-foreground",
+          )}
+        >
+          {r.rcode}
+        </TableCell>
+        <TableCell className="text-muted-foreground py-2">
+          {r.cache === "none" ? "—" : r.cache}
+        </TableCell>
+        <TableCell className="py-2">
+          {r.filter === "blocked" ? (
+            <Badge variant="destructive">blocked</Badge>
+          ) : r.filter === "allowed" ? (
+            <Badge variant="secondary">allowed</Badge>
+          ) : r.filter === "rewritten" ? (
+            <Badge variant="outline">rewritten</Badge>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </TableCell>
+        <TableCell
+          className={cn(
+            "max-w-[24rem] truncate py-2 whitespace-nowrap",
+            reason === "—" && "text-muted-foreground",
+          )}
+          data-testid="querylog-reason"
+          title={reason === "—" ? undefined : reason}
+        >
+          {reason}
+        </TableCell>
+        <TableCell className="py-2 whitespace-nowrap">
+          {r.upstream || <span className="text-muted-foreground">—</span>}
+        </TableCell>
+        <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">
+          {formatDuration(r.duration_us)}
+        </TableCell>
+      </TableRow>
+      {open && (
+        <TableRow className="bg-muted/40 hover:bg-muted/40">
+          <TableCell colSpan={columns} className="py-3">
+            <dl
+              data-testid="querylog-detail"
+              className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] sm:grid-cols-[auto_1fr_auto_1fr]"
+            >
+              <Detail label="Rule">{r.rule}</Detail>
+              <Detail label="List">
+                {[r.list_name, r.list_id && `(${r.list_id})`]
+                  .filter(Boolean)
+                  .join(" ")}
+              </Detail>
+              <Detail label="Policy group">
+                {r.policy_group_id
+                  ? r.policy_group_name || r.policy_group_id
+                  : "Global"}
+              </Detail>
+              <Detail label="RPZ">
+                {[r.rpz_zone_name, r.rpz_action].filter(Boolean).join(" · ")}
+              </Detail>
+              <Detail label="Upstream">
+                {r.upstream &&
+                  `${r.upstream}${r.upstreams_raced > 1 ? ` (raced ${r.upstreams_raced})` : ""}`}
+              </Detail>
+              <Detail label="Engine">{r.engine_id}</Detail>
+            </dl>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function Detail({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-mono break-all">
+        {children || <span className="text-muted-foreground">—</span>}
+      </dd>
+    </>
   );
 }
 
@@ -478,37 +615,5 @@ function Field({
       </Label>
       {children}
     </div>
-  );
-}
-
-function FilterSelect({
-  label,
-  id,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  id: string;
-  value: string;
-  options: string[];
-  onChange: (v: string) => void;
-}) {
-  return (
-    <Field label={label} htmlFor={id}>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} data-testid={id} className="h-9">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={any}>Any</SelectItem>
-          {options.map((o) => (
-            <SelectItem key={o} value={o}>
-              {o}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Field>
   );
 }

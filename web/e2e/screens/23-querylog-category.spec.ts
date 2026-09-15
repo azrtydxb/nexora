@@ -13,7 +13,8 @@ test("category in the query log and filter index in engine detail", async ({
   const blocked = env("NEXORA_E2E_CATEGORY_QUERY_NAME");
   await page.getByTestId("querylog-name").fill(blocked);
   await page.getByTestId("querylog-category").click();
-  await page.getByRole("option", { name: "malware", exact: true }).click();
+  await page.getByTestId("querylog-category-option-malware").click();
+  await page.keyboard.press("Escape");
   await page.getByTestId("querylog-search").click();
   const record = page
     .getByTestId("querylog-row")

@@ -2429,7 +2429,7 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test attribution'` and expect FAIL: it
       does not compile, with `struct ListHit does not have a field named offset`, `cannot find function
-      view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
+    view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
 - [ ] Implement:
   - **`engine/src/filter/index.rs`:**
     - `for_each_match(name_wire, visit: impl FnMut(u32, u8) -> bool)` passes the level's start
@@ -3017,12 +3017,16 @@ impl Acl { pub fn any() -> Acl; pub fn allows_all(&self) -> bool } // allows_all
 - [ ] Extend `cache_hit_path_does_not_allocate` in `engine/tests/hot_path_alloc.rs`:
   - set `authoritative_allow_cidrs: vec!["0.0.0.0/0".into(), "::/0".into()]` and
     `authoritative_acl_set: true`;
-  - use `resolver: Some(ResolverConfig { strategy: UpstreamStrategy::Parallel as i32, parallel_max: 2, ..Default::default() })`;
+  - use `resolver: Some(ResolverConfig { strategy: UpstreamStrategy::Parallel as i32, parallel_max: 2 })` (the two fields are all of `ResolverConfig`; clippy rejects a needless `..Default::default()`);
   - add `ok.ads.hot.test` to the group allowlist, and add a measured query for it next to the blocked
     one through `measure_blocked`'s loop;
   - add a hosted-zone measurement through `measure_auth` with the "any" ACL.
 
-  The assertions stay `allocations == 0`.
+  The assertions stay `allocations == 0`. As built: the allowlisted name is measured after the
+  blocked loop as a response-cache hit (an allow decision followed by a miss would allocate the miss
+  job), and `measure_auth` gained `auth_acl: Option<&[&str]>`; `cache_hit_path_does_not_allocate`
+  measures `www`/`nope.example.test.` with `["0.0.0.0/0", "::/0"]` and with a list containing the
+  client.
 
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test authoritative_acl; cargo test --locked -p nexora-engine --test hot_path_alloc'`
@@ -3036,8 +3040,10 @@ impl Acl { pub fn any() -> Acl; pub fn allows_all(&self) -> bool } // allows_all
     `Acl::parse`.
   - `engine/src/authoritative/loader.rs` builds `allow_query` and `update_allow` from the non-empty
     lists.
-  - In `engine/src/authoritative/dispatch.rs`, change `fast` and `signed_query` to take
-    `rec: &mut QueryRecord` from `handle_packet`. After the zone is found and before transfers and
+  - In `engine/src/authoritative/dispatch.rs`, change `fast` and `signed_query` (and `unparsed`, which
+    calls `signed_query`; `signed_query` also takes the found `zone`) to take
+    `rec: &mut QueryRecord` from `handle_packet`. As built the check is `query_allowed(rt, zone,
+    client, rec)`, shared by both paths; a refused hosted query is not marked `CacheOutcome::Auth`. After the zone is found and before transfers and
     answers:
     ```rust
         let auth_acl = zone.allow_query.as_ref().unwrap_or(&rt.authoritative_acl);
@@ -3124,6 +3130,11 @@ impl Acl { pub fn any() -> Acl; pub fn allows_all(&self) -> bool } // allows_all
   	}
   }
   ```
+  As built: `startAuthEnv` has no DNS TLS or fixture upstream, so the test starts its own management
+  plane with `MgmtOptions{DNSTLS: true}`, a fixture upstream (the inside recursion query needs an
+  answer) and `StartManagedEngineWith(..., EngineOptions{DoT: true, DoH: true})`; `addRecord` and
+  `PATCH /zones/{id}` use the id `createPrimaryZone` returns (revision from `GET /zones/{id}`); the
+  transport funcs take the subtest's `t`.
   Implement the helpers `tcpFrom`, `dotFrom` and `dohFrom` in `e2e/access_split_test.go`. Model
   `tcpFrom` on `udpFrom` in `e2e/per_client_policy_test.go`, using a `net.Dialer{LocalAddr: &net.TCPAddr{IP: ip}}`
   with `dns.Client{Net: "tcp", Dialer: ...}`. Build `dotFrom`/`dohFrom` from
@@ -3138,6 +3149,12 @@ impl Acl { pub fn any() -> Acl; pub fn allows_all(&self) -> bool } // allows_all
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --all-targets && make e2e-build && NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run "TestAuthoritativeAccessSplit|TestAuthoritativeZonePropagation|TestAXFRIXFROut|TestSecondaryAndDynamicUpdate" -count=1 -timeout 40m'`
       and expect PASS.
+      Open gap (2026-09-15): every DNS assertion of `TestAuthoritativeAccessSplit` passes, but the
+      query-log step fails: records carry `source: acl` with an empty `rule`, because the engine sends
+      the ACL kind only as `nexora.acl.refused` and `mgmt/internal/api/querylog_resolve.go` (Task 5)
+      never maps `Record.ACLRefused` to `rule`. Fix outside Task 16's files: in `resolveRecordNames`,
+      set `Rule: r.ACLRefused` when `r.Source == "acl"` (the GUI's `Refused · ${r.rule} access` needs it
+      too).
 - [ ] Run `scripts/dev-exec.sh 'cargo clippy --locked -p nexora-engine --all-targets -- -D warnings'`.
       Report the paths. Commit message: `engine: split recursion and authoritative access, per-zone allow-query`.
 
@@ -3157,7 +3174,9 @@ Interfaces:
 - `ResolverSettings.ParallelMax *int` in the generated Go type.
 - Snapshot `Resolver.ParallelMax`.
 
-- [ ] Create `e2e/upstream_parallel_test.go`:
+- [x] Create `e2e/upstream_parallel_test.go`. As built, both tests share the setup below (management,
+      the `slow` and `fast` upstreams, the engine) through `parallelSetup(t, node) (*harness.API, *harness.Engine)`,
+      and the settings check compares `rs["parallel_max"] != float64(2)` instead of a type assertion:
   ```go
   func TestUpstreamParallelStrategy(t *testing.T) {
   	env := harness.New(t)
@@ -3241,11 +3260,13 @@ Interfaces:
   `SetDelay` wraps the fixture's `POST /delay` control endpoint (`e2e/fixtures/cmd/nexora-fixture/dns.go`
   line 144). Use the existing harness wrapper if `e2e/harness/fixture.go` has one; otherwise add
   `func (f *DNSFixture) SetDelay(t *testing.T, d time.Duration)` to `e2e/harness/fixture.go` and add
-  that path to Files.
-- [ ] Run
+  that path to Files. The wrapper already exists (`e2e/harness/fixture.go`), so no harness change.
+- [x] Run
       `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run TestUpstreamParallelStrategy -count=1 -timeout 20m'`
-      and expect FAIL: `PUT /resolver-settings -> 500` (the database check rejects `parallel`).
-- [ ] Create `mgmt/migrations/00601_parallel_strategy.sql`:
+      and expect FAIL: `PUT /resolver-settings: status 400, want 200` with
+      `violates check constraint "resolver_settings_strategy_check"` (the database check rejects `parallel`;
+      `store.MapError` maps a check violation to 400, which also confirms the constraint name).
+- [x] Create `mgmt/migrations/00601_parallel_strategy.sql`:
   ```sql
   -- +goose Up
   ALTER TABLE resolver_settings DROP CONSTRAINT IF EXISTS resolver_settings_strategy_check;
@@ -3262,7 +3283,7 @@ Interfaces:
   Confirm the constraint name with
   `scripts/dev-exec.sh "psql ... -c '\d resolver_settings'"` against a migrated test database (the
   inline check in `00001_init.sql` is named `resolver_settings_strategy_check` by PostgreSQL).
-- [ ] In `mgmt/internal/api/handlers_dns.go`:
+- [x] In `mgmt/internal/api/handlers_dns.go`:
   - Add `parallel_max` to `resolverColumns`/`scanResolver`.
   - Have `validateResolver` reject `ParallelMax` outside 0..8 with
     `invalid("parallel_max must be between 0 and 8")` and give the strategy message
@@ -3272,7 +3293,7 @@ Interfaces:
   In `mgmt/internal/snapshot/snapshot.go`, add `"parallel": controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_PARALLEL`
   to `strategies`, select `parallel_max`, and set `snap.Resolver.ParallelMax`.
 
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'make webui-placeholder && go test ./mgmt/internal/api ./mgmt/internal/snapshot -count=1 && make e2e-build && NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run "TestUpstreamParallelStrategy|TestUpstreamParallelLatency|TestUpstreamFailover" -count=1 -timeout 40m -v'`
       and expect PASS, with the latency log line recorded in the task's todo evidence.
 - [ ] Report the paths. Commit message: `mgmt: parallel strategy setting and e2e latency proof`.
@@ -3459,7 +3480,7 @@ export function MultiSelect(props: {
     `querylog-row-toggle`.
   - Seed vars: `NEXORA_E2E_QL_MULTI_PREFIX` (a name prefix whose A, AAAA and MX queries the seed made,
     with NOERROR answers) and `NEXORA_E2E_ALLOW_QUERY_NAME` (a query allowed by the global allowlist
-    entry `allow.gui.test`).
+    entry `allow.malware.gui.test`, under the blocked `malware.gui.test`).
 
 - [ ] Create `e2e/gui_seed_querylog_test.go`:
   ```go
@@ -3477,26 +3498,57 @@ export function MultiSelect(props: {
   func init() { registerGUISeed(seedQueryLog) }
 
   func seedQueryLog(s guiSeedEnv) {
-  	prefix := strings.TrimSuffix(harness.UniqueName("qlmulti"), ".example.")
-  	harness.MustQuery(s.T, s.Engine.DNS, prefix+"-a.example.", dns.TypeA, harness.QueryOpts{})
-  	harness.MustQuery(s.T, s.Engine.DNS, prefix+"-aaaa.example.", dns.TypeAAAA, harness.QueryOpts{})
-  	harness.MustQuery(s.T, s.Engine.DNS, prefix+"-mx.example.", dns.TypeMX, harness.QueryOpts{})
-  	s.Vars["NEXORA_E2E_QL_MULTI_PREFIX"] = prefix
+  	// The fixture upstream serves unsigned answers under the real root anchor: without this every
+  	// forwarded answer is SERVFAIL. 16-dnssec.spec.ts flips the setting from whatever state it finds.
+  	s.Admin.DisableForwardedValidation()
   	var allow struct {
   		Domains  []string `json:"domains"`
   		Revision int64    `json:"revision"`
   	}
   	s.Admin.Must("GET", "/allowlist", nil, &allow, 200)
-  	s.Admin.Must("PUT", "/allowlist", map[string]any{"domains": append(allow.Domains, "allow.gui.test"), "revision": allow.Revision}, nil, 200)
-  	name := "www.allow.gui.test."
+  	// The engine attributes an allowlist match only where a block list also matches (an allowlist
+  	// entry carves an exception): the malware category blocks malware.gui.test.
+  	s.Admin.Must("PUT", "/allowlist", map[string]any{"domains": append(allow.Domains, "allow.malware.gui.test"), "revision": allow.Revision}, nil, 200)
+  	waitLatestApplied(s.T, s.Admin, "gui-engine", "gui-engine-2")
+  	// An applied version may serve before its filter index is rebuilt: wait until the category blocks.
   	harness.EventuallyTrue(s.T, 30*time.Second, func() bool {
-  		return harness.MustQuery(s.T, s.Engine.DNS, name, dns.TypeA, harness.QueryOpts{}).Rcode == dns.RcodeSuccess
-  	}, "allowlisted name resolves")
+  		probe := strings.TrimSuffix(harness.UniqueName("probe"), ".example.") + ".malware.gui.test."
+  		return firstA(harness.MustQuery(s.T, s.Engine.DNS, probe, dns.TypeA, harness.QueryOpts{})) == "0.0.0.0"
+  	}, "malware category blocks again")
+  	name := "www.allow.malware.gui.test."
+  	// debt: the engine drops the allowlist attribution of a cache miss (resolve_miss starts a fresh
+  	// record), so the second, cached answer is the one logged with its reason. Revisit when the
+  	// miss path carries the fast path's filter decision.
+  	for range 2 {
+  		if a := firstA(harness.MustQuery(s.T, s.Engine.DNS, name, dns.TypeA, harness.QueryOpts{})); a != "192.0.2.1" {
+  			s.T.Fatalf("allowlisted %s answered %q", name, a)
+  		}
+  	}
   	s.Vars["NEXORA_E2E_ALLOW_QUERY_NAME"] = strings.TrimSuffix(name, ".")
+
+  	prefix := strings.TrimSuffix(harness.UniqueName("qlmulti"), ".example.")
+  	for _, q := range []struct {
+  		suffix string
+  		qtype  uint16
+  	}{{"-a", dns.TypeA}, {"-aaaa", dns.TypeAAAA}, {"-mx", dns.TypeMX}} {
+  		if r := harness.MustQuery(s.T, s.Engine.DNS, prefix+q.suffix+".example.", q.qtype, harness.QueryOpts{}); r.Rcode != dns.RcodeSuccess {
+  			s.T.Fatalf("seed query %s%s: %v", prefix, q.suffix, r)
+  		}
+  	}
+  	s.Vars["NEXORA_E2E_QL_MULTI_PREFIX"] = prefix
   }
   ```
-  (`getAllowlist`/`updateAllowlist`, schema `Allowlist {domains, revision}`). An allowlist match is
-  attributed as `allowlist` whether or not a block list also lists the name.
+  (`getAllowlist`/`updateAllowlist`, schema `Allowlist {domains, revision}`). The engine (Task 12)
+  attributes an allowlist match only where a block list also matches the name (the allowlist carves an
+  exception; otherwise the decision is "none"), so the seed allowlists `allow.malware.gui.test` under
+  the malware category's `malware.gui.test` and 26-querylog-reason.spec.ts expects that rule. The
+  seed turns off forwarded DNSSEC validation first (as `TestQueryLogBackends` does): the fixture
+  upstream serves unsigned answers under the real root anchor, so without it every forwarded query is
+  SERVFAIL and the NOERROR rows the filters spec counts never exist; `16-dnssec.spec.ts` flips the
+  setting from whatever state it finds. It waits until the category blocks again after the new
+  version and queries the allowlisted name twice: the engine's miss path (`resolve_miss`) starts a
+  fresh query record and drops the fast path's allowlist attribution, so only the cached answer is
+  logged with its reason (a `debt:` in the seed; an engine defect to fix in Task 12's area).
 - [ ] Update `web/e2e/screens/10-query-log.spec.ts`. After the existing search, add:
   ```ts
   const full = env("NEXORA_E2E_QUERY_NAME");
@@ -3593,7 +3645,7 @@ export function MultiSelect(props: {
     await page.getByTestId("querylog-search").click();
     await expect(
       page.getByTestId("querylog-row").first().getByTestId("querylog-reason"),
-    ).toContainText("Allowlist · Global allowlist · allow.gui.test");
+    ).toContainText("Allowlist · Global allowlist · allow.malware.gui.test");
     await expect(page).toHaveURL(/source=allowlist/);
   });
   ```
@@ -3612,7 +3664,9 @@ export function MultiSelect(props: {
       `max-h-72 overflow-auto` and full width under 640 px.
 - [ ] In `web/src/pages/QueryLogPage.tsx`:
   - `type Filters` holds `string[]` for every select field. State is read from and written to
-    `useSearchParams` on search, reset and paging; a `useEffect` re-applies it on URL change. The
+    `useSearchParams` on search, reset and paging; a URL change re-applies it to the form while
+    rendering (the stored URL key is compared, not a `useEffect`: `react-hooks/set-state-in-effect`
+    rejects a setState in an effect). The
     cursor stays in state.
   - `FilterSelect` is replaced by `MultiSelect` for type, response, cache, filter, category, source
     (options `blocklist, category, allowlist, rpz, rewrite, acl`), policy group (options from
@@ -3899,7 +3953,7 @@ Interfaces:
 
 Files:
 
-- `web/src/components/EngineModal.tsx`: created.
+- `web/src/components/EngineModal.tsx`: created (`EngineModal`, `EngineModalOpenButton`).
 - `web/src/api/fleet.ts`: `useEngineMetrics`, `useEngineLogs`.
 - `web/src/pages/EnginesPage.tsx`: open the modal from rows.
 - `web/src/pages/EngineGroupPage.tsx`: open the modal from the group's engine list.
@@ -3927,6 +3981,7 @@ export function useEngineLogs(
 };
 // polls every 2 s with after=<last_seq>, keeps at most 2,000 lines, first request limit 1000
 export function EngineModal(props: { engineIds: string[] }): JSX.Element | null; // reads ?engine= from useSearchParams
+export function EngineModalOpenButton(props: { engine: Engine }): JSX.Element; // pushes ?engine=<id> with history state
 ```
 
 - Test ids:
@@ -3960,22 +4015,28 @@ export function EngineModal(props: { engineIds: string[] }): JSX.Element | null;
   		LastSeq int64 `json:"last_seq"`
   	}
   	harness.EventuallyTrue(t, 15*time.Second, func() bool {
-  		code, _ := api.Do("GET", "/engines/"+e.ID+"/logs?q=serving%20version", nil, &logs)
+  		code, _ := api.Do("GET", "/engines/"+e.ID+"/logs?q=applied%20version", nil, &logs)
   		return code == 200 && len(logs.Lines) > 0
   	}, "engine log line through getEngineLogs")
-  	if !strings.Contains(logs.Lines[0].Message, "serving version") || logs.Lines[0].Level != "info" {
+  	if !strings.Contains(logs.Lines[0].Message, "applied version") || logs.Lines[0].Level != "info" {
   		t.Fatalf("line: %+v", logs.Lines[0])
   	}
-  	if code, _ := api.Do("GET", fmt.Sprintf("/engines/%s/logs?after=%d", e.ID, logs.LastSeq), nil, &logs); code != 200 {
+  	cursor := logs.LastSeq
+  	var after = logs
+  	after.Lines = nil
+  	if code, _ := api.Do("GET", fmt.Sprintf("/engines/%s/logs?after=%d", e.ID, cursor), nil, &after); code != 200 {
   		t.Fatalf("cursor read -> %d", code)
   	}
-  	for _, l := range logs.Lines {
-  		if l.Seq <= logs.LastSeq-int64(len(logs.Lines)) {
-  			t.Fatalf("cursor returned an old line: %+v", l)
+  	for _, l := range after.Lines {
+  		if l.Seq <= cursor {
+  			t.Fatalf("cursor %d returned an old line: %+v", cursor, l)
   		}
   	}
   }
   ```
+  A managed engine logs `nexora-engine: applied version N` (engine/src/control.rs); "serving version" is
+  the standalone engine's line, so the managed test and spec 32 search for "applied version". The
+  committed test declares the response type once (`engineLogs`) and reads the cursor into a second value.
   Use the engine id field name that `harness.EngineView` exposes (check `e2e/harness/mgmt.go` line 263).
   Create `e2e/gui_seed_engines_test.go`. Spec 05 deletes `gui-engine-2` and spec 20 revokes
   `gui-engine` before spec 32 runs, so the modal needs its own engines:
@@ -4030,9 +4091,9 @@ export function EngineModal(props: { engineIds: string[] }): JSX.Element | null;
     await expect(page.getByTestId("engine-log-line").first()).toBeVisible({
       timeout: 20_000,
     });
-    await page.getByTestId("engine-logs-search").fill("serving version");
+    await page.getByTestId("engine-logs-search").fill("applied version");
     await expect(page.getByTestId("engine-log-line").first()).toContainText(
-      "serving version",
+      "applied version",
     );
     await page.getByTestId("engine-logs-pause").click();
     await page.getByTestId("engine-tab-queries").click();
@@ -4089,7 +4150,10 @@ export function EngineModal(props: { engineIds: string[] }): JSX.Element | null;
     `GET /query-log?engine_id=<id>&limit=20` rows and a link to `/query-log?engine_id=<id>`.
   - `EnginesPage.tsx` and `EngineGroupPage.tsx` render `<EngineModal engineIds={visibleIds} />` and a
     `Button variant="ghost" data-testid={`engine-modal-open-${e.node_name}`}` on the node name cell
-    that sets `?engine=<id>`. The existing Details links stay.
+    that sets `?engine=<id>` (as `EngineModalOpenButton`). The existing Details links stay.
+  - The Logs hook reads the newest 1,000 sequence numbers on open when the buffer holds more than one
+    batch, restarts from the beginning when `last_seq` goes backwards (engine restart), and sets
+    `droppedOlder` when lines fell out of the engine ring or the 2,000-line view.
 - [ ] Run the same command and expect PASS for `TestEngineLogsFromRealEngine`, `05-engines`,
       `20-fleet` and `32-engine-modal`. Run `cd web && pnpm run typecheck && pnpm run lint`.
 - [ ] Report the paths. Commit message: `gui: engine modal with metrics, logs and queries`.
@@ -4173,7 +4237,7 @@ type NavLeaf = {
   path: string;
   label: string;
   icon: LucideIcon;
-  op: OperationId;
+  op?: OperationId; // absent for Help: every signed-in user may open it
   end?: boolean;
 };
 type NavParent = {
@@ -4293,8 +4357,9 @@ type NavItem = NavLeaf | NavParent;
   - `NavParent` renders a `button data-testid="nav-filtering-group" aria-expanded aria-controls`,
     with a chevron and an active style when `useLocation()` matches a child path. The children list is
     indented (`md:pl-4`) and hidden when closed. It is hidden entirely when no child passes `useCan`.
-    The open state is initialised from localStorage (try/catch, default open) and forced open while
-    the route is a child. Toggling writes `open`/`closed` in try/catch. The mobile horizontal strip
+    The open state is initialised from localStorage (try/catch, default open), or open when the page
+    loads on a child route, and is set open whenever navigation enters a child route (the user may
+    still collapse it there). Toggling writes `open`/`closed` in try/catch. The mobile horizontal strip
     renders children inline after the parent button.
   - A `nav-help` link to `/help` (`LifeBuoy` icon, no `op`: always visible to signed-in users) at the
     end of the Overview group.
@@ -4332,15 +4397,19 @@ Interfaces:
 
 ```ts
 export type DashboardRange = "15m" | "1h" | "6h" | "24h" | "7d";
+export const dashboardRanges: DashboardRange[];
+// `live: false` (the auto-refresh switch off) stops polling; default true.
 export function useDashboardSeries(
   range: DashboardRange,
+  opts?: { live?: boolean },
 ): UseQueryResult<Schemas["DashboardSeries"]>; // refetch 10_000 for <= 1h, 60_000 otherwise
 export function useDashboardTop(
   range: DashboardRange,
-): UseQueryResult<Schemas["DashboardTop"]>;
-export function useDashboardHealth(): UseQueryResult<
-  Schemas["DashboardHealth"]
->; // refetch 15_000
+  opts?: { live?: boolean },
+): UseQueryResult<Schemas["DashboardTop"]>; // same intervals as the series
+export function useDashboardHealth(opts?: {
+  live?: boolean;
+}): UseQueryResult<Schemas["DashboardHealth"]>; // refetch 15_000
 ```
 
 - The existing ids stay: `dashboard-qps`, `dashboard-cache-hit-ratio`, `dashboard-engines`,
@@ -4350,7 +4419,7 @@ export function useDashboardHealth(): UseQueryResult<
   - Sections: `dashboard-section-traffic`, `-latency`, `-cache`, `-resolution`, `-filtering`,
     `-dnssec`, `-top`, `-fleet`, `-health`.
   - Contents: `dashboard-top-unavailable`, `dashboard-alert`, `dashboard-fleet-row-<node>`.
-- The range lives in the URL parameter `range`.
+- The range lives in the URL parameter `range` (default `1h`); auto refresh off is `refresh=off`.
 
 - [ ] Create `web/e2e/screens/27-dashboard.spec.ts`:
   ```ts
@@ -4432,8 +4501,12 @@ export function useDashboardHealth(): UseQueryResult<
       is unavailable" when `available` is false.
     - Fleet: the engine table from `useDashboardHealth` with `EngineStatusBadge`, plus group counts.
     - Health: `dashboard-alert` rows with a severity `StatusDot`, or "Everything looks healthy".
-  - Colours come from the existing CSS chart variables, so both themes work. The charts use
-    `ResponsiveContainer` with `height={220}`.
+  - The theme has no chart colour variables (and `index.css` is not this task's file), so the page
+    defines a fixed-order eight-slot categorical palette as `light-dark(<light>, <dark>)` values,
+    which follow the `color-scheme` the theme sets on `<html>`; DNSSEC states use the status
+    tokens `--success`, `--muted-foreground` and `--destructive`. Keys beyond eight fold into
+    "Other". The charts use `ResponsiveContainer` with `height={220}` and an x domain spanning the
+    whole range, so an empty range still draws its axes under the empty-state text.
   - The header description becomes "Traffic, latency, filtering and health across all resolvers.
     Pick a time range; charts refresh automatically."
 - [ ] Run the same command and expect `01-dashboard.spec.ts` and `27-dashboard.spec.ts` to pass. Run
@@ -4534,9 +4607,13 @@ Interfaces:
   - The hint shows when both commits are non-empty and differ: `version-reload-hint` "New version
     available – reload", with a button calling `location.reload()`.
   - A failed query shows the GUI build only.
-  - In `AppShell.tsx` `Sidebar`, render it at the bottom of the `md:h-screen` column (`mt-auto`). In
-    the mobile strip, render an `Info` icon button `version-info-button` that opens the same
-    popover.
+  - In `AppShell.tsx` `Sidebar`, render it at the bottom of the `md:h-screen` column (`mt-auto`; the
+    nav gets `md:min-h-0` so a long nav scrolls instead of pushing the footer out). In the mobile
+    strip (the wordmark row), render `VersionInfoButton`, an `Info` icon button `version-info-button`
+    (`md:hidden`) that opens the same popover. On narrow screens the footer text is hidden and only
+    the reload hint (when shown) stays below the nav strip, so each test id renders once.
+  - The short hash sits beside the popover trigger button, not inside it (a link inside a button is
+    invalid HTML).
 - [ ] Run the same command and expect `34-version.spec.ts` to pass. Run
       `cd web && pnpm run typecheck && pnpm run lint`.
 - [ ] Report the paths. Commit message: `gui: version footer with details and reload hint`.
