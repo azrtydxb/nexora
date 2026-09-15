@@ -3551,7 +3551,11 @@ Interfaces:
 
   The spec requests `listAiForecasts`.
 
-- [ ] Run the Task 24 commands. Expect FAIL, implement, and expect specs 55, 02 and 17 to PASS.
+- [x] Run the Task 24 commands. Expect FAIL, implement, and expect specs 55, 02 and 17 to PASS.
+      Run in a private copy of the tree in the dev pod (`/work/t27`, its own `bin/`), deleted
+      afterwards, because the wave-4 GUI agents share one checkout and one pod. 55 failed for the
+      missing card, then passed at both widths with 02 and 17; `34-version` and `60-ai-viewer` still
+      fail, as they did before this task (60 waits for Task 25's page).
 - [ ] Report the paths. Commit message: `M11 T27: AI forecasts GUI`.
 
 ## Task 28: Rollout risk GUI

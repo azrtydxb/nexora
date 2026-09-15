@@ -2,8 +2,10 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 
+import { useAiEnabled } from "@/api/ai";
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
 import { useCan } from "@/auth/AuthProvider";
+import { UpstreamPredictionsPanel } from "@/components/ai/UpstreamPredictionsPanel";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
 import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -60,6 +62,7 @@ function errorMessage(err: unknown): string {
 }
 
 export function UpstreamsPage() {
+  const aiOn = useAiEnabled();
   const canCreate = useCan("createUpstream");
   const canUpdate = useCan("updateUpstream");
   const canDelete = useCan("deleteUpstream");
@@ -217,6 +220,7 @@ export function UpstreamsPage() {
             </TableBody>
           </Table>
         </Card>
+        {aiOn && <UpstreamPredictionsPanel />}
       </section>
       {editing !== null && (
         <UpstreamDialog
