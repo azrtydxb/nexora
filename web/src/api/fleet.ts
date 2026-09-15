@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -112,6 +113,141 @@ export function useEngineStats(id: string, window: StatsWindow) {
       ),
     refetchInterval: 15_000,
   });
+}
+
+/** The engine's metric series for the engine modal's Metrics tab. */
+export function useEngineMetrics(id: string, window: StatsWindow) {
+  return useQuery({
+    queryKey: ["engines", id, "metrics", window],
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/engines/{id}/metrics", {
+          params: { path: { id }, query: { window } },
+        }),
+      ),
+    refetchInterval: 15_000,
+  });
+}
+
+export type EngineLogLine = Schemas["EngineLogs"]["lines"][number];
+export type LogLevel = EngineLogLine["level"];
+
+// The Logs tab keeps this many lines; older ones are dropped as new ones arrive.
+const logLinesKept = 2_000;
+// getEngineLogs answers at most this many lines per request.
+const logBatch = 1_000;
+const logPollMs = 2_000;
+
+type LogState = {
+  key: string;
+  lines: EngineLogLine[];
+  error: unknown;
+  droppedOlder: boolean;
+};
+
+/**
+ * Tails an engine's log ring buffer: the last 1,000 lines on open, then a poll every 2 s after the
+ * sequence cursor. Changing the engine, level or search starts over; pausing keeps the lines and the
+ * cursor so resuming continues where it stopped.
+ */
+export function useEngineLogs(
+  id: string,
+  opts: { level: LogLevel; q: string; paused: boolean },
+): { lines: EngineLogLine[]; error: unknown; droppedOlder: boolean } {
+  const { level, q, paused } = opts;
+  const key = `${id}\n${level}\n${q}`;
+  const [state, setState] = useState<LogState>({
+    key,
+    lines: [],
+    error: null,
+    droppedOlder: false,
+  });
+  // The cursor survives pause/resume; it belongs to one engine, level and search.
+  const cursor = useRef<{ key: string; after: number | null }>({
+    key,
+    after: null,
+  });
+
+  useEffect(() => {
+    if (paused || id === "") return;
+    if (cursor.current.key !== key) cursor.current = { key, after: null };
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const read = async (after: number | null) =>
+      unwrap(
+        await api.GET("/engines/{id}/logs", {
+          params: {
+            path: { id },
+            query: {
+              level,
+              limit: logBatch,
+              ...(q !== "" && { q }),
+              ...(after !== null && { after }),
+            },
+          },
+        }),
+      );
+
+    async function tick() {
+      let after = cursor.current.after;
+      let reset = after === null;
+      try {
+        let r = await read(after);
+        // A restarted engine numbers its lines from 1 again: start over.
+        if (after !== null && r.last_seq < after) {
+          after = null;
+          reset = true;
+          r = await read(null);
+        }
+        let gap = after !== null && r.oldest_seq > after + 1;
+        // On open the buffer can hold more than one batch: read its newest 1,000 sequence numbers.
+        if (after === null && r.lines.length === logBatch) {
+          gap = true;
+          r = await read(Math.max(0, r.last_seq - logBatch));
+        }
+        if (stopped) return;
+        const lines = r.lines;
+        cursor.current = {
+          key,
+          after:
+            lines.length === logBatch
+              ? lines[lines.length - 1].seq
+              : r.last_seq,
+        };
+        setState((prev) => {
+          const base = prev.key === key && !reset ? prev.lines : [];
+          const merged = lines.length > 0 ? base.concat(lines) : base;
+          const over = merged.length > logLinesKept;
+          return {
+            key,
+            lines: over ? merged.slice(-logLinesKept) : merged,
+            error: null,
+            droppedOlder:
+              (prev.key === key && !reset && prev.droppedOlder) || over || gap,
+          };
+        });
+      } catch (err) {
+        if (stopped) return;
+        setState((prev) =>
+          prev.key === key
+            ? { ...prev, error: err }
+            : { key, lines: [], error: err, droppedOlder: false },
+        );
+      }
+      if (!stopped) timer = setTimeout(() => void tick(), logPollMs);
+    }
+
+    void tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [id, level, q, paused, key]);
+
+  return state.key === key
+    ? state
+    : { lines: [], error: null, droppedOlder: false };
 }
 
 export function useCreateEngineGroup() {

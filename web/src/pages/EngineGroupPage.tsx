@@ -30,6 +30,7 @@ import {
   RolloutStages,
   RolloutStateBadge,
 } from "@/components/fleet";
+import { EngineModal, EngineModalOpenButton } from "@/components/EngineModal";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -628,8 +629,8 @@ function GroupEngines({ groupId }: { groupId: string }) {
           <TableBody>
             {rows.map((e) => (
               <TableRow key={e.id}>
-                <TableCell className="py-2.5 font-medium">
-                  {e.node_name}
+                <TableCell className="py-1.5">
+                  <EngineModalOpenButton engine={e} />
                 </TableCell>
                 <TableCell className="py-2.5">
                   <EngineStatusBadge status={e.status} />
@@ -658,6 +659,7 @@ function GroupEngines({ groupId }: { groupId: string }) {
           </TableBody>
         </Table>
       </Card>
+      <EngineModal engineIds={rows.map((e) => e.id)} />
     </section>
   );
 }

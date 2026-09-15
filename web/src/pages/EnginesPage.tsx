@@ -43,6 +43,7 @@ import {
   RolloutStateBadge,
   type LabelRow,
 } from "@/components/fleet";
+import { EngineModal, EngineModalOpenButton } from "@/components/EngineModal";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -545,8 +546,8 @@ function EnginesTable({ canTokens }: { canTokens: boolean }) {
               const lag = e.target_version - e.applied_version;
               return (
                 <TableRow key={e.id} data-testid={`engine-row-${e.node_name}`}>
-                  <TableCell className="py-2.5 font-medium whitespace-nowrap">
-                    {e.node_name}
+                  <TableCell className="py-1.5 whitespace-nowrap">
+                    <EngineModalOpenButton engine={e} />
                   </TableCell>
                   <TableCell className="py-2.5 whitespace-nowrap">
                     {e.engine_group_name}
@@ -653,6 +654,7 @@ function EnginesTable({ canTokens }: { canTokens: boolean }) {
           </div>
         )}
       </Card>
+      <EngineModal engineIds={rows.map((e) => e.id)} />
     </section>
   );
 }

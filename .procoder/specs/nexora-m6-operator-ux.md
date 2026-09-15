@@ -507,7 +507,7 @@ AI), because the console is now the daily tool for the kw deployment.
       `log_request_returns_filtered_lines_after_cursor` (run by `.github/workflows/ci.yml`).
       `TestEngineLogsRoutedAcrossInstances` connects a fake engine to instance B, requests logs through
       instance A, and gets the batch; a disconnected engine gives 409 and a silent one gives 504.
-      `TestEngineLogsFromRealEngine` reads the "serving version" line from a managed engine through
+      `TestEngineLogsFromRealEngine` reads the "applied version" line from a managed engine through
       `getEngineLogs`. Fails if the buffer grows past 2,000 lines, a secret survives redaction, or routing
       misses the stream holder.
 - [ ] [S-15] `TestAccountSelfService`:
