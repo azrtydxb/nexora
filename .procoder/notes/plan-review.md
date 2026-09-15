@@ -69,3 +69,5 @@
 - Lead note (M11 T9, 2026-09-15): Task 13 must remove the condition in `TestAIDisabledChangesNothing` that only checks fixture calls once `querylog_anomalies` is enabled; Task 12 must make `TestAIOpenAICompatibleWire` run (no skip).
 
 - Follow-up (M11 T20, 2026-09-15): the capacity agent does not forecast the recursor cache because `recursor_cache_max_bytes` (M7 T12) was not on main when it was written. After the M7 merge, add the resource and its limit.
+
+- Flaky (M11 final check, 2026-09-15): `54-ai-assistant` can time out waiting for the "Thinking" status (the fake model may answer before the status renders). Fix in M11 Task 32 without weakening: assert the task reaches running or succeeded, or have the fixture hold the response until the spec observes the status.
