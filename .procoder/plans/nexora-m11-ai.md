@@ -2725,6 +2725,7 @@ Files:
 - `mgmt/internal/api/ai_rollout_risk.go`: `GetAiRolloutRisk`.
 - `mgmt/cmd/nexora-mgmt/ai_rolloutrisk.go`: registration.
 - `e2e/ai_rollout_risk_test.go`: created.
+- `mgmt/api/openapi.yaml`: `EngineGroupInput` loses `additionalProperties: false` (see below).
 
 Interfaces:
 
@@ -2761,7 +2762,14 @@ type Assessment struct {
 	RiskLevel          string
 	Analysis           string
 	HistoricalPatterns []History
-	Recommendation     *struct{ Strategy string; CanaryCount, MinHealthQueries int; MaxServfailRatio float64; Reasoning string }
+	Recommendation     *Recommendation // named, not anonymous: it carries JSON tags
+}
+type Recommendation struct {
+	Strategy         string
+	CanaryCount      int
+	MinHealthQueries int
+	MaxServfailRatio float64
+	Reasoning        string
 }
 func ValidateAssessment(a *Assessment, f Features) error
 type Agent struct{ Store *store.Store; Service *ai.Service; Validator *proposal.Validator; Now func() time.Time }
@@ -2798,8 +2806,12 @@ DROP TABLE ai_rollout_risks;
 Agent run (every 15 s through the scheduler):
 
 1. Select up to 5 rollouts `created_at > now() - interval '24 hours'` without a risk row, oldest first.
-2. `kind <> 'change'` or strategy `all_at_once` whose content equals the stable version (as recorded by
-   `rollouts.params->>'immediate'`; check the field name in `mgmt/internal/rollout`) → `skipped`.
+2. `kind <> 'change'` or strategy `all_at_once` whose content the group's engines already serve →
+   `skipped`. `rollout.Create` does not record its `Immediate` flag in `rollouts.params`, and the
+   group's `stable_version` becomes this rollout's version once it completes, so neither can identify
+   such a rollout afterwards. The agent compares `group_snapshots.content_sha256` of the rollout's
+   version with that of the group's previous snapshot version instead: equal digests mean the rollout
+   changes nothing the engines serve.
 3. Otherwise `Collect` → `ai.Generate[Assessment]` with `Validate: ValidateAssessment` → `assessed`.
 4. On error → `failed` with `ai.Code(err)`.
 5. For medium or high level with a recommendation that differs from the group's rollout parameters:
@@ -2808,12 +2820,23 @@ Agent run (every 15 s through the scheduler):
 
 `ValidateAssessment` rules:
 
-- score 1..10 and the level matches its band;
+- score 1..10 and the level matches its band (1–3 low, 4–7 medium, 8–10 high);
 - `analysis` ≤ 1,200 characters;
-- every historical version is in `f.Similar`;
+- every historical version is in `f.Similar`, and each cited pattern is then replaced by the computed
+  `History` of that version, so a stored pattern is never the model's numbers;
 - recommendation `strategy` in `all_at_once|canary`;
 - `canary_count` 1..max(1, Engines−1);
+- `min_health_queries` ≥ 0;
 - `max_servfail_ratio` 0..1.
+
+`updateEngineGroup` could not be proposed as the spec stood: `EngineGroupUpdate` is an `allOf` of
+`EngineGroupInput` and `revision`, and `EngineGroupInput` carried `additionalProperties: false`, which
+makes that `allOf` unsatisfiable — `proposal.Validator` rejected every body for the unknown property
+`revision`. This task removes that line from `EngineGroupInput`; unknown fields are still rejected by
+`proposal.unknownFields` and by the generated structs the handlers decode into. The copy of the spec
+embedded in `mgmt/internal/api/gen.go` still carries the old line: the locally installed
+`oapi-codegen` predates OpenAPI 3.1 and cannot regenerate this document, so the next `make proto`
+picks the change up.
 
 - [ ] Create `features_test.go` with `TestRolloutRiskFeatures`:
   - `Jaccard([{policy_group,update},{resolver_settings,update}], [{policy_group,update}]) == 0.5`;
@@ -2841,8 +2864,10 @@ Agent run (every 15 s through the scheduler):
 - [ ] Create `e2e/ai_rollout_risk_test.go` with `TestRolloutNotDelayedByAI`:
   1. mgmt with `AIEnv` plus `NEXORA_AI_ROLLOUT_RISK_ENABLED=true`, a 15 s scheduler interval (fixed) and
      `NEXORA_AI_AGENT_START_DELAY=0s` in extra env, and a managed engine.
-  2. Script `rollout_risk` with one valid answer with `DelayMS: 120000`.
-  3. Time `PUT /policy-groups/{id}` and assert < 2 s.
+  2. Wait until every rollout created so far has a risk row (unscripted features answer 500, so they
+     end `failed`), then script `rollout_risk` with one valid answer with `DelayMS: 120000`.
+  3. Time `PUT /policy-groups/{id}` — widening the group's CIDRs, so the snapshot content really
+     changes and the rollout is not skipped — and assert < 2 s.
   4. `WaitRollout(..., "completed")` within 30 s.
   5. `GET /rollouts/{id}/ai-risk` is still `pending` at that moment.
   6. After the delay (up to 200 s), it is `assessed`.
@@ -2860,7 +2885,9 @@ Files:
   agent.
 - `mgmt/internal/api/ai_threat.go`, `mgmt/internal/api/ai_threat_test.go`: `StartAiThreatCheck`,
   `GetAiFilterListClassification`.
-- `mgmt/internal/api/querylog_resolve.go`: fill `threat` from cached verdicts.
+- `mgmt/internal/api/querylog_resolve.go`: fill `threat` from cached verdicts. `resolveRecordNames`
+  takes one more argument, `withThreats`, so the lookup is skipped while AI is off.
+- `mgmt/internal/api/handlers_admin.go`: `searchQueryLog` passes `h.d.AI != nil` as `withThreats`.
 - `mgmt/cmd/nexora-mgmt/ai_threat.go`: registration of the task and the agent.
 - `e2e/ai_threat_test.go`: created.
 
@@ -2928,7 +2955,7 @@ CREATE TABLE ai_list_classifications (
 DROP TABLE ai_list_classifications, ai_domain_verdicts;
 ```
 
-- [ ] Create `check_test.go` with `TestThreatCheck`:
+- [x] Create `check_test.go` with `TestThreatCheck`:
   - a builtin backend with 5 records for `evil.ait.test.` from 2 clients, the newest blocked with
     source `category` and category `malware`, and 1 record for `safe.ait.test.`;
   - a pre-inserted non-expired verdict for `cached.ait.test`;
@@ -2937,32 +2964,36 @@ DROP TABLE ai_list_classifications, ai_domain_verdicts;
 
   Assert one model call whose data block does not contain `cached.ait.test`; the evil verdict has
   `QueryCount 5`, `ClientCount 2`, `BlockedBy` containing `malware`; cached has `Cached true`; and
-  `CachedVerdicts` now returns all three. An answer with name `other.test` is re-asked.
+  `CachedVerdicts` now returns all three. An answer with name `other.test` is re-asked
+  (a second test, `TestThreatCheckRejectsUnknownName`, since it needs its own model script).
 
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/threat -run TestThreatCheck -count=1'`, expect
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/threat -run TestThreatCheck -count=1'`, expect
       FAIL, implement `check.go`, and expect PASS.
-- [ ] Create `classify_test.go` with `TestListClassificationSampling`:
+- [x] Create `classify_test.go` with `TestSampleIsUniformAndStable` and `TestListClassificationSampling`:
   - `Sample` of 10,000 names n=200 has 200 unique names, is stable for the same seed, and a chi-square
     test over 10 equal buckets is below 21.67 (p=0.01, 9 degrees of freedom);
   - with `storetest`, one enabled list with a 10,000-name blob and `entry_count` 10,000, the fake model
     answers 4 batches with 100 `malware` and 100 `none` → breakdown `malware sampled 100 estimated 5000`,
-    and exactly 4 model calls;
+    and exactly 4 model calls. The test computes the same sample with `Sample`, since the answers must
+    name the names of their batch;
   - a second run makes 0 calls (unchanged blob).
 
   Run, expect FAIL, implement `classify.go` and `GetClassification`, and expect PASS.
 
-- [ ] Implement the handlers and the `querylog_resolve.go` change: one `CachedVerdicts` query per page
+- [x] Implement the handlers and the `querylog_resolve.go` change: one `CachedVerdicts` query per page
       for the page's names, and `threat` null otherwise. Create
       `mgmt/internal/api/ai_threat_test.go` with `TestQueryLogRecordThreat`, which asserts a cached verdict
-      appears on the record and an expired one does not, and `TestStartAiThreatCheckLimits`: 100 names
-      → 202, 101 → 400.
-- [ ] Create `e2e/ai_threat_test.go` with `TestAIThreatLabelsInQueryLog`:
+      appears on the record, an expired one does not and nothing is labelled while AI is off, and
+      `TestStartAiThreatCheckLimits`: 100 names → 202, 101 → 400.
+- [x] Create `e2e/ai_threat_test.go` with `TestAIThreatLabelsInQueryLog`:
   1. Query `evil.ait.test` through a managed engine and script `threat_check`.
   2. `POST /ai/threat-check {"domains":["evil.ait.test"]}` and wait until `succeeded`.
   3. `fx.Reset`, then `GET /query-log?name=evil.ait` shows `threat.is_threat == true`, and
      `len(fx.Requests(t)) == 0`.
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestAIThreatLabelsInQueryLog -count=1 -v'` and expect PASS.
-- [ ] Report the paths. Commit message: `M11 T19: threat checks, list classification, query log threat labels`.
+- [x] Run the e2e test with private binaries (the shared `bin/` is not rebuilt):
+      `scripts/dev-exec.sh 'go build -o /work/t19-bin/nexora-mgmt ./mgmt/cmd/nexora-mgmt && go build -o /work/t19-bin/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture'`,
+      then `NEXORA_E2E_BIN_DIR=/work/t19-bin go test ./e2e -run TestAIThreatLabelsInQueryLog -count=1 -v`, and expect PASS.
+- [x] Report the paths. Commit message: `M11 T19: threat checks, list classification, query log threat labels`.
 
 ## Task 20: Capacity forecast agent
 
@@ -3142,7 +3173,7 @@ own proposal (`Source "rpz_suggestions"`, one `appendAiRpzRules` action with one
 `Block <record>`, priority from confidence ≥ 0.9 high, ≥ 0.7 medium, else low), validated by
 `proposal.Validator`.
 
-- [ ] Create `inputs_test.go` with `TestCollectRpzInputs`:
+- [x] Create `inputs_test.go` with `TestCollectRpzInputs`:
   - `DamerauLevenshtein("corp", "crop") == 1`, `("corp", "c0rp") == 1`, `("corp", "example") > 2`;
   - `storetest` with hosted zone `corp.example.`;
   - a builtin backend with records for `crop.example.`, 6 high-entropy names under `fam.ars.test.` and
@@ -3150,27 +3181,33 @@ own proposal (`Source "rpz_suggestions"`, one `appendAiRpzRules` action with one
   - one threat verdict for `bad.ars.test` (0.8) with a record.
 
   Assert the inputs `lookalike crop.example`, `family *.fam.ars.test` and `threat bad.ars.test`, and none
-  for `ok.ars.test`.
+  for `ok.ars.test`, and that a record already in `ai_rpz_rules` is not offered again.
 
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/rpzsuggest -run TestCollectRpzInputs -count=1'`,
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/rpzsuggest -run TestCollectRpzInputs -count=1'`,
       expect FAIL, implement `inputs.go`, and expect PASS.
-- [ ] Create `agent_test.go` with `TestRpzSuggestionAgent`. The fake answers rules for `bad.ars.test`
+- [x] Create `agent_test.go` with `TestRpzSuggestionAgent`. The fake answers rules for `bad.ars.test`
       (0.8), `*.fam.ars.test` (0.95) and `www.corp.example` (under the hosted zone). The last makes
       validation reject the whole answer and re-ask; the second answer drops it. Assert 2 model calls and 2 open
       proposals with priorities `medium` and `high`. Run, expect FAIL, implement `agent.go`, and expect PASS.
-- [ ] Add the registration file. Create `e2e/ai_rpz_test.go` with `TestAIRpzSuggestionsApply`, following
+      `TestRpzSuggestionAgentWithoutInputs` adds that a run without candidates never calls the model.
+- [x] Add the registration file. Create `e2e/ai_rpz_test.go` with `TestAIRpzSuggestionsApply`, following
       the spec criterion:
-  1. A managed engine, and 6 high-entropy names under `fam.ars.test` and `bad.ars.test` queried.
-  2. A threat verdict row inserted by SQL.
+  1. A managed engine, and 6 high-entropy names under `fam.ars.test`, `bad.ars.test` and
+     `third.ars.test` queried (they answer NOERROR first: the positive path before any rule exists).
+  2. A threat verdict row for `bad.ars.test` and one for `third.ars.test` inserted by SQL, so both are
+     candidates of a run.
   3. Script `rpz_suggestions` with rules for `bad.ars.test` (nxdomain) and `*.fam.ars.test` (nxdomain).
-  4. Run the agent and apply both ids in one request.
+  4. Run the agent, assert no RPZ zone exists yet, and apply both ids in one request.
   5. Wait until the engine answers NXDOMAIN for `bad.ars.test` and `x1.fam.ars.test`.
-  6. Script a third rule `third.ars.test`, run and apply it: all three are NXDOMAIN.
+  6. Script a third rule `third.ars.test`, run (the applied records are not suggested again) and apply
+     it: all three are NXDOMAIN.
   7. `DELETE /rpz-zones/{id}`, then insert a new open proposal for `fourth.ars.test` by SQL and apply it:
      the zone is recreated and `bad.ars.test`, `x1.fam.ars.test` and `third.ars.test` are NXDOMAIN
      again.
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestAIRpzSuggestionsApply -count=1 -v'` and expect PASS.
-- [ ] Report the paths. Commit message: `M11 T21: RPZ rule suggestions`.
+- [x] Run `go test ./e2e -run TestAIRpzSuggestionsApply -count=1 -v` in the pod and expect PASS. The
+      binaries were built into a private `bin/` of a private tree instead of through `make e2e-build`,
+      which would overwrite the `bin/` and `target/release` shared with the other agents.
+- [x] Report the paths. Commit message: `M11 T21: RPZ rule suggestions`.
 
 ## Task 22: Suggest-only proof, prompt-injection test and viewer spec
 

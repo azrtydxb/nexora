@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/piwi3910/nexora/mgmt/internal/ai/threat"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
@@ -19,8 +21,9 @@ const (
 )
 
 // resolveRecordNames maps records to the API shape and names their filter list, policy group, RPZ
-// zone and rewrite answer. Each kind of lookup runs at most once for the page.
-func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog.Catalog, recs []querylog.Record) ([]QueryLogRecord, error) {
+// zone and rewrite answer. Each kind of lookup runs at most once for the page. With withThreats, one
+// more query labels the page's names with their cached AI verdicts; the model is never called here.
+func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog.Catalog, recs []querylog.Record, withThreats bool) ([]QueryLogRecord, error) {
 	var listIDs, groupIDs, rpzIDs, rwNames, rwGroups []string
 	for _, r := range recs {
 		if r.ListID != "" && r.ListID != globalAllowlistID && !strings.HasPrefix(r.ListID, groupAllowPrefix) {
@@ -53,6 +56,16 @@ func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog
 	if err != nil {
 		return nil, err
 	}
+	verdicts := map[string]threat.Verdict{}
+	if withThreats && len(recs) > 0 {
+		names := make([]string, 0, len(recs))
+		for _, r := range recs {
+			names = append(names, r.Name)
+		}
+		if verdicts, err = threat.CachedVerdicts(ctx, q, names, time.Now()); err != nil {
+			return nil, err
+		}
+	}
 
 	out := make([]QueryLogRecord, len(recs))
 	for i, r := range recs {
@@ -77,6 +90,14 @@ func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog
 			ListName: listName, Source: QueryLogRecordSource(r.Source), Rule: r.Rule,
 			PolicyGroupId: r.PolicyGroupID, PolicyGroupName: groupName, RpzZoneId: r.RPZZoneID, RpzZoneName: rpz[r.RPZZoneID],
 			RpzAction: r.RPZAction, UpstreamsRaced: int(r.UpstreamsRaced), Threat: nil}
+		if v, ok := verdicts[threat.Normalize(r.Name)]; ok {
+			out[i].Threat = &struct {
+				Categories []string  `json:"categories"`
+				CheckedAt  time.Time `json:"checked_at"`
+				Confidence float32   `json:"confidence"`
+				IsThreat   bool      `json:"is_threat"`
+			}{Categories: v.Categories, CheckedAt: v.CheckedAt, Confidence: float32(v.Confidence), IsThreat: v.IsThreat}
+		}
 		if r.Source == string(QueryLogRecordSourceRewrite) {
 			out[i].RewriteAnswer = answers[rewriteKey{r.Rule, r.PolicyGroupID}]
 		}

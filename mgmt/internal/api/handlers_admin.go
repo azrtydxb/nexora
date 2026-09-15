@@ -303,7 +303,7 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	if err != nil {
 		return nil, err
 	}
-	records, err := resolveRecordNames(ctx, h.d.Store.Pool, h.d.Catalog, page.Records)
+	records, err := resolveRecordNames(ctx, h.d.Store.Pool, h.d.Catalog, page.Records, h.d.AI != nil)
 	if err != nil {
 		return nil, err
 	}
