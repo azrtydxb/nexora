@@ -34,7 +34,7 @@ var (
 )
 
 func registerMetrics(reg prometheus.Registerer) error {
-	for _, c := range []prometheus.Collector{Enabled, Requests, RequestDuration, Tokens, ValidationRetries, InflightRequests, QueueWait} {
+	for _, c := range []prometheus.Collector{Enabled, Requests, RequestDuration, Tokens, ValidationRetries, InflightRequests, QueueWait, AgentRuns, AgentLastSuccess} {
 		if err := reg.Register(c); err != nil {
 			var already prometheus.AlreadyRegisteredError
 			if !errors.As(err, &already) {
