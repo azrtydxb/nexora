@@ -236,3 +236,29 @@ All answers recorded in .procoder/specs/nexora-v1.md.
 - Both
 
 **Answer (2026-09-14):** Keep #38 and #39 pending (not decided); do not implement.
+
+## kw cluster hostname: move off the `.local` TLD
+
+`.local` is reserved for mDNS (RFC 6762); macOS/Avahi intercept it before unicast DNS, so `*.kw.local` resolution is fragile from the laptop. 71 references across 25 files (deploy/kw, scripts/kw-*.sh, docs, plans/todos), plus deployed ingress hosts and any TLS SANs.
+
+- Migrate now to `*.kw.watteel.lab` (add records + ingress hosts alongside, cut over, retire `.local`)
+- File it as a GitHub issue and keep `kw.local` for now
+- Leave it as is; `.local` works well enough here
+
+**Answer (2026-09-15):** Migrate now — all migrated to `*.kw.watteel.lab`; `kw.local` is removed and doesn't resolve anymore.
+
+## kw.local certs and ingress hosts that are Helm-owned
+
+DNS for watteel.lab (incl. the kw subdomain) is done on Nexora. The kubectl-managed certs
+(nexus-tls, sera-tls) and the novamem ingress now carry the kw.watteel.lab names. The remainder
+are owned by Helm releases, so a live `kubectl patch` is reverted on the next `helm upgrade`:
+nexora-ingress-tls + ingress (release `nexora`, this repo: deploy/kw/values-kw.yaml),
+headlamp, hubble-ui (release `cilium`), kuvryn, kps-grafana (release `kps`), dhole.
+Also `nexora-dns-tls` is hand-issued by scripts/kw-deploy.sh with CN=dns.nexora.kw.local.
+No certificate on the cluster uses an external domain; all are issued by the internal cluster-ca.
+
+- Change at source: edit each chart/values (nexora here, kuvryn/dhole/novamem repos are local) and redeploy
+- Patch live now as a stopgap, accepting they revert on the next helm upgrade
+- Leave them on kw.local for now; the user handles the other projects
+
+**Answer (2026-09-15):** The stopgap patches were correct; a permanent fix is needed — every one of them changes at source and everything migrates to `kw.watteel.lab` (`kw.local` is removed and doesn't resolve anymore).
