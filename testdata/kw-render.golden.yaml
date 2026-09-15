@@ -1,0 +1,759 @@
+---
+# Source: nexora/templates/mgmt-pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nexora-mgmt
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexora-mgmt
+      app.kubernetes.io/instance: nexora
+---
+# Source: nexora/templates/engine-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexora-engine
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/engine-group: default
+data:
+  engine.toml: |
+    node_name = "engine"
+    state_dir = "/var/lib/nexora"
+    management_urls = ["https://nexora-mgmt-grpc.nexora.svc.cluster.local:9443"]
+    join_token_file = "/etc/nexora/join/join-token"
+    listen_udp = ["0.0.0.0:53"]
+    listen_tcp = ["0.0.0.0:53"]
+    listen_dot = ["0.0.0.0:853"]
+    listen_doh = ["0.0.0.0:443"]
+    doh_path = "/dns-query"
+    listen_doq = ["0.0.0.0:853"]
+    metrics_listen = "0.0.0.0:9153"
+    workers = 2
+    shutdown_drain_seconds = 15
+---
+# Source: nexora/templates/engine-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-engine-metrics
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/metrics: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+  ports:
+    - { name: metrics, port: 9153, targetPort: metrics }
+---
+# Source: nexora/templates/engine-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-dns
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: a
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.10.136
+  # Local keeps client source addresses (per-client policy, query log); the node announcing a
+  # LoadBalancer address must then run an engine of this group.
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: a
+  ports:
+    - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
+    - { name: dot, port: 853, targetPort: dot, protocol: TCP }
+    - { name: doq, port: 853, targetPort: doq, protocol: UDP }
+    - { name: doh, port: 443, targetPort: doh, protocol: TCP }
+---
+# Source: nexora/templates/engine-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-dns-2
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: b
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.10.139
+  # Local keeps client source addresses (per-client policy, query log); the node announcing a
+  # LoadBalancer address must then run an engine of this group.
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: b
+  ports:
+    - { name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP }
+    - { name: dot, port: 853, targetPort: dot, protocol: TCP }
+    - { name: doq, port: 853, targetPort: doq, protocol: UDP }
+    - { name: doh, port: 443, targetPort: doh, protocol: TCP }
+---
+# Source: nexora/templates/mgmt-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-mgmt
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/metrics: "true"
+spec:
+  selector:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+# Source: nexora/templates/mgmt-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-mgmt-grpc
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+spec:
+  selector:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+  ports:
+    - { name: grpc, port: 9443, targetPort: grpc }
+---
+# Source: nexora/templates/mgmt-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexora-mgmt-lb
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.10.135
+  selector:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+  # gRPC only: the GUI/API is never reachable in cleartext here, so session cookies stay on TLS.
+  ports:
+    - { name: grpc, port: 9443, targetPort: grpc }
+---
+# Source: nexora/templates/engine-workloads.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nexora-engine-a
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: a
+spec:
+  # Zero-downtime updates: the new engine starts beside the old one (same node for a DaemonSet,
+  # sharing its hostPath state directory, which the engine supports), and the old one is only
+  # stopped once the new one is ready (/ready: configuration applied) and stayed ready for
+  # minReadySeconds. hostNetwork engines cannot run twice on a node (same host ports), so they
+  # are replaced one at a time instead.
+  minReadySeconds: 5
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexora-engine
+      app.kubernetes.io/instance: nexora
+      nexora.io/engine-group: default
+      nexora.io/engine-instance: a
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nexora-engine
+        app.kubernetes.io/instance: nexora
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: "golden"
+        helm.sh/chart: nexora-1.0.0
+        nexora.io/engine-group: default
+        nexora.io/engine-instance: a
+      annotations:
+        checksum/config: 0fd93c8aa8c37dd0fe2c13ca709fae2ff56a06fb2d8fb094541c5af5852b8e5d
+    spec:
+      # The engine drains for shutdownDrainSeconds after SIGTERM, then finishes in-flight queries
+      # (at most 5 s).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # Port 53 without NET_BIND_SERVICE (a namespaced sysctl, unavailable with hostNetwork).
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master-12
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+          operator: Exists
+      initContainers:
+        # The hostPath directory is created root-owned; hand it to the engine user.
+        - name: state-owner
+          image: 192.168.10.131/library/busybox:1.37
+          imagePullPolicy: Always
+          command:
+            [
+              "sh",
+              "-c",
+              "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora",
+            ]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL], add: [CHOWN, FOWNER] }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/nexora }
+      containers:
+        - name: engine
+          image: 192.168.10.131/azrtydxb/nexora-engine:golden
+          imagePullPolicy: Always
+          args: ["--config", "/etc/nexora/engine.toml"]
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # A stable name per node and group, so a restarted pod keeps its engine identity.
+            - name: NEXORA_ENGINE_NODE_NAME
+              value: "$(K8S_NODE_NAME)"
+          ports:
+            - { name: dns-udp, containerPort: 53, protocol: UDP }
+            - { name: dns-tcp, containerPort: 53, protocol: TCP }
+            - { name: dot, containerPort: 853, protocol: TCP }
+            - { name: doq, containerPort: 853, protocol: UDP }
+            - { name: doh, containerPort: 443, protocol: TCP }
+            - { name: metrics, containerPort: 9153, protocol: TCP }
+          # Ready only with an applied configuration (filter index built) and until shutdown starts.
+          readinessProbe:
+            httpGet: { path: /ready, port: metrics }
+            periodSeconds: 1
+            failureThreshold: 1
+            successThreshold: 1
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet: { path: /live, port: metrics }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            limits:
+              cpu: "4"
+              memory: 1Gi
+            requests:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {
+                name: config,
+                mountPath: /etc/nexora/engine.toml,
+                subPath: engine.toml,
+                readOnly: true,
+              }
+            - { name: join, mountPath: /etc/nexora/join, readOnly: true }
+            - { name: state, mountPath: /var/lib/nexora }
+      volumes:
+        - name: config
+          configMap: { name: nexora-engine }
+        - name: join
+          secret:
+            secretName: nexora-join-token
+            defaultMode: 0440
+        - name: state
+          hostPath:
+            { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
+---
+# Source: nexora/templates/engine-workloads.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nexora-engine-b
+  labels:
+    app.kubernetes.io/name: nexora-engine
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    nexora.io/engine-group: default
+    nexora.io/engine-instance: b
+spec:
+  # Zero-downtime updates: the new engine starts beside the old one (same node for a DaemonSet,
+  # sharing its hostPath state directory, which the engine supports), and the old one is only
+  # stopped once the new one is ready (/ready: configuration applied) and stayed ready for
+  # minReadySeconds. hostNetwork engines cannot run twice on a node (same host ports), so they
+  # are replaced one at a time instead.
+  minReadySeconds: 5
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexora-engine
+      app.kubernetes.io/instance: nexora
+      nexora.io/engine-group: default
+      nexora.io/engine-instance: b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nexora-engine
+        app.kubernetes.io/instance: nexora
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: "golden"
+        helm.sh/chart: nexora-1.0.0
+        nexora.io/engine-group: default
+        nexora.io/engine-instance: b
+      annotations:
+        checksum/config: 0fd93c8aa8c37dd0fe2c13ca709fae2ff56a06fb2d8fb094541c5af5852b8e5d
+    spec:
+      # The engine drains for shutdownDrainSeconds after SIGTERM, then finishes in-flight queries
+      # (at most 5 s).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # Port 53 without NET_BIND_SERVICE (a namespaced sysctl, unavailable with hostNetwork).
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master-13
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+          operator: Exists
+      initContainers:
+        # The hostPath directory is created root-owned; hand it to the engine user.
+        - name: state-owner
+          image: 192.168.10.131/library/busybox:1.37
+          imagePullPolicy: Always
+          command:
+            [
+              "sh",
+              "-c",
+              "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora",
+            ]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL], add: [CHOWN, FOWNER] }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/nexora }
+      containers:
+        - name: engine
+          image: 192.168.10.131/azrtydxb/nexora-engine:golden
+          imagePullPolicy: Always
+          args: ["--config", "/etc/nexora/engine.toml"]
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            # A stable name per node and group, so a restarted pod keeps its engine identity.
+            - name: NEXORA_ENGINE_NODE_NAME
+              value: "$(K8S_NODE_NAME)"
+          ports:
+            - { name: dns-udp, containerPort: 53, protocol: UDP }
+            - { name: dns-tcp, containerPort: 53, protocol: TCP }
+            - { name: dot, containerPort: 853, protocol: TCP }
+            - { name: doq, containerPort: 853, protocol: UDP }
+            - { name: doh, containerPort: 443, protocol: TCP }
+            - { name: metrics, containerPort: 9153, protocol: TCP }
+          # Ready only with an applied configuration (filter index built) and until shutdown starts.
+          readinessProbe:
+            httpGet: { path: /ready, port: metrics }
+            periodSeconds: 1
+            failureThreshold: 1
+            successThreshold: 1
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet: { path: /live, port: metrics }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 2
+          resources:
+            limits:
+              cpu: "4"
+              memory: 1Gi
+            requests:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {
+                name: config,
+                mountPath: /etc/nexora/engine.toml,
+                subPath: engine.toml,
+                readOnly: true,
+              }
+            - { name: join, mountPath: /etc/nexora/join, readOnly: true }
+            - { name: state, mountPath: /var/lib/nexora }
+      volumes:
+        - name: config
+          configMap: { name: nexora-engine }
+        - name: join
+          secret:
+            secretName: nexora-join-token
+            defaultMode: 0440
+        - name: state
+          hostPath:
+            { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
+---
+# Source: nexora/templates/mgmt-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexora-mgmt
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexora-mgmt
+      app.kubernetes.io/instance: nexora
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nexora-mgmt
+        app.kubernetes.io/instance: nexora
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: "golden"
+        helm.sh/chart: nexora-1.0.0
+    spec:
+      # runAsGroup and fsGroup make the 0440 secret volumes (CA, KEK, DNS TLS) readable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: nexora-mgmt
+                    app.kubernetes.io/instance: nexora
+      initContainers:
+        - name: migrate
+          image: 192.168.10.131/azrtydxb/nexora-mgmt:golden
+          imagePullPolicy: Always
+          args: ["migrate"]
+          env:
+            - name: NEXORA_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-db-app
+                  key: uri
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      containers:
+        - name: mgmt
+          image: 192.168.10.131/azrtydxb/nexora-mgmt:golden
+          imagePullPolicy: Always
+          args: ["serve"]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: grpc, containerPort: 9443 }
+          env:
+            - { name: NEXORA_HTTP_LISTEN, value: ":8080" }
+            - { name: NEXORA_GRPC_LISTEN, value: ":9443" }
+            - name: NEXORA_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-db-app
+                  key: uri
+            - { name: NEXORA_CA_CERT_FILE, value: /etc/nexora/ca/ca.crt }
+            - { name: NEXORA_CA_KEY_FILE, value: /etc/nexora/ca/ca.key }
+            - name: NEXORA_GRPC_SERVER_NAMES
+              value: "nexora-mgmt-grpc,nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,192.168.10.135"
+            - name: NEXORA_PUBLIC_URL
+              value: "https://nexora.kw.watteel.lab"
+            - name: NEXORA_SECURE_COOKIES
+              value: "true"
+            - name: NEXORA_ENGINE_CERT_TTL
+              value: "2160h"
+            - name: NEXORA_ROLLOUT_TICK
+              value: "1s"
+            - name: NEXORA_QUERYLOG_BACKEND
+              value: "opensearch"
+            - name: NEXORA_QUERYLOG_BUILTIN_CAPACITY
+              value: "200000"
+            - name: NEXORA_OPENSEARCH_URL
+              value: "http://opensearch.nexora.svc.cluster.local:9200"
+            - name: NEXORA_OPENSEARCH_INDEX
+              value: "nexora-querylog-*"
+            - name: NEXORA_OTLP_ENDPOINT
+              value: "http://nexora-otelcol.nexora.svc.cluster.local:4317"
+            # 32 random bytes (base64) sealing stored secrets such as TSIG keys.
+            - { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }
+            # The kubelet updates Secret volumes in place, so rotating the Secret rotates the DNS
+            # serving certificate without restarts.
+            - {
+                name: NEXORA_DNS_TLS_CERT_FILE,
+                value: /etc/nexora/dns-tls/tls.crt,
+              }
+            - {
+                name: NEXORA_DNS_TLS_KEY_FILE,
+                value: /etc/nexora/dns-tls/tls.key,
+              }
+            - name: NEXORA_DNS_TLS_RELOAD_INTERVAL
+              value: "30s"
+            # The Secret is the only source of the AI endpoint, model and API key.
+            - name: NEXORA_AI_BASE_URL
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: nexora-ai, key: base-url, optional: true },
+                }
+            - name: NEXORA_AI_MODEL
+              valueFrom:
+                {
+                  secretKeyRef: { name: nexora-ai, key: model, optional: true },
+                }
+            - name: NEXORA_AI_API_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: nexora-ai, key: api-key, optional: true },
+                }
+            - name: NEXORA_MCP_ENABLED
+              value: "true"
+            - name: NEXORA_MCP_READ_ONLY
+              value: "true"
+            - name: NEXORA_TRUSTED_PROXY_CIDRS
+              value: 10.42.0.0/16
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: grpc }
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: ca, mountPath: /etc/nexora/ca, readOnly: true }
+            - { name: kek, mountPath: /etc/nexora/kek, readOnly: true }
+            - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
+      volumes:
+        - name: ca
+          secret:
+            secretName: nexora-ca
+            defaultMode: 0440
+        - name: kek
+          secret: { secretName: nexora-kek, defaultMode: 0440 }
+        - name: dns-tls
+          secret: { secretName: nexora-dns-tls, defaultMode: 0440 }
+---
+# Source: nexora/templates/mgmt-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexora
+  labels:
+    app.kubernetes.io/name: nexora-mgmt
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+  annotations:
+    cert-manager.io/cluster-issuer: cluster-ca
+    # Plain HTTP redirects to HTTPS; session cookies are Secure.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["nexora.kw.watteel.lab"]
+      secretName: nexora-ingress-tls
+  rules:
+    - host: "nexora.kw.watteel.lab"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nexora-mgmt
+                port: { name: http }
+---
+# Source: nexora/templates/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nexora
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nexora
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    release: kps
+spec:
+  groups:
+    - name: nexora-fleet
+      rules:
+        - alert: NexoraEngineDisconnected
+          expr: max(nexora_mgmt_engines_disconnected{namespace="nexora"}) > 0
+          for: 2m
+          labels: { severity: warning }
+          annotations:
+            summary: "{{ $value }} Nexora engine(s) without a control stream for more than 60 seconds"
+        - alert: NexoraRolloutHalted
+          expr: max(nexora_mgmt_rollouts{state="halted",namespace="nexora"}) > 0
+          labels: { severity: warning }
+          annotations:
+            summary: A Nexora configuration rollout halted on its health gate; roll back or fix forward
+        - alert: NexoraManagementPlaneDown
+          expr: absent(up{namespace="nexora",service="nexora-mgmt"} == 1)
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: No Nexora management plane instance is being scraped
+    - name: nexora-ai
+      rules:
+        # 21600 s is the 6 h default agent interval: the alert fires once an agent has failed in the last
+        # hour and has not succeeded for three default intervals.
+        - alert: NexoraAIAgentFailing
+          expr: increase(nexora_mgmt_ai_agent_runs_total{outcome="failed"}[1h]) > 0 and (time() - nexora_mgmt_ai_agent_last_success_timestamp_seconds) > 3 * 21600
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Nexora AI agent {{ $labels.agent }} keeps failing and has not succeeded for three intervals"
+        - alert: NexoraAIBudgetExhausted
+          expr: nexora_mgmt_ai_budget_used_ratio >= 1
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: The Nexora AI daily token budget is spent; AI requests answer ai_budget_exhausted until the UTC day ends
+---
+# Source: nexora/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nexora
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nexora
+    app.kubernetes.io/instance: nexora
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "golden"
+    helm.sh/chart: nexora-1.0.0
+    release: kps
+spec:
+  namespaceSelector:
+    matchNames: [nexora]
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: nexora
+      nexora.io/metrics: "true"
+  endpoints:
+    - { port: http, path: /metrics, interval: 30s }
+    - { port: metrics, path: /metrics, interval: 30s }
