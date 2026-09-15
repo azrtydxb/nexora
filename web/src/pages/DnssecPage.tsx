@@ -24,6 +24,7 @@ import {
   SavedNote,
   StatusDot,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -116,7 +117,7 @@ function RefreshWarning() {
       <AlertDescription>
         <span className="font-semibold">Trust anchor refresh failing</span> on{" "}
         {failing.map((e) => e.engine_name).join(", ")}. Validation stops once
-        the root key is no longer trusted; check the engines' reachability of
+        the root key is no longer trusted; check that these servers can reach
         the root servers.
       </AlertDescription>
     </Alert>
@@ -147,6 +148,7 @@ function SettingsForm({ settings }: { settings: Settings }) {
     key: keyof typeof form,
     label: string,
     help: string,
+    tip: ReactNode,
     disabled = false,
   ) => (
     <div className="flex items-start gap-3">
@@ -158,7 +160,10 @@ function SettingsForm({ settings }: { settings: Settings }) {
         onCheckedChange={(v) => setForm((f) => ({ ...f, [key]: v }))}
       />
       <div>
-        <Label htmlFor={id}>{label}</Label>
+        <div className="flex items-center gap-1.5">
+          <Label htmlFor={id}>{label}</Label>
+          {tip}
+        </div>
         <p className="text-muted-foreground mt-1 text-sm">{help}</p>
       </div>
     </div>
@@ -176,19 +181,28 @@ function SettingsForm({ settings }: { settings: Settings }) {
             "validation",
             "Validate answers",
             "Check signatures on recursive answers and validating forward zones; bogus answers become SERVFAIL.",
+            <HelpTip id="dnssec-validation" label="Validate answers" />,
           )}
           {toggle(
             "dnssec-validate-forwarded",
             "validate_forwarded",
             "Validate forwarded answers",
             "Also validate answers from the global upstreams in forward mode, up to the root trust anchor.",
+            <HelpTip
+              id="dnssec-validate-forwarded"
+              label="Validate forwarded answers"
+            />,
             !form.validation,
           )}
           {toggle(
             "dnssec-rfc5011",
             "rfc5011",
             "Automated trust anchor updates (RFC 5011)",
-            "Engines track root key rollovers and trust new keys after the hold-down period.",
+            "Follow root key rollovers and trust new keys after the hold-down period.",
+            <HelpTip
+              id="dnssec-rfc5011"
+              label="Automated trust anchor updates"
+            />,
           )}
         </fieldset>
         <div className="bg-muted/40 flex flex-wrap items-center justify-end gap-3 border-t px-5 py-3">
@@ -278,7 +292,12 @@ function TrustAnchorsSection() {
             <TableRow className="hover:bg-transparent">
               <TableHead>Zone</TableHead>
               <TableHead>DS</TableHead>
-              <TableHead>Source</TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  Source
+                  <HelpTip id="trustanchors-col-source" label="Source column" />
+                </span>
+              </TableHead>
               {canDelete && (
                 <TableHead className="w-16 text-right">Actions</TableHead>
               )}
@@ -364,7 +383,10 @@ function TrustAnchorDialog({ onClose }: { onClose: () => void }) {
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid gap-1.5">
-            <Label htmlFor="trust-anchor-zone">Zone</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="trust-anchor-zone">Zone</Label>
+              <HelpTip id="trust-anchor-zone" label="Zone" />
+            </div>
             <Input
               id="trust-anchor-zone"
               className="font-mono"
@@ -374,7 +396,10 @@ function TrustAnchorDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="trust-anchor-ds">DS record</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="trust-anchor-ds">DS record</Label>
+              <HelpTip id="trust-anchor-ds" label="DS record" />
+            </div>
             <Input
               id="trust-anchor-ds"
               className="font-mono"
@@ -535,7 +560,10 @@ function NtaDialog({ onClose }: { onClose: () => void }) {
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid gap-1.5">
-            <Label htmlFor="nta-domain">Domain</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="nta-domain">Domain</Label>
+              <HelpTip id="nta-domain" label="Domain" />
+            </div>
             <Input
               id="nta-domain"
               className="font-mono"
@@ -545,7 +573,10 @@ function NtaDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="nta-reason">Reason</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="nta-reason">Reason</Label>
+              <HelpTip id="nta-reason" label="Reason" />
+            </div>
             <Input
               id="nta-reason"
               maxLength={500}
@@ -554,7 +585,10 @@ function NtaDialog({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="nta-lifetime">Expires in</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="nta-lifetime">Expires in</Label>
+              <HelpTip id="nta-lifetime" label="Expires in" />
+            </div>
             <Select
               value={form.lifetime}
               onValueChange={(v) => set("lifetime", v)}
@@ -622,11 +656,42 @@ function EnginesSection() {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead>Engine</TableHead>
-              <TableHead className="text-right">Secure</TableHead>
-              <TableHead className="text-right">Insecure</TableHead>
-              <TableHead className="text-right">Bogus</TableHead>
-              <TableHead className="text-right">Indeterminate</TableHead>
-              <TableHead>Trust anchor keys</TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5 justify-end">
+                  Secure
+                  <HelpTip id="dnssec-col-secure" label="Secure column" />
+                </span>
+              </TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5 justify-end">
+                  Insecure
+                  <HelpTip id="dnssec-col-insecure" label="Insecure column" />
+                </span>
+              </TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5 justify-end">
+                  Bogus
+                  <HelpTip id="dnssec-col-bogus" label="Bogus column" />
+                </span>
+              </TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5 justify-end">
+                  Indeterminate
+                  <HelpTip
+                    id="dnssec-col-indeterminate"
+                    label="Indeterminate column"
+                  />
+                </span>
+              </TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  Trust anchor keys
+                  <HelpTip
+                    id="dnssec-col-keys"
+                    label="Trust anchor keys column"
+                  />
+                </span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

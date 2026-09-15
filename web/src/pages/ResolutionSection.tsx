@@ -8,6 +8,7 @@ import {
 } from "@/api/resolution";
 import { useCan } from "@/auth/AuthProvider";
 import { ErrorAlert, SavedNote } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -121,7 +122,11 @@ function ResolutionForm({ settings }: { settings: Settings }) {
           className="grid gap-5 px-5 py-5"
         >
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Field label="Mode" htmlFor="resolution-mode">
+            <Field
+              label="Mode"
+              htmlFor="resolution-mode"
+              help={<HelpTip id="resolution-mode" label="Mode" />}
+            >
               <Select
                 value={form.mode}
                 onValueChange={(v) => set("mode", v as Form["mode"])}
@@ -139,18 +144,33 @@ function ResolutionForm({ settings }: { settings: Settings }) {
             <SwitchField
               id="resolution-qname-min"
               label="QNAME minimisation"
+              help={
+                <HelpTip id="resolution-qname-min" label="QNAME minimisation" />
+              }
               checked={form.qname_minimisation}
               onChange={(v) => set("qname_minimisation", v)}
             />
             <SwitchField
               id="resolution-aggressive-nsec"
               label="Aggressive NSEC caching"
+              help={
+                <HelpTip
+                  id="resolution-aggressive-nsec"
+                  label="Aggressive NSEC caching"
+                />
+              }
               checked={form.aggressive_nsec}
               onChange={(v) => set("aggressive_nsec", v)}
             />
             <Field
               label="Maximum upstream queries per client query"
               htmlFor="resolution-max-queries"
+              help={
+                <HelpTip
+                  id="resolution-max-queries"
+                  label="Maximum upstream queries per client query"
+                />
+              }
             >
               <Input
                 id="resolution-max-queries"
@@ -164,6 +184,12 @@ function ResolutionForm({ settings }: { settings: Settings }) {
             <Field
               label="Maximum delegation depth"
               htmlFor="resolution-max-depth"
+              help={
+                <HelpTip
+                  id="resolution-max-depth"
+                  label="Maximum delegation depth"
+                />
+              }
             >
               <Input
                 id="resolution-max-depth"
@@ -177,6 +203,12 @@ function ResolutionForm({ settings }: { settings: Settings }) {
             <Field
               label="Authority port"
               htmlFor="resolution-authority-port"
+              help={
+                <HelpTip
+                  id="resolution-authority-port"
+                  label="Authority port"
+                />
+              }
               hint="Port queried on authoritative servers; 53 outside test labs"
             >
               <Input
@@ -192,7 +224,10 @@ function ResolutionForm({ settings }: { settings: Settings }) {
 
           <div className="grid gap-2">
             <div>
-              <h3 className="text-sm font-semibold">Root hints</h3>
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-semibold">Root hints</h3>
+                <HelpTip id="resolution-root-hints" label="Root hints" />
+              </div>
               <p className="text-muted-foreground text-sm">
                 Empty uses the built-in IANA root servers. Addresses are bare
                 IPs, comma-separated.
@@ -294,16 +329,22 @@ function Field({
   label,
   htmlFor,
   hint,
+  help,
   children,
 }: {
   label: string;
   htmlFor: string;
   hint?: string;
+  /** A HelpTip shown in the label row, so it never covers validation text below the input. */
+  help?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="grid content-start gap-1.5">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={htmlFor}>{label}</Label>
+        {help}
+      </div>
       {children}
       {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
     </div>
@@ -313,11 +354,13 @@ function Field({
 function SwitchField({
   id,
   label,
+  help,
   checked,
   onChange,
 }: {
   id: string;
   label: string;
+  help: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -325,6 +368,7 @@ function SwitchField({
     <div className="flex items-center gap-2 self-end sm:h-9">
       <Switch id={id} checked={checked} onCheckedChange={onChange} />
       <Label htmlFor={id}>{label}</Label>
+      {help}
     </div>
   );
 }

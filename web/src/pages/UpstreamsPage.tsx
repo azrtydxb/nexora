@@ -5,6 +5,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, ApiError, unwrap, type Schemas } from "@/api/client";
 import { useCan } from "@/auth/AuthProvider";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -85,8 +86,9 @@ export function UpstreamsPage() {
           <div>
             <h2 className="mb-1 text-sm font-semibold">Upstream forwarders</h2>
             <p className="text-muted-foreground max-w-prose text-sm">
-              Resolvers the engines forward to in forward mode, tried in the
-              order listed. An engine group in override mode uses only its own.
+              Resolvers that Nexora forwards queries to in forward mode. The
+              strategy under Settings decides which one answers. An engine group
+              in override mode uses only its own.
             </p>
           </div>
           {canCreate && (
@@ -110,7 +112,12 @@ export function UpstreamsPage() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="w-12">#</TableHead>
+                <TableHead className="w-16">
+                  <span className="inline-flex items-center gap-1.5">
+                    #
+                    <HelpTip id="upstreams-col-position" label="Position" />
+                  </span>
+                </TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Protocol</TableHead>
                 <TableHead>Target</TableHead>
@@ -202,7 +209,7 @@ export function UpstreamsPage() {
                   >
                     No upstreams yet.{" "}
                     {canCreate
-                      ? "Add one so the engines can resolve names."
+                      ? "Add one so Nexora can resolve names in forward mode."
                       : "An operator can add one."}
                   </TableCell>
                 </TableRow>
@@ -292,8 +299,7 @@ function UpstreamDialog({
             {upstream ? `Edit ${upstream.name}` : "Add upstream"}
           </DialogTitle>
           <DialogDescription>
-            Changes publish a new configuration version that every engine
-            applies.
+            Saving publishes a new configuration version.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
@@ -303,7 +309,10 @@ function UpstreamDialog({
             </Alert>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="upstream-name">Name</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="upstream-name">Name</Label>
+              <HelpTip id="upstream-name" label="Name" />
+            </div>
             <Input
               id="upstream-name"
               data-testid="upstream-name"
@@ -314,7 +323,10 @@ function UpstreamDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="upstream-protocol">Protocol</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="upstream-protocol">Protocol</Label>
+              <HelpTip id="upstream-protocol" label="Protocol" />
+            </div>
             <Select
               value={form.protocol}
               onValueChange={(v) => set("protocol", v as Protocol)}
@@ -341,7 +353,10 @@ function UpstreamDialog({
           </div>
           {form.protocol === "doh" ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="upstream-doh-url">DoH URL</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="upstream-doh-url">DoH URL</Label>
+                <HelpTip id="upstream-doh-url" label="DoH URL" />
+              </div>
               <Input
                 id="upstream-doh-url"
                 data-testid="upstream-doh-url"
@@ -354,7 +369,10 @@ function UpstreamDialog({
             </div>
           ) : (
             <div className="grid gap-1.5">
-              <Label htmlFor="upstream-address">Address</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="upstream-address">Address</Label>
+                <HelpTip id="upstream-address" label="Address" />
+              </div>
               <Input
                 id="upstream-address"
                 data-testid="upstream-address"
@@ -370,7 +388,10 @@ function UpstreamDialog({
           )}
           {form.protocol === "dot" && (
             <div className="grid gap-1.5">
-              <Label htmlFor="upstream-tls-name">TLS server name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="upstream-tls-name">TLS server name</Label>
+                <HelpTip id="upstream-tls-name" label="TLS server name" />
+              </div>
               <Input
                 id="upstream-tls-name"
                 data-testid="upstream-tls-name"
@@ -383,7 +404,10 @@ function UpstreamDialog({
             </div>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="upstream-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="upstream-engine-group">Engine group</Label>
+              <HelpTip id="upstream-engine-group" label="Engine group" />
+            </div>
             <EngineGroupSelect
               id="upstream-engine-group"
               testId="upstream-engine-group"
@@ -393,7 +417,10 @@ function UpstreamDialog({
           </div>
           <div className="grid grid-cols-[1fr_auto] items-end gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="upstream-timeout">Timeout (ms)</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="upstream-timeout">Timeout (ms)</Label>
+                <HelpTip id="upstream-timeout" label="Timeout (ms)" />
+              </div>
               <Input
                 id="upstream-timeout"
                 data-testid="upstream-timeout"
@@ -405,14 +432,17 @@ function UpstreamDialog({
                 onChange={(e) => set("timeout_ms", e.target.value)}
               />
             </div>
-            <label className="flex h-9 items-center gap-2 text-sm">
-              <Switch
-                checked={form.enabled}
-                onCheckedChange={(v) => set("enabled", v)}
-                data-testid="upstream-enabled"
-              />
-              Enabled
-            </label>
+            <div className="flex h-9 items-center gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={form.enabled}
+                  onCheckedChange={(v) => set("enabled", v)}
+                  data-testid="upstream-enabled"
+                />
+                Enabled
+              </label>
+              <HelpTip id="upstream-enabled" label="Enabled" />
+            </div>
           </div>
           <DialogFooter className="gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
@@ -465,13 +495,13 @@ function DeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete {upstream.name}?</DialogTitle>
           <DialogDescription>
-            Engines stop forwarding to{" "}
+            Nexora stops forwarding to{" "}
             <span className="font-mono">
               {upstream.protocol === "doh"
                 ? upstream.doh_url
                 : upstream.address}
             </span>{" "}
-            once they apply the new configuration.
+            once the new configuration is applied.
           </DialogDescription>
         </DialogHeader>
         {remove.error && (

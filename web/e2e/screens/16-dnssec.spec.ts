@@ -47,12 +47,12 @@ test("operator edits DNSSEC settings, trust anchors and negative trust anchors",
   );
   await anchors.getByRole("button", { name: "Add trust anchor" }).click();
   let dialog = page.getByRole("dialog", { name: "Add trust anchor" });
-  await dialog.getByLabel("Zone").fill("example.");
-  await dialog.getByLabel("DS record").fill("1 13 2 ZZ");
+  await dialog.getByLabel("Zone", { exact: true }).fill("example.");
+  await dialog.getByLabel("DS record", { exact: true }).fill("1 13 2 ZZ");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog.getByRole("alert")).toContainText("digest");
   await dialog
-    .getByLabel("DS record")
+    .getByLabel("DS record", { exact: true })
     .fill(
       "12345 13 2 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
     );
@@ -68,9 +68,11 @@ test("operator edits DNSSEC settings, trust anchors and negative trust anchors",
   const ntas = page.getByRole("region", { name: "Negative trust anchors" });
   await ntas.getByRole("button", { name: "Add negative trust anchor" }).click();
   dialog = page.getByRole("dialog", { name: "Add negative trust anchor" });
-  await dialog.getByLabel("Domain").fill("broken.example");
-  await dialog.getByLabel("Reason").fill("expired signatures at provider");
-  await dialog.getByLabel("Expires in").click();
+  await dialog.getByLabel("Domain", { exact: true }).fill("broken.example");
+  await dialog
+    .getByLabel("Reason", { exact: true })
+    .fill("expired signatures at provider");
+  await dialog.getByLabel("Expires in", { exact: true }).click();
   await page.getByRole("option", { name: "1 day", exact: true }).click();
   await dialog.getByRole("button", { name: "Save" }).click();
   const nta = ntas.getByRole("row", { name: /broken\.example\./ });

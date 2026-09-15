@@ -2429,7 +2429,7 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test attribution'` and expect FAIL: it
       does not compile, with `struct ListHit does not have a field named offset`, `cannot find function
-    view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
+  view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
 - [ ] Implement:
   - **`engine/src/filter/index.rs`:**
     - `for_each_match(name_wire, visit: impl FnMut(u32, u8) -> bool)` passes the level's start
@@ -3043,7 +3043,7 @@ impl Acl { pub fn any() -> Acl; pub fn allows_all(&self) -> bool } // allows_all
   - In `engine/src/authoritative/dispatch.rs`, change `fast` and `signed_query` (and `unparsed`, which
     calls `signed_query`; `signed_query` also takes the found `zone`) to take
     `rec: &mut QueryRecord` from `handle_packet`. As built the check is `query_allowed(rt, zone,
-    client, rec)`, shared by both paths; a refused hosted query is not marked `CacheOutcome::Auth`. After the zone is found and before transfers and
+client, rec)`, shared by both paths; a refused hosted query is not marked `CacheOutcome::Auth`. After the zone is found and before transfers and
     answers:
     ```rust
         let auth_acl = zone.allow_query.as_ref().unwrap_or(&rt.authoritative_acl);

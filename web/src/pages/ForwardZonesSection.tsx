@@ -11,6 +11,7 @@ import {
 import { useCan } from "@/auth/AuthProvider";
 import { ConfirmDialog, ErrorAlert, MessageRow } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -76,7 +77,12 @@ export function ForwardZonesSection() {
             <TableRow className="hover:bg-transparent">
               <TableHead>Domain</TableHead>
               <TableHead>Servers</TableHead>
-              <TableHead>DNSSEC</TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  DNSSEC
+                  <HelpTip id="forwardzones-col-dnssec" label="DNSSEC column" />
+                </span>
+              </TableHead>
               <TableHead>Engine group</TableHead>
               {(canUpdate || canDelete) && (
                 <TableHead className="w-24 text-right">Actions</TableHead>
@@ -209,13 +215,15 @@ function ForwardZoneDialog({
             {zone ? "Edit forward zone" : "New forward zone"}
           </DialogTitle>
           <DialogDescription>
-            Changes publish a new configuration version that every engine
-            applies.
+            Saving publishes a new configuration version.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid gap-1.5">
-            <Label htmlFor="forward-zone-domain">Domain</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="forward-zone-domain">Domain</Label>
+              <HelpTip id="forward-zone-domain" label="Domain" />
+            </div>
             <Input
               id="forward-zone-domain"
               className="font-mono"
@@ -227,7 +235,10 @@ function ForwardZoneDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="forward-zone-servers">Servers</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="forward-zone-servers">Servers</Label>
+              <HelpTip id="forward-zone-servers" label="Servers" />
+            </div>
             <Input
               id="forward-zone-servers"
               className="font-mono"
@@ -241,7 +252,10 @@ function ForwardZoneDialog({
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="forwardzone-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="forwardzone-engine-group">Engine group</Label>
+              <HelpTip id="forwardzone-engine-group" label="Engine group" />
+            </div>
             <EngineGroupSelect
               id="forwardzone-engine-group"
               testId="forwardzone-engine-group"
@@ -256,6 +270,7 @@ function ForwardZoneDialog({
               onCheckedChange={(v) => set("validate", v)}
             />
             <Label htmlFor="forward-zone-validate">Validate DNSSEC</Label>
+            <HelpTip id="forward-zone-validate" label="Validate DNSSEC" />
           </div>
           <ErrorAlert error={save.error} thing="This forward zone" />
           <DialogFooter className="gap-2 pt-2">

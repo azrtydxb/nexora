@@ -13,9 +13,11 @@ test("operator edits resolution settings and forward zones", async ({
   await page.getByTestId("nav-resolution").click();
 
   const card = page.getByRole("region", { name: "Resolution mode" });
-  await expect(card.getByLabel("Mode")).toContainText("Forward");
+  await expect(card.getByLabel("Mode", { exact: true })).toContainText(
+    "Forward",
+  );
   await card
-    .getByLabel("Maximum upstream queries per client query")
+    .getByLabel("Maximum upstream queries per client query", { exact: true })
     .fill("150");
   await card.getByRole("button", { name: "Add root hint" }).click();
   await card.getByLabel("Root hint name 1").fill("a.root.test.");
@@ -29,18 +31,20 @@ test("operator edits resolution settings and forward zones", async ({
   await expect(
     page
       .getByRole("region", { name: "Resolution mode" })
-      .getByLabel("Maximum upstream queries per client query"),
+      .getByLabel("Maximum upstream queries per client query", { exact: true }),
   ).toHaveValue("150");
 
   const zones = page.getByRole("region", { name: "Forward zones" });
   const domain = `corp-${Date.now()}.example`;
   await zones.getByRole("button", { name: "New forward zone" }).click();
   let dialog = page.getByRole("dialog", { name: "New forward zone" });
-  await dialog.getByLabel("Domain").fill(domain);
-  await dialog.getByLabel("Servers").fill("10.0.0.1");
+  await dialog.getByLabel("Domain", { exact: true }).fill(domain);
+  await dialog.getByLabel("Servers", { exact: true }).fill("10.0.0.1");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog.getByRole("alert")).toContainText("not ip:port");
-  await dialog.getByLabel("Servers").fill("10.0.0.1:53, 10.0.0.2:53");
+  await dialog
+    .getByLabel("Servers", { exact: true })
+    .fill("10.0.0.1:53, 10.0.0.2:53");
   await dialog.getByRole("button", { name: "Save" }).click();
   const row = zones.getByRole("row", {
     name: new RegExp(domain.replaceAll(".", "\\.")),

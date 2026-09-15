@@ -6,6 +6,7 @@ import { api, unwrap, type Schemas } from "@/api/client";
 import { useTsigKeys, useZones } from "@/api/zones";
 import { useCan } from "@/auth/AuthProvider";
 import { ErrorAlert, MessageRow } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { ListEditor } from "@/components/ListEditor";
 import { Card } from "@/components/ui/card";
@@ -91,6 +92,7 @@ export function AccessControlPage() {
             <ListEditor
               prefix="acl"
               inputTestId="acl-cidr-input"
+              help="acl-cidr-input"
               items={acl.data?.allow_cidrs}
               loading={acl.isPending}
               canEdit={canUpdate}
@@ -109,6 +111,7 @@ export function AccessControlPage() {
           <Card className="overflow-hidden">
             <ListEditor
               prefix="authacl"
+              help="authacl-input"
               items={
                 acl.data
                   ? (acl.data.authoritative_allow_cidrs ?? [])
@@ -181,9 +184,24 @@ function ZoneAccessSummary() {
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="h-10">Zone</TableHead>
-              <TableHead className="h-10">Queries</TableHead>
-              <TableHead className="h-10">Transfers</TableHead>
-              <TableHead className="h-10">Updates</TableHead>
+              <TableHead className="h-10">
+                <span className="inline-flex items-center gap-1.5">
+                  Queries
+                  <HelpTip id="access-col-queries" label="Queries column" />
+                </span>
+              </TableHead>
+              <TableHead className="h-10">
+                <span className="inline-flex items-center gap-1.5">
+                  Transfers
+                  <HelpTip id="access-col-transfers" label="Transfers column" />
+                </span>
+              </TableHead>
+              <TableHead className="h-10">
+                <span className="inline-flex items-center gap-1.5">
+                  Updates
+                  <HelpTip id="access-col-updates" label="Updates column" />
+                </span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

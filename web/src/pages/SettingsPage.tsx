@@ -17,6 +17,7 @@ import {
   SavedNote,
   StatusDot,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -110,7 +111,7 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Resolver behaviour shared by every engine. Saving publishes a new configuration version."
+        description="Resolver behaviour for every client: upstream selection, cache, blocking and telemetry. Saving publishes a new configuration version."
       />
       <ErrorAlert
         error={settings.error}
@@ -226,9 +227,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
         <fieldset disabled={!canUpdate || save.isPending} className="divide-y">
           <Group
             title="Upstream selection"
-            description="How engines pick among the enabled upstreams."
+            description="How Nexora picks among the enabled upstreams in forward mode."
           >
-            <Field label="Strategy" htmlFor="settings-strategy">
+            <Field
+              label="Strategy"
+              htmlFor="settings-strategy"
+              help={<HelpTip id="settings-strategy" label="Strategy" />}
+            >
               <Select
                 value={form.strategy}
                 onValueChange={(v) => set("strategy", v as Form["strategy"])}
@@ -260,6 +265,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
                 <Field
                   label="Parallel upstreams"
                   htmlFor="settings-parallel-max"
+                  help={
+                    <HelpTip
+                      id="settings-parallel-max"
+                      label="Parallel upstreams"
+                    />
+                  }
                   hint="0 races every healthy upstream (at most 8)."
                 >
                   {/* No max attribute: the server's 0-8 message is the one shown. */}
@@ -291,11 +302,17 @@ function SettingsForm({ settings }: { settings: Settings }) {
 
           <Group
             title="Cache"
-            description="Answers are cached per engine, bounded by memory; TTLs are in seconds."
+            description="Each resolver caches answers, bounded by memory; TTLs are in seconds."
           >
             <Field
               label="Maximum size (bytes)"
               htmlFor="settings-cache_max_bytes"
+              help={
+                <HelpTip
+                  id="settings-cache_max_bytes"
+                  label="Maximum size (bytes)"
+                />
+              }
               hint={
                 formatBytes(Number(form.cache_max_bytes)) || "At least 1 MiB"
               }
@@ -305,13 +322,21 @@ function SettingsForm({ settings }: { settings: Settings }) {
                 data-testid="settings-cache-max-bytes"
               />
             </Field>
-            <Field label="Minimum TTL" htmlFor="settings-cache_min_ttl">
+            <Field
+              label="Minimum TTL"
+              htmlFor="settings-cache_min_ttl"
+              help={<HelpTip id="settings-cache_min_ttl" label="Minimum TTL" />}
+            >
               <Input
                 {...num("cache_min_ttl", 0)}
                 data-testid="settings-cache-min-ttl"
               />
             </Field>
-            <Field label="Maximum TTL" htmlFor="settings-cache_max_ttl">
+            <Field
+              label="Maximum TTL"
+              htmlFor="settings-cache_max_ttl"
+              help={<HelpTip id="settings-cache_max_ttl" label="Maximum TTL" />}
+            >
               <Input
                 {...num("cache_max_ttl", 0)}
                 data-testid="settings-cache-max-ttl"
@@ -320,6 +345,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
             <Field
               label="Negative answer max TTL"
               htmlFor="settings-cache_negative_max_ttl"
+              help={
+                <HelpTip
+                  id="settings-cache_negative_max_ttl"
+                  label="Negative answer max TTL"
+                />
+              }
             >
               <Input
                 {...num("cache_negative_max_ttl", 0)}
@@ -329,6 +360,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
             <Field
               label="Serve-stale window"
               htmlFor="settings-cache_stale_window"
+              help={
+                <HelpTip
+                  id="settings-cache_stale_window"
+                  label="Serve-stale window"
+                />
+              }
               hint="Expired answers are served only when resolution fails"
             >
               <Input
@@ -340,9 +377,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
 
           <Group
             title="Blocking"
-            description="The answer engines give for a blocked name."
+            description="The answer clients get for a blocked name."
           >
-            <Field label="Response" htmlFor="settings-block-mode">
+            <Field
+              label="Response"
+              htmlFor="settings-block-mode"
+              help={<HelpTip id="settings-block-mode" label="Response" />}
+            >
               <Select
                 value={form.block_mode}
                 onValueChange={(v) =>
@@ -366,7 +407,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Blocked answer TTL" htmlFor="settings-block_ttl">
+            <Field
+              label="Blocked answer TTL"
+              htmlFor="settings-block_ttl"
+              help={
+                <HelpTip id="settings-block_ttl" label="Blocked answer TTL" />
+              }
+            >
               <Input
                 {...num("block_ttl", 0)}
                 data-testid="settings-block-ttl"
@@ -376,12 +423,15 @@ function SettingsForm({ settings }: { settings: Settings }) {
 
           <Group
             title="Telemetry"
-            description="Where engines export OpenTelemetry data, and which queries become traces (SERVFAIL answers always do)."
+            description="Where Nexora sends OpenTelemetry metrics and traces, and which queries become traces (SERVFAIL answers always do)."
           >
             <Field
               label="OTLP endpoint"
               htmlFor="settings-otlp-endpoint"
-              hint="Empty uses the management plane's default"
+              hint="Empty uses the installation's default endpoint"
+              help={
+                <HelpTip id="settings-otlp-endpoint" label="OTLP endpoint" />
+              }
               wide
             >
               <Input
@@ -396,6 +446,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
             <Field
               label="Trace one query in"
               htmlFor="settings-trace_sample_one_in"
+              help={
+                <HelpTip
+                  id="settings-trace_sample_one_in"
+                  label="Trace one query in"
+                />
+              }
             >
               <Input
                 {...num("trace_sample_one_in", 0)}
@@ -405,6 +461,12 @@ function SettingsForm({ settings }: { settings: Settings }) {
             <Field
               label="Always trace slower than (µs)"
               htmlFor="settings-trace_slow_threshold_us"
+              help={
+                <HelpTip
+                  id="settings-trace_slow_threshold_us"
+                  label="Always trace slower than (µs)"
+                />
+              }
             >
               <Input
                 {...num("trace_slow_threshold_us", 0)}
@@ -485,12 +547,15 @@ function Field({
   htmlFor,
   hint,
   wide,
+  help,
   children,
 }: {
   label: string;
   htmlFor: string;
   hint?: string;
   wide?: boolean;
+  /** A HelpTip shown in the label row, so it never covers validation text below the input. */
+  help?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -501,7 +566,10 @@ function Field({
           : "grid content-start gap-1.5"
       }
     >
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={htmlFor}>{label}</Label>
+        {help}
+      </div>
       {children}
       {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
     </div>
@@ -519,8 +587,8 @@ function DnsTlsSection() {
         DNS encryption certificate
       </h2>
       <p className="text-muted-foreground mb-3 text-sm">
-        The certificate engines present to DoT, DoH and DoQ clients. Management
-        loads it from files and pushes it to every engine.
+        The certificate Nexora presents to DoT, DoH and DoQ clients. It is
+        loaded from files on the server and sent to every resolver.
       </p>
       <ErrorAlert
         error={status.error}
