@@ -122,7 +122,7 @@ func TestAIOpenAICompatibleWire(t *testing.T) {
 	mg := env.StartMgmt(pg, ca, harness.MgmtOptions{ExtraEnv: harness.AIEnv(fx)})
 	admin := harness.Bootstrap(t, env, mg.SetupToken(t), mg.BaseURL)
 	if !taskKindRegistered(admin, "querylog_search") {
-		t.Skip("needs M11 Task 12")
+		t.Fatal("querylog_search is not registered on a configured instance")
 	}
 
 	search := func(a *harness.API, fenced bool) {
@@ -216,11 +216,12 @@ func TestAIDisabledChangesNothing(t *testing.T) {
 	if text := mgmtMetricsText(t, on); !strings.Contains(text, "nexora_mgmt_ai_enabled 1") || !strings.Contains(text, "nexora_mgmt_ai_budget_used_ratio") {
 		t.Fatal("configured instance does not expose nexora_mgmt_ai_enabled 1 and the budget ratio")
 	}
-	if agentRegistered(onAPI, "querylog_anomalies") { // debt: M11 Task 13 registers the agent; remove this condition then
-		harness.EventuallyTrue(t, 60*time.Second, func() bool {
-			return len(fx.Requests(t)) > 0 || strings.Contains(mgmtMetricsText(t, on), `nexora_mgmt_ai_agent_runs_total{agent="querylog_anomalies"`)
-		}, "the configured instance runs the query-log anomaly agent")
+	if !agentRegistered(onAPI, "querylog_anomalies") {
+		t.Fatal("the configured instance does not report the query-log anomaly agent as enabled")
 	}
+	harness.EventuallyTrue(t, 60*time.Second, func() bool {
+		return len(fx.Requests(t)) > 0 || strings.Contains(mgmtMetricsText(t, on), `nexora_mgmt_ai_agent_runs_total{agent="querylog_anomalies"`)
+	}, "the configured instance runs the query-log anomaly agent")
 	engOn.Proc.Stop()
 	on.Proc.Stop()
 	fx.Reset(t)
