@@ -1,0 +1,86 @@
+# deploy/kw/values-kw.yaml as a NexoraInstallation (Task 6 TestValuesFromKwEquivalentInstallation).
+# Left out, because the operator injects them: mgmt.ca, mgmt.kek, engine.groups[].joinTokenSecret and
+# metrics.*.namespace.
+apiVersion: nexora.io/v1alpha1
+kind: NexoraInstallation
+metadata:
+  name: nexora
+  namespace: nexora
+spec:
+  image:
+    registry: 192.168.10.131/azrtydxb
+    pullPolicy: Always
+  mgmt:
+    replicas: 2
+    publicURL: https://nexora.kw.local
+    secureCookies: true
+    extraEnv:
+      - { name: NEXORA_TRUSTED_PROXY_CIDRS, value: "10.42.0.0/16" }
+    grpcServerNames: [nexora-mgmt-grpc.nexora.svc]
+    otlpEndpoint: http://nexora-otelcol.nexora.svc.cluster.local:4317
+    dnsTLS: { existingSecret: nexora-dns-tls, reloadInterval: 30s }
+    querylog:
+      backend: opensearch
+      opensearch:
+        {
+          url: "http://opensearch.nexora.svc.cluster.local:9200",
+          index: "nexora-querylog-*",
+        }
+    grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
+    ingress:
+      enabled: true
+      name: nexora
+      className: nginx
+      host: nexora.kw.local
+      clusterIssuer: cluster-ca
+      tlsSecretName: nexora-ingress-tls
+  database:
+    mode: external
+    external: { existingSecret: nexora-db-app, key: uri }
+  engine:
+    kind: DaemonSet
+    workers: 2
+    initImage: 192.168.10.131/library/busybox:1.37
+    ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
+    stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
+    resources:
+      requests: { cpu: 500m, memory: 384Mi }
+      limits: { cpu: "4", memory: 1Gi }
+    tolerations:
+      - {
+          key: node-role.kubernetes.io/control-plane,
+          operator: Exists,
+          effect: NoSchedule,
+        }
+      - {
+          key: node-role.kubernetes.io/master,
+          operator: Exists,
+          effect: NoSchedule,
+        }
+    groups:
+      - name: default
+        engineGroupRef: default
+        workloadName: nexora-engine
+        nodeNamePrefix: ""
+        instances:
+          - name: a
+            node: master-12
+            service:
+              {
+                name: nexora-dns,
+                type: LoadBalancer,
+                loadBalancerIP: 192.168.10.136,
+                externalTrafficPolicy: Local,
+              }
+          - name: b
+            node: master-13
+            service:
+              {
+                name: nexora-dns-2,
+                type: LoadBalancer,
+                loadBalancerIP: 192.168.10.139,
+                externalTrafficPolicy: Local,
+              }
+  metrics:
+    serviceMonitor: { enabled: true, labels: { release: kps }, interval: 30s }
+    prometheusRule: { enabled: true, labels: { release: kps } }

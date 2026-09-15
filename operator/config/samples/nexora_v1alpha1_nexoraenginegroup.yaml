@@ -1,0 +1,14 @@
+apiVersion: nexora.io/v1alpha1
+kind: NexoraEngineGroup
+metadata:
+  name: default
+spec:
+  installationRef:
+    name: nexora
+  groupName: default
+  description: Engines of the default group
+  joinToken:
+    ttl: 8760h
+    renewBefore: 720h
+    revokeGracePeriod: 10m
+  deletionPolicy: Retain

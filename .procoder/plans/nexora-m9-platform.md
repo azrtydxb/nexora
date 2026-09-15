@@ -366,18 +366,21 @@ const (
 
 The CEL rules (markers on the named types; the messages are the literal strings the tests match):
 
-| Type                    | Rule                                                                                                                                             | Message                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `DatabaseSpec`          | `!has(self.mode) \|\| self.mode != 'external' \|\| (has(self.external.existingSecret) && self.external.existingSecret != '')`                    | `database.external.existingSecret is required when database.mode=external`       |
-| `QuerylogSpec`          | `!has(self.backend) \|\| self.backend != 'opensearch' \|\| (has(self.opensearch.url) && self.opensearch.url != '')`                              | `mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch` |
-| `CNPGBackupSpec`        | `!has(self.enabled) \|\| !self.enabled \|\| (has(self.destinationPath) && self.destinationPath != '' && has(self.s3Credentials.existingSecret))` | `database.cnpg.backup needs destinationPath and s3Credentials.existingSecret`    |
-| `JoinTokenSpec`         | `!has(self.ttl) \|\| (duration(self.ttl) >= duration('1m') && duration(self.ttl) <= duration('8760h'))`                                          | `joinToken.ttl must be between 1m and 8760h`                                     |
-| `JoinTokenSpec`         | `!has(self.ttl) \|\| !has(self.renewBefore) \|\| duration(self.renewBefore) < duration(self.ttl)`                                                | `joinToken.renewBefore must be less than joinToken.ttl`                          |
-| `NexoraEngineGroupSpec` | `has(self.groupName) == has(oldSelf.groupName) && (!has(self.groupName) \|\| self.groupName == oldSelf.groupName)`                               | `groupName is immutable`                                                         |
-| `NexoraEngineGroupSpec` | `self.installationRef.name == oldSelf.installationRef.name`                                                                                      | `installationRef is immutable`                                                   |
+| Type                    | Rule                                                                                                                                                 | Message                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `DatabaseSpec`          | `!has(self.mode) \|\| self.mode != 'external' \|\| (has(self.external.existingSecret) && size(self.external.existingSecret) > 0)`                    | `database.external.existingSecret is required when database.mode=external`       |
+| `QuerylogSpec`          | `!has(self.backend) \|\| self.backend != 'opensearch' \|\| (has(self.opensearch.url) && size(self.opensearch.url) > 0)`                              | `mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch` |
+| `CNPGBackupSpec`        | `!has(self.enabled) \|\| !self.enabled \|\| (has(self.destinationPath) && size(self.destinationPath) > 0 && has(self.s3Credentials.existingSecret))` | `database.cnpg.backup needs destinationPath and s3Credentials.existingSecret`    |
+| `JoinTokenSpec`         | `!has(self.ttl) \|\| (duration(self.ttl) >= duration('1m') && duration(self.ttl) <= duration('8760h'))`                                              | `joinToken.ttl must be between 1m and 8760h`                                     |
+| `JoinTokenSpec`         | `!has(self.ttl) \|\| !has(self.renewBefore) \|\| duration(self.renewBefore) < duration(self.ttl)`                                                    | `joinToken.renewBefore must be less than joinToken.ttl`                          |
+| `NexoraEngineGroupSpec` | `has(self.groupName) == has(oldSelf.groupName) && (!has(self.groupName) \|\| self.groupName == oldSelf.groupName)`                                   | `groupName is immutable`                                                         |
+| `NexoraEngineGroupSpec` | `self.installationRef.name == oldSelf.installationRef.name`                                                                                          | `installationRef is immutable`                                                   |
 
 `CNPGBackupSpec.S3Credentials` and `QuerylogSpec.Opensearch` and `DatabaseSpec.External` are
-non-pointer structs with `+kubebuilder:default={}` so `self.external` always exists in CEL.
+non-pointer structs with `+kubebuilder:default={}` so `self.external` always exists in CEL; so is
+`NexoraEngineGroupSpec.JoinToken`, so the join token duration defaults apply when `joinToken` is omitted.
+The rules use `size(x) > 0` instead of `x != ''`: gofmt rewrites `''` in doc comments to a typographic
+quote, which breaks the marker.
 `NexoraEngineGroupSpec.GroupName` has the pattern `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`.
 
 ```go
@@ -401,7 +404,7 @@ leader election id `nexora-operator.nexora.io`, and the subcommand `version` pri
 fields) and a manager, then calls `setupControllers(mgr, opts)`, a function in the same file that
 Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
 
-- [ ] Create `deploy/deploytest/platform_docs_test.go`:
+- [x] Create `deploy/deploytest/platform_docs_test.go`:
   ```go
   package deploytest
 
@@ -434,13 +437,13 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestArchitectureDocNamesPlatform -count=1'` and
   expect FAIL `docs/architecture.md lacks ## Platform (M9)`.
-- [ ] Write `## Platform (M9)` in `docs/architecture.md` after `## Fleet (M5)`: the module layout, both
+- [x] Write `## Platform (M9)` in `docs/architecture.md` after `## Fleet (M5)`: the module layout, both
       CRDs and their JSON-mirrors-values rule, the render → own → apply → prune → status loop, the
       retained kinds and Secrets, engine group gating, the engine group controller's managed-fields rule
       and join token rotation, the bootstrap token (`NEXORA_BOOTSTRAP_TOKEN_FILE`, system user,
       `01000_system_users.sql`), and the CNPG values (`barmanObjectStore`, ScheduledBackup, recovery).
       Add the three directories to the repository layout block. Run the test again and expect PASS.
-- [ ] Create `operator/go.mod` (`module github.com/piwi3910/nexora/operator`, `go 1.27`) and
+- [x] Create `operator/go.mod` (`module github.com/piwi3910/nexora/operator`, `go 1.27`) and
       `operator/tools.go`:
   ```go
   //go:build tools
@@ -461,10 +464,10 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   and expect a `go.sum` and no error. If Helm v3.21.4 does not compile against k8s.io v0.37.0
   (`go build ./...` error in `helm.sh/helm/v3/pkg/engine`), stop and report the error to the lead
   instead of changing versions.
-- [ ] Write the types, `groupversion_info.go`, `version.go`, `envtestutil.go`, `main.go` and the two
+- [x] Write the types, `groupversion_info.go`, `version.go`, `envtestutil.go`, `main.go` and the two
       samples exactly as in Interfaces. The installation sample has group `default` with instances `a`
       and `b` on `node-1` and `node-2`, mode `cnpg` with backup enabled, and `image.tag: sha-0000000`.
-- [ ] Add to `Makefile`:
+- [x] Add to `Makefile`:
   ```make
   CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.1
   ENVTEST_K8S ?= 1.34.x
@@ -481,7 +484,7 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   and add both names to `.PHONY`. Run `make operator-generate` on the laptop and expect the deepcopy
   file and both CRD files in `deploy/operator/crds/` and `deploy/helm/nexora-operator/crds/`.
-- [ ] Create `operator/api/v1alpha1/validation_test.go`:
+- [x] Create `operator/api/v1alpha1/validation_test.go`:
   ```go
   package v1alpha1_test
 
@@ -605,11 +608,11 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   `go test ./api/... -run CRDValidation` inside the target's environment) and expect FAIL on
   `external-no-secret` (admitted). Add the markers from the table, run `make operator-generate`, and
   expect PASS.
-- [ ] Write `operator/internal/render/testdata/kw-installation.yaml`: `deploy/kw/values-kw.yaml` as a
+- [x] Write `operator/internal/render/testdata/kw-installation.yaml`: `deploy/kw/values-kw.yaml` as a
       `NexoraInstallation` named `nexora` in namespace `nexora`. Leave out `mgmt.ca`, `mgmt.kek` and
       `engine.groups[].joinTokenSecret`, give group `default` `engineGroupRef: default`, and drop
       `metrics.*.namespace`. Every other key and value is the same.
-- [ ] Add the CI job to `.github/workflows/ci.yml` after `mgmt`, with the same container, timeout 30 and
+- [x] Add the CI job to `.github/workflows/ci.yml` after `mgmt`, with the same container, timeout 30 and
       the same "Trust the cluster CA", checkout and `safe.directory` steps, then:
   ```yaml
   - name: gofmt
@@ -621,7 +624,7 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestImagesWorkflow -count=1'` and expect
   PASS (the images workflow is unchanged).
-- [ ] Run `scripts/dev-exec.sh 'make operator-test'` and `scripts/dev-exec.sh 'cd operator && go vet ./... && go run ./cmd/nexora-operator version'`.
+- [x] Run `scripts/dev-exec.sh 'make operator-test'` and `scripts/dev-exec.sh 'cd operator && go vet ./... && go run ./cmd/nexora-operator version'`.
       Expect PASS and `nexora-operator dev`. Report the paths.
 
 ## Task 2: Management API contract: system users, error code, migration 01000

@@ -1,0 +1,31 @@
+apiVersion: nexora.io/v1alpha1
+kind: NexoraInstallation
+metadata:
+  name: nexora
+spec:
+  image:
+    tag: sha-0000000
+  mgmt:
+    publicURL: https://nexora.example.com
+  database:
+    mode: cnpg
+    cnpg:
+      instances: 3
+      antiAffinity: required
+      backup:
+        enabled: true
+        destinationPath: s3://nexora-backups/nexora
+        endpointURL: http://minio.minio.svc.cluster.local:9000
+        s3Credentials:
+          existingSecret: nexora-s3
+  engine:
+    kind: DaemonSet
+    groups:
+      - name: default
+        instances:
+          - name: a
+            node: node-1
+            service: { name: nexora-dns-a, type: ClusterIP }
+          - name: b
+            node: node-2
+            service: { name: nexora-dns-b, type: ClusterIP }
