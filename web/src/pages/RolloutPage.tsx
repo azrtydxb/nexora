@@ -1,6 +1,8 @@
 import { Link, useParams } from "react-router";
 
+import { useAiEnabled } from "@/api/ai";
 import { type RolloutDetail, useRollout } from "@/api/fleet";
+import { RolloutRiskCard } from "@/components/ai/RolloutRiskCard";
 import {
   ErrorAlert,
   Fact,
@@ -52,6 +54,7 @@ export function RolloutPage() {
   const { id = "" } = useParams();
   const q = useRollout(id);
   const r = q.data;
+  const aiOn = useAiEnabled();
   const engines = [...(r?.engines ?? [])].sort(
     (a, b) =>
       Number(b.canary) - Number(a.canary) ||
@@ -80,6 +83,7 @@ export function RolloutPage() {
       {q.isPending && <p className="text-muted-foreground text-sm">Loading…</p>}
       {r && (
         <div className="grid gap-6">
+          {aiOn && <RolloutRiskCard rolloutId={r.id} />}
           <Card className="grid gap-4 px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-wrap items-center gap-3">

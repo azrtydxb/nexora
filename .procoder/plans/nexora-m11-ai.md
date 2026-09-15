@@ -3570,18 +3570,26 @@ Files:
 Interfaces:
 
 - Test ids: `ai-rollout-risk`, `ai-risk-score` ("5/10"), `ai-risk-level` (low|medium|high with colour),
-  `ai-risk-analysis`, `ai-risk-history` rows, and `ai-risk-proposal` linking to the proposal.
-- Status `pending` shows "Assessing…" and polls; `skipped` shows "Not assessed (rollback or republish)".
+  `ai-risk-analysis`, `ai-risk-history` rows, `ai-risk-recommendation`, and `ai-risk-proposal`
+  linking to the proposal. As built, no page deep-links one proposal id, so the link opens
+  `/ai/recommendations?source=rollout_risk&status=all`.
+- Status `pending` shows "Assessing…" and polls; `skipped` shows "Not assessed (rollback or republish)";
+  `failed` shows the error.
 
-- [ ] Create `e2e/gui_seed_ai_rollout_risk_test.go`:
-  - read the newest rollout id of the default group with `GET /rollouts`;
-  - insert an `ai_rollout_risks` row `assessed`, score 5, level `medium`, analysis "Similar changes
-    halted once.", detail with one historical pattern and a recommendation;
+- [x] Create `e2e/gui_seed_ai_rollout_risk_test.go`:
+  - read the newest rollout id of the default group with `GET /rollouts?limit=1&engine_group_id=`;
+  - insert (upsert) an `ai_rollout_risks` row `assessed`, score 5, level `medium`, analysis "Similar
+    changes halted once.", detail with one historical pattern (v3) and a recommendation;
   - set `NEXORA_E2E_AI_ROLLOUT_ID`.
-- [ ] Create `web/e2e/screens/56-ai-rollout-risk.spec.ts`. At 1280 and 400 px as viewer, open
+- [x] Create `web/e2e/screens/56-ai-rollout-risk.spec.ts`. At 1280 and 400 px as viewer, open
       `/engines/rollouts/<id>` and see `ai-risk-score` "5/10", `ai-risk-level` "medium" and one
       `ai-risk-history` row. The spec requests `getAiRolloutRisk`.
-- [ ] Run the Task 24 commands. Expect FAIL, implement, and expect specs 56 and 20 to PASS.
+- [x] Run the Task 24 commands. Expect FAIL, implement, and expect specs 56 and 20 to PASS.
+
+  As built: the laptop checkout is shared with parallel agents whose uncommitted edits broke
+  `web-build`, so both runs used a private tree in the dev pod made from `git archive HEAD` plus
+  this task's files (deleted afterwards), with the shared prebuilt `CARGO_TARGET_DIR=/work/target`
+  (no engine source changes).
 - [ ] Report the paths. Commit message: `M11 T28: rollout risk GUI`.
 
 ## Task 29: Threat check dialog and list classification GUI
@@ -3592,6 +3600,7 @@ Files:
   created.
 - `web/src/pages/FilteringPage.tsx`: a "Check domains" button in the header and a classification row
   expander per block list when AI is enabled.
+- `web/src/help/catalog/ai.ts`: both components added to the AI help area's `pages`.
 - `e2e/gui_seed_ai_threat_test.go`: created.
 - `web/e2e/screens/57-ai-threat.spec.ts`: created.
 
@@ -3602,17 +3611,28 @@ Interfaces:
   categories, confidence, queries and "blocked by".
 - Classification: `ai-list-classification-<listId>` with bars per category, "Estimated from 200 sampled
   names", and "Not classified yet" when absent.
+- As built: the button shows when `useAiStatus().data?.features.threat_check`; the counter is
+  `ai-threat-count` ("3 / 100 names", red with submit disabled above 100). The "expander" is the
+  list's existing Details card (`list-open-<name>`): `ListDetail` mounts `ListClassification` under
+  its facts for `kind === "block"` when `useAiEnabled()`, so the classification request is never
+  made with AI off. A list counts as not classified while `classified_at` is null or the breakdown
+  is empty.
 
-- [ ] Create `e2e/gui_seed_ai_threat_test.go`:
-  - script `threat_check` with a verdict for `evil.gui-threat.test` (threat, phishing, 0.9);
-  - insert an `ai_list_classifications` row for the `gui` list (`web.URL("gui")` list id from
-    `GET /filter-lists`) with breakdown `[{"category":"tracking","sampled":120,"estimated":1},{"category":"none","sampled":80,"estimated":1}]`;
-  - set `NEXORA_E2E_AI_LIST_ID`.
-- [ ] Create `web/e2e/screens/57-ai-threat.spec.ts`. At 1280 and 400 px as viewer:
+- [x] Create `e2e/gui_seed_ai_threat_test.go`:
+  - script `threat_check` with a verdict for `evil.gui-threat.test` (threat, phishing, 0.9), once:
+    the second viewport's check is answered from the seven-day verdict cache;
+  - insert an `ai_list_classifications` row for a block list on the `gui` fixture list
+    (`web.URL("gui")`) with breakdown `[{"category":"tracking","sampled":120,"estimated":1},{"category":"none","sampled":80,"estimated":1}]`.
+    As built: no filter list exists at seed time (`04-filtering.spec.ts` creates and deletes its own
+    `gui-list` later), so the seed creates the block list `gui-ai` with `POST /filter-lists`, refreshes
+    it once (entry count 2, a content hash), and inserts the row for its id;
+  - set `NEXORA_E2E_AI_LIST_ID`, `NEXORA_E2E_AI_LIST_NAME` (`gui-ai`) and `NEXORA_E2E_AI_THREAT_DOMAIN`.
+- [x] Create `web/e2e/screens/57-ai-threat.spec.ts`. At 1280 and 400 px as viewer:
   1. `nav-filtering`, then `ai-threat-open`.
   2. Enter `evil.gui-threat.test` and submit.
   3. `ai-threat-result` shows "phishing".
-  4. Close, expand the `gui` list, and see `ai-list-classification-<id>` with "tracking".
+  4. Close (Escape), expand the `gui-ai` list (`list-open-gui-ai`), and see
+     `ai-list-classification-<id>` with "tracking" and "200 sampled names".
 
   The spec requests `startAiThreatCheck`, `getAiTask` and `getAiFilterListClassification`.
 
@@ -3628,15 +3648,21 @@ Files:
   is enabled.
 - `e2e/gui_seed_ai_rpz_test.go`: created.
 - `web/e2e/screens/58-ai-rpz-suggestions.spec.ts`: created.
+- `web/src/help/catalog/ai.ts`: `components/ai/RpzSuggestionsTab.tsx` added to `pages` (its entries
+  `ai-rpz-select-all` and `ai-rpz-select` were already there).
 
 Interfaces:
 
-- Test ids: `rpz-tab-ai`, select-all `ai-rpz-select-all`, row checkboxes
+- Test ids: `rpz-tab-zones`, `rpz-tab-ai`, select-all `ai-rpz-select-all`, row checkboxes
   `data-help="ai-rpz-select"` with test id `ai-rpz-row-<record>`, `ai-rpz-apply-selected` (opens
   `ProposalApplyDialog` with the selected ids), `ai-rpz-reject-selected` (the dismiss dialog), and the
   notice `ai-rpz-zone-notice` "Applied rules are written to the zone ai-suggested.rpz. Manual uploads to
   that zone are replaced by the next apply."
 - Rows show record, policy, category, confidence and reason as text.
+- As built: the tab lists `useAiProposals("rpz_suggestions", "open")`, one row per rule of each
+  `appendAiRpzRules` action; a row checkbox selects its proposal. The empty list shows
+  `ai-rpz-empty`. The "New zone" header button shows on the Zones tab only; choosing the Zones tab
+  drops `?tab`. Viewers see the rows without checkboxes or buttons.
 
 - [ ] Create `e2e/gui_seed_ai_rpz_test.go`, inserting three open `rpz_suggestions` proposals for
       `c2.gui-rpz.test`, `phish.gui-rpz.test` and `keep.gui-rpz.test`, each with one
@@ -3651,6 +3677,10 @@ Interfaces:
 
   At 400 px: open the tab and see the notice. The spec requests `listAiProposals` and
   `applyAiProposals`.
+
+  As built: step 4 checks the `ai-suggested.rpz.` row reads "2 records"; step 5 selects the row
+  and uses `ai-rpz-reject-selected`. The 400 px test runs after the writes, so it asserts the notice
+  and `ai-rpz-empty`.
 
 - [ ] Run the Task 24 commands. Expect FAIL, implement, and expect specs 58 and 15 to PASS.
 - [ ] Report the paths. Commit message: `M11 T30: RPZ suggestions GUI`.
