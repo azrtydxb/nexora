@@ -362,8 +362,8 @@ func (h *Hierarchy) deepest(name string, qtype uint16) *zone {
 
 // respond answers name/qtype as this zone's authoritative server would: REFUSED outside the
 // zone, a referral below a delegation, otherwise an authoritative answer, NODATA or NXDOMAIN
-// with DNSSEC records when do is set and the zone is signed.
-// debt: no wildcard synthesis; the fixture zones have no wildcards. Revisit when a test needs one.
+// with DNSSEC records when do is set and the zone is signed. Names that do not exist are
+// synthesised from a wildcard at their closest encloser (RFC 1034 section 4.3.3).
 func (z *zone) respond(name string, qtype uint16, do bool) *dns.Msg {
 	m := new(dns.Msg)
 	name = dns.CanonicalName(name)
@@ -399,17 +399,35 @@ func (z *zone) referral(m *dns.Msg, cut string, secure bool) {
 }
 
 func (z *zone) authoritative(m *dns.Msg, name string, qtype uint16, secure bool, depth int) {
-	withSigs := func(k rrKey) {
-		m.Answer = append(m.Answer, z.sets[k]...)
-		if secure {
-			m.Answer = append(m.Answer, z.sigs[k]...)
+	// owner is the name whose data answers: name itself, or the wildcard that synthesises it.
+	owner, ce, nextCloser := name, "", ""
+	if !z.exists[name] {
+		ce, nextCloser = z.closestEncloser(name)
+		if w := wildcardAt(ce); z.exists[w] {
+			owner = w
 		}
 	}
-	if k := (rrKey{name, qtype}); len(z.sets[k]) > 0 {
+	synthesised := owner != name
+	withSigs := func(k rrKey) {
+		m.Answer = append(m.Answer, expand(z.sets[k], name)...)
+		if secure {
+			// RRSIG.Labels stays the wildcard's, which tells a validator the answer was expanded.
+			m.Answer = append(m.Answer, expand(z.sigs[k], name)...)
+		}
+		if synthesised && secure && !z.spec.OmitWildcardProof {
+			// The next closer name does not exist, so the wildcard applies (RFC 4035 section 3.1.3.3).
+			if z.spec.NSEC3Iterations >= 0 {
+				z.addDenial(m, z.cover(nextCloser))
+			} else {
+				z.addDenial(m, z.cover(name))
+			}
+		}
+	}
+	if k := (rrKey{owner, qtype}); len(z.sets[k]) > 0 {
 		withSigs(k)
 		return
 	}
-	if k := (rrKey{name, dns.TypeCNAME}); qtype != dns.TypeCNAME && len(z.sets[k]) > 0 {
+	if k := (rrKey{owner, dns.TypeCNAME}); qtype != dns.TypeCNAME && len(z.sets[k]) > 0 {
 		withSigs(k)
 		target := dns.CanonicalName(z.sets[k][0].(*dns.CNAME).Target)
 		if depth < cnameChain && dns.IsSubDomain(z.origin, target) && z.cutAbove(target) == "" {
@@ -422,6 +440,17 @@ func (z *zone) authoritative(m *dns.Msg, name string, qtype uint16, secure bool,
 	m.Ns = append(m.Ns, soa)
 	if secure {
 		m.Ns = append(m.Ns, z.sigs[rrKey{z.origin, dns.TypeSOA}]...)
+	}
+	if synthesised {
+		// Wildcard NODATA (RFC 4035 section 3.1.3.4, RFC 5155 section 7.2.5).
+		if secure {
+			if z.spec.NSEC3Iterations >= 0 {
+				z.addDenial(m, z.match(ce), z.cover(nextCloser), z.match(owner))
+			} else {
+				z.addDenial(m, z.cover(name), z.match(owner))
+			}
+		}
+		return
 	}
 	if z.exists[name] {
 		if secure {
@@ -439,21 +468,42 @@ func (z *zone) authoritative(m *dns.Msg, name string, qtype uint16, secure bool,
 	if !secure {
 		return
 	}
-	ce := name
+	if z.spec.NSEC3Iterations >= 0 {
+		z.addDenial(m, z.match(ce), z.cover(nextCloser), z.cover(wildcardAt(ce)))
+		return
+	}
+	z.addDenial(m, z.cover(name), z.cover(wildcardAt(ce)))
+}
+
+// closestEncloser returns the deepest existing ancestor of name, which does not exist, and the
+// next closer name: the ancestor of name one label below it.
+func (z *zone) closestEncloser(name string) (ce, nextCloser string) {
+	ce = name
 	for !z.exists[ce] {
 		ce = parentName(ce)
 	}
-	wildcard := "*." + ce
+	labels := dns.SplitDomainName(name)
+	return ce, dns.Fqdn(strings.Join(labels[len(labels)-dns.CountLabel(ce)-1:], "."))
+}
+
+func wildcardAt(ce string) string {
 	if ce == "." {
-		wildcard = "*."
+		return "*."
 	}
-	if z.spec.NSEC3Iterations >= 0 {
-		labels := dns.SplitDomainName(name)
-		nextCloser := dns.Fqdn(strings.Join(labels[len(labels)-dns.CountLabel(ce)-1:], "."))
-		z.addDenial(m, z.match(ce), z.cover(nextCloser), z.cover(wildcard))
-		return
+	return "*." + ce
+}
+
+// expand returns rrs unchanged when they are owned by name, otherwise copies owned by name.
+func expand(rrs []dns.RR, name string) []dns.RR {
+	if len(rrs) == 0 || rrs[0].Header().Name == name {
+		return rrs
 	}
-	z.addDenial(m, z.cover(name), z.cover(wildcard))
+	out := make([]dns.RR, len(rrs))
+	for i, rr := range rrs {
+		out[i] = dns.Copy(rr)
+		out[i].Header().Name = name
+	}
+	return out
 }
 
 // match returns the denial record for name itself (NSEC owner or NSEC3 hash), or nil.

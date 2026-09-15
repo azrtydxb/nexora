@@ -2,6 +2,8 @@ package querylog_test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -95,5 +97,49 @@ func TestOpenSearchNameWildcardEscaped(t *testing.T) {
 	}
 	if strings.Contains(body, "match_phrase") {
 		t.Fatalf("name still uses match_phrase: %s", body)
+	}
+}
+
+func TestOpenSearchSortHasUniqueTiebreaker(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		w.Header().Set("Content-Type", "application/json")
+		hit := func(id string) string {
+			return `{"_id":"` + id + `","_source":{"@timestamp":"2026-09-14T10:00:00.123Z","attributes":{"dns.question.name":"` + id + `.example."}},"sort":[1789380000123,"` + id + `"]}`
+		}
+		fmt.Fprintf(w, `{"hits":{"hits":[%s,%s]}}`, hit("a"), hit("b"))
+	}))
+	defer srv.Close()
+	os, err := querylog.NewOpenSearch(config.OpenSearchConfig{URL: srv.URL, Index: "nexora-querylog-*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	page, err := os.Search(ctx, querylog.Query{Limit: 1})
+	if err != nil || page.NextCursor == "" {
+		t.Fatalf("first page: %+v %v", page, err)
+	}
+	if !strings.Contains(bodies[0], `"sort":[{"@timestamp":{"order":"desc"}},{"_id":{"order":"asc"}}]`) {
+		t.Fatalf("sort lacks the _id tiebreaker: %s", bodies[0])
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(page.NextCursor)
+	var after []any
+	if err := json.Unmarshal(raw, &after); err != nil || len(after) != 2 || after[1] != "a" {
+		t.Fatalf("cursor = %s", raw)
+	}
+	if _, err := os.Search(ctx, querylog.Query{Limit: 1, Cursor: page.NextCursor}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[1], `"search_after":[1789380000123,"a"]`) {
+		t.Fatalf("second request: %s", bodies[1])
+	}
+	old := base64.RawURLEncoding.EncodeToString([]byte(`[1789380000123]`))
+	if _, err := os.Search(ctx, querylog.Query{Limit: 1, Cursor: old}); err != nil {
+		t.Fatalf("a cursor from an older instance: %v", err)
+	}
+	if !strings.Contains(bodies[2], `"search_after":[1789380000123,""]`) {
+		t.Fatalf("upgraded cursor: %s", bodies[2])
 	}
 }

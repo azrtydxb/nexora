@@ -13,7 +13,7 @@ use crate::clock;
 use crate::edns::{self, ReplyOpt, Transport};
 use crate::proto;
 use crate::runtime::Runtime;
-use crate::server::WorkerCtx;
+use crate::server::{Shared, WorkerCtx};
 use crate::telemetry::querylog::{ACL_AUTHORITATIVE, FilterSource, QueryRecord};
 use crate::tsig::{self, Verified};
 use crate::wire::{self, QueryView};
@@ -66,29 +66,11 @@ pub struct SlowJob {
 pub async fn run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec<Vec<u8>> {
     match job.kind {
         SlowKind::Transfer => {
-            let Ok(q) = Question::parse(&job.query) else {
-                let mut out = vec![0u8; job.query.len().max(HEADER_LEN)];
-                return wire::write_error_reply(&job.query, wire::RCODE_FORMERR, &mut out)
-                    .map(|n| {
-                        out.truncate(n);
-                        vec![out]
-                    })
-                    .unwrap_or_default();
-            };
-            let now = unix_now();
-            // debt: the whole transfer is built on the worker thread; move it off the worker
-            // (spawn_blocking) when hosted zones grow past ~100k records.
-            let (plan, signing) = xfr::authorize_and_plan(
-                &rt,
-                &ctx.shared.auth.keyring,
-                &job.query,
-                &q,
-                job.client.ip(),
-                true,
-                now,
-            );
-            xfr::count(&ctx.shared.metrics.auth, q.qtype, &plan);
-            xfr::messages(&plan, &job.query, &q, signing, now)
+            // Large zones take long to encode; the blocking pool keeps the worker answering queries.
+            let shared = ctx.shared.clone();
+            tokio::task::spawn_blocking(move || build_transfer(&rt, &shared, &job))
+                .await
+                .unwrap_or_default()
         }
         SlowKind::Update => {
             let auth = ctx.shared.auth.clone();
@@ -109,6 +91,31 @@ pub async fn run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec
             }
         }
     }
+}
+
+/// Authorises, plans and encodes a zone transfer over TCP/DoT; runs on the blocking pool.
+fn build_transfer(rt: &Runtime, shared: &Shared, job: &SlowJob) -> Vec<Vec<u8>> {
+    let Ok(q) = Question::parse(&job.query) else {
+        let mut out = vec![0u8; job.query.len().max(HEADER_LEN)];
+        return wire::write_error_reply(&job.query, wire::RCODE_FORMERR, &mut out)
+            .map(|n| {
+                out.truncate(n);
+                vec![out]
+            })
+            .unwrap_or_default();
+    };
+    let now = unix_now();
+    let (plan, signing) = xfr::authorize_and_plan(
+        rt,
+        &shared.auth.keyring,
+        &job.query,
+        &q,
+        job.client.ip(),
+        true,
+        now,
+    );
+    xfr::count(&shared.metrics.auth, q.qtype, &plan);
+    xfr::messages(&plan, &job.query, &q, signing, now)
 }
 
 /// The production NOTIFY sink with the forwarded/dropped count.

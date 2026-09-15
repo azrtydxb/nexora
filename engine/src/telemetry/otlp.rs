@@ -40,6 +40,8 @@ use tonic::transport::{Channel, Endpoint};
 pub const BATCH_MAX: usize = 1000;
 pub const BATCH_INTERVAL: Duration = Duration::from_secs(1);
 pub const MAX_QUEUED_BATCHES: usize = 8;
+/// Batch exports running at once.
+pub const MAX_INFLIGHT: usize = 4;
 pub const EXPORT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const METRICS_INTERVAL: Duration = Duration::from_secs(15);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -295,14 +297,22 @@ fn presentation(wire: &[u8]) -> String {
     out
 }
 
-fn upstream_name<'a>(rt: &'a Runtime, r: &QueryRecord) -> &'a str {
-    // debt: the index is resolved against the runtime current at drain time
-    // (at most 100 ms after the reply); a reload that reorders upstreams in
-    // that window mislabels those records. Revisit if records carry names.
-    rt.upstreams
-        .specs
-        .get(usize::from(r.upstream))
-        .map_or("", |s| s.name.as_str())
+/// The upstream name and policy group id of `r` under the runtime that answered it: empty when
+/// that version is no longer kept.
+fn labels<'a>(rt: &'a Runtime, r: &QueryRecord) -> (&'a str, &'a str) {
+    rt.labels
+        .iter()
+        .find(|l| l.version == r.config_version)
+        .map_or(("", ""), |l| {
+            (
+                l.upstreams
+                    .get(usize::from(r.upstream))
+                    .map_or("", String::as_str),
+                l.groups
+                    .get(usize::from(r.policy_group))
+                    .map_or("", String::as_str),
+            )
+        })
 }
 
 #[derive(Default)]
@@ -344,24 +354,26 @@ async fn run(shared: Arc<Shared>) {
         tokio::time::Instant::now() + METRICS_INTERVAL,
         METRICS_INTERVAL,
     );
-    let mut inflight: Option<tokio::task::JoinHandle<()>> = None;
+    let mut inflight = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             _ = drain.tick() => {}
             _ = metrics.tick() => ex.export_metrics(),
-            _ = async { inflight.as_mut().expect("guarded by the precondition").await },
-                if inflight.is_some() => {}
-        }
-        if inflight.as_ref().is_some_and(|h| h.is_finished()) {
-            inflight = None;
+            Some(_) = inflight.join_next(), if !inflight.is_empty() => {}
         }
         ex.drain();
-        // debt: one batch export at a time caps log throughput at BATCH_MAX
-        // records per collector round trip; revisit if drops show at scale.
-        if inflight.is_none()
+        // Drain again at once while a full batch waits, and keep up to MAX_INFLIGHT exports running.
+        // Bounded, so records that never form a batch (logs off) cannot starve the loop.
+        for _ in 0..MAX_QUEUED_BATCHES {
+            if ex.shared.querylog.len() < BATCH_MAX || ex.queue.len() >= MAX_QUEUED_BATCHES {
+                break;
+            }
+            ex.drain();
+        }
+        while inflight.len() < MAX_INFLIGHT
             && let Some(batch) = ex.queue.pop_front()
         {
-            inflight = Some(ex.export_batch(batch));
+            inflight.spawn(ex.export_batch(batch));
         }
     }
 }
@@ -390,14 +402,13 @@ impl Exporter {
             if !keep_logs && !keep_traces {
                 continue;
             }
-            let upstream = upstream_name(&rt, &r);
+            let (upstream, group) = labels(&rt, &r);
             if keep_traces && should_trace(&r, t, self.seq) {
                 let mut trace_id = [0u8; 16];
                 rand::rng().fill(&mut trace_id[..]);
                 self.current.spans.extend(spans_for(&r, trace_id, upstream));
             }
             if keep_logs {
-                let group = rt.policy.group(r.policy_group).map_or("", |g| g.group_id());
                 // Only a list of the index build that decided names the record's list.
                 let list = (r.filter_list != NO_FILTER_LIST
                     && rt.filter_index.generation() == r.filter_generation)
@@ -467,7 +478,8 @@ impl Exporter {
         }
     }
 
-    fn export_batch(&mut self, batch: Batch) -> tokio::task::JoinHandle<()> {
+    /// The export of `batch` to the destinations configured now; failures are counted as drops.
+    fn export_batch(&mut self, batch: Batch) -> impl Future<Output = ()> + Send + 'static {
         let rt = self.shared.runtime.load_full();
         let traces = self.otlp_dest(&rt.telemetry.otlp_endpoint);
         let logs = if rt.telemetry.querylog_to_management {
@@ -479,7 +491,7 @@ impl Exporter {
             self.otlp_dest(&rt.telemetry.otlp_endpoint)
         };
         let shared = self.shared.clone();
-        tokio::spawn(async move {
+        async move {
             let res = resource(&shared);
             let drop = |s: Signal, n: usize| {
                 shared.metrics.export_dropped[s as usize].fetch_add(n as u64, Ordering::Relaxed);
@@ -534,7 +546,7 @@ impl Exporter {
                     }
                 }
             }
-        })
+        }
     }
 
     /// Pushes the summed counters; bounded by `EXPORT_TIMEOUT`, well under

@@ -99,15 +99,17 @@ func (o *OpenSearch) Search(ctx context.Context, q Query) (Page, error) {
 		"size":             limit + 1,
 		"track_total_hits": false,
 		"query":            map[string]any{"bool": map[string]any{"filter": filterClauses(q)}},
-		// debt: @timestamp has millisecond resolution, so records sharing the millisecond at a
-		// page boundary can be skipped by search_after; revisit with a unique tiebreaker field.
-		"sort": []map[string]any{{"@timestamp": "desc"}},
+		// _id breaks ties between records sharing a millisecond, so search_after skips none.
+		"sort": []map[string]any{{"@timestamp": map[string]any{"order": "desc"}}, {"_id": map[string]any{"order": "asc"}}},
 	}
 	if q.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
 		var after []any
-		if err != nil || json.Unmarshal(raw, &after) != nil || len(after) == 0 {
+		if err != nil || json.Unmarshal(raw, &after) != nil || len(after) == 0 || len(after) > 2 {
 			return Page{}, ErrInvalidCursor
+		}
+		if len(after) == 1 { // a cursor from an instance without the _id tiebreaker
+			after = append(after, "")
 		}
 		body["search_after"] = after
 	}

@@ -352,12 +352,21 @@ docker compose --profile otel up -d                    # optional collector (ote
   in `enginestate`. Back up `ca` together with the database.
 - The collector in `deploy/compose/otel-collector.yaml` only prints what it
   receives (`debug` exporter). Replace the exporters to send data to a real
-  backend.
+  backend. With the built-in query log, engines send query logs to the
+  management plane, so the collector receives the engines' OTLP metrics
+  (every 15 seconds) and traces only.
+- Hosts that cannot pull from the registry (for example one whose certificate
+  the Docker daemon does not trust): on a machine that can, run
+  `crane pull --platform linux/<arch> <registry>/nexora-mgmt:<tag> mgmt.tar`,
+  copy the file and run `docker load < mgmt.tar` on the host; the same for
+  `nexora-engine`. Set `NEXORA_REGISTRY` to the `<registry>` the images were
+  pulled as, since `docker load` keeps that name.
 - Engines on other hosts use the same `engine.toml` with
   `management_urls = ["https://<NEXORA_PUBLIC_HOST>:9443"]`, a unique
   `node_name` and their own join token.
-- The example is checked statically (`TestComposeExample`); it is not started
-  in CI.
+- The example is checked statically (`TestComposeExample`) and run for real on
+  a Docker host with `scripts/compose-verify.sh user@host` (last verified on
+  novanas, x86_64, Docker 29.4.1, Compose v5.1.3).
 
 ## First-run setup and access
 
@@ -663,6 +672,7 @@ report. Resuming rollouts publishes one version, and it needs the group paused:
 ```sh
 # as many times as needed, until GET /api/v1/config-versions?limit=1 is above the engines' version
 psql "$NEXORA_DATABASE_URL" -c "update engine_groups set rollouts_paused = true where name = 'default';"
+# Compose: docker compose exec -T postgres psql -U nexora -d nexora -c "update engine_groups set rollouts_paused = true where name = 'default';"
 curl -fsS -X POST -H "Authorization: Bearer $NEXORA_TOKEN" \
   https://nexora.example.net/api/v1/engine-groups/00000000-0000-0000-0000-000000000001/resume-rollouts
 ```
@@ -1415,6 +1425,14 @@ validation of forwarded answers.
   restart; ship them off the engine if you need history.
 - **The query log name filter scans every term of a day's OpenSearch index**;
   very large daily indices may reach the 5 s timeout.
+- **OpenSearch query-log paging** sorts by `@timestamp` and then `_id`, which
+  needs `indices.id_field_data.enabled` (the default, true in OpenSearch 3.x).
+  With it disabled, query-log searches fail with HTTP 400.
+- **Record edits of DNSSEC-signed zones** still rebuild from the whole zone per
+  edit; unsigned zones load only the owners an edit touches.
+- **Recursor cache budget** is `recursor_cache_max_bytes` (default 64 MiB,
+  4 MiB to 16 GiB), set as "Recursor cache memory (MiB)" in the Resolution
+  section of `/upstreams`.
 - **Restores** leave engines `ahead` until enough versions are published
   (see [Backup and restore PostgreSQL](#backup-and-restore-postgresql)).
 - **Node names are not unique**: re-enrolling a host creates a new engine

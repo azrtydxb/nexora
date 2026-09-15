@@ -71,6 +71,7 @@ fn snapshot(mode: proto::ResolutionMode, port: u16) -> proto::ConfigSnapshot {
             max_upstream_queries: 100,
             max_delegation_depth: 32,
             authority_port: u32::from(port),
+            cache_max_bytes: 0,
         }),
         forward_zones: vec![proto::ForwardZone {
             domain: "corp.".into(),

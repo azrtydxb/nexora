@@ -1183,6 +1183,15 @@ fn register_recursor(reg: &mut Registry, rt: &Runtime, recursor: &RecursorState)
         "Last successful RFC 5011 refresh of the zone's trust anchors",
         last,
     );
+    let lost = Family::<Labels, Gauge>::default();
+    for zone in recursor.anchors.lost_trust_points() {
+        lost.get_or_create(&vec![("zone", zone.to_ascii())]).set(1);
+    }
+    reg.register(
+        "nexora_dnssec_trust_point_lost",
+        "1 for a zone whose trusted keys were all revoked: validation below it is insecure until a trust anchor is added",
+        lost,
+    );
     reg.register(
         "nexora_dnssec_negative_trust_anchors",
         "Negative trust anchors in effect",
@@ -1291,6 +1300,27 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn lost_trust_point_raises_its_gauge() {
+        let dir = tempfile::tempdir().unwrap();
+        // The root's only key is revoked, so the root has no trust point (RFC 5011 §5).
+        std::fs::write(
+            dir.path().join("trust-anchors.json"),
+            r#"{"zones":{".":{"keys":[{"key_tag":20326,"algorithm":8,"ds":null,"dnskey_b64":null,
+            "state":"Revoked","hold_down_until":0,"from_config":true}],
+            "last_success":0,"next_refresh":0,"last_error":""}}}"#,
+        )
+        .unwrap();
+        let text =
+            Metrics::new(1).render(&Runtime::initial(), &RecursorState::new(Some(dir.path())));
+        assert!(
+            has_positive(&text, "nexora_dnssec_trust_point_lost{zone=\".\"} "),
+            "{text}"
+        );
+        let text = Metrics::new(1).render(&Runtime::initial(), &RecursorState::new(None));
+        assert!(!text.contains("nexora_dnssec_trust_point_lost{"), "{text}");
     }
 
     #[test]

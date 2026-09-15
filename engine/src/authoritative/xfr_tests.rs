@@ -275,4 +275,62 @@ mod authorization {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0][3] & 0x0f, 5, "REFUSED");
     }
+
+    /// The blocking pool has one thread, taken by a job only the worker's other task releases: the
+    /// transfer completes only if the worker ran that task while the transfer was pending.
+    #[test]
+    fn transfer_is_built_off_the_worker() {
+        use crate::edns::Transport;
+        use crate::server::{FastOutcome, Shared, WorkerCtx, handle_packet};
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let shared = Shared::new(1);
+        let mut z = Zone::from_image(&nzf::parse(BIG).unwrap()).unwrap();
+        z.transfer_allow = vec!["127.0.0.1/32".parse().unwrap()];
+        let mut rt = Runtime::initial();
+        rt.auth = Arc::new(AuthSet::from_zones(vec![Arc::new(z)]).unwrap());
+        shared.runtime.store(Arc::new(rt));
+        let ctx = Rc::new(WorkerCtx::new(0, shared.clone()));
+        let rt = shared.runtime.load_full();
+        let client = "127.0.0.1:5353".parse().unwrap();
+        let axfr = query("big.test.", RecordType::AXFR, None);
+        let worker = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        worker.block_on(local.run_until(async {
+            for round in 0..20 {
+                let mut out = vec![0u8; 65535];
+                let FastOutcome::Slow(job) =
+                    handle_packet(&ctx, &rt, &axfr, client, Transport::Tcp, &mut out)
+                else {
+                    panic!("AXFR over TCP not handed to the slow path")
+                };
+                let (release, released) = std::sync::mpsc::channel::<()>();
+                let blocker = tokio::task::spawn_blocking(move || {
+                    let _ = released.recv();
+                });
+                let ran = Rc::new(Cell::new(false));
+                let flag = ran.clone();
+                let other = tokio::task::spawn_local(async move {
+                    flag.set(true);
+                    let _ = release.send(());
+                });
+                let msgs =
+                    crate::authoritative::dispatch::run_slow(ctx.clone(), rt.clone(), job).await;
+                assert!(
+                    msgs.len() > 1,
+                    "the 2,002-record zone spans several messages"
+                );
+                assert!(
+                    ran.get(),
+                    "round {round}: nothing else ran on the worker while the transfer was built"
+                );
+                other.await.unwrap();
+                blocker.await.unwrap();
+            }
+        }));
+    }
 }

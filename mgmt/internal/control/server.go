@@ -378,17 +378,26 @@ func (s *Server) GetBlob(req *controlv1.GetBlobRequest, stream controlv1.EngineC
 	if !sha256RE.MatchString(req.Sha256) {
 		return status.Error(codes.InvalidArgument, "sha256 must be 64 lowercase hex characters")
 	}
-	// debt: the whole blob is read into memory (<= 256 MiB lists); revisit with large-object
-	// streaming if memory pressure on mgmt instances shows up.
-	var data []byte
-	if err := s.st.Pool.QueryRow(ctx, "select data from blobs where sha256 = $1", req.Sha256).Scan(&data); err != nil {
+	// Blobs are content-addressed and never change, so chunks read by separate statements belong to
+	// one value; a blob collected mid-stream ends the stream with NotFound (the engine checks size
+	// and SHA-256 and retries).
+	var size int64
+	if err := s.st.Pool.QueryRow(ctx, "select octet_length(data) from blobs where sha256 = $1", req.Sha256).Scan(&size); err != nil {
 		if errors.Is(store.MapError(err), store.ErrNotFound) {
 			return status.Error(codes.NotFound, "blob not found")
 		}
 		return grpcError(err)
 	}
-	for off := 0; off < len(data); off += BlobChunkSize {
-		if err := stream.Send(&controlv1.BlobChunk{Data: data[off:min(off+BlobChunkSize, len(data))]}); err != nil {
+	for off := int64(0); off < size; off += BlobChunkSize {
+		var chunk []byte
+		if err := s.st.Pool.QueryRow(ctx, "select substring(data from $2 for $3) from blobs where sha256 = $1",
+			req.Sha256, off+1, BlobChunkSize).Scan(&chunk); err != nil {
+			if errors.Is(store.MapError(err), store.ErrNotFound) {
+				return status.Error(codes.NotFound, "blob removed while streaming")
+			}
+			return grpcError(err)
+		}
+		if err := stream.Send(&controlv1.BlobChunk{Data: chunk}); err != nil {
 			return err
 		}
 	}

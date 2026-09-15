@@ -9,8 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/miekg/dns"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/nzf"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/zonefile"
 )
@@ -83,16 +85,52 @@ func (s *Service) Import(ctx context.Context, actor auth.Actor, zoneID uuid.UUID
 	return &ImportResult{Zone: out, RecordsImported: len(res.Records)}, nil
 }
 
-// Export writes zone zoneID as a BIND master file.
-// debt: loads every record into memory; revisit when exports of multi-million-record zones are needed.
-func (s *Service) Export(ctx context.Context, zoneID uuid.UUID, w io.Writer) error {
-	z, err := s.GetZone(ctx, zoneID)
-	if err != nil {
-		return err
-	}
-	rrs, err := loadRecordRRs(ctx, s.Store.Pool, zoneID)
+// ExportTo writes zone zoneID as a BIND master file to w, streaming records from one read-only
+// snapshot: the SOA from the zone row, then the apex records, then owners lowercase byte-wise,
+// then type and RDATA.
+func (s *Service) ExportTo(ctx context.Context, zoneID uuid.UUID, w io.Writer) error {
+	tx, err := s.Store.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return store.MapError(err)
 	}
-	return zonefile.Export(w, z.Name, z.DefaultTTL, soaRR(z), rrs)
+	defer tx.Rollback(ctx) //nolint:errcheck // read-only
+	z, err := loadZone(ctx, tx, zoneID, false)
+	if err != nil {
+		return err
+	}
+	zw := zonefile.NewWriter(w, z.Name, z.DefaultTTL)
+	if err := zw.SOA(soaRR(z)); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT owner, rtype, ttl, rdata_wire FROM zone_records WHERE zone_id = $1
+		ORDER BY lower(owner) <> lower($2), lower(owner) COLLATE "C", rtype, rdata_wire`, zoneID, z.Name)
+	if err != nil {
+		return store.MapError(err)
+	}
+	defer rows.Close()
+	owner := make([]byte, 256)
+	for rows.Next() {
+		var name string
+		var rtype int32
+		var ttl int64
+		var rdata []byte
+		if err := rows.Scan(&name, &rtype, &ttl, &rdata); err != nil {
+			return store.MapError(err)
+		}
+		n, err := dns.PackDomainName(name, owner, 0, nil, false)
+		if err != nil {
+			return fmt.Errorf("record owner %q: %w", name, err)
+		}
+		rr, err := nzf.ToRR(nzf.Record{Owner: owner[:n], Type: uint16(rtype), Class: dns.ClassINET, TTL: uint32(ttl), RData: rdata})
+		if err != nil {
+			return fmt.Errorf("record %s %d: %w", name, rtype, err)
+		}
+		if err := zw.Record(rr); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return store.MapError(err)
+	}
+	return zw.Flush()
 }

@@ -24,6 +24,7 @@ type ResolutionSettings struct {
 	Mode                                                  string
 	QnameMinimisation, AggressiveNSEC                     bool
 	MaxUpstreamQueries, MaxDelegationDepth, AuthorityPort int32
+	RecursorCacheMaxBytes                                 int64
 	RootHints                                             []RootHint
 	Revision                                              int64
 }
@@ -107,9 +108,9 @@ type ResolutionRows struct {
 func GetResolutionSettings(ctx context.Context, q PolicyQuerier) (ResolutionSettings, error) {
 	var s ResolutionSettings
 	err := q.QueryRow(ctx, `select mode, qname_minimisation, aggressive_nsec, max_upstream_queries, max_delegation_depth,
-		authority_port, root_hints, revision from resolution_settings`).
+		authority_port, recursor_cache_max_bytes, root_hints, revision from resolution_settings`).
 		Scan(&s.Mode, &s.QnameMinimisation, &s.AggressiveNSEC, &s.MaxUpstreamQueries, &s.MaxDelegationDepth,
-			&s.AuthorityPort, &s.RootHints, &s.Revision)
+			&s.AuthorityPort, &s.RecursorCacheMaxBytes, &s.RootHints, &s.Revision)
 	if s.RootHints == nil {
 		s.RootHints = []RootHint{}
 	}
@@ -124,9 +125,9 @@ func UpdateResolutionSettings(ctx context.Context, tx pgx.Tx, s ResolutionSettin
 	var rev int64
 	err := tx.QueryRow(ctx, `update resolution_settings set mode = $1, qname_minimisation = $2, aggressive_nsec = $3,
 		max_upstream_queries = $4, max_delegation_depth = $5, authority_port = $6, root_hints = $7,
-		revision = revision + 1, updated_at = now() where revision = $8 returning revision`,
+		recursor_cache_max_bytes = $9, revision = revision + 1, updated_at = now() where revision = $8 returning revision`,
 		s.Mode, s.QnameMinimisation, s.AggressiveNSEC, s.MaxUpstreamQueries, s.MaxDelegationDepth, s.AuthorityPort,
-		s.RootHints, s.Revision).Scan(&rev)
+		s.RootHints, s.Revision, s.RecursorCacheMaxBytes).Scan(&rev)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ResolutionSettings{}, fmt.Errorf("%w: resolution settings revision %d is stale; reload and retry", ErrConflict, s.Revision)
 	}

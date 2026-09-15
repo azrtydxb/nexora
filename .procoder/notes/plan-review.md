@@ -71,3 +71,5 @@
 - Follow-up (M11 T20, 2026-09-15): the capacity agent does not forecast the recursor cache because `recursor_cache_max_bytes` (M7 T12) was not on main when it was written. After the M7 merge, add the resource and its limit.
 
 - Flaky (M11 final check, 2026-09-15): `54-ai-assistant` can time out waiting for the "Thinking" status (the fake model may answer before the status renders). Fix in M11 Task 32 without weakening: assert the task reaches running or succeeded, or have the fixture hold the response until the spec observes the status.
+
+- Follow-up (M7 T13, 2026-09-15): pgx v5.11 keeps a reference to a pooled connection's last query parameters until that connection runs another query, so a blob upload can stay in memory on an idle pooled connection. Bounded by pool size x largest blob; revisit if management plane memory on large list refreshes becomes a problem.

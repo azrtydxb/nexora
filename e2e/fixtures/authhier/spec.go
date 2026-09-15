@@ -7,13 +7,15 @@ import "fmt"
 
 // ZoneSpec describes one authoritative zone and the address its server listens on.
 type ZoneSpec struct {
-	Origin          string   `json:"origin"`
-	ServerIP        string   `json:"server_ip"`
-	Signed          bool     `json:"signed"`
-	NSEC3Iterations int      `json:"nsec3_iterations"` // -1: NSEC; >= 0: NSEC3 with this iteration count
-	BreakSignatures bool     `json:"break_signatures"` // flips the last byte of every RRSIG over A/AAAA/TXT
-	Spoof           bool     `json:"spoof"`
-	Records         []string `json:"records"` // presentation format, owner names absolute
+	Origin          string `json:"origin"`
+	ServerIP        string `json:"server_ip"`
+	Signed          bool   `json:"signed"`
+	NSEC3Iterations int    `json:"nsec3_iterations"` // -1: NSEC; >= 0: NSEC3 with this iteration count
+	BreakSignatures bool   `json:"break_signatures"` // flips the last byte of every RRSIG over A/AAAA/TXT
+	Spoof           bool   `json:"spoof"`
+	// OmitWildcardProof serves synthesised wildcard answers without the next-closer denial.
+	OmitWildcardProof bool     `json:"omit_wildcard_proof"`
+	Records           []string `json:"records"` // presentation format, owner names absolute
 }
 
 // Spec is a whole hierarchy.
@@ -52,10 +54,11 @@ const (
 // DefaultSpec is the hierarchy the M3 acceptance tests use, every server on 127.0.53.0/24:
 //
 //	.              127.0.53.1  NSEC signed; delegates test.
-//	test.          127.0.53.2  NSEC signed; delegates good, bad, n3 (signed, with DS), plain, glueless, spoof, poison, lame
-//	good.test.     127.0.53.3  NSEC signed; www A, alias CNAME, big TXT (> 1232 octets)
+//	test.          127.0.53.2  NSEC signed; delegates good, bad, n3, wild (signed, with DS), plain, glueless, spoof, poison, lame
+//	good.test.     127.0.53.3  NSEC signed; www A, alias CNAME, big TXT (> 1232 octets), *.w A and TXT
 //	bad.test.      127.0.53.4  NSEC signed with broken signatures
-//	n3.test.       127.0.53.8  NSEC3 signed, 0 iterations
+//	n3.test.       127.0.53.8  NSEC3 signed, 0 iterations; *.w A
+//	wild.test.     127.0.53.12 NSEC signed; *.w A, answered without the next-closer proof
 //	plain.test.    127.0.53.5  unsigned; also serves ns2.plain.test., the glueless name server
 //	glueless.test. 127.0.53.6  unsigned; delegated to ns2.plain.test. without glue
 //	spoof.test.    127.0.53.7  unsigned; sends forged replies before the real one
@@ -104,6 +107,8 @@ func DefaultSpec(port int) Spec {
 				"lame.test. 300 IN NS ns.plain.test.",
 				"ns.lame.test. 300 IN A 127.0.53.11",
 				"dead.lame.test. 300 IN A 127.0.53.10",
+				"wild.test. 300 IN NS ns.wild.test.",
+				"ns.wild.test. 300 IN A 127.0.53.12",
 			}},
 			{Origin: "good.test.", ServerIP: "127.0.53.3", Signed: true, NSEC3Iterations: nsec, Records: append([]string{
 				"good.test. 300 IN SOA ns.good.test. hostmaster.good.test. 1 3600 600 86400 300",
@@ -111,6 +116,8 @@ func DefaultSpec(port int) Spec {
 				"ns.good.test. 300 IN A 127.0.53.3",
 				"www.good.test. 300 IN A 192.0.2.10",
 				"alias.good.test. 300 IN CNAME www.good.test.",
+				"*.w.good.test. 300 IN A 192.0.2.60",
+				"*.w.good.test. 300 IN TXT \"wild\"",
 			}, big...)},
 			{Origin: "bad.test.", ServerIP: "127.0.53.4", Signed: true, NSEC3Iterations: nsec, BreakSignatures: true, Records: []string{
 				"bad.test. 300 IN SOA ns.bad.test. hostmaster.bad.test. 1 3600 600 86400 300",
@@ -123,6 +130,13 @@ func DefaultSpec(port int) Spec {
 				"n3.test. 300 IN NS ns.n3.test.",
 				"ns.n3.test. 300 IN A 127.0.53.8",
 				"www.n3.test. 300 IN A 192.0.2.40",
+				"*.w.n3.test. 300 IN A 192.0.2.61",
+			}},
+			{Origin: "wild.test.", ServerIP: "127.0.53.12", Signed: true, NSEC3Iterations: nsec, OmitWildcardProof: true, Records: []string{
+				"wild.test. 300 IN SOA ns.wild.test. hostmaster.wild.test. 1 3600 600 86400 300",
+				"wild.test. 300 IN NS ns.wild.test.",
+				"ns.wild.test. 300 IN A 127.0.53.12",
+				"*.w.wild.test. 300 IN A 192.0.2.62",
 			}},
 			{Origin: "plain.test.", ServerIP: "127.0.53.5", NSEC3Iterations: nsec, Records: []string{
 				"plain.test. 300 IN SOA ns.plain.test. hostmaster.plain.test. 1 3600 600 86400 300",

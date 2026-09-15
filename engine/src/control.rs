@@ -465,6 +465,9 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
     shared.engine_id.store(Arc::new(identity.engine_id.clone()));
     let staged_dir = cert_renewal::staged_dir(&boot.state_dir);
     let mut attempt = 0;
+    // The renewed identity that failed for a reason other than authentication: the next attempt
+    // uses the current identity instead.
+    let mut fallback_from: Option<Identity> = None;
     for url in boot.management_urls.iter().cycle() {
         let lock = identity_lock(&boot).await;
         match load_identity(&boot.state_dir) {
@@ -473,12 +476,15 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
             Err(e) => eprintln!("nexora-engine: identity unreadable, using the loaded one: {e}"),
         }
         // A renewed identity is tried first; the current one stays on disk until it works.
-        let staged = match load_identity_dir(&staged_dir) {
-            Ok(staged) => staged,
-            Err(e) => {
-                eprintln!("nexora-engine: renewed identity unreadable: {e}");
-                None
-            }
+        let staged = match fallback_from {
+            Some(_) => None,
+            None => match load_identity_dir(&staged_dir) {
+                Ok(staged) => staged,
+                Err(e) => {
+                    eprintln!("nexora-engine: renewed identity unreadable: {e}");
+                    None
+                }
+            },
         };
         drop(lock);
         let id = staged.as_ref().unwrap_or(&identity);
@@ -488,6 +494,7 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
             &cert_store,
             id,
             staged.is_some(),
+            fallback_from.as_ref(),
             url,
             &mut attempt,
         )
@@ -503,12 +510,11 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
         };
         if matches!(err, ControlError::Renewed) {
             eprintln!("nexora-engine: control stream to {url}: {err}");
+            // The newly staged identity is tried next, not skipped for an older failed one.
+            fallback_from = None;
             attempt = 0;
             continue;
         }
-        // debt: a renewed certificate failing for any reason other than PermissionDenied or
-        // Unauthenticated is retried with backoff instead of discarded; it was verified against
-        // the pinned CA before staging, so revisit only if such failures show up in practice.
         let staged_refused = staged.is_some()
             && staged_dir.exists()
             && status.is_some_and(|s| {
@@ -536,6 +542,13 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
                 Err(e) => eprintln!("nexora-engine: discard renewed identity: {e}"),
             }
         }
+        // A staged certificate failing for another reason: the next attempt uses the current
+        // identity, which discards the staged one if it reaches the stream. With both failing,
+        // they alternate.
+        fallback_from = match (&staged, staged_refused) {
+            (Some(s), false) => Some(s.clone()),
+            _ => None,
+        };
         let revoked = status.is_some_and(refused);
         shared
             .metrics
@@ -557,6 +570,8 @@ pub async fn run(shared: Arc<Shared>, boot: Bootstrap, cert_store: Arc<CertStore
 
 async fn obtain_identity(boot: &Bootstrap) -> Identity {
     let mut attempt = 0;
+    // Enrolled but not yet stored: saving is retried, and the engine never enrolls again.
+    let mut unsaved: Option<Identity> = None;
     loop {
         // Held through enrollment: an engine starting beside this one waits and loads the result.
         let lock = identity_lock(boot).await;
@@ -567,6 +582,22 @@ async fn obtain_identity(boot: &Bootstrap) -> Identity {
             Ok(Some(id)) => return id,
             Ok(None) => {}
             Err(e) => eprintln!("nexora-engine: identity unreadable: {e}"),
+        }
+        if let Some(id) = unsaved.take() {
+            match save_identity(&boot.state_dir, &id) {
+                Ok(()) => {
+                    eprintln!("nexora-engine: stored identity {}", id.engine_id);
+                    return id;
+                }
+                Err(e) => {
+                    eprintln!("nexora-engine: store identity (retrying, not re-enrolling): {e}");
+                    unsaved = Some(id);
+                    drop(lock);
+                    tokio::time::sleep(backoff(attempt)).await;
+                    attempt = attempt.saturating_add(1);
+                    continue;
+                }
+            }
         }
         let token = std::fs::read_to_string(&boot.join_token_file)
             .map_err(ControlError::from)
@@ -580,9 +611,11 @@ async fn obtain_identity(boot: &Bootstrap) -> Identity {
                                 eprintln!("nexora-engine: enrolled as {}", id.engine_id);
                                 return id;
                             }
-                            // debt: an identity that cannot be stored is re-enrolled on every
-                            // retry, leaving orphan engine rows; revisit if state dirs fail in practice.
-                            Err(e) => eprintln!("nexora-engine: store identity: {e}"),
+                            Err(e) => {
+                                eprintln!("nexora-engine: store identity (kept in memory): {e}");
+                                unsaved = Some(id);
+                                break;
+                            }
                         },
                         Err(e) => eprintln!("nexora-engine: enroll via {url}: {e}"),
                     }
@@ -641,13 +674,16 @@ fn certificate_request(
 }
 
 /// One control stream; returns why it ended. `staged` marks a renewed identity, promoted once the
-/// management plane accepts the stream.
+/// management plane accepts the stream. `discard_staged` is a renewed identity that failed before;
+/// once this stream is accepted it is discarded if `identity.new` still holds it.
+#[allow(clippy::too_many_arguments)]
 async fn session(
     shared: &Arc<Shared>,
     boot: &Bootstrap,
     cert_store: &CertStore,
     id: &Identity,
     staged: bool,
+    discard_staged: Option<&Identity>,
     url: &str,
     attempt: &mut u32,
 ) -> ControlError {
@@ -675,6 +711,18 @@ async fn session(
         Err(s) => return s.into(),
     };
     eprintln!("nexora-engine: control connected to {url}");
+    if let Some(failed) = discard_staged {
+        let lock = identity_lock(boot).await;
+        // Only the certificate that failed: an engine sharing the state directory may have staged
+        // another one meanwhile.
+        if let Ok(Some(on_disk)) = load_identity_dir(&cert_renewal::staged_dir(&boot.state_dir))
+            && on_disk.cert_pem == failed.cert_pem
+            && let Err(e) = cert_renewal::discard_staged(&boot.state_dir)
+        {
+            eprintln!("nexora-engine: discard renewed identity: {e}");
+        }
+        drop(lock);
+    }
     if staged {
         let lock = identity_lock(boot).await;
         // Only the identity this stream authenticated with: an engine sharing the state directory

@@ -89,9 +89,9 @@ No two tasks in one wave touch the same file.
 | 1    | 9                    | `engine/src/runtime.rs`, `engine/src/telemetry/otlp.rs`, `engine/tests/telemetry_export.rs`                                                                                                                                                                                                                                          |
 | 1    | 13                   | `mgmt/internal/control/server.go`, `mgmt/internal/control/control_test.go`, `mgmt/migrations/00801_blobs_storage_external.sql`                                                                                                                                                                                                       |
 | 1    | 14                   | `mgmt/internal/querylog/opensearch.go`, `.../opensearch_test.go`, `e2e/querylog_paging_test.go` (new)                                                                                                                                                                                                                                |
-| 1    | 15                   | `mgmt/internal/secrets/pkcs11.go`, `.../pkcs11_test.go`, `.../export_test.go` (new)                                                                                                                                                                                                                                                  |
+| 1    | 15                   | `mgmt/internal/secrets/pkcs11.go`, `.../pkcs11_test.go`, `.../export_test.go` (new), `.../secrets.go` (Unseal only)                                                                                                                                                                                                                  |
 | 1    | 16                   | `mgmt/internal/zone/import.go`, `mgmt/internal/zonefile/export.go`, `mgmt/internal/api/zonefile.go`, `mgmt/internal/zone/export_test.go` (new), `mgmt/internal/api/zonefile_test.go` (new)                                                                                                                                           |
-| 1    | 17                   | `mgmt/internal/zone/service.go`, `.../build.go`, `.../validate.go`, `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)                                                                                                                                                                      |
+| 1    | 17                   | `mgmt/internal/zone/service.go`, `.../build.go`, `.../validate.go`, `.../model.go` (RebuildOptions), `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)                                                                                                                                     |
 | 1    | 18                   | `e2e/fixtures/authhier/{spec,server,authhier_test}.go`, `e2e/dnssec_test.go`                                                                                                                                                                                                                                                         |
 | 1    | 19                   | `e2e/harness/otelcol.go`, `e2e/harness/harness_test.go`                                                                                                                                                                                                                                                                              |
 | 1    | 20                   | `scripts/compose-verify.sh` (new), `deploy/compose/*`, `docs/operations.md` (sections "Install with Docker Compose", "Plain PostgreSQL and Compose", "Engines ahead of a restored database"), `deploy/deploytest/compose_test.go`                                                                                                    |
@@ -161,7 +161,7 @@ Interfaces: produces the names every later task uses:
 
 ## Task 2: Contract field RecursionConfig.cache_max_bytes
 
-Files: `proto/nexora/control/v1/control.proto`, `gen/go/nexora/control/v1/control.pb.go` (regenerated)
+Files: `proto/nexora/control/v1/control.proto`, `gen/go/nexora/control/v1/control.pb.go` (regenerated), `engine/src/snapshot_m3.rs` and `engine/src/recursor/dispatch_tests.rs` (test struct literals gain `cache_max_bytes: 0`)
 Interfaces: `RecursionConfig.cache_max_bytes` (uint64, field 800). Rust: `proto::RecursionConfig { cache_max_bytes: u64, .. }`. Go: `controlv1.RecursionConfig.CacheMaxBytes uint64`.
 
 - [ ] Run `rg -n "cache_max_bytes" proto/nexora/control/v1/control.proto` and expect no match.
@@ -170,7 +170,7 @@ Interfaces: `RecursionConfig.cache_max_bytes` (uint64, field 800). Rust: `proto:
     // M7: recursor cache memory in bytes; 0 -> 67108864 (64 MiB); otherwise 4194304..=17179869184.
     uint64 cache_max_bytes = 800;
   ```
-- [ ] Run `make generate` on the laptop (buf, protoc, Go) and expect `gen/go/nexora/control/v1/control.pb.go` to contain `CacheMaxBytes`.
+- [ ] Regenerate the Go code with the `protoc` command of `make proto` (the repository has no `make generate`; the other two `make proto` steps regenerate the OpenAPI clients and are Task 12's). Run it in the dev pod, whose protoc 3.21.12 and protoc-gen-go v1.36.12 produced the committed files (the laptop's newer protoc would rewrite the version headers), and copy `control.pb.go`/`control_grpc.pb.go` back to the laptop. Expect `gen/go/nexora/control/v1/control.pb.go` to contain `CacheMaxBytes`.
 - [ ] Run `scripts/dev-exec.sh 'cargo build --locked -p nexora-engine && go build ./... && cargo test --locked -p nexora-engine --test proto_roundtrip'` and expect success. The Rust struct gains the field through `build.rs`. Existing struct literals use `..Default::default()`; fix any that do not by adding `cache_max_bytes: 0`.
 
 ## Task 3: BADVERS for EDNS versions other than 0 (#21)
@@ -237,7 +237,7 @@ Interfaces: `pub const RCODE_BADVERS: u8 = 16;` in `engine/src/server/mod.rs`; `
       let badvers = ReplyOpt {
           udp_size: ADVERTISED_UDP_SIZE,
           do_bit: o.do_bit,
-          ext_rcode: (RCODE_BADVERS >> 4) as u8,
+          ext_rcode: RCODE_BADVERS >> 4,
           cookie: None,
           ede: None,
       };
@@ -249,7 +249,7 @@ Interfaces: `pub const RCODE_BADVERS: u8 = 16;` in `engine/src/server/mod.rs`; `
       return FastOutcome::Reply(n);
   }
   ```
-  Add `pub const RCODE_BADVERS: u8 = 16;` near the other server constants. `RCODE_BADVERS & 0x0f` is 0 and `>> 4` is 1. The query-log exporter already names rcode 16 `RCODE16`, and the metric slot is `other`.
+  Add `pub const RCODE_BADVERS: u8 = 16;` near the other server constants. `RCODE_BADVERS & 0x0f` is 0 and `>> 4` is 1 (already `u8`, so no cast: clippy::unnecessary_cast). The query-log exporter already names rcode 16 `RCODE16`, and the metric slot is `other`.
 - [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test server_pipeline && cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --lib edns'` and expect all to pass.
 - [ ] Run `scripts/dev-exec.sh 'cargo clippy --locked -p nexora-engine --all-targets -- -D warnings'` and expect no warnings. Run `rg -n "EDNS versions other than 0" engine/src` and expect no match.
 
@@ -258,8 +258,8 @@ Interfaces: `pub const RCODE_BADVERS: u8 = 16;` in `engine/src/server/mod.rs`; `
 Files: `engine/src/acl.rs`
 Interfaces: `Acl::parse(&[String]) -> Result<Acl, String>` and `Acl::allows(IpAddr) -> bool` unchanged; new `Acl::v4_ranges(&self) -> usize`, `Acl::v6_ranges(&self) -> usize`.
 
-- [ ] Re-read `engine/src/acl.rs` at the M6 head. If M6 #63 split the ACL into resolver and authoritative lists, apply this task to the type that holds CIDRs and keep M6's API.
-- [ ] Add the counters with the current representation, `pub fn v4_ranges(&self) -> usize { self.v4.len() }` and the same for v6, then add this test module at the end of `acl.rs`:
+- [x] Re-read `engine/src/acl.rs` at the M6 head. If M6 #63 split the ACL into resolver and authoritative lists, apply this task to the type that holds CIDRs and keep M6's API. (Built on the m7 branch, where `acl.rs` is still the single `Acl` with `parse`/`allows`; M6 had not changed `acl.rs` when this was built, so only the internals changed and the public API stays as M6 uses it.)
+- [x] Add the counters with the current representation, `pub fn v4_ranges(&self) -> usize { self.v4.len() }` and the same for v6, then add this test module at the end of `acl.rs`:
   ```rust
   #[cfg(test)]
   mod tests {
@@ -315,8 +315,8 @@ Interfaces: `Acl::parse(&[String]) -> Result<Acl, String>` and `Acl::allows(IpAd
       }
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib acl::tests'`. Expect FAIL in `overlapping_cidrs_merge_into_ranges` with `left: 4, right: 2` (the linear representation keeps every CIDR).
-- [ ] Replace the struct and `allows` with ranges and remove the `debt:` doc lines:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib acl::tests'`. Expect FAIL in `overlapping_cidrs_merge_into_ranges` with `left: 4, right: 2` (the linear representation keeps every CIDR).
+- [x] Replace the struct and `allows` with ranges and remove the `debt:` doc lines:
   ```rust
   pub struct Acl {
       /// Sorted, non-overlapping, non-adjacent inclusive ranges.
@@ -342,17 +342,19 @@ Interfaces: `Acl::parse(&[String]) -> Result<Acl, String>` and `Acl::allows(IpAd
   }
   ```
   In `parse`, collect `(u32::from(n.network()), u32::from(n.broadcast()))` per `Ipv4Net` (after `trunc()`), and `u128` pairs per `Ipv6Net`. Then `v4: merged(v4, |x| x.checked_add(1))` and the same for v6. `allows` becomes `covered(&self.v4, u32::from(a))`, and `u128::from(a)` for v6, keeping the v4-mapped branch. `v4_ranges`/`v6_ranges` return the merged lengths. Document on `allows`: `Binary search over merged ranges: O(log n), allocation-free.`
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib acl::tests && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect every test to pass.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib acl::tests && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect every test to pass.
 
 ## Task 5: Zone transfers off the worker thread (#12)
 
 Files: `engine/src/authoritative/dispatch.rs`, `engine/src/authoritative/xfr_tests.rs`
 Interfaces: `run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec<Vec<u8>>` unchanged; new private `fn build_transfer(rt: &Runtime, shared: &Shared, job: &SlowJob) -> Vec<Vec<u8>>`.
 
-- [ ] Add inside `mod authorization` in `xfr_tests.rs`:
+- [x] Add inside `mod authorization` in `xfr_tests.rs`:
   ```rust
-  #[tokio::test(flavor = "current_thread")]
-  async fn transfer_is_built_off_the_worker() {
+  /// The blocking pool has one thread, taken by a job only the worker's other task releases: the
+  /// transfer completes only if the worker ran that task while the transfer was pending.
+  #[test]
+  fn transfer_is_built_off_the_worker() {
       use crate::edns::Transport;
       use crate::server::{FastOutcome, Shared, WorkerCtx, handle_packet};
       use std::cell::Cell;
@@ -368,29 +370,47 @@ Interfaces: `run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec
       let rt = shared.runtime.load_full();
       let client = "127.0.0.1:5353".parse().unwrap();
       let axfr = query("big.test.", RecordType::AXFR, None);
-      tokio::task::LocalSet::new()
-          .run_until(async {
-              for round in 0..20 {
-                  let mut out = vec![0u8; 65535];
-                  let FastOutcome::Slow(job) =
-                      handle_packet(&ctx, &rt, &axfr, client, Transport::Tcp, &mut out)
-                  else {
-                      panic!("AXFR over TCP not handed to the slow path")
-                  };
-                  let ran = Rc::new(Cell::new(false));
-                  let flag = ran.clone();
-                  let other = tokio::task::spawn_local(async move { flag.set(true) });
-                  let msgs = crate::authoritative::dispatch::run_slow(ctx.clone(), rt.clone(), job).await;
-                  assert!(msgs.len() > 1, "the 2,002-record zone spans several messages");
-                  assert!(ran.get(), "round {round}: nothing else ran on the worker while the transfer was built");
-                  other.await.unwrap();
-              }
-          })
-          .await;
+      let worker = tokio::runtime::Builder::new_current_thread()
+          .max_blocking_threads(1)
+          .build()
+          .unwrap();
+      let local = tokio::task::LocalSet::new();
+      worker.block_on(local.run_until(async {
+          for round in 0..20 {
+              let mut out = vec![0u8; 65535];
+              let FastOutcome::Slow(job) =
+                  handle_packet(&ctx, &rt, &axfr, client, Transport::Tcp, &mut out)
+              else {
+                  panic!("AXFR over TCP not handed to the slow path")
+              };
+              let (release, released) = std::sync::mpsc::channel::<()>();
+              let blocker = tokio::task::spawn_blocking(move || {
+                  let _ = released.recv();
+              });
+              let ran = Rc::new(Cell::new(false));
+              let flag = ran.clone();
+              let other = tokio::task::spawn_local(async move {
+                  flag.set(true);
+                  let _ = release.send(());
+              });
+              let msgs =
+                  crate::authoritative::dispatch::run_slow(ctx.clone(), rt.clone(), job).await;
+              assert!(
+                  msgs.len() > 1,
+                  "the 2,002-record zone spans several messages"
+              );
+              assert!(
+                  ran.get(),
+                  "round {round}: nothing else ran on the worker while the transfer was built"
+              );
+              other.await.unwrap();
+              blocker.await.unwrap();
+          }
+      }));
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib transfer_is_built_off_the_worker'`. Expect FAIL with `round 0: nothing else ran on the worker`: today `run_slow` never yields for transfers.
-- [ ] In `dispatch.rs`, move the body of the `SlowKind::Transfer` arm (the `Question::parse` FORMERR reply, `authorize_and_plan`, `xfr::count`, `xfr::messages`) into `fn build_transfer(rt: &Runtime, shared: &Shared, job: &SlowJob) -> Vec<Vec<u8>>`. Use `shared.auth.keyring` and `shared.metrics.auth`, and delete the `debt:` comment. The arm becomes:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib transfer_is_built_off_the_worker'`. Expect FAIL with `round 0: nothing else ran on the worker`: today `run_slow` never yields for transfers. (The test caps the blocking pool at one thread and fills it with a job only the worker's other task releases; a first version without that blocker was flaky, because the pool could finish the build before the worker first polled the join handle.)
+- [x] In `dispatch.rs`, move the body of the `SlowKind::Transfer` arm (the `Question::parse` FORMERR reply, `authorize_and_plan`, `xfr::count`, `xfr::messages`) into `fn build_transfer(rt: &Runtime, shared: &Shared, job: &SlowJob) -> Vec<Vec<u8>>`. Use `shared.auth.keyring` and `shared.metrics.auth`, and delete the `debt:` comment. The arm becomes:
   ```rust
   SlowKind::Transfer => {
       // Large zones take long to encode; the blocking pool keeps the worker answering queries.
@@ -401,7 +421,7 @@ Interfaces: `run_slow(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: SlowJob) -> Vec
   }
   ```
   If `WorkerCtx::shared` is not an `Arc<Shared>`, clone the `Arc`s the function needs (`auth`, `metrics`) instead.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib authoritative:: && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect every test to pass, including `signed_queries_and_transfers_through_the_pipeline`.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib authoritative:: && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect every test to pass, including `signed_queries_and_transfers_through_the_pipeline`.
 
 ## Task 6: Renewal fallback and unstorable identities (#13, #14)
 
@@ -409,11 +429,11 @@ Files: `engine/src/control.rs`, `engine/tests/control_renewal.rs`, `engine/tests
 Interfaces:
 
 - `control::run(shared, boot, cert_store)` is unchanged.
-- The private `session(...)` gains a `discard_staged: Option<&Identity>` parameter. After the stream connects, it discards `identity.new` when that directory still holds exactly this certificate.
+- The private `session(...)` gains a `discard_staged: Option<&Identity>` parameter (and `#[allow(clippy::too_many_arguments)]`, now 8 arguments). After the stream connects, it discards `identity.new` when that directory still holds exactly this certificate.
 - `obtain_identity` keeps an enrolled but unsaved `Identity` in memory.
 
-- [ ] Re-read `engine/src/control.rs` at the M6 head (M6 #65 adds engine log streaming to `session`) and keep M6's additions.
-- [ ] Add to `engine/tests/control_renewal.rs` a second fake and a test (reuse `Ca`, `p256`, `set_validity`, `serial_of`, `next`, `Event`):
+- [x] Re-read `engine/src/control.rs` at the M6 head (M6 #65 adds engine log streaming to `session`) and keep M6's additions.
+- [x] Add to `engine/tests/control_renewal.rs` a second fake and a test (reuse `Ca`, `p256`, `set_validity`, `serial_of`, `next`, `Event`):
   ```rust
   /// Refuses the staged certificate with a non-authentication status and accepts every other one.
   struct StagedUnavailableMgmt {
@@ -513,8 +533,8 @@ Interfaces:
   }
   ```
   `stage_identity(state_dir, cert_pem, key_pem)` is `engine/src/cert_renewal.rs:148`. If it expects the CA or the engine id from `identity/`, it reads them from the saved identity.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_renewal staged_certificate_failing'`. Expect FAIL at the second `assert_eq!`: connection 1 presents the staged serial again.
-- [ ] Create `engine/tests/control_enroll.rs`. It uses the `Ca` helpers copied from `control_renewal.rs` (a test file cannot import another). An `EnrollingMgmt` counts `enroll` calls and answers each with engine id `11111111-2222-3333-4444-555555555555`, `ca.sign_csr(&csr_der)` and `ca.cert.der()`. Its `connect` returns `Status::unavailable("down")`. The server identity PEM is the server certificate followed by the CA certificate, so `fetch_pinned_ca` finds the pinned CA in the chain. The test:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_renewal staged_certificate_failing'`. Expect FAIL at the second `assert_eq!`: connection 1 presents the staged serial again.
+- [x] Create `engine/tests/control_enroll.rs`. It uses the `Ca` helpers copied from `control_renewal.rs` (a test file cannot import another). An `EnrollingMgmt` counts `enroll` calls and answers each with engine id `11111111-2222-3333-4444-555555555555`, `ca.sign_csr(&csr_der)` and `ca.cert.der()`. Its `connect` returns `Status::unavailable("down")`. The server identity PEM is the server certificate followed by the CA certificate, so `fetch_pinned_ca` finds the pinned CA in the chain. The test:
   ```rust
   #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
   async fn unstorable_identity_is_not_enrolled_again() {
@@ -546,8 +566,8 @@ Interfaces:
   }
   ```
   The 40 s deadline covers the backoff cap of 30 s. If `parse_join_token` rejects the secret, use a base32 string it accepts (read the function).
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_enroll'`. Expect FAIL with `left: 3, right: 1` (enrolls at 0 s, about 0.5 s and about 1.5 s).
-- [ ] In `obtain_identity`, hold `let mut unsaved: Option<Identity> = None;` outside the loop. At the top of each iteration, after `recover_identity`/`load_identity`:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_enroll'`. Expect FAIL with `left: 3, right: 1` (enrolls at 0 s, about 0.5 s and about 1.5 s).
+- [x] In `obtain_identity`, hold `let mut unsaved: Option<Identity> = None;` outside the loop. At the top of each iteration, after `recover_identity`/`load_identity`:
   ```rust
   if let Some(id) = unsaved.take() {
       match save_identity(&boot.state_dir, &id) {
@@ -567,7 +587,7 @@ Interfaces:
   }
   ```
   In the enroll branch, `Err(e)` from `save_identity` sets `unsaved = Some(id)` and breaks out of the URL loop. Delete the `debt:` comment.
-- [ ] In `run`, add `let mut fallback_from: Option<Identity> = None;` before the loop.
+- [x] In `run`, add `let mut fallback_from: Option<Identity> = None;` before the loop.
   - Load `staged` only when `fallback_from.is_none()`.
   - Pass `fallback_from.as_ref()` as `discard_staged` to `session`.
   - After the existing `staged_refused` block (unchanged), update the fallback:
@@ -575,10 +595,11 @@ Interfaces:
   // A staged certificate failing for another reason: the next attempt uses the current identity,
   // which discards the staged one if it reaches the stream. With both failing, they alternate.
   fallback_from = match (&staged, staged_refused) {
-      (Some(s), false) if !matches!(err, ControlError::Renewed) => Some(s.clone()),
+      (Some(s), false) => Some(s.clone()),
       _ => None,
   };
   ```
+  The `Renewed` branch `continue`s before this point, so it sets `fallback_from = None` itself: a newly staged identity is tried next instead of being skipped for the older failed one (otherwise a fallback session that renews would loop on the current identity).
   In `session`, right after `eprintln!("nexora-engine: control connected to {url}")`, add:
   ```rust
   if let Some(failed) = discard_staged {
@@ -593,14 +614,14 @@ Interfaces:
   }
   ```
   Delete the `debt:` comment on the renewal branch.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_renewal && cargo test --locked -p nexora-engine --test control_enroll && cargo test --locked -p nexora-engine --test control_unit'`. Expect all to pass, `renews_rotates_and_backs_off_when_revoked` included.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test control_renewal && cargo test --locked -p nexora-engine --test control_enroll && cargo test --locked -p nexora-engine --test control_unit'`. Expect all to pass, `renews_rotates_and_backs_off_when_revoked` included.
 
 ## Task 7: RFC 5011 revocation of the only trusted key (#15)
 
-Files: `engine/src/recursor/dnssec/anchors.rs`, `engine/src/recursor/dnssec/anchors_tests.rs`, `engine/src/recursor/dnssec/verify.rs`
-Interfaces: `pub fn revoked_key_verifies(rrset: &[Record], rrsigs: &[Record], key: &DNSKEY, zone: &Name, now_unix: u64) -> Option<VerifiedSig>` in `verify.rs`; `revoked_key_signs` is re-expressed through it.
+Files: `engine/src/recursor/dnssec/anchors.rs`, `engine/src/recursor/dnssec/anchors_tests.rs`, `engine/src/recursor/dnssec/verify.rs`; for the alert step also `engine/src/telemetry/metrics.rs` (one gauge and its test) and `web/src/pages/DnssecPage.tsx` (one alert component)
+Interfaces: `pub fn revoked_key_verifies(rrset: &[Record], rrsigs: &[Record], key: &DNSKEY, zone: &Name, now_unix: u64) -> Option<VerifiedSig>` in `verify.rs`; `revoked_key_signs` is re-expressed through it. `pub fn lost_trust_points(&self) -> Vec<Name>` on `TrustAnchorStore`.
 
-- [ ] Add to `anchors_tests.rs`:
+- [x] Add to `anchors_tests.rs`:
   ```rust
   #[tokio::test(flavor = "current_thread")]
   async fn refresh_accepts_revocation_of_the_only_trusted_key() {
@@ -629,9 +650,9 @@ Interfaces: `pub fn revoked_key_verifies(rrset: &[Record], rrsigs: &[Record], ke
       assert_eq!(metrics.trust_anchor_refresh_failures.load(std::sync::atomic::Ordering::Relaxed), 0);
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib refresh_accepts_revocation_of_the_only_trusted_key'`. Expect FAIL `left: Some(Valid), right: Some(Revoked)`: the RRset is refused as "not validated by a trusted key".
-- [ ] In `verify.rs`, add `revoked_key_verifies`, which returns `key.revoke().then(|| verify_inner(rrset, rrsigs, std::slice::from_ref(key), zone, now_unix, true).ok()).flatten()`. Make `revoked_key_signs` return `revoked_key_verifies(..).is_some()`.
-- [ ] In `refresh_zone`, replace the `let Ok(v) = verify_rrset(...) else { return fail(...) };` statement with a match whose `Err` arm handles a self-revocation by a trusted key:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib refresh_accepts_revocation_of_the_only_trusted_key'`. Expect FAIL `left: Some(Valid), right: Some(Revoked)`: the RRset is refused as "not validated by a trusted key".
+- [x] In `verify.rs`, add `revoked_key_verifies`, which returns `key.revoke().then(|| verify_inner(rrset, rrsigs, std::slice::from_ref(key), zone, now_unix, true).ok()).flatten()`. Make `revoked_key_signs` return `revoked_key_verifies(..).is_some()`.
+- [x] In `refresh_zone`, replace the `let Ok(v) = verify_rrset(...) else { return fail(...) };` statement with a match whose `Err` arm handles a self-revocation by a trusted key:
   ```rust
   let v = match verify_rrset(&records, &sigs, &authorised, zone, now_unix) {
       Ok(v) => v,
@@ -671,19 +692,19 @@ Interfaces: `pub fn revoked_key_verifies(rrset: &[Record], rrsigs: &[Record], ke
   };
   ```
   Delete the `debt:` paragraph from the doc comment and add: `A trusted key's self-signed revocation is accepted even when it is the zone's only trusted key; the zone then has no trust point (RFC 5011 §5).`
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::dnssec'` and expect all to pass, including `refresh_authenticates_rollover_and_self_signed_revocation`.
-- [ ] Lost trust point alert (spec [S-9] edge case, lead decision 2026-09-14). Extend the test above with `assert_eq!(s.lost_trust_points(), vec![root.clone()]);`. Expect FAIL (no such method). Then:
-  - Add `pub fn lost_trust_points(&self) -> Vec<Name>` to the trust anchor store in `anchors.rs`. It returns the zones whose last trusted key was revoked and that have no trust point now. Adding a trust anchor for that zone clears the entry.
-  - Export it in `engine/src/telemetry/metrics.rs` as the gauge `nexora_dnssec_trust_point_lost{zone}` = 1, and add a `trust_point_lost` flag per zone to the DNSSEC stats (reuse the existing `DnssecStats` trust anchor status field if present; if a new proto field is needed, use `ConfigSnapshot`-independent field 801 in `DnssecStats`).
-  - `web/src/pages/DnssecPage.tsx` shows a destructive `Alert` with `data-testid="dnssec-trust-point-lost"` naming the zone.
-  - Rerun the test and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::dnssec'` and expect all to pass, including `refresh_authenticates_rollover_and_self_signed_revocation`.
+- [x] Lost trust point alert (spec [S-9] edge case, lead decision 2026-09-14). Extend the test above with `assert_eq!(s.lost_trust_points(), vec![root.clone()]);`, and at its end re-merge the configuration with the original DS (captured as `only_ds` before `set_revoked`) plus the newcomer's DS and assert the old key stays `Revoked` and `s.lost_trust_points().is_empty()`. Expect FAIL (no such method). Then:
+  - Add `pub fn lost_trust_points(&self) -> Vec<Name>` to the trust anchor store in `anchors.rs`. It returns the zones that hold a `Revoked` key and have no trust point now, derived from the persisted state (no extra state). Adding a trust anchor for that zone (or removing the zone) clears the entry.
+  - Export it in `engine/src/telemetry/metrics.rs` as the gauge `nexora_dnssec_trust_point_lost{zone}` = 1 (no series when no zone is lost), with the test `lost_trust_point_raises_its_gauge`. No proto field is needed: `DnssecStats.trust_anchors` already carries every key's state per zone, and the same condition (a `revoked` key and no `configured`/`valid`/`missing` key) is derived from it in the GUI.
+  - `web/src/pages/DnssecPage.tsx` shows a destructive `Alert` with `data-testid="dnssec-trust-point-lost"` naming each lost zone and the engines reporting it.
+  - Rerun `cargo test --locked -p nexora-engine --lib anchors_tests` and `... --lib telemetry::metrics` and expect PASS.
 
 ## Task 8: RPZ IXFR keys only for deleted owners (#19)
 
 Files: `engine/src/recursor/rpz/transfer.rs`, `engine/src/recursor/rpz/transfer_tests.rs`
 Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` unchanged; `#[cfg(test)] thread_local! { pub(super) static KEYS_BUILT: Cell<usize> }` in `transfer.rs`.
 
-- [ ] In `transfer.rs`, add the test counter and count every `record_key` call:
+- [x] In `transfer.rs`, add the test counter and count every `record_key` call:
   ```rust
   #[cfg(test)]
   thread_local! {
@@ -691,7 +712,7 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
   }
   ```
   and `#[cfg(test)] KEYS_BUILT.with(|c| c.set(c.get() + 1));` as the first statement of `record_key`.
-- [ ] Add to `transfer_tests.rs`:
+- [x] Add to `transfer_tests.rs`:
   ```rust
   #[test]
   fn ixfr_builds_keys_only_for_records_at_deleted_owners() {
@@ -708,8 +729,8 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
       assert!(built <= 2, "built {built} record keys for a one-record deletion");
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib ixfr_builds_keys_only'`. Expect FAIL `built 100001 record keys for a one-record deletion`.
-- [ ] In `apply_ixfr`, build the owner set next to `deletions`, then filter by it before building a key:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib ixfr_builds_keys_only'`. Expect FAIL `built 100001 record keys for a one-record deletion`.
+- [x] In `apply_ixfr`, build the owner set next to `deletions`, then filter by it before building a key:
   ```rust
   // hickory's Name hashes and compares case-insensitively.
   let deleted_owners: FxHashSet<&Name> = body[del_start..i].iter().map(|r| &r.name).collect();
@@ -721,7 +742,7 @@ Interfaces: `apply_ixfr(&ZoneData, &[Record]) -> Result<ZoneData, String>` uncha
   });
   ```
   Delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::rpz && cargo test --locked -p nexora-engine --test rpz_pipeline'` and expect all to pass.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib recursor::rpz && cargo test --locked -p nexora-engine --test rpz_pipeline'` and expect all to pass.
 
 ## Task 9: Query-log labels by config version and concurrent exports (#23, #24)
 
@@ -733,13 +754,13 @@ Interfaces:
 - `Runtime.labels: Arc<[Arc<RecordLabels>]>`, newest first
 - `telemetry::otlp::MAX_INFLIGHT: usize = 4`
 
-- [ ] Extend `Sink` in `telemetry_export.rs` with `upstreams: Arc<parking_lot::Mutex<Vec<String>>>`, `delay: Duration`, `active: Arc<AtomicUsize>` and `peak: Arc<AtomicUsize>`. In `LogsService::export`:
+- [x] Extend `Sink` in `telemetry_export.rs` with `upstreams: Arc<parking_lot::Mutex<Vec<String>>>`, `delay: Duration`, `active: Arc<AtomicUsize>` and `peak: Arc<AtomicUsize>`. In `LogsService::export`:
   - increment `active` and raise `peak` to it;
   - `tokio::time::sleep(self.delay).await`;
   - push every `nexora.upstream` attribute string into `upstreams`;
   - decrement `active`.
   - Existing tests keep `Sink::default()` (delay zero).
-- [ ] Add the two tests:
+- [x] Add the two tests:
   ```rust
   fn serve(sink: Sink) -> (tokio::runtime::Runtime, std::net::SocketAddr) {
       let rt = tokio::runtime::Runtime::new().unwrap();
@@ -793,10 +814,10 @@ Interfaces:
       assert!(sink.peak.load(Ordering::SeqCst) > 1, "exports never overlapped");
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export'`. Expect both new tests to FAIL:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export'`. Expect both new tests to FAIL:
   - `upstream_label_uses_the_runtime_that_answered` with `left: ["other"]`;
   - `slow_collector_does_not_drop_with_concurrent_exports` with a non-zero drop count (one export at a time clears about 2.5 batches/s against 10/s arriving).
-- [ ] In `runtime.rs`:
+- [x] In `runtime.rs`:
   - add `LABEL_HISTORY`, `RecordLabels` and the field `labels`;
   - `Runtime::initial()` gets `labels: Arc::from([])`;
   - in `build_with`, after the upstreams and policy are built:
@@ -804,15 +825,15 @@ Interfaces:
   let current = Arc::new(RecordLabels {
       version: s.version,
       upstreams: upstreams.specs.iter().map(|u| u.name.clone()).collect(),
-      groups: (0..policy.group_count()).map(|i| policy.group(i as u16).map_or(String::new(), |g| g.group_id().to_owned())).collect(),
+      groups: (0..=u16::MAX).map_while(|i| policy.group(i)).map(|g| g.group_id().to_owned()).collect(),
   });
   let labels: Arc<[Arc<RecordLabels>]> = std::iter::once(current)
       .chain(previous.into_iter().flat_map(|p| p.labels.iter().filter(|l| l.version != s.version).cloned()))
       .take(LABEL_HISTORY)
       .collect();
   ```
-  Use the names the committed `PolicyTable` has for its group count and lookup (`rt.policy.group(r.policy_group)` is what `otlp.rs` calls today).
-- [ ] In `otlp.rs`, replace `upstream_name` (and the policy-group lookup in `drain`) with:
+  The committed `PolicyTable` has no group count, so the groups are enumerated with `group(i)` until it returns `None` (`engine/src/filter.rs` is not this task's file).
+- [x] In `otlp.rs`, replace `upstream_name` (and the policy-group lookup in `drain`) with:
   ```rust
   /// The labels of the runtime that answered `r`: empty when that version is no longer kept.
   fn labels<'a>(rt: &'a Runtime, r: &QueryRecord) -> (&'a str, &'a str) {
@@ -824,13 +845,17 @@ Interfaces:
       })
   }
   ```
-- [ ] Still in `otlp.rs`, add `pub const MAX_INFLIGHT: usize = 4;`.
+- [x] Still in `otlp.rs`, add `pub const MAX_INFLIGHT: usize = 4;`.
   - Change `export_batch` to return the export future (`impl Future<Output = ()> + 'static`) instead of spawning.
   - In `run`, replace `inflight: Option<JoinHandle<()>>` with `let mut inflight = tokio::task::JoinSet::new();` and the select arm `Some(_) = inflight.join_next(), if !inflight.is_empty() => {}`.
   - After `ex.drain()`:
   ```rust
   // Drain again at once while a full batch waits, and keep up to MAX_INFLIGHT exports running.
-  while ex.shared.querylog.len() >= BATCH_MAX && ex.queue.len() < MAX_QUEUED_BATCHES {
+  // Bounded, so records that never form a batch (logs off) cannot starve the loop.
+  for _ in 0..MAX_QUEUED_BATCHES {
+      if ex.shared.querylog.len() < BATCH_MAX || ex.queue.len() >= MAX_QUEUED_BATCHES {
+          break;
+      }
       ex.drain();
   }
   while inflight.len() < MAX_INFLIGHT && let Some(batch) = ex.queue.pop_front() {
@@ -838,7 +863,7 @@ Interfaces:
   }
   ```
   Delete both `debt:` comments.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect all to pass.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test telemetry_export && cargo test --locked -p nexora-engine --test snapshot_apply && cargo test --locked -p nexora-engine --test hot_path_alloc'` and expect all to pass.
 
 ## Task 10: Recursor memory budget, atomic infra updates, uncapped NSEC cache (#16, #17, #18)
 
@@ -853,6 +878,7 @@ Files:
 - `engine/src/recursor/rrcache.rs`
 - `engine/src/recursor/dnssec/nsec_cache.rs`
 - `engine/src/recursor/dnssec/validator.rs` (construction only)
+- `engine/src/recursor/testnet.rs` (the `RecursionParams` literal gains `cache_max_bytes: 0`)
 - `engine/src/snapshot_m3.rs`
 
 Interfaces:
@@ -953,9 +979,9 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
   #[test]
   fn cache_max_bytes_outside_range_is_rejected() {
       for (bytes, ok) in [(0u64, true), (4 << 20, true), (64 << 20, true), (16 << 30, true), ((4 << 20) - 1, false), ((16 << 30) + 1, false)] {
-          let mut s = valid_snapshot(); // the module's existing builder
+          let mut s = ok_snapshot(); // the module's existing builder
           s.recursion.as_mut().unwrap().cache_max_bytes = bytes;
-          assert_eq!(validate(&s).is_ok(), ok, "cache_max_bytes {bytes}");
+          assert_eq!(validate_m3(&s).is_ok(), ok, "cache_max_bytes {bytes}");
       }
   }
   ```
@@ -1025,7 +1051,7 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
 - [ ] `nsec_cache.rs`:
   - remove `MAX_DENIALS_PER_ZONE` and its `debt:` comment, and `max_zones`;
   - add `capacity: AtomicU64`, `ZoneDenials.bytes: u64` and a cache-wide `bytes: u64` kept inside the mutex (`struct Zones { map: HashMap<Name, ZoneDenials>, bytes: u64 }`);
-  - an entry's bytes = `64 + Σ record_bytes(records)`; add them on insert (replacing an entry subtracts the old one), subtract on `retain` of expired entries;
+  - an entry's bytes = `64 + Σ record_bytes(records)`; add them on insert (replacing an entry subtracts the old one), subtract on `retain` of expired entries; a zone also counts `64 + Σ record_bytes(soa)` for its SOA;
   - a zone stops taking new entries once its own bytes would exceed the capacity;
   - after inserting, while `bytes > capacity`, remove the zone with the smallest `inserted` other than the one just written;
   - `set_capacity(bytes)` stores the capacity and evicts the same way.
@@ -1034,11 +1060,11 @@ pub fn record_bytes(r: &hickory_proto::rr::Record) -> u64;
 - [ ] `RecursorState::sync(&runtime)` in `recursor/mod.rs`: read the runtime's `RecursionParams::cache_max_bytes` (the params `recursor/dispatch.rs` builds from the snapshot), then call `set_capacity` with `memory::shares(..)` on `recursor.rrcache`, `recursor.infra` and the validator's aggressive NSEC cache.
 - [ ] `snapshot_m3.rs`: in the `recursion` block, add
   ```rust
-  if r.cache_max_bytes != 0 && !(memory::MIN_CACHE_MAX_BYTES..=memory::MAX_CACHE_MAX_BYTES).contains(&r.cache_max_bytes) {
-      return Err(SnapshotError::Invalid(format!(
-          "recursion.cache_max_bytes: {} not 0 or in 4194304..=17179869184",
+  if r.cache_max_bytes != 0 && !(MIN_CACHE_MAX_BYTES..=MAX_CACHE_MAX_BYTES).contains(&r.cache_max_bytes) {
+      return Err(format!(
+          "recursion.cache_max_bytes: {} not 0 or in {MIN_CACHE_MAX_BYTES}..={MAX_CACHE_MAX_BYTES}",
           r.cache_max_bytes
-      )));
+      ));
   }
   ```
   following the file's existing error style.
@@ -1051,9 +1077,9 @@ Depends on Task 3 (same `engine/src/server/mod.rs`).
 Files: `engine/src/server/buffers.rs` (new), `engine/src/server/mod.rs` (module declaration and the two `WorkerAnswerer` methods), `engine/src/server/stream.rs`, `engine/src/server/doq.rs`, `engine/tests/hot_path_alloc.rs`
 Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() -> Vec<u8>, give(Vec<u8>)}`.
 
-- [ ] In `hot_path_alloc.rs`, add a big-allocation counter next to `ALLOCS`: `static BIG: Cell<usize>`, incremented by the armed allocator when `layout.size() >= 60_000` in `alloc` and `realloc`.
-- [ ] Add a helper `stream_setup() -> (Arc<Shared>, Vec<u8> /* query */)`. It applies a snapshot with `acl_allow_cidrs: ["127.0.0.0/8"]`, an 8 MiB cache and no filter, and inserts a cached answer for `hot.example. A` for client `127.0.0.1` exactly as `measure` does (`CacheKey::in_partition(&v, policy.cache_partition())`).
-- [ ] Add the stream test:
+- [x] In `hot_path_alloc.rs`, add a big-allocation counter next to `ALLOCS`: `static BIG: Cell<usize>`, incremented by the armed allocator when the requested size is at least 60,000 octets (`layout.size()` in `alloc`, the new size in `realloc`).
+- [x] Add a helper `stream_setup() -> (Arc<Shared>, Vec<u8> /* query */)`. It applies a snapshot with `acl_allow_cidrs: ["127.0.0.0/8"]`, an 8 MiB cache and an empty filter (no lists), and inserts a cached answer for `hot.example. A` for client `127.0.0.1` exactly as `measure` does (`CacheKey::in_partition(&v, policy.cache_partition())`).
+- [x] Add the stream test:
   ```rust
   #[test]
   fn stream_answers_reuse_pooled_buffers() {
@@ -1092,17 +1118,17 @@ Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() 
       assert_eq!(BIG.with(Cell::get), 0, "a stream query allocated a 64 KiB buffer");
   }
   ```
-  If the async closure does not borrow-check, inline the loop body twice. The shape that matters: 64 warm-up round trips, then 1,000 measured ones.
-- [ ] Add `doq_answers_reuse_pooled_buffers` the same way:
+  As built, the round trip is a helper `async fn stream_roundtrip(wr, rd, frame, reply)` (it also asserts one answer) instead of the async closure. The shape that matters: 64 warm-up round trips, then 1,000 measured ones.
+- [x] Add `doq_answers_reuse_pooled_buffers` the same way:
   - self-signed `rcgen` certificate installed in a `CertStore`;
   - `nexora_engine::server::doq::bind_doq("127.0.0.1:0", tls::quic_server_config(store), doq::endpoint_config(&[7; 64]))`;
   - `run_doq(server, Rc::new(WorkerAnswerer(ctx)), store)` spawned locally;
   - a quinn client built as in `doq.rs`'s `client_endpoint` test helper;
-  - each query opens a bidirectional stream, writes the length-prefixed query with message ID 0 (DoQ requires it; rebuild `query` with ID 0), finishes, and reads to the end;
+  - each query opens a bidirectional stream, writes the length-prefixed query with message ID 0 (DoQ requires it; rebuild `query` with ID 0), finishes, and reads to the end into a preallocated reply buffer (`recv.read` loop, helper `doq_roundtrip`);
   - 32 warm-up queries, then 200 measured with `ARMED` set;
   - assert `BIG == 0` with the message `a DoQ query allocated a 64 KiB buffer`.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc -- stream_answers_reuse_pooled_buffers doq_answers_reuse_pooled_buffers'`. Expect FAIL on both assertions, with `left` about 2,000 (answer buffer and frame) and about 200.
-- [ ] Create `engine/src/server/buffers.rs`:
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc -- stream_answers_reuse_pooled_buffers doq_answers_reuse_pooled_buffers'`. Expect FAIL on both assertions, with `left` 1,000 (the answer buffer; the old frame is sized to the answer) and 200 (observed).
+- [x] Create `engine/src/server/buffers.rs`:
   ```rust
   //! Per-worker pool of stream query, answer and frame buffers. Every worker thread runs its own
   //! single-threaded runtime, so a thread-local pool is a per-worker pool without locks.
@@ -1138,20 +1164,20 @@ Interfaces: `server::buffers::{POOL_MAX = 256, BUFFER_CAPACITY = 65_537, take() 
   }
   ```
   Declare `pub mod buffers;` in `server/mod.rs`.
-- [ ] In `WorkerAnswerer::answer_frames`, replace `let mut out = vec![0u8; 65535];` with `let mut out = buffers::take(); out.resize(65535, 0);`. `answer` already resizes the `out` it is given.
-- [ ] In `stream.rs`:
+- [x] In `WorkerAnswerer::answer_frames`, replace `let mut out = vec![0u8; 65535];` with `let mut out = buffers::take(); out.resize(65535, 0);`. `answer` already resizes the `out` it is given. On a `FastOutcome::Slow` outcome (zone transfer), `buffers::give(out)` before running the slow job. `buffers.rs` has a unit test `pool_reuses_bounded_and_rejects_grown_buffers` (reuse, capacity check, `POOL_MAX` bound).
+- [x] In `stream.rs`:
   - replace `let mut msg = vec![0u8; n];` with `let mut msg = buffers::take(); msg.resize(n, 0);`;
   - in the per-query task, build each frame from `buffers::take()` and `give` the answer message after copying it;
   - `give(msg)` after `answer_frames` returns;
-  - in the writer task, `buffers::give(frame)` after `write_all`;
+  - in the writer task, `buffers::give(frame)` after `write_all` (whether or not it succeeded);
   - delete the `debt:` comment.
-- [ ] In `doq.rs`:
-  - read the stream into a pooled buffer, `let mut buf = buffers::take();` with a `recv.read` loop up to `MAX_STREAM` (exceeding it keeps the existing protocol error), instead of `read_to_end`;
+- [x] In `doq.rs`:
+  - read the stream into a pooled buffer, `let mut buf = buffers::take();` with a `recv.read_chunk(MAX_STREAM + 1 - buf.len(), true)` loop up to `MAX_STREAM` (exceeding it keeps the existing `message too long` protocol error), instead of `read_to_end`; new test `oversized_stream_closes_connection_with_protocol_error` in `doq.rs` (a shared `connect_echo_server` helper also serves the existing test);
   - `let mut out = buffers::take();` for the answer;
   - the frame comes from `buffers::take()`;
-  - `give` all three after `send.write_all`;
+  - `give` all three after `send.write_all` (error paths drop them);
   - delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --lib server:: && cargo test --locked -p nexora-engine --test upstream_encrypted && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect all to pass. That covers `pipelined_queries_all_answered_on_one_stream`, `one_stream_per_query_and_nonzero_id_closes_connection` and zone transfers over TCP.
+- [x] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test hot_path_alloc && cargo test --locked -p nexora-engine --lib server:: && cargo test --locked -p nexora-engine --test upstream_encrypted && cargo test --locked -p nexora-engine --test authoritative_pipeline'` and expect all to pass. That covers `pipelined_queries_all_answered_on_one_stream`, `one_stream_per_query_and_nonzero_id_closes_connection` and zone transfers over TCP.
 
 ## Task 12: recursor_cache_max_bytes in the API, snapshot and GUI (#18)
 
@@ -1208,12 +1234,12 @@ Interfaces: store field `ResolutionSettings.RecursorCacheMaxBytes int64`; API fi
   ALTER TABLE resolution_settings DROP COLUMN recursor_cache_max_bytes;
   ```
 - [ ] `store/resolution.go`: add `RecursorCacheMaxBytes int64` to `ResolutionSettings` and to the select and update statements of `GetResolutionSettings`/`UpdateResolutionSettings`.
-- [ ] `openapi.yaml`: in `ResolutionSettings`, add `recursor_cache_max_bytes` to `required` and the property `recursor_cache_max_bytes: { type: integer, format: int64, minimum: 4194304, maximum: 17179869184, description: "Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes." }`. Run `make generate` on the laptop; expect `gen.go` and `schema.d.ts` to change.
-- [ ] `api/resolution.go`: map the field in `resolutionOut` and in the update input.
+- [ ] `openapi.yaml`: in `ResolutionSettings`, add `recursor_cache_max_bytes` to `required` and the property `recursor_cache_max_bytes: { type: integer, format: int64, minimum: 4194304, maximum: 17179869184, description: "Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes." }`. Regenerate on the laptop with `cd mgmt/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml` (the version `gen.go` was generated with) and `cd web && pnpm run gen:api`; expect `gen.go` and `schema.d.ts` to change.
+- [ ] `api/resolution.go`: map the field in `resolutionOut` and in the update input; `validateResolution` rejects values outside 4194304..17179869184 with `invalid_request`.
 - [ ] `snapshot/resolution.go`: add `CacheMaxBytes: uint64(res.RecursorCacheMaxBytes),` to the `RecursionConfig` literal.
 - [ ] `ResolutionSection.tsx`:
   - form field `recursor_cache_mib: string`, initialised with `String(s.recursor_cache_max_bytes / 1048576)`;
-  - an input labelled `Recursor cache memory (MiB)` (type number, min 4, max 16384), with the M6 help tooltip "Memory for the RRset, aggressive NSEC and server caches of recursive resolution";
+  - an input labelled `Recursor cache memory (MiB)` (type number, min 4, max 16384), with the hint "Memory for the RRset, aggressive NSEC and server caches of recursive resolution" (the `Field` `hint` this page already uses; the M6 help tooltip is not on this branch);
   - saved as `recursor_cache_max_bytes: Number(form.recursor_cache_mib) * 1048576`.
 - [ ] In `17-resolution.spec.ts`, after the "Maximum upstream queries" fill:
   - `await card.getByLabel("Recursor cache memory (MiB)").fill("128");`;
@@ -1225,7 +1251,7 @@ Interfaces: store field `ResolutionSettings.RecursorCacheMaxBytes int64`; API fi
 Files: `mgmt/internal/control/server.go`, `mgmt/internal/control/control_test.go`, `mgmt/migrations/00801_blobs_storage_external.sql` (new)
 Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most `BlobChunkSize`, `codes.NotFound` for unknown blobs).
 
-- [ ] Add to `control_test.go` (imports `runtime`, `time`, `crypto/sha256`):
+- [ ] Add to `control_test.go` (imports `runtime`, `time`, `crypto/sha256`). The 64 MiB insert runs on a closed dedicated connection: on a pooled connection pgx v5.11 keeps the encoded parameter referenced until that connection's next query, which made the heap check read 75 MiB in 2 of 26 runs after the rewrite:
   ```go
   func TestGetBlobDoesNotHoldWholeBlob(t *testing.T) {
   	f := setup(t, 1)
@@ -1233,7 +1259,16 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   	data := make([]byte, 64<<20)
   	_, _ = rand.Read(data)
   	sha := sha256Hex(data)
-  	if _, err := f.st.Pool.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3)", sha, len(data), data); err != nil {
+  	// A pgx connection keeps its last parameters referenced (ExtendedQueryBuilder.ParamValues), so
+  	// the insert runs on a connection that is closed afterwards: only the server's heap is measured.
+  	conn, err := f.st.Pool.Acquire(f.ctx)
+  	if err != nil {
+  		t.Fatal(err)
+  	}
+  	if _, err := conn.Exec(f.ctx, "insert into blobs(sha256,size,data) values ($1,$2,$3)", sha, len(data), data); err != nil {
+  		t.Fatal(err)
+  	}
+  	if err := conn.Hijack().Close(f.ctx); err != nil {
   		t.Fatal(err)
   	}
   	data = nil
@@ -1304,29 +1339,27 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/control -run "TestGetBlob"'`. Expect `TestGetBlobDoesNotHoldWholeBlob` to FAIL with `heap 6x MiB while a 64 MiB blob is mid-stream`; `TestGetBlobChunkBoundaries` passes today and guards the rewrite.
+- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/control -run "TestGetBlob"'`. Expect `TestGetBlobDoesNotHoldWholeBlob` to FAIL with `heap NNN MiB while a 64 MiB blob is mid-stream` (199 MiB measured before the rewrite); `TestGetBlobChunkBoundaries` passes today and guards the rewrite.
 - [ ] Rewrite the body of `GetBlob` after authentication and the `sha256RE` check (delete the `debt:` comment):
   ```go
   // Blobs are content-addressed and never change, so chunks read by separate statements belong to
   // one value; a blob collected mid-stream ends the stream with NotFound (the engine checks size
   // and SHA-256 and retries).
   var size int64
-  err := s.st.Pool.QueryRow(ctx, "select octet_length(data) from blobs where sha256 = $1", req.Sha256).Scan(&size)
-  if errors.Is(err, pgx.ErrNoRows) {
-  	return status.Error(codes.NotFound, "blob not found")
-  }
-  if err != nil {
-  	return status.Errorf(codes.Internal, "blob: %v", err)
+  if err := s.st.Pool.QueryRow(ctx, "select octet_length(data) from blobs where sha256 = $1", req.Sha256).Scan(&size); err != nil {
+  	if errors.Is(store.MapError(err), store.ErrNotFound) {
+  		return status.Error(codes.NotFound, "blob not found")
+  	}
+  	return grpcError(err)
   }
   for off := int64(0); off < size; off += BlobChunkSize {
   	var chunk []byte
-  	err := s.st.Pool.QueryRow(ctx, "select substring(data from $2 for $3) from blobs where sha256 = $1",
-  		req.Sha256, off+1, BlobChunkSize).Scan(&chunk)
-  	if errors.Is(err, pgx.ErrNoRows) {
-  		return status.Error(codes.NotFound, "blob removed while streaming")
-  	}
-  	if err != nil {
-  		return status.Errorf(codes.Internal, "blob: %v", err)
+  	if err := s.st.Pool.QueryRow(ctx, "select substring(data from $2 for $3) from blobs where sha256 = $1",
+  		req.Sha256, off+1, BlobChunkSize).Scan(&chunk); err != nil {
+  		if errors.Is(store.MapError(err), store.ErrNotFound) {
+  			return status.Error(codes.NotFound, "blob removed while streaming")
+  		}
+  		return grpcError(err)
   	}
   	if err := stream.Send(&controlv1.BlobChunk{Data: chunk}); err != nil {
   		return err
@@ -1334,7 +1367,7 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
   }
   return nil
   ```
-  Keep the error messages the existing code uses for NotFound, if they differ.
+  Errors keep the existing mapping (`store.MapError` for NotFound, `grpcError` for Unavailable/Canceled/Internal) and the existing `blob not found` message.
 - [ ] Create `mgmt/migrations/00801_blobs_storage_external.sql`:
   ```sql
   -- +goose Up
@@ -1352,8 +1385,8 @@ Interfaces: `(*control.Server).GetBlob` unchanged on the wire (chunks of at most
 Files: `mgmt/internal/querylog/opensearch.go`, `mgmt/internal/querylog/opensearch_test.go`, `e2e/querylog_paging_test.go` (new)
 Interfaces: the cursor is base64url JSON `[timestamp, _id]`; a one-element cursor is accepted as `[timestamp, ""]`.
 
-- [ ] Re-read `opensearch.go` at the M6 head (M6 #54, #56, #61 change the filters) and keep M6's filter code.
-- [ ] Add to `opensearch_test.go` (imports `encoding/base64`, `encoding/json`):
+- [x] Re-read `opensearch.go` at the M6 head (M6 #54, #56, #61 change the filters) and keep M6's filter code. (Built on m7 at 3ac5883, where M6 T5's filter changes are not yet merged; the change touches only the `sort` entry and the cursor decoding, so the merge with M6's filter code is textual only.)
+- [x] Add to `opensearch_test.go` (imports `encoding/base64`, `encoding/json`):
   ```go
   func TestOpenSearchSortHasUniqueTiebreaker(t *testing.T) {
   	var bodies []string
@@ -1399,7 +1432,7 @@ Interfaces: the cursor is base64url JSON `[timestamp, _id]`; a one-element curso
   	}
   }
   ```
-- [ ] Create `e2e/querylog_paging_test.go`:
+- [x] Create `e2e/querylog_paging_test.go`:
   ```go
   package e2e
 
@@ -1452,8 +1485,8 @@ Interfaces: the cursor is base64url JSON `[timestamp, _id]`; a one-element curso
   }
   ```
   Use the query-log response field names and name filter of `mgmt/api/openapi.yaml` (`/query-log`) at the M6 head. The `name` filter keeps other tests' documents out, if the index pattern overlaps.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/querylog -run TestOpenSearchSortHasUniqueTiebreaker'`. Expect FAIL `sort lacks the _id tiebreaker`. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run TestOpenSearchPagesRecordsSharingAMillisecond'`. Expect FAIL `paged records map[r0.paging.test.:true], want all 3`: page 2's `search_after [ts]` skips the other two.
-- [ ] In `opensearch.go`, set `"sort": []map[string]any{{"@timestamp": map[string]any{"order": "desc"}}, {"_id": map[string]any{"order": "asc"}}},` and delete the `debt:` comment. In cursor decoding:
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/querylog -run TestOpenSearchSortHasUniqueTiebreaker'`. Expect FAIL `sort lacks the _id tiebreaker`. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run TestOpenSearchPagesRecordsSharingAMillisecond'`. Expect FAIL `paged records map[r0.paging.test.:true], want all 3`: page 2's `search_after [ts]` skips the other two.
+- [x] In `opensearch.go`, set `"sort": []map[string]any{{"@timestamp": map[string]any{"order": "desc"}}, {"_id": map[string]any{"order": "asc"}}},` and replace the `debt:` comment with a one-line note on the tiebreaker. In cursor decoding:
   ```go
   if err != nil || json.Unmarshal(raw, &after) != nil || len(after) == 0 || len(after) > 2 {
   	return Page{}, ErrInvalidCursor
@@ -1462,14 +1495,14 @@ Interfaces: the cursor is base64url JSON `[timestamp, _id]`; a one-element curso
   	after = append(after, "")
   }
   ```
-- [ ] Run both commands again and expect PASS. Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/querylog/... && go test -count=1 ./e2e -run "TestQueryLogBackends|TestQueryLogCategoryAttribution"'` and expect PASS.
+- [x] Run both commands again and expect PASS. Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/querylog/... && go test -count=1 ./e2e -run "TestQueryLogBackends|TestQueryLogCategoryAttribution"'` and expect PASS.
 
 ## Task 15: PKCS#11 session recovery (#27)
 
-Files: `mgmt/internal/secrets/pkcs11.go`, `mgmt/internal/secrets/pkcs11_test.go`, `mgmt/internal/secrets/export_test.go` (new)
-Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `module, label, pinFile string`, `mu sync.Mutex`, `gen uint64`. Test-only `(*Box).KillHSMSessionsForTest() error` and `(*Box).HSMPoolLenForTest() int`.
+Files: `mgmt/internal/secrets/pkcs11.go`, `mgmt/internal/secrets/pkcs11_test.go`, `mgmt/internal/secrets/export_test.go` (new), `mgmt/internal/secrets/secrets.go` (`Unseal` passes `ErrBackendUnavailable` through)
+Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `label, pinFile string`, `mu sync.Mutex`, `gen uint64`. Test-only `(*Box).KillHSMSessionsForTest() error` and `(*Box).HSMPoolLenForTest() int`.
 
-- [ ] Create `mgmt/internal/secrets/export_test.go`:
+- [x] Create `mgmt/internal/secrets/export_test.go`:
   ```go
   //go:build cgo
 
@@ -1481,7 +1514,7 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   // HSMPoolLenForTest reports the sessions currently idle in the pool.
   func (b *Box) HSMPoolLenForTest() int { return len(b.hsm.pool) }
   ```
-- [ ] Add to `pkcs11_test.go`:
+- [x] Add to `pkcs11_test.go`:
   ```go
   func TestPKCS11RecoversFromInvalidatedSessions(t *testing.T) {
   	cfg := softhsmConfig(t)
@@ -1510,8 +1543,9 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   		}
   		verifySignerMatchesDNSKEY(t, box, k)
   	}
-  	// A reset the pool cannot recover from: the PIN is gone.
-  	if err := os.Chmod(cfg.PKCS11PinFile, 0); err != nil {
+  	// A reset the pool cannot recover from: the PIN is gone. The tests run as root in the dev pod,
+  	// where chmod 0 does not stop reading, so the file gets a wrong PIN instead.
+  	if err := os.WriteFile(cfg.PKCS11PinFile, []byte("000000\n"), 0o600); err != nil {
   		t.Fatal(err)
   	}
   	if err := box.KillHSMSessionsForTest(); err != nil {
@@ -1532,10 +1566,10 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
   	}
   }
   ```
-  If the tests run as root (so `chmod 0` does not stop reading), replace the PIN file content with a wrong PIN instead. Use the package's name for `ErrBackendUnavailable`, if it differs.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/secrets -run TestPKCS11RecoversFromInvalidatedSessions'`. Expect FAIL `unseal 0 after the reset: "" pkcs11: 0xB3: CKR_SESSION_HANDLE_INVALID`.
-- [ ] In `pkcs11.go`:
-  - store `module`, `label`, `pinFile` in `openHSM`;
+  The dev pod runs tests as root, so `chmod 0` does not stop reading; the test writes a wrong PIN instead.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/secrets -run TestPKCS11RecoversFromInvalidatedSessions'`. Expect FAIL `unseal 0 after the reset: "" envelope authentication failed` (`Unseal` hides the `CKR_SESSION_HANDLE_INVALID` underneath).
+- [x] In `pkcs11.go`:
+  - store `label`, `pinFile` in `openHSM`; the slot lookup and the login move into `findSlot()` and `login(sh, pin)`, shared by `openHSM` and `reopen`;
   - add `mu sync.Mutex` and `gen uint64`;
   - replace `with` (delete the `debt:` comment):
   ```go
@@ -1576,8 +1610,9 @@ Interfaces: `(*HSM).with(fn)` unchanged for callers. New unexported fields `modu
     2. finds the slot by `label` again (the slot id can change after re-insertion) and stores it;
     3. opens a RW session;
     4. if `seenGen == h.gen` (the first recovery for this event), reads the PIN with `readSecretFile(pinFile)`, logs in with `CKU_USER`, tolerates `CKR_USER_ALREADY_LOGGED_IN`, clears the PIN bytes and increments `gen`;
-    5. returns the new handle.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/secrets/... ./mgmt/internal/dnssec/...'` and expect all to pass, including `TestPKCS11SigningKeysStayInToken` and `TestSweepLeavesOtherInstallationsTokenKeys`.
+    5. returns the new handle; on a failed login it closes the new session first.
+- [x] In `secrets.go` `Unseal`, return an unwrap error that `errors.Is(err, ErrBackendUnavailable)` as is, instead of `envelope authentication failed`: a lost token is not a forged envelope.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/secrets/... ./mgmt/internal/dnssec/...'` and expect all to pass, including `TestPKCS11SigningKeysStayInToken` and `TestSweepLeavesOtherInstallationsTokenKeys`.
 
 ## Task 16: Streaming zone export (#28)
 
@@ -1589,7 +1624,7 @@ Interfaces:
 - `(*Writer).SOA(dns.RR) error`, `(*Writer).Record(dns.RR) error`, `(*Writer).Flush() error`
 - `zonefile.Export` keeps its signature and output, built on `Writer`.
 
-- [ ] Create `mgmt/internal/zone/export_test.go`:
+- [x] Create `mgmt/internal/zone/export_test.go`:
   ```go
   package zone_test
 
@@ -1625,15 +1660,15 @@ Interfaces:
   	}
   }
   ```
-  Use `zonefile.Parse`'s real options type and result field names.
-- [ ] Create `mgmt/internal/api/zonefile_test.go`: `TestExportZoneFileStreams`.
-  - It creates a zone (through the API, as `resolution_test.go` creates RPZ zones) and one record.
+  `zonefile.Parse` is called with `zonefile.Options{AllowedTypes: zone.ManagedTypes, MaxRecords: zone.MaxImportRecords}` (an empty `Options` rejects every type).
+- [x] Create `mgmt/internal/api/zonefile_test.go`: `TestExportZoneFileStreams`.
+  - It creates a zone (through the API, as `tsig_keys_test.go` does) and one record: a `www` TXT of 12 × 255-octet strings, because net/http announces a `Content-Length` by itself when the whole body fits its 2 KiB buffer before the handler returns.
   - It performs a raw `GET /api/v1/zones/<id>/export` with the operator client's `http.Client` and cookie jar.
   - It asserts status 200, the `Content-Disposition` header present, `resp.ContentLength == -1` (no `Content-Length`: the body streams), and a body containing `www`.
   - Add a `raw(method, path string) *http.Response` helper next to `client.do` in this file.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run TestExportToIsStableAndReparses; go test -count=1 ./mgmt/internal/api -run TestExportZoneFileStreams'`. Expect a compile FAIL `s.ExportTo undefined` for the first. For the second, expect FAIL `ContentLength = <n>, want -1`.
-- [ ] In `zonefile/export.go`, extract the per-record line writing of `Export` into `Writer` (header `$ORIGIN`/`$TTL`, `SOA`, `Record` with the relative owner names and presentation `rdataText` Export already uses, `Flush`). `Export` sorts as before and writes through a `Writer`; `TestExportIsStableAndReparses` must keep passing unchanged.
-- [ ] In `zone/import.go`, replace `Export` (delete the `debt:` comment) with `ExportTo`. Keep `Export(ctx, zoneID, w)` as a one-line wrapper if other callers use it.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run TestExportToIsStableAndReparses; go test -count=1 ./mgmt/internal/api -run TestExportZoneFileStreams'`. Expect a compile FAIL `s.ExportTo undefined` for the first. For the second, expect FAIL `ContentLength = <n>, want -1`.
+- [x] In `zonefile/export.go`, extract the per-record line writing of `Export` into `Writer` (header `$ORIGIN`/`$TTL`, `SOA`, `Record` with the relative owner names and presentation `rdataText` Export already uses, `Flush`). `Export` sorts as before and writes through a `Writer`; `TestExportIsStableAndReparses` must keep passing unchanged.
+- [x] In `zone/import.go`, replace `Export` (delete the `debt:` comment) with `ExportTo`. `Export` had no caller besides the handler, so no wrapper is kept.
   ```go
   // ExportTo writes the zone file of zoneID to w, streaming records from one read-only snapshot:
   // the SOA from the zone row, then the apex, then owners byte-wise, then type and RDATA.
@@ -1672,26 +1707,28 @@ Interfaces:
   	return zw.Flush()
   }
   ```
-  Use the existing helpers for reading the zone row, building the SOA and decoding a row (the ones `Export`/`loadRecordRRs` use). Put the row decoder in `import.go` if it has to be split out of `service.go`: `service.go` is Task 17's file.
-- [ ] In `api/zonefile.go`, keep the `GetZone` 404 check. Then stream:
+  The zone row is read with `loadZone(ctx, tx, zoneID, false)` and the SOA built with `soaRR`. The per-row decoding (`PackDomainName` + `nzf.ToRR`, as `loadRecordRRs` does) is written inline in `ExportTo`, because `service.go` is Task 17's file.
+- [x] In `api/zonefile.go`, keep the `GetZone` 404 check. Then stream:
   ```go
   pr, pw := io.Pipe()
   go func() { pw.CloseWithError(h.d.Zones.ExportTo(ctx, id, pw)) }()
   return ExportZoneFile200TextplainCharsetUtf8Response{Body: pr, Headers: ExportZoneFile200ResponseHeaders{ContentDisposition: disposition}}, nil
   ```
   `ContentLength` stays zero, so the generated visitor sets no `Content-Length`. A failure after the status line truncates the body, and the generated error handler logs it.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone/... ./mgmt/internal/zonefile/... ./mgmt/internal/api/... && make e2e-build && go test -count=1 ./e2e -run TestZoneFileRoundTrip'` and expect all to pass.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone/... ./mgmt/internal/zonefile/... ./mgmt/internal/api/... && make e2e-build && go test -count=1 ./e2e -run TestZoneFileRoundTrip'` and expect all to pass.
 
 ## Task 17: Record edits without loading the zone (#29)
 
-Files: `mgmt/internal/zone/service.go`, `mgmt/internal/zone/build.go`, `mgmt/internal/zone/validate.go`, `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)
+Files: `mgmt/internal/zone/service.go`, `mgmt/internal/zone/build.go`, `mgmt/internal/zone/validate.go`, `mgmt/internal/zone/model.go` (`RebuildOptions` lives there; one field and one type added), `mgmt/internal/zone/edit_test.go` (new), `mgmt/internal/zone/export_internal_test.go` (new)
 Interfaces:
 
 - `RebuildOptions` gains `Edit *EditDelta`, with `type EditDelta struct { Before, After []dns.RR }`: the RRsets at the edited owner/type pairs before and after the change.
 - `checkOwners(ctx context.Context, tx pgx.Tx, z *Zone, owners ...string) error` replaces `checkZoneRecords` for record edits.
+- `recordEdit(ctx, tx, z, owners []string, sets []rrset, change func() error) (*EditDelta, error)` reads the RRsets, runs the change, checks the owners and reads the RRsets again; `rtypeOf(*Record) uint16`.
+- `build.go` helpers shared by both paths: `nextSerial(z, opts)`, `writeVersion(ctx, tx, z, origin, newSerial, d *nzf.Delta, forceImage, image func() ([]nzf.Record, error))`, `writeImage(ctx, tx, z, origin, seq, serial, recs)`.
 - `CheckSet` stays for import and dynamic updates.
 
-- [ ] Create `mgmt/internal/zone/edit_test.go` (package `zone_test`, reusing `newService`, `createZone` and `actor` from `service_test.go`):
+- [x] Create `mgmt/internal/zone/edit_test.go` (package `zone_test`, reusing `newService`, `createZone` and `actor` from `service_test.go`):
   ```go
   // rowTracer counts the rows each zone_records SELECT returned.
   type rowTracer struct {
@@ -1760,7 +1797,7 @@ Interfaces:
   	}
   }
   ```
-  Creating 2,000 records one by one is slow but valid; bulk-insert them with SQL plus one rebuild if the test exceeds 2 minutes. An image falling due during the three measured edits reads the full set legitimately: before resetting the tracer, force an image, for example with the `Rebuild` `Force` option the zone package already has, so none is due.
+  As built, the 2,000 records are bulk-inserted with one `INSERT ... SELECT generate_series` and published by `zone.RebuildWithImageForTest(t, pool, zoneID)` (in `export_internal_test.go`): a forced `Rebuild` plus a full image at the new version (`Force` alone writes no image), so no image falls due during the three measured edits.
   ```go
   func TestIncrementalEditsMatchFullRebuild(t *testing.T) {
   	ctx := context.Background()
@@ -1801,7 +1838,7 @@ Interfaces:
   	}
   }
   ```
-  `LoadServed` and `LoadRecords` are the exported loaders in `build.go`/`service.go`; adapt their signatures. Add `DiffForTest` in `mgmt/internal/zone/export_internal_test.go`, a package-internal test file this task owns: it compares ignoring SOA serial and RRSIGs and returns the differing lines. A failed create or update (for example an RRset TTL conflict) is fine and skipped.
+  As built: `LoadServed(ctx, tx, z)` and `LoadRecords(ctx, tx, zoneID)` take a transaction, so the test begins one and re-reads the zone with `GetZone`; after every edit the test refreshes the revisions of the live records (a sibling's TTL change bumps them) and fails if fewer than 100 of the 200 edits succeeded, so the delta is exercised. Add `DiffForTest` in `mgmt/internal/zone/export_internal_test.go`, a package-internal test file this task owns: it compares ignoring SOA serial and RRSIGs and returns the differing lines. A failed create or update (for example an RRset TTL conflict) is fine and skipped.
   ```go
   func TestOwnerScopedChecksKeepRules(t *testing.T) {
   	ctx := context.Background()
@@ -1835,24 +1872,24 @@ Interfaces:
   	_, err = s.UpdateRecord(ctx, actor, z.ID, c.ID, c.Revision, zone.RecordInput{Name: "host.own.test.", Type: "CNAME", TTL: 300, Data: "www.example."})
   	code(err, "cname_conflict")
   	_ = a
-  	ns := apexNS(t, s, z.ID) // the zone's only apex NS record
+  	ns := apexNS(t, s, z) // the zone's only apex NS record
   	_, err = s.UpdateRecord(ctx, actor, z.ID, ns.ID, ns.Revision, zone.RecordInput{Name: "www.own.test.", Type: "NS", TTL: 300, Data: "ns1.own.test."})
   	code(err, "last_apex_ns")
   }
   ```
   `apexNS` lists the zone's records with the service's list function and returns the apex NS.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run "TestRecordEditDoesNotLoadWholeZone|TestIncrementalEditsMatchFullRebuild|TestOwnerScopedChecksKeepRules"'`. Expect `TestRecordEditDoesNotLoadWholeZone` to FAIL with `a record edit read 20xx zone_records rows`. The other two pass today and guard the rewrite.
-- [ ] In `validate.go`, factor `CheckSet`'s rules into per-owner functions. `CheckSet` keeps calling them over the whole set.
-- [ ] In `service.go`, add `checkOwners`. It reads only these rows and applies the same rules and error codes:
-  - `SELECT owner, rtype, rdata_wire FROM zone_records WHERE zone_id = $1 AND lower(owner) = ANY($2)` for the edited owners plus their ancestors up to the apex (DNAME above, DS/NS at the owner, CNAME exclusivity);
-  - `SELECT count(*) FROM zone_records WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = 2` (apex NS);
-  - for an owner holding a DNAME, `SELECT EXISTS (SELECT 1 FROM zone_records WHERE zone_id = $1 AND lower(owner) LIKE '%.' || $2 ESCAPE '\')` with `%`, `_` and `\` escaped in `$2`.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./mgmt/internal/zone -run "TestRecordEditDoesNotLoadWholeZone|TestIncrementalEditsMatchFullRebuild|TestOwnerScopedChecksKeepRules"'`. Expect `TestRecordEditDoesNotLoadWholeZone` to FAIL with `a record edit read 20xx zone_records rows`. The other two pass today and guard the rewrite.
+- [x] In `validate.go`, factor `CheckSet`'s rules into per-owner functions. `CheckSet` keeps calling them over the whole set.
+- [x] In `service.go`, add `checkOwners`. It reads only these rows and applies the same rules and error codes:
+  - `SELECT lower(owner), rtype FROM zone_records WHERE zone_id = $1 AND lower(owner) = ANY($2)` for the apex, the edited owners and their ancestors up to the apex (DNAME above, DS/NS at the owner, CNAME exclusivity); the apex is always among the names, so this also gives the apex NS count without a separate query;
+  - for an owner holding a DNAME, `SELECT lower(owner) FROM zone_records WHERE zone_id = $1 AND lower(owner) LIKE '%.' || $2 ESCAPE '\' LIMIT 1` with `%`, `_` and `\` escaped in `$2` (the name found goes into the `dname_occludes` message, as `CheckSet` words it);
+  - owners with no records left are skipped, as `CheckSet` only visits owners that hold records.
   - `CreateRecord` checks the new owner; `UpdateRecord` checks the old and new owners; `DeleteRecord` checks the deleted owner.
   - Replace the `checkZoneRecords` calls, and delete `checkZoneRecords` if nothing else uses it.
-- [ ] In `CreateRecord`/`UpdateRecord`/`DeleteRecord`:
+- [x] In `CreateRecord`/`UpdateRecord`/`DeleteRecord`:
   - read the RRsets at each affected (owner, type) before the change (`SELECT ... WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = $3`) and after it;
   - pass them as `RebuildOptions{Edit: &EditDelta{Before, After}}` through `Mutate`.
-- [ ] In `build.go`'s `Rebuild`, add the incremental path at the top:
+- [x] In `build.go`'s `Rebuild`, add the incremental path at the top:
   ```go
   if opts.Edit != nil && !z.DNSSECEnabled && z.Kind == "primary" && z.CurrentSeq > 0 && !opts.Force {
   	return rebuildEdit(ctx, tx, z, opts, now)
@@ -1862,36 +1899,36 @@ Interfaces:
   1. converts `Before`/`After` with `toRecords`;
   2. diffs them with `diffIgnoringSOA(before, after)` (no change and no serial → return false);
   3. computes the new serial as `Rebuild` does;
-  4. builds the old SOA from the zone row with `oldSerial` and the new SOA with `newSerial` (`setSOASerial` on the row's SOA RR);
+  4. builds the old SOA from the zone row with `oldSerial` and the new SOA with `newSerial` (`soaRR(z)` with the serial replaced); it reads the served serial at `current_seq` (`zone_journal.to_serial`, else `zone_images.serial`) and forces an image when it differs from the row's serial, as `Rebuild` does;
   5. writes the `nzf.Delta{Origin, FromSerial, ToSerial, Deleted: [oldSOA]+deleted, Added: [newSOA]+added}` journal row exactly as `Rebuild` does;
   6. when `needImage` is due, loads `desiredRRs` once and writes the image;
   7. prunes the journal and updates the zone row as `Rebuild` does.
   - Share the journal, image and zone-row code with `Rebuild` by extracting it into a helper rather than copying it.
   - Replace the old `debt:` marker in `service.go` with this marker at the incremental-path condition in `build.go`:
     `// debt: DNSSEC-signed zones still rebuild from the whole record set per edit (NSEC/NSEC3 chain and RRSIG maintenance need the ordered owner set; zone_signatures limits re-signing); revisit when signed zones with hundreds of thousands of records are edited record by record.`
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/zone/... ./mgmt/internal/dnssec/... ./mgmt/internal/dynupdate/... ./mgmt/internal/xfrin/...'` and expect all to pass. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run "TestAuthoritativeZonePropagation|TestZoneFileRoundTrip|TestDynamicUpdate"'` and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 -race ./mgmt/internal/zone/... ./mgmt/internal/dnssec/... ./mgmt/internal/dynupdate/... ./mgmt/internal/xfrin/...'` and expect all to pass. Run `scripts/dev-exec.sh 'make e2e-build && go test -count=1 ./e2e -run "TestAuthoritativeZonePropagation|TestZoneFileRoundTrip|TestSecondaryAndDynamicUpdate"'` and expect PASS.
 
 ## Task 18: Wildcard synthesis in the private DNS hierarchy (#9)
 
 Files: `e2e/fixtures/authhier/spec.go`, `e2e/fixtures/authhier/server.go`, `e2e/fixtures/authhier/authhier_test.go`, `e2e/dnssec_test.go`
 Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `DefaultSpec` gains `*.w.good.test.`, `*.w.n3.test.` and the zone `wild.test.` on 127.0.53.12.
 
-- [ ] In `spec.go`:
+- [x] In `spec.go`:
   - add the field `OmitWildcardProof bool \`json:"omit_wildcard_proof"\``with the comment`serves synthesised wildcard answers without the next-closer denial`;
   - add to `good.test.` the records `*.w.good.test. 300 IN A 192.0.2.60` and `*.w.good.test. 300 IN TXT "wild"`;
   - add to `n3.test.` the record `*.w.n3.test. 300 IN A 192.0.2.61`;
   - add to `test.` the records `wild.test. 300 IN NS ns.wild.test.` and `ns.wild.test. 300 IN A 127.0.53.12`;
   - add the zone `{Origin: "wild.test.", ServerIP: "127.0.53.12", Signed: true, NSEC3Iterations: nsec, OmitWildcardProof: true, Records: ["wild.test. 300 IN SOA ns.wild.test. hostmaster.wild.test. 1 3600 600 86400 300", "wild.test. 300 IN NS ns.wild.test.", "ns.wild.test. 300 IN A 127.0.53.12", "*.w.wild.test. 300 IN A 192.0.2.62"]}`;
   - extend the `DefaultSpec` doc table.
-- [ ] Add to `authhier_test.go` `TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof`:
+- [x] Add to `authhier_test.go` `TestWildcardAnswerCarriesExpandedSignatureAndNextCloserProof`:
   - start the default hierarchy as the other tests there do;
   - query `x.w.good.test. A` with DO at 127.0.53.3;
   - assert one A `192.0.2.60` owned by `x.w.good.test.`;
-  - assert an RRSIG over it with `Labels == 3` (fewer than the owner's 4) that verifies against the zone's ZSK with the owner rewritten back to `*.w.good.test.` (`sig.Verify(zsk, []dns.RR{wildcardCopy})`);
+  - assert an RRSIG over it with `Labels == 3` (fewer than the owner's 4) that verifies against the zone's ZSK with the owners of copies of the A and the RRSIG rewritten back to `*.w.good.test.` (`wildSig.Verify(zsk, []dns.RR{wildcardCopy})`; miekg's `Verify` rejects an RRset whose owner differs from the RRSIG's);
   - assert an NSEC in the authority section whose owner sorts before `x.w.good.test.` and whose next name sorts after it;
   - query `x.w.good.test. AAAA` and assert NOERROR, no answer, SOA and NSEC in the authority section;
   - query `x.w.wild.test. A` at 127.0.53.12 and assert the answer carries no NSEC in the authority section.
-- [ ] Add three subtests to `TestDNSSECValidation` in `e2e/dnssec_test.go`:
+- [x] Add three subtests to `TestDNSSECValidation` in `e2e/dnssec_test.go`:
   ```go
   t.Run("wildcard answer validates with AD", func(t *testing.T) {
   	m := query(t, addr, "x.w.good.test", dns.TypeA, qopt{DO: true})
@@ -1926,8 +1963,8 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
   })
   ```
   If the engine reports another EDE for a missing wildcard proof, check `validator_tests.rs` `wildcard_expansion_needs_a_next_closer_proof` (EDE 12) and use the code it asserts.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier -run TestWildcardAnswer'`. Expect FAIL: the query for `x.w.good.test.` returns NXDOMAIN.
-- [ ] In `server.go` `authoritative`, before the NXDOMAIN branch, add RFC 1034 §4.3.3 synthesis:
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier -run TestWildcardAnswer'`. Expect FAIL: the query for `x.w.good.test.` returns NXDOMAIN.
+- [x] In `server.go` `authoritative`, before the NXDOMAIN branch, add RFC 1034 §4.3.3 synthesis:
   1. Factor the closest-encloser walk (`ce`) and the `nextCloser` computation into `func (z *zone) closestEncloser(name string) (ce, nextCloser string)`.
   2. If `!z.exists[name]` and `z.exists["*."+ce]`:
      - With a set `{"*."+ce, qtype}` (or a CNAME): copy each RR and its RRSIGs with `Hdr.Name` set to `name`, leaving `RRSIG.Labels` unchanged, into `m.Answer`.
@@ -1935,14 +1972,14 @@ Interfaces: `ZoneSpec.OmitWildcardProof bool` (json `omit_wildcard_proof`); `Def
      - When `secure && !z.spec.OmitWildcardProof`, add the next-closer proof for answers: NSEC `z.addDenial(m, z.cover(name))`; NSEC3 `z.addDenial(m, z.cover(nextCloser))`.
      - Return.
   3. Delete the `debt:` comment.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier/... && make e2e-build && go test -count=1 ./e2e -run "TestDNSSECValidation|TestRecursionRootHints|TestSpoofedReplyRejected"'` and expect every test to pass. `TestDelvValidatesTheHierarchyIndependently` also validates the new records.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/fixtures/authhier/... && make e2e-build && go test -count=1 ./e2e -run "TestDNSSECValidation|TestRecursionRootHints|TestSpoofedReplyRejected"'` and expect every test to pass. `TestDelvValidatesTheHierarchyIndependently` also validates the new records.
 
 ## Task 19: Collector restart waits for its port (#10)
 
 Files: `e2e/harness/otelcol.go`, `e2e/harness/harness_test.go`
 Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the same port for up to 10 s.
 
-- [ ] Add to `harness_test.go`:
+- [x] Add to `harness_test.go`:
   ```go
   func TestHarnessOtelcolRestartWaitsForPortHolder(t *testing.T) {
   	env := harness.New(t)
@@ -1965,8 +2002,8 @@ Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the 
   	c.Close()
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run TestHarnessOtelcolRestartWaitsForPortHolder'`. Expect FAIL `otelcol-contrib exited: ... address already in use`.
-- [ ] Replace `Restart` (delete the `debt:` comment):
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run TestHarnessOtelcolRestartWaitsForPortHolder'`. Expect FAIL `otelcol-contrib exited: ... address already in use`.
+- [x] Replace `Restart` (delete the `debt:` comment):
   ```go
   // Restart stops the collector if running and starts it again on the same port and config: the
   // exporters point at that port. A port another process holds is retried for 10 s.
@@ -1980,7 +2017,7 @@ Interfaces: `(*Otelcol).Restart(e *Env)` unchanged in signature; it retries the 
   }
   ```
   `start(e, false)` still fails the test with the collector's log, which names the address in use. Prefix that `Fatalf` message with `otelcol %s:` and `o.OTLPGRPC`.
-- [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run Otelcol && make e2e-build && go test -count=1 ./e2e -run TestOTelSinkDownNoBackpressure'` and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'go test -count=1 ./e2e/harness -run Otelcol && make e2e-build && go test -count=1 ./e2e -run TestOTelSinkDownNoBackpressure'` and expect PASS.
 
 ## Task 20: The Compose example on novanas (#5)
 
@@ -2008,6 +2045,7 @@ Interfaces: `scripts/compose-verify.sh <user@host>` prints `ok <step>` per step 
   # Runs the "Install with Docker Compose" and "Plain PostgreSQL and Compose" steps of docs/operations.md
   # on a Docker host over ssh, checks enrollment, DNS, the collector, backup and restore, and removes
   # everything it created. Usage: scripts/compose-verify.sh user@host
+  # shellcheck disable=SC2016 # single-quoted commands expand on the host, not here
   set -euo pipefail
   HOST=${1:?usage: scripts/compose-verify.sh user@host}
   ADDR=${HOST#*@}
@@ -2022,22 +2060,24 @@ Interfaces: `scripts/compose-verify.sh <user@host>` prints `ok <step>` per step 
   api() { curl -fsS -b "$JAR" -c "$JAR" -H 'Content-Type: application/json' "$@"; }
 
   cleanup() {
-    remote 'docker compose --profile engine --profile otel down -v --remove-orphans' >/dev/null 2>&1 || true
-    ssh -o BatchMode=yes "$HOST" "comm -13 ~/$DIR.images-before <(docker image ls -q | sort -u) | xargs -r docker image rm -f; rm -rf ~/$DIR ~/$DIR.images-before" >/dev/null 2>&1 || true
-    rm -rf "$WORK"
+  	remote 'docker compose --profile engine --profile otel down -v --remove-orphans' >/dev/null 2>&1 || true
+  	ssh -o BatchMode=yes "$HOST" "comm -13 ~/$DIR.images-before <(docker image ls -q | sort -u) | xargs -r docker image rm -f; rm -rf ~/$DIR ~/$DIR.images-before" >/dev/null 2>&1 || true
+  	rm -rf "$WORK"
   }
   trap cleanup EXIT
+  trap 'echo "failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
   arch=$(ssh -o BatchMode=yes "$HOST" 'uname -m')
   case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
   ssh -o BatchMode=yes "$HOST" "test ! -e ~/$DIR && docker image ls -q | sort -u > ~/$DIR.images-before"
   for image in nexora-mgmt nexora-engine; do
-    crane pull --platform "linux/$arch" "$SRC/$image:$TAG" "$WORK/$image.tar"
-    ssh -o BatchMode=yes "$HOST" 'docker load' < "$WORK/$image.tar" >/dev/null
+  	# --insecure: the kw Nexus certificate is not in the laptop's trust store either.
+  	crane pull --insecure --platform "linux/$arch" "$SRC/$image:$TAG" "$WORK/$image.tar"
+  	ssh -o BatchMode=yes "$HOST" 'docker load' <"$WORK/$image.tar" >/dev/null
   done
   ok pull
 
-  tar -C deploy/compose -cf - . | ssh -o BatchMode=yes "$HOST" "mkdir -p ~/$DIR && tar -C ~/$DIR -xf -"
+  tar --no-xattrs -C deploy/compose -cf - . | ssh -o BatchMode=yes "$HOST" "mkdir -p ~/$DIR && tar -C ~/$DIR -xf -"
   # The documented steps, with this run's registry, tag, address and ports.
   remote "cp .env.example .env && sed -i \
     -e 's|^NEXORA_TAG=.*|NEXORA_TAG=$TAG|' -e 's|^NEXORA_REGISTRY=.*|NEXORA_REGISTRY=$SRC|' \
@@ -2053,11 +2093,14 @@ Interfaces: `scripts/compose-verify.sh <user@host>` prints `ok <step>` per step 
 
   token=""
   for _ in $(seq 60); do
-    token=$(remote 'docker compose logs mgmt' 2>/dev/null | sed -n 's/.*setup token: //p' | tail -1)
-    [ -n "$token" ] && break
-    sleep 2
+  	token=$(remote 'docker compose logs mgmt' 2>/dev/null | sed -n 's/.*setup token: //p' | tail -1)
+  	[ -n "$token" ] && break
+  	sleep 2
   done
-  [ -n "$token" ] || { echo "no setup token in the mgmt log"; exit 1; }
+  [ -n "$token" ] || {
+  	echo "no setup token in the mgmt log"
+  	exit 1
+  }
   ok setup-token
 
   password=$(openssl rand -hex 16)
@@ -2073,43 +2116,67 @@ Interfaces: `scripts/compose-verify.sh <user@host>` prints `ok <step>` per step 
   ok join-token
 
   for _ in $(seq 60); do
-    api "$API/engines" | jq -e '.[] | select(.connected and .status == "current")' >/dev/null && break
-    sleep 2
+  	api "$API/engines" | jq -e '.[] | select(.connected and .status == "current")' >/dev/null && break
+  	sleep 2
   done
   api "$API/engines" | jq -e '.[] | select(.connected and .status == "current")' >/dev/null
   ok engine-enrolled
 
   dns() { dig +short +time=2 +tries=3 @"$ADDR" -p 15353 www.compose.test A; }
-  for _ in $(seq 30); do [ "$(dns)" = 192.0.2.10 ] && break; sleep 2; done
+  for _ in $(seq 30); do
+  	[ "$(dns)" = 192.0.2.10 ] && break
+  	sleep 2
+  done
   [ "$(dns)" = 192.0.2.10 ]
   ok dns-answers
 
-  for _ in $(seq 30); do remote 'docker compose logs otel-collector' | grep -q 'log records' && break; sleep 2; done
-  remote 'docker compose logs otel-collector' | grep -q 'log records'
+  # With the built-in query log the engine sends query logs to mgmt, not to the collector; the collector's
+  # debug exporter logs the engine's OTLP metrics (pushed every 15 s) as "data points".
+  for _ in $(seq 30); do
+  	remote 'docker compose logs otel-collector' | grep -q 'data points' && break
+  	sleep 2
+  done
+  remote 'docker compose logs otel-collector' | grep -q 'data points'
   ok otel-logs
 
   remote 'docker compose exec -T postgres pg_dump -U nexora -Fc nexora > nexora-backup.dump'
-  record=$(api "$API/zones/$zone/records" | jq -r '.[] | select(.name=="www.compose.test.") | "\(.id) \(.revision)"')
+  record=$(api "$API/zones/$zone/records?name=www.compose.test." | jq -r '.items[] | select(.name=="www.compose.test.") | "\(.id) \(.revision)"')
   api -X DELETE "$API/zones/$zone/records/${record% *}?revision=${record#* }" >/dev/null
-  for _ in $(seq 30); do [ -z "$(dns)" ] && break; sleep 2; done
+  for _ in $(seq 30); do
+  	[ -z "$(dns)" ] && break
+  	sleep 2
+  done
   [ -z "$(dns)" ]
   ok backup
 
+  # The version the engine runs now; the restored database's newest version is below it.
+  engine_version=$(api "$API/engines" | jq '[.[].applied_version] | max')
   remote 'docker compose stop mgmt'
   remote 'docker compose exec -T postgres pg_restore -U nexora --clean --if-exists -d nexora < nexora-backup.dump'
   remote 'docker compose start mgmt'
-  for _ in $(seq 60); do api -X POST "$API/auth/login" -d "{\"username\":\"admin\",\"password\":\"$password\"}" >/dev/null 2>&1 && break; sleep 2; done
-  api "$API/zones/$zone/records" | jq -e '.[] | select(.name=="www.compose.test.")' >/dev/null
+  for _ in $(seq 60); do
+  	api -X POST "$API/auth/login" -d "{\"username\":\"admin\",\"password\":\"$password\"}" >/dev/null 2>&1 && break
+  	sleep 2
+  done
+  api "$API/zones/$zone/records?name=www.compose.test." | jq -e '.items[] | select(.name=="www.compose.test.")' >/dev/null
   ok restore
 
-  # docs/operations.md "Engines ahead of a restored database": publish until the engine is current.
+  # docs/operations.md "Engines ahead of a restored database": publish until the newest version is above
+  # the engine's. The restored engine row reads "current" until the engine reconnects, so it is not the test.
   for _ in $(seq 5); do
-    api "$API/engines" | jq -e '.[] | select(.status == "current")' >/dev/null && break
-    remote 'docker compose exec -T postgres psql -U nexora -d nexora -c "update engine_groups set rollouts_paused = true where name = '"'"'default'"'"';"' >/dev/null
-    api -X POST "$API/engine-groups/00000000-0000-0000-0000-000000000001/resume-rollouts" >/dev/null
-    sleep 5
+  	[ "$(api "$API/config-versions?limit=1" | jq '.[0].version')" -gt "$engine_version" ] && break
+  	remote 'docker compose exec -T postgres psql -U nexora -d nexora -c "update engine_groups set rollouts_paused = true where name = '"'"'default'"'"';"' >/dev/null
+  	api -X POST "$API/engine-groups/00000000-0000-0000-0000-000000000001/resume-rollouts" >/dev/null
   done
-  for _ in $(seq 30); do [ "$(dns)" = 192.0.2.10 ] && break; sleep 2; done
+  [ "$(api "$API/config-versions?limit=1" | jq '.[0].version')" -gt "$engine_version" ]
+  for _ in $(seq 60); do
+  	api "$API/engines" | jq -e ".[] | select(.connected and .status == \"current\" and .applied_version > $engine_version)" >/dev/null && break
+  	sleep 2
+  done
+  for _ in $(seq 30); do
+  	[ "$(dns)" = 192.0.2.10 ] && break
+  	sleep 2
+  done
   [ "$(dns)" = 192.0.2.10 ]
   ok restored-dns
 
@@ -2117,8 +2184,9 @@ Interfaces: `scripts/compose-verify.sh <user@host>` prints `ok <step>` per step 
   trap - EXIT
   ok cleanup
   ```
+  As built, the script differs from the first draft where the first runs proved the draft wrong: `crane pull --insecure` (the laptop does not trust the Nexus certificate either); record lists read `.items[]` (`RecordPage`); `otel-logs` greps the collector's `data points` lines, because with `NEXORA_QUERYLOG_BACKEND=builtin` engines send query logs to mgmt and only OTLP metrics and traces reach the collector (now said in `docs/operations.md`); the restore recovery publishes until `GET /config-versions?limit=1` is above the engine's `applied_version` recorded before the restore, then waits for a connected `current` engine above it (the restored engine row reads `current` until the engine reconnects, which made the first draft's check racy); `tar --no-xattrs` and an `ERR` trap that names the failing line.
   Take the exact paths and fields from `mgmt/api/openapi.yaml`: the zone create body (`ZoneCreate`), record list and delete (revision as query or body), the engine list fields, and resume-rollouts. Where the documented command sequence itself is wrong, fix `docs/operations.md` and the script in the same way, and note it in the todo evidence. Never change only the script.
-- [ ] Run `scripts/compose-verify.sh piwi@192.168.10.211` from the laptop, after `images.yml` has pushed `sha-<7>` for the commit being verified.
+- [ ] Run `scripts/compose-verify.sh piwi@192.168.10.211` from the laptop, after `images.yml` has pushed `sha-<7>` for the commit being verified (while the branch is unpushed, `NEXORA_TAG=sha-<origin/main>` when `deploy/compose`, the Compose sections of `docs/operations.md` and `mgmt/cmd` are unchanged since that commit).
   - Expect to find real failures on the first run.
   - For each failure: fix the compose file or the doc, re-run from the start (the trap leaves the host clean), and record the failure and fix in `.procoder/todo/`.
   - Expected when done: 12 lines `ok pull` … `ok cleanup` and exit 0.
@@ -2198,8 +2266,9 @@ Interfaces: `TestM7DebtMarkersResolved`.
   - remove entries these tasks lifted, if listed (zone export memory, per-edit zone loads for unsigned zones, collector drop behaviour);
   - add: "Record edits of DNSSEC-signed zones still rebuild from the whole zone per edit.";
   - add: "The OpenSearch query log sorts by `_id`, which needs `indices.id_field_data.enabled` (the default).";
-  - add: "The recursor cache budget is `recursor_cache_max_bytes` (default 64 MiB) under Forwarding & recursion.".
+  - add: "The recursor cache budget is `recursor_cache_max_bytes` (default 64 MiB), set as "Recursor cache memory (MiB)" in the Resolution section of `/upstreams`." (M6's "Forwarding & recursion" navigation is not on the M7 branch; the GUI location follows the committed code.)
 - [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./deploy/deploytest/...'` and expect PASS.
+- [ ] (Lead note from Task 14) In `docs/operations.md` Known limitations / OpenSearch, state that query-log paging sorts by `_id`, which requires `indices.id_field_data.enabled` (true by default in OpenSearch 3.x); with it disabled, searches fail with HTTP 400.
 
 ## Task 22: Workflows proven on the ARC runners (#3)
 

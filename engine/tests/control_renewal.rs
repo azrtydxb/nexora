@@ -1,5 +1,6 @@
 //! The engine's control loop against a fake management plane: renewal at 2/3 of the lifetime,
-//! operator rotation, and revocation (with the fallback from a refused renewed identity).
+//! operator rotation, revocation (with the fallback from a refused renewed identity), and the
+//! fallback from a renewed identity failing for another reason.
 
 use nexora_engine::bootstrap::Bootstrap;
 use nexora_engine::control::{self, Identity, load_identity, save_identity};
@@ -328,6 +329,164 @@ async fn renews_rotates_and_backs_off_when_revoked() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o600);
+
+    engine.abort();
+    server.abort();
+}
+
+/// Refuses the staged certificate with a non-authentication status and accepts every other one.
+struct StagedUnavailableMgmt {
+    staged_serial: String,
+    conns: AtomicUsize,
+    events: mpsc::UnboundedSender<Event>,
+}
+
+#[tonic::async_trait]
+impl EngineControl for StagedUnavailableMgmt {
+    async fn enroll(&self, _: Request<EnrollRequest>) -> Result<Response<EnrollResponse>, Status> {
+        Err(Status::unimplemented("enroll"))
+    }
+
+    type ConnectStream = ReceiverStream<Result<ServerMessage, Status>>;
+
+    async fn connect(
+        &self,
+        req: Request<Streaming<EngineMessage>>,
+    ) -> Result<Response<Self::ConnectStream>, Status> {
+        let certs = req
+            .peer_certs()
+            .ok_or_else(|| Status::unauthenticated("client certificate required"))?;
+        let (_, leaf) = x509_parser::parse_x509_certificate(&certs[0]).unwrap();
+        let serial = leaf.serial.to_str_radix(16);
+        let n = self.conns.fetch_add(1, Ordering::SeqCst);
+        let _ = self.events.send(Event::Connect {
+            n,
+            serial: serial.clone(),
+        });
+        if serial == self.staged_serial {
+            return Err(Status::unavailable("certificate not usable yet"));
+        }
+        let (tx, rx) = mpsc::channel(8);
+        let mut inbound = req.into_inner();
+        tokio::spawn(async move {
+            while let Ok(Some(_)) = inbound.message().await {}
+            drop(tx);
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    type GetBlobStream = ReceiverStream<Result<BlobChunk, Status>>;
+
+    async fn get_blob(
+        &self,
+        _: Request<GetBlobRequest>,
+    ) -> Result<Response<Self::GetBlobStream>, Status> {
+        Err(Status::not_found("no blobs"))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn staged_certificate_failing_otherwise_falls_back_and_is_discarded() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let ca = Ca::new();
+    let now = SystemTime::now();
+    let server_key = p256();
+    let mut sp = rcgen::CertificateParams::new(vec!["127.0.0.1".to_string()]).unwrap();
+    sp.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let server_cert = ca.issue(sp, &server_key);
+    // Both certificates are young (renewal not due), so no certificate request interferes.
+    let engine_cert = |key: &rcgen::KeyPair| {
+        let mut p = rcgen::CertificateParams::default();
+        p.distinguished_name
+            .push(rcgen::DnType::CommonName, ENGINE_ID);
+        p.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        set_validity(
+            &mut p,
+            now - Duration::from_secs(60),
+            now + Duration::from_secs(3600),
+        );
+        ca.issue(p, key)
+    };
+    let (current_key, staged_key) = (p256(), p256());
+    let (current, staged) = (engine_cert(&current_key), engine_cert(&staged_key));
+    let state = tempfile::tempdir().unwrap();
+    save_identity(
+        state.path(),
+        &Identity {
+            engine_id: ENGINE_ID.into(),
+            cert_pem: current.pem(),
+            key_pem: current_key.serialize_pem(),
+            ca_pem: ca.cert.pem(),
+        },
+    )
+    .unwrap();
+    nexora_engine::cert_renewal::stage_identity(
+        state.path(),
+        staged.pem().as_bytes(),
+        staged_key.serialize_pem().as_bytes(),
+    )
+    .unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let fake = StagedUnavailableMgmt {
+        staged_serial: serial_of(&staged.pem()),
+        conns: AtomicUsize::new(0),
+        events: events_tx,
+    };
+    let tls = ServerTlsConfig::new()
+        .identity(tonic::transport::Identity::from_pem(
+            server_cert.pem(),
+            server_key.serialize_pem(),
+        ))
+        .client_ca_root(Certificate::from_pem(ca.cert.pem()));
+    let server = tokio::spawn(
+        Server::builder()
+            .tls_config(tls)
+            .unwrap()
+            .add_service(EngineControlServer::new(fake))
+            .serve_with_incoming(TcpListenerStream::new(listener)),
+    );
+    let boot: Bootstrap = toml::from_str(&format!(
+        "node_name = \"fallback-1\"\nstate_dir = {:?}\nmanagement_urls = [\"https://{addr}\"]\n",
+        state.path()
+    ))
+    .unwrap();
+    let shared = Shared::new(1);
+    let engine = tokio::spawn(control::run(
+        shared.clone(),
+        boot,
+        Arc::new(CertStore::new()),
+    ));
+
+    assert_eq!(
+        next(&mut events).await,
+        Event::Connect {
+            n: 0,
+            serial: serial_of(&staged.pem())
+        }
+    );
+    assert_eq!(
+        next(&mut events).await,
+        Event::Connect {
+            n: 1,
+            serial: serial_of(&current.pem())
+        },
+        "after a non-authentication failure the current identity is tried"
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while nexora_engine::cert_renewal::staged_dir(state.path()).exists() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the staged certificate was not discarded"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        serial_of(&load_identity(state.path()).unwrap().unwrap().cert_pem),
+        serial_of(&current.pem())
+    );
 
     engine.abort();
     server.abort();

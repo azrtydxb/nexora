@@ -222,3 +222,62 @@ fn malformed_and_notimp() {
     c.send_to(&[1, 2, 3], srv).unwrap();
     assert!(c.recv_from(&mut buf).is_err(), "short packets are dropped");
 }
+
+#[test]
+fn edns_version_above_zero_gets_badvers() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let (srv, shared) = start_engine(fake_upstream(count.clone(), 1), "127.0.0.0/8", None);
+    assert_eq!(
+        ask(srv, "v0.example.", Some(1232)).metadata.response_code,
+        ResponseCode::NoError,
+        "EDNS version 0 is answered normally"
+    );
+    let upstream_before = count.load(Ordering::SeqCst);
+    for version in [1u8, 255] {
+        let c = UdpSocket::bind("127.0.0.1:0").unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut m = Message::new(rand_id(), MessageType::Query, OpCode::Query);
+        m.metadata.recursion_desired = true;
+        m.add_query(Query::query(
+            Name::from_ascii("v1.example.").unwrap(),
+            RecordType::A,
+        ));
+        let mut e = Edns::new();
+        e.set_max_payload(1232);
+        e.set_version(version);
+        m.set_edns(e);
+        c.send_to(&m.to_bytes().unwrap(), srv).unwrap();
+        let mut buf = [0u8; 4096];
+        let (n, _) = c.recv_from(&mut buf).unwrap();
+        assert_eq!(
+            buf[3] & 0x0f,
+            0,
+            "version {version}: header RCODE carries the low bits of 16"
+        );
+        let r = Message::from_bytes(&buf[..n]).unwrap();
+        // hickory decodes 16 as BADSIG; the numeric value is what matters.
+        assert_eq!(
+            u16::from(r.metadata.response_code),
+            16,
+            "version {version}: BADVERS"
+        );
+        assert_eq!(
+            r.edns.as_ref().expect("OPT in a BADVERS reply").version(),
+            0
+        );
+        assert!(r.answers.is_empty());
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        upstream_before,
+        "BADVERS never reaches the upstream"
+    );
+    let body = shared
+        .metrics
+        .render(&shared.runtime.load(), &shared.recursor);
+    assert!(
+        body.contains("rcode=\"other\""),
+        "rcode 16 is counted as other: {body}"
+    );
+}

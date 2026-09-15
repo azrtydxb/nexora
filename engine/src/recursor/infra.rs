@@ -2,7 +2,8 @@
 //! (server, zone) marks, used to choose which authoritative server to ask next.
 
 use hickory_proto::rr::Name;
-use quick_cache::sync::Cache;
+use quick_cache::Weighter;
+use quick_cache::sync::{Cache, EntryAction, EntryResult};
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -22,6 +23,8 @@ const EXPLORE_ABOVE_MS: f32 = 40.0;
 const COLD_RACERS: usize = 2;
 /// How long each further server of a race waits for the ones already asked to answer.
 pub const RACE_STAGGER: Duration = Duration::from_millis(20);
+/// Estimated bytes of one server entry (key, value and cache overhead).
+const INFRA_ENTRY_BYTES: u64 = 128;
 
 /// The servers to ask for one step: `primary` at once, then each of `racers` `RACE_STAGGER`
 /// after the previous one unless a reply has arrived; the first valid reply wins.
@@ -58,30 +61,69 @@ impl InfraEntry {
     }
 }
 
+#[derive(Clone)]
+struct ServerWeight;
+
+impl Weighter<IpAddr, InfraEntry> for ServerWeight {
+    fn weight(&self, _: &IpAddr, _: &InfraEntry) -> u64 {
+        INFRA_ENTRY_BYTES
+    }
+}
+
+#[derive(Clone)]
+struct LameWeight;
+
+impl Weighter<(IpAddr, Name), u64> for LameWeight {
+    fn weight(&self, key: &(IpAddr, Name), _: &u64) -> u64 {
+        64 + key.1.len() as u64
+    }
+}
+
 pub struct InfraCache {
-    servers: Cache<IpAddr, InfraEntry>,
+    servers: Cache<IpAddr, InfraEntry, ServerWeight>,
     /// (server, lowercase zone) -> lame until (Unix seconds).
-    lame: Cache<(IpAddr, Name), u64>,
+    lame: Cache<(IpAddr, Name), u64, LameWeight>,
 }
 
 impl InfraCache {
-    pub fn new(capacity: usize) -> Self {
+    /// A cache of at most `capacity_bytes` estimated bytes, half for servers and half for lame
+    /// marks.
+    pub fn new(capacity_bytes: u64) -> Self {
+        let half = capacity_bytes / 2;
+        let items = (half / INFRA_ENTRY_BYTES).max(16) as usize;
         Self {
-            servers: Cache::new(capacity),
-            lame: Cache::new(capacity),
+            servers: Cache::with_weighter(items, half, ServerWeight),
+            lame: Cache::with_weighter(items, half, LameWeight),
         }
+    }
+
+    /// Sets the byte budget; entries above it are evicted at once.
+    pub fn set_capacity(&self, capacity_bytes: u64) {
+        self.servers.set_capacity(capacity_bytes / 2);
+        self.lame.set_capacity(capacity_bytes / 2);
     }
 
     fn entry(&self, ip: IpAddr) -> Option<InfraEntry> {
         self.servers.get(&ip)
     }
 
-    // debt: read-modify-write is not atomic across workers; a lost update only skews one RTT
-    // sample or timeout count. Revisit if server selection shows measurable flapping.
+    /// Atomic across workers: the shard lock covers read, change and write; a new server is filled
+    /// through its placeholder guard, so concurrent first updates wait for each other.
     fn update(&self, ip: IpAddr, f: impl FnOnce(&mut InfraEntry)) {
-        let mut e = self.entry(ip).unwrap_or_else(InfraEntry::unknown);
-        f(&mut e);
-        self.servers.insert(ip, e);
+        let mut f = Some(f);
+        let result = self.servers.entry(&ip, None, |_, e| {
+            if let Some(f) = f.take() {
+                f(e);
+            }
+            EntryAction::Retain(())
+        });
+        if let EntryResult::Vacant(guard) = result {
+            let mut e = InfraEntry::unknown();
+            if let Some(f) = f.take() {
+                f(&mut e);
+            }
+            let _ = guard.insert(e);
+        }
     }
 
     pub fn rto(&self, ip: IpAddr) -> Duration {
@@ -255,5 +297,30 @@ impl InfraCache {
 
     pub fn is_empty(&self) -> bool {
         self.servers.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_updates_are_not_lost() {
+        let cache = std::sync::Arc::new(InfraCache::new(1 << 20));
+        let ip: IpAddr = "192.0.2.53".parse().unwrap();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let c = cache.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..100_000 {
+                        c.update(ip, |e| e.rto_ms += 1);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(cache.entry(ip).unwrap().rto_ms, UNKNOWN_RTO_MS + 800_000);
     }
 }

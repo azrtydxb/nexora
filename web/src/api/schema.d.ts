@@ -4,6763 +4,6877 @@
  */
 
 export interface paths {
-    "/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getHealth"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/version": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getVersion"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/setup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getSetupStatus"];
-        put?: never;
-        post: operations["completeSetup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["logout"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getCurrentUser"];
-        put: operations["updateCurrentUser"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/me/password": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["changeOwnPassword"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/providers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listAuthProviders"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/oidc/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["startOidcLogin"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/oidc/callback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["oidcCallback"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dashboard": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDashboard"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dashboard/series": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDashboardSeries"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dashboard/top": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDashboardTop"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dashboard/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDashboardHealth"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/upstreams": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listUpstreams"];
-        put?: never;
-        post: operations["createUpstream"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/upstreams/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateUpstream"];
-        post?: never;
-        delete: operations["deleteUpstream"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resolver-settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getResolverSettings"];
-        put: operations["updateResolverSettings"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/access-control": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getAccessControl"];
-        put: operations["updateAccessControl"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-lists": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listFilterLists"];
-        put?: never;
-        post: operations["createFilterList"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-lists/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getFilterList"];
-        put: operations["updateFilterList"];
-        post?: never;
-        delete: operations["deleteFilterList"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-lists/{id}/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["refreshFilterList"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-categories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listFilterCategories"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-categories/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateFilterCategory"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/allowlist": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getAllowlist"];
-        put: operations["updateAllowlist"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listEngines"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getEngine"];
-        put?: never;
-        post?: never;
-        delete: operations["deleteEngine"];
-        options?: never;
-        head?: never;
-        patch: operations["updateEngine"];
-        trace?: never;
-    };
-    "/join-tokens": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listJoinTokens"];
-        put?: never;
-        post: operations["createJoinToken"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/join-tokens/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["revokeJoinToken"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/config-versions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listConfigVersions"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listUsers"];
-        put?: never;
-        post: operations["createUser"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/users/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateUser"];
-        post?: never;
-        delete: operations["deleteUser"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api-tokens": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listApiTokens"];
-        put?: never;
-        post: operations["createApiToken"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api-tokens/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["revokeApiToken"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listAuditEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/query-log": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["searchQueryLog"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/policy-groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listPolicyGroups"];
-        put?: never;
-        post: operations["createPolicyGroup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/policy-groups/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get: operations["getPolicyGroup"];
-        put: operations["updatePolicyGroup"];
-        post?: never;
-        delete: operations["deletePolicyGroup"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/safe-search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getGlobalSafeSearch"];
-        put: operations["updateGlobalSafeSearch"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rewrites": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listRewrites"];
-        put?: never;
-        post: operations["createRewrite"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rewrites/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateRewrite"];
-        post?: never;
-        delete: operations["deleteRewrite"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/settings/dns-tls": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDnsTlsStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resolution": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getResolutionSettings"];
-        put: operations["updateResolutionSettings"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/forward-zones": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listForwardZones"];
-        put?: never;
-        post: operations["createForwardZone"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/forward-zones/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateForwardZone"];
-        post?: never;
-        delete: operations["deleteForwardZone"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDnssecSettings"];
-        put: operations["updateDnssecSettings"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getDnssecStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/trust-anchors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listTrustAnchors"];
-        put?: never;
-        post: operations["createTrustAnchor"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/trust-anchors/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["deleteTrustAnchor"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/negative-trust-anchors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listNegativeTrustAnchors"];
-        put?: never;
-        post: operations["createNegativeTrustAnchor"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/dnssec/negative-trust-anchors/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["deleteNegativeTrustAnchor"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rpz-zones": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listRpzZones"];
-        put?: never;
-        post: operations["createRpzZone"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rpz-zones/order": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["reorderRpzZones"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rpz-zones/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get: operations["getRpzZone"];
-        put: operations["updateRpzZone"];
-        post?: never;
-        delete: operations["deleteRpzZone"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rpz-zones/{id}/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["uploadRpzZoneFile"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rpz-zones/{id}/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["refreshRpzZone"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listZones"];
-        put?: never;
-        post: operations["createZone"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get: operations["getZone"];
-        put?: never;
-        post?: never;
-        delete: operations["deleteZone"];
-        options?: never;
-        head?: never;
-        patch: operations["updateZone"];
-        trace?: never;
-    };
-    "/zones/{zoneId}/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Secondary zones only. The management plane checks the primaries and transfers a newer version now. */
-        post: operations["refreshZone"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/records": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get: operations["listZoneRecords"];
-        put?: never;
-        post: operations["createZoneRecord"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/records/{recordId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-                recordId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateZoneRecord"];
-        post?: never;
-        delete: operations["deleteZoneRecord"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["importZoneFile"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get: operations["exportZoneFile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/dnssec": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get: operations["getZoneDnssec"];
-        /** @description Enables (generating a KSK and a ZSK), reconfigures or disables online signing. Omitted settings keep their current values. */
-        put: operations["updateZoneDnssec"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/dnssec/rollovers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Starts a ZSK pre-publish rollover or a KSK double-signature rollover; the maintainer completes it (a KSK rollover after confirmZoneKskDs). */
-        post: operations["startZoneKeyRollover"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/zones/{zoneId}/dnssec/rollovers/ds-published": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Confirms that the parent publishes the DS of an active KSK whose DS is pending; CDS/CDNSKEY are withdrawn and an older KSK is removed after the parent DS TTL. */
-        post: operations["confirmZoneKskDs"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tsig-keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listTsigKeys"];
-        put?: never;
-        post: operations["createTsigKey"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tsig-keys/{keyId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                keyId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["deleteTsigKey"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engine-groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listEngineGroups"];
-        put?: never;
-        post: operations["createEngineGroup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engine-groups/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getEngineGroup"];
-        put: operations["updateEngineGroup"];
-        post?: never;
-        delete: operations["deleteEngineGroup"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engine-groups/{id}/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["rollbackEngineGroup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engine-groups/{id}/resume-rollouts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["resumeEngineGroupRollouts"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rollouts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listRollouts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rollouts/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getRollout"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/fleet/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getFleetSummary"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}/stats": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getEngineStats"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getEngineMetrics"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getEngineLogs"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}/revoke": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["revokeEngine"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/engines/{id}/rotate-certificate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["rotateEngineCertificate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description The AI layer's state; answers 200 with enabled false and a reason when AI is off. */
-        get: operations["getAiStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/agents/{agent}/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Requests an immediate run of a background agent (Run now). */
-        post: operations["runAiAgent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/tasks/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description An interactive AI task; 404 to anyone but its requester or an admin. */
-        get: operations["getAiTask"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/query-log/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Starts a natural-language query-log search task. */
-        post: operations["startAiQueryLogSearch"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/findings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listAiFindings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/findings/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch: operations["updateAiFinding"];
-        trace?: never;
-    };
-    "/ai/insights": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getAiInsights"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listAiProposals"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/proposals/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description One proposal, with each action's live current resource. */
-        get: operations["getAiProposal"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/proposals/apply": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Applies open proposals by replaying their actions through the API with the caller's credentials. */
-        post: operations["applyAiProposals"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/proposals/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["dismissAiProposals"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/assistant/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createAiAssistantSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/assistant/sessions/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description One of the caller's assistant sessions. */
-        get: operations["getAiAssistantSession"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/assistant/sessions/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Adds a user message and starts the assistant turn task. */
-        post: operations["postAiAssistantMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/forecasts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description The newest forecast per subject. */
-        get: operations["listAiForecasts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/rollouts/{id}/ai-risk": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getAiRolloutRisk"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ai/threat-check": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Starts a threat check task for up to 100 domain names. */
-        post: operations["startAiThreatCheck"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/filter-lists/{id}/ai-classification": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getAiFilterListClassification"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+  "/health": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getHealth"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/version": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getVersion"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/setup": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getSetupStatus"];
+    put?: never;
+    post: operations["completeSetup"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["login"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["logout"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getCurrentUser"];
+    put: operations["updateCurrentUser"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/me/password": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["changeOwnPassword"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/providers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listAuthProviders"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/oidc/start": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["startOidcLogin"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/oidc/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["oidcCallback"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboard": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDashboard"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboard/series": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDashboardSeries"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboard/top": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDashboardTop"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dashboard/health": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDashboardHealth"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/upstreams": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listUpstreams"];
+    put?: never;
+    post: operations["createUpstream"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/upstreams/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateUpstream"];
+    post?: never;
+    delete: operations["deleteUpstream"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/resolver-settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getResolverSettings"];
+    put: operations["updateResolverSettings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/access-control": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getAccessControl"];
+    put: operations["updateAccessControl"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-lists": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listFilterLists"];
+    put?: never;
+    post: operations["createFilterList"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-lists/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getFilterList"];
+    put: operations["updateFilterList"];
+    post?: never;
+    delete: operations["deleteFilterList"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-lists/{id}/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["refreshFilterList"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-categories": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listFilterCategories"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-categories/{key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateFilterCategory"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/allowlist": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getAllowlist"];
+    put: operations["updateAllowlist"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listEngines"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getEngine"];
+    put?: never;
+    post?: never;
+    delete: operations["deleteEngine"];
+    options?: never;
+    head?: never;
+    patch: operations["updateEngine"];
+    trace?: never;
+  };
+  "/join-tokens": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listJoinTokens"];
+    put?: never;
+    post: operations["createJoinToken"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/join-tokens/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["revokeJoinToken"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/config-versions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listConfigVersions"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/users": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listUsers"];
+    put?: never;
+    post: operations["createUser"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/users/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateUser"];
+    post?: never;
+    delete: operations["deleteUser"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api-tokens": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listApiTokens"];
+    put?: never;
+    post: operations["createApiToken"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api-tokens/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["revokeApiToken"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/audit": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listAuditEvents"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/query-log": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["searchQueryLog"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/policy-groups": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listPolicyGroups"];
+    put?: never;
+    post: operations["createPolicyGroup"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/policy-groups/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    get: operations["getPolicyGroup"];
+    put: operations["updatePolicyGroup"];
+    post?: never;
+    delete: operations["deletePolicyGroup"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/safe-search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getGlobalSafeSearch"];
+    put: operations["updateGlobalSafeSearch"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rewrites": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listRewrites"];
+    put?: never;
+    post: operations["createRewrite"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rewrites/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateRewrite"];
+    post?: never;
+    delete: operations["deleteRewrite"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/settings/dns-tls": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDnsTlsStatus"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/resolution": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getResolutionSettings"];
+    put: operations["updateResolutionSettings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/forward-zones": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listForwardZones"];
+    put?: never;
+    post: operations["createForwardZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/forward-zones/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateForwardZone"];
+    post?: never;
+    delete: operations["deleteForwardZone"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDnssecSettings"];
+    put: operations["updateDnssecSettings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDnssecStatus"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/trust-anchors": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listTrustAnchors"];
+    put?: never;
+    post: operations["createTrustAnchor"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/trust-anchors/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["deleteTrustAnchor"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/negative-trust-anchors": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listNegativeTrustAnchors"];
+    put?: never;
+    post: operations["createNegativeTrustAnchor"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/dnssec/negative-trust-anchors/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["deleteNegativeTrustAnchor"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rpz-zones": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listRpzZones"];
+    put?: never;
+    post: operations["createRpzZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rpz-zones/order": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["reorderRpzZones"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rpz-zones/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get: operations["getRpzZone"];
+    put: operations["updateRpzZone"];
+    post?: never;
+    delete: operations["deleteRpzZone"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rpz-zones/{id}/file": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["uploadRpzZoneFile"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rpz-zones/{id}/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["refreshRpzZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listZones"];
+    put?: never;
+    post: operations["createZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get: operations["getZone"];
+    put?: never;
+    post?: never;
+    delete: operations["deleteZone"];
+    options?: never;
+    head?: never;
+    patch: operations["updateZone"];
+    trace?: never;
+  };
+  "/zones/{zoneId}/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Secondary zones only. The management plane checks the primaries and transfers a newer version now. */
+    post: operations["refreshZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/records": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get: operations["listZoneRecords"];
+    put?: never;
+    post: operations["createZoneRecord"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/records/{recordId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+        recordId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put: operations["updateZoneRecord"];
+    post?: never;
+    delete: operations["deleteZoneRecord"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["importZoneFile"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get: operations["exportZoneFile"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/dnssec": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get: operations["getZoneDnssec"];
+    /** @description Enables (generating a KSK and a ZSK), reconfigures or disables online signing. Omitted settings keep their current values. */
+    put: operations["updateZoneDnssec"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/dnssec/rollovers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Starts a ZSK pre-publish rollover or a KSK double-signature rollover; the maintainer completes it (a KSK rollover after confirmZoneKskDs). */
+    post: operations["startZoneKeyRollover"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/zones/{zoneId}/dnssec/rollovers/ds-published": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Confirms that the parent publishes the DS of an active KSK whose DS is pending; CDS/CDNSKEY are withdrawn and an older KSK is removed after the parent DS TTL. */
+    post: operations["confirmZoneKskDs"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/tsig-keys": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listTsigKeys"];
+    put?: never;
+    post: operations["createTsigKey"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/tsig-keys/{keyId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        keyId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations["deleteTsigKey"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engine-groups": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listEngineGroups"];
+    put?: never;
+    post: operations["createEngineGroup"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engine-groups/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getEngineGroup"];
+    put: operations["updateEngineGroup"];
+    post?: never;
+    delete: operations["deleteEngineGroup"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engine-groups/{id}/rollback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["rollbackEngineGroup"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engine-groups/{id}/resume-rollouts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["resumeEngineGroupRollouts"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rollouts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listRollouts"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rollouts/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getRollout"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/fleet/summary": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getFleetSummary"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}/stats": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getEngineStats"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}/metrics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getEngineMetrics"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}/logs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getEngineLogs"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}/revoke": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["revokeEngine"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/engines/{id}/rotate-certificate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["rotateEngineCertificate"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description The AI layer's state; answers 200 with enabled false and a reason when AI is off. */
+    get: operations["getAiStatus"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/agents/{agent}/run": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Requests an immediate run of a background agent (Run now). */
+    post: operations["runAiAgent"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/tasks/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description An interactive AI task; 404 to anyone but its requester or an admin. */
+    get: operations["getAiTask"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/query-log/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Starts a natural-language query-log search task. */
+    post: operations["startAiQueryLogSearch"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/findings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listAiFindings"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/findings/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch: operations["updateAiFinding"];
+    trace?: never;
+  };
+  "/ai/insights": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getAiInsights"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/proposals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listAiProposals"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/proposals/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description One proposal, with each action's live current resource. */
+    get: operations["getAiProposal"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/proposals/apply": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Applies open proposals by replaying their actions through the API with the caller's credentials. */
+    post: operations["applyAiProposals"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/proposals/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["dismissAiProposals"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/assistant/sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["createAiAssistantSession"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/assistant/sessions/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description One of the caller's assistant sessions. */
+    get: operations["getAiAssistantSession"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/assistant/sessions/{id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Adds a user message and starts the assistant turn task. */
+    post: operations["postAiAssistantMessage"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/forecasts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description The newest forecast per subject. */
+    get: operations["listAiForecasts"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rollouts/{id}/ai-risk": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getAiRolloutRisk"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/ai/threat-check": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Starts a threat check task for up to 100 domain names. */
+    post: operations["startAiThreatCheck"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/filter-lists/{id}/ai-classification": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getAiFilterListClassification"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: {
-        Error: {
-            code: string;
-            message: string;
-            /** @description Per-line problems of submitted zone data; for license_acknowledgement_required one entry per source (line 0, message "<source key>: <notice>"). */
-            details?: {
-                line: number;
-                message: string;
-            }[];
-        };
-        Health: {
-            /** @enum {string} */
-            status: "ok" | "degraded";
-            /** @enum {string} */
-            database: "ok" | "unavailable";
-            version: string;
-        };
-        SetupStatus: {
-            required: boolean;
-        };
-        SetupRequest: {
-            token: string;
-            username: string;
-            email: string;
-            password: string;
-        };
-        LoginRequest: {
-            username: string;
-            password: string;
-        };
-        AuthProviders: {
-            local: boolean;
-            oidc: boolean;
-        };
-        /** @enum {string} */
-        Role: "viewer" | "operator" | "admin";
-        User: {
-            /** Format: uuid */
-            id: string;
-            username: string;
-            email: string;
-            role: components["schemas"]["Role"];
-            /** @enum {string} */
-            source: "local" | "oidc";
-            disabled: boolean;
-            /** Format: int64 */
-            revision: number;
-            /** Format: date-time */
-            created_at: string;
-            display_name: string;
-            /** Format: date-time */
-            last_login_at: string | null;
-            preferences: components["schemas"]["UserPreferences"];
-        };
-        UserPreferences: {
-            /** @enum {string} */
-            theme: "system" | "light" | "dark";
-            /** @description IANA name; empty uses the browser */
-            time_zone: string;
-            clock_24h: boolean;
-            querylog_live: boolean;
-        };
-        CurrentUserUpdate: {
-            /** Format: int64 */
-            revision: number;
-            email?: string;
-            display_name?: string;
-            preferences?: components["schemas"]["UserPreferences"];
-        };
-        PasswordChange: {
-            current_password: string;
-            new_password: string;
-            /** @default true */
-            revoke_other_sessions: boolean;
-        };
-        VersionInfo: {
-            version: string;
-            commit: string;
-            build_date: string;
-            repository_url: string;
-            engines: {
-                version: string;
-                count: number;
-            }[];
-        };
-        UserCreate: {
-            username: string;
-            email: string;
-            password: string;
-            role: components["schemas"]["Role"];
-        };
-        UserUpdate: {
-            /** Format: int64 */
-            revision: number;
-            email: string;
-            role: components["schemas"]["Role"];
-            disabled: boolean;
-            password?: string;
-        };
-        Upstream: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            /** @enum {string} */
-            protocol: "udp" | "tcp" | "dot" | "doh";
-            address: string;
-            tls_server_name: string;
-            doh_url: string;
-            timeout_ms: number;
-            ca_certificate_pem: string;
-            position: number;
-            enabled: boolean;
-            /** Format: int64 */
-            revision: number;
-        };
-        UpstreamInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            name: string;
-            /** @enum {string} */
-            protocol: "udp" | "tcp" | "dot" | "doh";
-            address?: string;
-            tls_server_name?: string;
-            doh_url?: string;
-            timeout_ms: number;
-            ca_certificate_pem?: string;
-            position: number;
-            enabled: boolean;
-            /**
-             * Format: int64
-             * @description required on update
-             */
-            revision?: number;
-        };
-        ResolverSettings: {
-            /** @enum {string} */
-            strategy: "ordered" | "fastest" | "parallel";
-            /** @description parallel strategy: upstreams queried at once; 0 = every candidate, engines cap at 8 */
-            parallel_max?: number;
-            /** Format: int64 */
-            cache_max_bytes: number;
-            cache_min_ttl: number;
-            cache_max_ttl: number;
-            cache_negative_max_ttl: number;
-            cache_stale_window: number;
-            /** @enum {string} */
-            block_mode: "null_ip" | "nxdomain" | "refused";
-            block_ttl: number;
-            otlp_endpoint: string;
-            trace_sample_one_in: number;
-            trace_slow_threshold_us: number;
-            /** Format: int64 */
-            revision: number;
-        };
-        AccessControl: {
-            allow_cidrs: string[];
-            /** @description Clients allowed to query hosted zones that set no allow_query_cidrs; omitted on update keeps the current value. */
-            authoritative_allow_cidrs?: string[];
-            /** Format: int64 */
-            revision: number;
-        };
-        FilterList: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** @description filter category of a catalog-managed list; null for custom lists */
-            category_key: string | null;
-            /** @description mirrors a filter category catalog source; read-only (toggle it through /filter-categories) */
-            managed_by_catalog: boolean;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            /** @enum {string} */
-            kind: "block" | "allow";
-            url: string;
-            refresh_interval_seconds: number;
-            enabled: boolean;
-            current_blob_sha256?: string | null;
-            entry_count: number;
-            invalid_line_count: number;
-            /** Format: date-time */
-            last_success_at?: string | null;
-            /** Format: date-time */
-            last_attempt_at?: string | null;
-            last_error: string;
-            /** @description last attempt failed or last success older than 2 x refresh interval */
-            stale: boolean;
-            /** Format: int64 */
-            revision: number;
-        };
-        FilterListInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            name: string;
-            /** @enum {string} */
-            kind: "block" | "allow";
-            url: string;
-            refresh_interval_seconds: number;
-            enabled: boolean;
-            /** Format: int64 */
-            revision?: number;
-        };
-        FilterCategorySource: {
-            key: string;
-            name: string;
-            url: string;
-            /** @enum {string} */
-            format: "domains" | "hosts" | "wildcard";
-            /** @description member of a .tar.gz archive; empty for plain lists */
-            archive_member: string;
-            license: string;
-            license_url: string;
-            attribution: string;
-            /** @description false: enabling needs acknowledge_license */
-            commercial_use: boolean;
-            notice: string;
-            enabled: boolean;
-            /** Format: uuid */
-            list_id: string;
-            entry_count: number;
-            /** Format: date-time */
-            last_success_at: string | null;
-            last_error: string;
-            stale: boolean;
-        };
-        FilterCategory: {
-            key: string;
-            name: string;
-            description: string;
-            enabled: boolean;
-            /** @description an enabled source failed its last refresh or is older than two intervals */
-            stale: boolean;
-            /** Format: int64 */
-            revision: number;
-            sources: components["schemas"]["FilterCategorySource"][];
-        };
-        FilterCategoryUpdate: {
-            enabled: boolean;
-            /** Format: int64 */
-            revision: number;
-            /** @default false */
-            acknowledge_license: boolean;
-            sources?: {
-                key: string;
-                enabled: boolean;
-            }[];
-        };
-        Allowlist: {
-            domains: string[];
-            /** Format: int64 */
-            revision: number;
-        };
-        Engine: {
-            /** Format: uuid */
-            id: string;
-            node_name: string;
-            engine_version: string;
-            /** Format: date-time */
-            enrolled_at: string;
-            /** Format: date-time */
-            last_seen_at?: string | null;
-            connected: boolean;
-            /** Format: int64 */
-            applied_version: number;
-            /** Format: int64 */
-            rejected_version?: number | null;
-            rejected_reason: string;
-            persist_error: string;
-            version_ahead: boolean;
-            /** @enum {string} */
-            status: "current" | "behind" | "rejected" | "ahead" | "disconnected" | "revoked";
-            /** Format: uuid */
-            engine_group_id: string;
-            engine_group_name: string;
-            labels: {
-                [key: string]: string;
-            };
-            /** Format: int64 */
-            revision: number;
-            /** Format: int64 */
-            target_version: number;
-            certificate_serial: string;
-            /** Format: date-time */
-            revoked_at?: string | null;
-            /** Format: date-time */
-            cert_rotate_requested_at?: string | null;
-            /** Format: date-time */
-            certificate_not_after?: string | null;
-        };
-        JoinToken: {
-            /** Format: uuid */
-            id: string;
-            name: string;
-            created_by: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            expires_at: string;
-            /** Format: date-time */
-            revoked_at?: string | null;
-            uses: number;
-            /** Format: uuid */
-            engine_group_id: string;
-            engine_group_name: string;
-            labels: {
-                [key: string]: string;
-            };
-            /** @enum {string} */
-            state: "active" | "expired" | "exhausted" | "revoked";
-            max_uses?: number | null;
-        };
-        JoinTokenCreate: {
-            name: string;
-            ttl_seconds: number;
-            /** Format: uuid */
-            engine_group_id?: string;
-            max_uses?: number;
-            labels?: {
-                [key: string]: string;
-            };
-        };
-        JoinTokenCreated: {
-            join_token: components["schemas"]["JoinToken"];
-            token: string;
-        };
-        ConfigVersion: {
-            /** Format: int64 */
-            version: number;
-            /** Format: date-time */
-            created_at: string;
-            created_by: string;
-            summary: string;
-        };
-        ApiToken: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            user_id: string;
-            name: string;
-            prefix: string;
-            role: components["schemas"]["Role"];
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            expires_at?: string | null;
-            /** Format: date-time */
-            last_used_at?: string | null;
-            /** Format: date-time */
-            revoked_at?: string | null;
-        };
-        ApiTokenCreate: {
-            name: string;
-            role: components["schemas"]["Role"];
-            /** Format: date-time */
-            expires_at?: string | null;
-        };
-        ApiTokenCreated: {
-            api_token: components["schemas"]["ApiToken"];
-            token: string;
-        };
-        AuditEvent: {
-            /** Format: int64 */
-            id: number;
-            /** Format: date-time */
-            at: string;
-            /** @enum {string} */
-            actor_type: "user" | "api_token" | "system";
-            actor_id: string;
-            actor_name: string;
-            action: string;
-            target_type: string;
-            target_id: string;
-            diff: {
-                [key: string]: unknown;
-            };
-            /** Format: int64 */
-            config_version?: number | null;
-        };
-        QueryLogRecord: {
-            /** Format: date-time */
-            time: string;
-            client: string;
-            name: string;
-            qtype: string;
-            rcode: string;
-            /** @enum {string} */
-            cache: "hit" | "miss" | "stale" | "none" | "auth";
-            /** @enum {string} */
-            filter: "none" | "blocked" | "allowed" | "rewritten";
-            upstream: string;
-            transport: string;
-            engine_id: string;
-            /** Format: int64 */
-            duration_us: number;
-            list_id: string;
-            category: string;
-            /** @enum {string} */
-            source: "" | "blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl";
-            list_name: string;
-            rule: string;
-            policy_group_id: string;
-            policy_group_name: string;
-            rpz_zone_id: string;
-            rpz_zone_name: string;
-            rpz_action: string;
-            rewrite_answer: string;
-            upstreams_raced: number;
-            /** @description The cached AI threat verdict for the name; null when none is cached or AI is off. */
-            threat: {
-                is_threat: boolean;
-                categories: string[];
-                confidence: number;
-                /** Format: date-time */
-                checked_at: string;
-            } | null;
-        };
-        QueryLogPage: {
-            backend: string;
-            records: components["schemas"]["QueryLogRecord"][];
-            next_cursor: string;
-        };
-        Dashboard: {
-            /** Format: int64 */
-            queries_total: number;
-            /** Format: int64 */
-            blocked_total: number;
-            qps: number;
-            cache_hit_ratio: number;
-            engines_total: number;
-            engines_connected: number;
-            upstreams: {
-                name: string;
-                up_engines: number;
-                total_engines: number;
-                rtt_ms: number;
-            }[];
-            series: {
-                /** Format: date-time */
-                at: string;
-                qps: number;
-            }[];
-        };
-        SafeSearch: {
-            google: boolean;
-            bing: boolean;
-            duckduckgo: boolean;
-            /** @enum {string} */
-            youtube: "off" | "moderate" | "strict";
-        };
-        GlobalSafeSearch: components["schemas"]["SafeSearch"] & {
-            /** Format: int64 */
-            revision: number;
-        };
-        PolicyGroupInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            name: string;
-            /** @default  */
-            description: string;
-            cidrs: string[];
-            /** @default [] */
-            filter_list_ids: string[];
-            /** @default [] */
-            allowlist: string[];
-            /**
-             * @description filter categories whose enabled catalog sources this group blocks
-             * @default []
-             */
-            category_keys: string[];
-            /**
-             * @description required when a newly selected category has enabled sources that are not free for commercial use
-             * @default false
-             */
-            acknowledge_license: boolean;
-            safe_search?: components["schemas"]["SafeSearch"];
-        };
-        PolicyGroupUpdate: components["schemas"]["PolicyGroupInput"] & {
-            /** Format: int64 */
-            revision: number;
-        };
-        PolicyGroup: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            description: string;
-            cidrs: string[];
-            filter_list_ids: string[];
-            allowlist: string[];
-            category_keys: string[];
-            safe_search: components["schemas"]["SafeSearch"];
-            /** Format: int64 */
-            revision: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        RewriteInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            /**
-             * Format: uuid
-             * @description null means global
-             */
-            group_id?: string | null;
-            /** @description Domain or *.domain */
-            name: string;
-            /** @enum {string} */
-            type: "A" | "AAAA" | "CNAME";
-            value: string;
-            /** @default 300 */
-            ttl: number;
-        };
-        RewriteUpdate: components["schemas"]["RewriteInput"] & {
-            /** Format: int64 */
-            revision: number;
-        };
-        Rewrite: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            group_id: string | null;
-            name: string;
-            /** @enum {string} */
-            type: "A" | "AAAA" | "CNAME";
-            value: string;
-            ttl: number;
-            /** Format: int64 */
-            revision: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        DnsTlsStatus: {
-            configured: boolean;
-            certificate: {
-                subject: string;
-                dns_names: string[];
-                ip_addresses: string[];
-                /** Format: date-time */
-                not_before: string;
-                /** Format: date-time */
-                not_after: string;
-                fingerprint_sha256: string;
-            } | null;
-            engines: {
-                /** Format: uuid */
-                engine_id: string;
-                node_name: string;
-                fingerprint_sha256: string;
-                applied: boolean;
-                error: string;
-                /** Format: date-time */
-                updated_at: string;
-            }[];
-        };
-        ResolutionSettings: {
-            /** @enum {string} */
-            mode: "forward" | "recursive";
-            qname_minimisation: boolean;
-            aggressive_nsec: boolean;
-            max_upstream_queries: number;
-            max_delegation_depth: number;
-            authority_port: number;
-            root_hints: components["schemas"]["RootHint"][];
-            /** Format: int64 */
-            revision: number;
-        };
-        RootHint: {
-            name: string;
-            addresses: string[];
-        };
-        ForwardZoneInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            domain: string;
-            addresses: string[];
-            validate: boolean;
-        };
-        ForwardZoneUpdate: components["schemas"]["ForwardZoneInput"] & {
-            /** Format: int64 */
-            revision: number;
-        };
-        ForwardZone: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            domain: string;
-            addresses: string[];
-            validate: boolean;
-            /** Format: int64 */
-            revision: number;
-        };
-        DnssecSettings: {
-            validation: boolean;
-            /** @description Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation */
-            validate_forwarded: boolean;
-            rfc5011: boolean;
-            /** Format: int64 */
-            revision: number;
-        };
-        TrustAnchorInput: {
-            zone: string;
-            ds: string;
-        };
-        TrustAnchor: {
-            /** Format: uuid */
-            id: string;
-            zone: string;
-            ds: string;
-            /** @enum {string} */
-            source: "iana" | "operator";
-            /** Format: date-time */
-            created_at: string;
-        };
-        NegativeTrustAnchorInput: {
-            domain: string;
-            /** @default  */
-            reason: string;
-            /**
-             * Format: date-time
-             * @description in the future and at most 30 days ahead
-             */
-            expires_at: string;
-        };
-        NegativeTrustAnchor: {
-            /** Format: uuid */
-            id: string;
-            domain: string;
-            reason: string;
-            /** Format: date-time */
-            expires_at: string;
-            created_by: string;
-            /** Format: date-time */
-            created_at: string;
-        };
-        DnssecStatus: {
-            engines: {
-                /** Format: uuid */
-                engine_id: string;
-                engine_name: string;
-                /** Format: date-time */
-                reported_at: string;
-                /** Format: int64 */
-                secure: number;
-                /** Format: int64 */
-                insecure: number;
-                /** Format: int64 */
-                bogus: number;
-                /** Format: int64 */
-                indeterminate: number;
-                active_negative_trust_anchors: number;
-                trust_anchors: {
-                    zone: string;
-                    key_tag: number;
-                    algorithm: number;
-                    /** @enum {string} */
-                    state: "configured" | "add_pend" | "valid" | "missing" | "revoked";
-                    /** Format: date-time */
-                    last_refresh_success: string | null;
-                    /** Format: date-time */
-                    hold_down_until: string | null;
-                    last_error: string;
-                }[];
-            }[];
-        };
-        RpzZoneInput: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            name: string;
-            /** @enum {string} */
-            source_type: "file" | "transfer";
-            /** @description ip:port, transfer only */
-            primary?: string | null;
-            tsig_key_name?: string | null;
-            /** @enum {string|null} */
-            tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
-            /** @description base64, 16-64 bytes; stored sealed under NEXORA_KEK_FILE; omit on update to keep the stored secret */
-            tsig_secret?: string | null;
-            min_refresh_seconds: number;
-            /** @enum {string} */
-            policy_override: "given" | "disabled" | "nxdomain" | "nodata" | "passthru" | "drop" | "tcp_only";
-        };
-        RpzZoneUpdate: {
-            primary?: string | null;
-            tsig_key_name?: string | null;
-            /** @enum {string|null} */
-            tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
-            tsig_secret?: string | null;
-            min_refresh_seconds: number;
-            /** @enum {string} */
-            policy_override: "given" | "disabled" | "nxdomain" | "nodata" | "passthru" | "drop" | "tcp_only";
-            /** Format: int64 */
-            revision: number;
-        };
-        RpzZone: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            position: number;
-            /** @enum {string} */
-            source_type: "file" | "transfer";
-            primary: string | null;
-            tsig_key_name: string | null;
-            tsig_algorithm: string | null;
-            tsig_secret_set: boolean;
-            min_refresh_seconds: number;
-            policy_override: string;
-            file_records: number | null;
-            /** Format: int64 */
-            revision: number;
-            status: {
-                /** Format: uuid */
-                engine_id: string;
-                engine_name: string;
-                /** Format: int64 */
-                serial: number;
-                /** Format: int64 */
-                records: number;
-                /** Format: int64 */
-                skipped: number;
-                /** Format: int64 */
-                hits: number;
-                /** Format: date-time */
-                last_success: string | null;
-                last_error: string;
-                stale: boolean;
-            }[];
-        };
-        RpzZoneFile: {
-            content: string;
-            /** Format: int64 */
-            revision: number;
-        };
-        RpzZoneOrder: {
-            ids: string[];
-        };
-        ZoneEndpoint: {
-            /** @description ip:port */
-            address: string;
-            /** Format: uuid */
-            tsig_key_id?: string | null;
-        };
-        ZoneTransfer: {
-            /** @description Clients allowed to transfer the zone; empty refuses transfers. */
-            allow_cidrs: string[];
-            /** Format: uuid */
-            tsig_key_id?: string | null;
-        };
-        ZoneUpdatePolicy: {
-            /** @description TSIG keys allowed to send dynamic updates; empty refuses updates. */
-            tsig_key_ids: string[];
-            /** @description Sources allowed to send updates; empty allows any source. TSIG is always required. */
-            allow_cidrs?: string[];
-        };
-        ZoneSOA: {
-            mname: string;
-            rname: string;
-            /** Format: int64 */
-            refresh: number;
-            /** Format: int64 */
-            retry: number;
-            /** Format: int64 */
-            expire: number;
-            /** Format: int64 */
-            minimum: number;
-            /** Format: int64 */
-            ttl: number;
-        };
-        /** @description Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update. */
-        ZoneSOAInput: {
-            mname: string;
-            rname: string;
-            /** Format: int64 */
-            refresh?: number;
-            /** Format: int64 */
-            retry?: number;
-            /** Format: int64 */
-            expire?: number;
-            /** Format: int64 */
-            minimum?: number;
-            /** Format: int64 */
-            ttl?: number;
-        };
-        ZoneSecondaryStatus: {
-            /** Format: date-time */
-            last_refresh_at: string | null;
-            /** Format: date-time */
-            last_success_at: string | null;
-            /** Format: date-time */
-            next_refresh_at: string | null;
-            /** Format: date-time */
-            expires_at: string | null;
-            expired: boolean;
-            last_error: string;
-            last_trigger: string;
-        };
-        Zone: {
-            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
-            allow_query_cidrs: string[];
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id: string | null;
-            /** Format: uuid */
-            id: string;
-            name: string;
-            /** @enum {string} */
-            kind: "primary" | "secondary";
-            /** Format: int64 */
-            revision: number;
-            /** Format: int64 */
-            serial: number;
-            /** Format: int64 */
-            default_ttl: number;
-            soa: components["schemas"]["ZoneSOA"];
-            transfer: components["schemas"]["ZoneTransfer"];
-            notify: components["schemas"]["ZoneEndpoint"][];
-            update: components["schemas"]["ZoneUpdatePolicy"];
-            primaries: components["schemas"]["ZoneEndpoint"][];
-            /** @description Present for secondary zones only. */
-            secondary_status?: components["schemas"]["ZoneSecondaryStatus"];
-            dnssec_enabled: boolean;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        ZoneCreate: {
-            /**
-             * Format: uuid
-             * @description engine group; null applies to every group
-             */
-            engine_group_id?: string | null;
-            /** @description Absolute zone name. */
-            name: string;
-            /** @enum {string} */
-            kind: "primary" | "secondary";
-            /**
-             * Format: int64
-             * @description Default 3600 when omitted.
-             */
-            default_ttl?: number;
-            /** @description Required for primary zones; secondary zones take the SOA of their primary. */
-            soa?: components["schemas"]["ZoneSOAInput"];
-            /** @description Primary zones: at least one apex NS target. */
-            nameservers?: string[];
-            /** @description Secondary zones: at least one primary. */
-            primaries?: components["schemas"]["ZoneEndpoint"][];
-            transfer?: components["schemas"]["ZoneTransfer"];
-            notify?: components["schemas"]["ZoneEndpoint"][];
-            update?: components["schemas"]["ZoneUpdatePolicy"];
-            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
-            allow_query_cidrs?: string[];
-        };
-        ZoneUpdate: {
-            /** Format: int64 */
-            revision: number;
-            /** Format: int64 */
-            default_ttl?: number;
-            soa?: components["schemas"]["ZoneSOAInput"];
-            primaries?: components["schemas"]["ZoneEndpoint"][];
-            transfer?: components["schemas"]["ZoneTransfer"];
-            notify?: components["schemas"]["ZoneEndpoint"][];
-            update?: components["schemas"]["ZoneUpdatePolicy"];
-            /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
-            allow_query_cidrs?: string[];
-        };
-        RecordInput: {
-            /** @description Absolute owner name inside the zone. */
-            name: string;
-            /** @enum {string} */
-            type: "A" | "AAAA" | "CAA" | "CNAME" | "DNAME" | "DS" | "HTTPS" | "LOC" | "MX" | "NAPTR" | "NS" | "PTR" | "SRV" | "SSHFP" | "SVCB" | "TLSA" | "TXT";
-            /** Format: int64 */
-            ttl: number;
-            /** @description RDATA in presentation format. */
-            data: string;
-        };
-        RecordUpdate: {
-            name: string;
-            /** @enum {string} */
-            type: "A" | "AAAA" | "CAA" | "CNAME" | "DNAME" | "DS" | "HTTPS" | "LOC" | "MX" | "NAPTR" | "NS" | "PTR" | "SRV" | "SSHFP" | "SVCB" | "TLSA" | "TXT";
-            /** Format: int64 */
-            ttl: number;
-            data: string;
-            /** Format: int64 */
-            revision: number;
-        };
-        Record: {
-            /** Format: uuid */
-            id: string;
-            name: string;
-            type: string;
-            /** Format: int64 */
-            ttl: number;
-            data: string;
-            /** Format: int64 */
-            revision: number;
-        };
-        ZoneImport: {
-            /** Format: int64 */
-            revision: number;
-            /** @description BIND master file; $INCLUDE and $GENERATE are refused. Request bodies may be up to 64 MiB. */
-            content: string;
-        };
-        ZoneImportResult: {
-            zone: components["schemas"]["Zone"];
-            records_imported: number;
-        };
-        RecordPage: {
-            items: components["schemas"]["Record"][];
-            next_cursor: string | null;
-        };
-        ZoneDnssecKey: {
-            /** Format: uuid */
-            id: string;
-            /** @enum {string} */
-            role: "ksk" | "zsk";
-            algorithm: number;
-            key_tag: number;
-            flags: number;
-            /** @enum {string} */
-            state: "published" | "active" | "retired" | "removed";
-            /**
-             * @description KSKs: whether the parent's DS for this key is pending or was confirmed.
-             * @enum {string}
-             */
-            ds_state: "none" | "pending" | "seen";
-            /** @enum {string} */
-            backend: "kek" | "pkcs11";
-            /** @description DNSKEY public key field (base64). */
-            public_key: string;
-            /** Format: date-time */
-            published_at: string;
-            /** Format: date-time */
-            activated_at: string | null;
-            /** Format: date-time */
-            retired_at: string | null;
-            /** Format: date-time */
-            removed_at: string | null;
-        };
-        ZoneDnssec: {
-            enabled: boolean;
-            /** @enum {integer} */
-            algorithm: 8 | 13;
-            /** @enum {string} */
-            nsec_mode: "nsec" | "nsec3";
-            /** @description kek or pkcs11; empty when no key storage is configured. */
-            key_backend: string;
-            propagation_delay_seconds: number;
-            parent_ds_ttl_seconds: number;
-            /** @description 0 means manual ZSK rollovers only. */
-            zsk_lifetime_days: number;
-            keys: components["schemas"]["ZoneDnssecKey"][];
-            /** @description DS records (SHA-256) of the newest active KSK, to publish at the parent. */
-            ds: string[];
-            /** @description The served DNSKEY RRset in presentation form. */
-            dnskeys: string[];
-        };
-        ZoneDnssecUpdate: {
-            /**
-             * Format: int64
-             * @description Zone revision.
-             */
-            revision: number;
-            enabled: boolean;
-            /**
-             * @description Default 13 (ECDSA P-256); cannot change while signing is enabled.
-             * @enum {integer}
-             */
-            algorithm?: 8 | 13;
-            /**
-             * @description Default nsec3.
-             * @enum {string}
-             */
-            nsec_mode?: "nsec" | "nsec3";
-            /**
-             * @description Default pkcs11 when a token is configured, else kek.
-             * @enum {string}
-             */
-            key_backend?: "kek" | "pkcs11";
-            propagation_delay_seconds?: number;
-            parent_ds_ttl_seconds?: number;
-            zsk_lifetime_days?: number;
-        };
-        ZoneKeyRollover: {
-            /** @enum {string} */
-            role: "zsk" | "ksk";
-        };
-        ZoneKskDsPublished: {
-            /** Format: uuid */
-            key_id: string;
-        };
-        /** @enum {string} */
-        TsigKeyAlgorithm: "hmac-sha256" | "hmac-sha384" | "hmac-sha512";
-        /** @description A TSIG key. The secret is write-only and returned once, on create. */
-        TsigKey: {
-            /** Format: uuid */
-            id: string;
-            /** @description Absolute key name, lowercase (e.g. xfr-key.). */
-            name: string;
-            algorithm: components["schemas"]["TsigKeyAlgorithm"];
-            /** Format: int64 */
-            revision: number;
-            /** Format: date-time */
-            created_at: string;
-        };
-        TsigKeyCreate: {
-            name: string;
-            algorithm: components["schemas"]["TsigKeyAlgorithm"];
-            /** @description Base64 of 16..64 bytes; omitted, a random secret of the HMAC output size is generated. */
-            secret?: string;
-        };
-        TsigKeyCreated: components["schemas"]["TsigKey"] & {
-            /** @description Base64 secret; shown only in this response. */
-            secret: string;
-        };
-        /** @enum {string} */
-        RolloutState: "pending" | "canary" | "verifying" | "rolling" | "completed" | "halted" | "rolled_back" | "superseded";
-        EngineGroupInput: {
-            name: string;
-            description?: string;
-            /** @enum {string} */
-            upstream_mode?: "inherit" | "override";
-            extra_acl_cidrs?: string[];
-            otlp_endpoint?: string;
-            /** @enum {string} */
-            rollout_strategy?: "all_at_once" | "canary";
-            canary_count?: number;
-            canary_percent?: number;
-            ack_timeout_seconds?: number;
-            health_window_seconds?: number;
-            max_servfail_ratio?: number;
-            min_health_queries?: number;
-            /**
-             * Format: int64
-             * @description filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216
-             */
-            filter_index_max_bytes?: number;
-        };
-        EngineGroupUpdate: components["schemas"]["EngineGroupInput"] & {
-            /** Format: int64 */
-            revision: number;
-        };
-        EngineGroup: {
-            /** Format: uuid */
-            id: string;
-            name: string;
-            description: string;
-            /** @enum {string} */
-            upstream_mode: "inherit" | "override";
-            extra_acl_cidrs: string[];
-            otlp_endpoint: string;
-            /** @enum {string} */
-            rollout_strategy: "all_at_once" | "canary";
-            canary_count: number;
-            canary_percent: number;
-            ack_timeout_seconds: number;
-            health_window_seconds: number;
-            max_servfail_ratio: number;
-            min_health_queries: number;
-            rollouts_paused: boolean;
-            /** Format: int64 */
-            filter_index_max_bytes: number;
-            /** Format: int64 */
-            stable_version?: number | null;
-            engine_count: number;
-            active_rollout?: components["schemas"]["Rollout"] | null;
-            /** Format: int64 */
-            revision: number;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        Rollout: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            engine_group_id: string;
-            engine_group_name: string;
-            /** Format: int64 */
-            version: number;
-            /** Format: int64 */
-            from_version?: number | null;
-            /** @enum {string} */
-            kind: "change" | "rollback" | "republish";
-            /** @enum {string} */
-            strategy: "all_at_once" | "canary";
-            state: components["schemas"]["RolloutState"];
-            canary_engine_ids: string[];
-            /** Format: date-time */
-            phase_started_at?: string | null;
-            halt_reason: string;
-            created_by: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            finished_at?: string | null;
-            progress: {
-                total: number;
-                applied: number;
-                rejected: number;
-            };
-        };
-        RolloutDetail: components["schemas"]["Rollout"] & {
-            engines: {
-                /** Format: uuid */
-                engine_id: string;
-                node_name: string;
-                canary: boolean;
-                connected: boolean;
-                /** Format: int64 */
-                applied_version: number;
-                /** @enum {string} */
-                progress: "waiting" | "applied" | "rejected" | "disconnected";
-                rejected_reason: string;
-            }[];
-        };
-        EngineUpdate: {
-            /** Format: int64 */
-            revision: number;
-            /** Format: uuid */
-            engine_group_id?: string;
-            labels?: {
-                [key: string]: string;
-            };
-        };
-        EngineStats: {
-            /** @enum {string} */
-            window: "5m" | "1h" | "24h";
-            samples: {
-                /** Format: date-time */
-                at: string;
-                qps: number;
-                cache_hit_ratio: number;
-                servfail_ratio: number;
-                p99_ms: number;
-            }[];
-            filter_index?: {
-                /** Format: date-time */
-                at: string;
-                /** Format: int64 */
-                entries: number;
-                /** Format: int64 */
-                bytes: number;
-                /** Format: int64 */
-                max_bytes: number;
-                build_seconds: number;
-                decision_ns_blocked: number;
-                decision_ns_clean: number;
-                cpu: string;
-            } | null;
-        };
-        DashboardSeries: {
-            /** @enum {string} */
-            range: "15m" | "1h" | "6h" | "24h" | "7d";
-            step_seconds: number;
-            points: {
-                /** Format: date-time */
-                at: string;
-                qps: number;
-                qps_by_transport: {
-                    [key: string]: number;
-                };
-                qps_by_rcode: {
-                    [key: string]: number;
-                };
-                p50_ms: number;
-                p95_ms: number;
-                p99_ms: number;
-                miss_p50_ms: number;
-                miss_p95_ms: number;
-                miss_p99_ms: number;
-                cache_hit_ratio: number;
-                cache_miss_ratio: number;
-                cache_stale_ratio: number;
-                blocked_qps: number;
-                rewritten_qps: number;
-                blocked_by_category: {
-                    [key: string]: number;
-                };
-                answers_by_route: {
-                    [key: string]: number;
-                };
-                recursion_upstream_qps: number;
-                recursion_timeouts_qps: number;
-                lame_marked: number;
-                resolution_failures_qps: number;
-                dnssec_secure_qps: number;
-                dnssec_insecure_qps: number;
-                dnssec_bogus_qps: number;
-            }[];
-            engines: {
-                /** Format: uuid */
-                engine_id: string;
-                node_name: string;
-                /** Format: int64 */
-                cache_entries: number;
-                /** Format: int64 */
-                cache_bytes: number;
-                /** Format: int64 */
-                filter_index_bytes: number;
-            }[];
-        };
-        DashboardTop: {
-            /** @enum {string} */
-            range: "15m" | "1h" | "6h" | "24h" | "7d";
-            /** @description false when the query log backend cannot aggregate; the lists are then empty */
-            available: boolean;
-            domains: {
-                key: string;
-                /** Format: int64 */
-                count: number;
-            }[];
-            blocked_domains: {
-                key: string;
-                /** Format: int64 */
-                count: number;
-            }[];
-            clients: {
-                key: string;
-                /** Format: int64 */
-                count: number;
-            }[];
-            categories: {
-                key: string;
-                /** Format: int64 */
-                count: number;
-            }[];
-        };
-        DashboardHealth: {
-            engines: {
-                /** Format: uuid */
-                id: string;
-                node_name: string;
-                engine_group_name: string;
-                status: string;
-                qps: number;
-                p99_ms: number;
-                cache_hit_ratio: number;
-                /** Format: int64 */
-                filter_index_bytes: number;
-                /** Format: int64 */
-                applied_version: number;
-                /** Format: int64 */
-                target_version: number;
-            }[];
-            groups: {
-                /** Format: uuid */
-                id: string;
-                name: string;
-                engines: number;
-                connected: number;
-            }[];
-            alerts: {
-                /** @enum {string} */
-                kind: "engine_disconnected" | "category_stale" | "upstream_down" | "certificate_expiring" | "trust_anchor_refresh_failed" | "export_dropped";
-                /** @enum {string} */
-                severity: "warning" | "critical";
-                subject: string;
-                message: string;
-            }[];
-        };
-        EngineMetrics: {
-            /** @enum {string} */
-            window: "5m" | "1h" | "24h";
-            samples: {
-                /** Format: date-time */
-                at: string;
-                qps: number;
-                p50_ms: number;
-                p99_ms: number;
-                cache_hit_ratio: number;
-                servfail_ratio: number;
-                nxdomain_ratio: number;
-                refused_ratio: number;
-                blocked_qps: number;
-                cpu_cores: number;
-                /** Format: int64 */
-                resident_bytes: number;
-                /** Format: int64 */
-                memory_limit_bytes: number;
-                connections: {
-                    [key: string]: number;
-                };
-            }[];
-            upstreams: {
-                name: string;
-                samples: {
-                    /** Format: date-time */
-                    at: string;
-                    rtt_ms: number;
-                    failures_per_second: number;
-                    race_wins_per_second: number;
-                }[];
-            }[];
-            /** Format: date-time */
-            started_at: string | null;
-            restarts: number;
-            filter_index: {
-                /** Format: date-time */
-                at: string;
-                /** Format: int64 */
-                entries: number;
-                /** Format: int64 */
-                bytes: number;
-                /** Format: int64 */
-                max_bytes: number;
-                build_seconds: number;
-                decision_ns_blocked: number;
-                decision_ns_clean: number;
-                cpu: string;
-            } | null;
-        };
-        EngineLogs: {
-            /** Format: uuid */
-            engine_id: string;
-            lines: {
-                /** Format: int64 */
-                seq: number;
-                /** Format: date-time */
-                time: string;
-                /** @enum {string} */
-                level: "error" | "warn" | "info" | "debug";
-                message: string;
-            }[];
-            /** Format: int64 */
-            last_seq: number;
-            /** Format: int64 */
-            oldest_seq: number;
-        };
-        FleetSummary: {
-            engines_total: number;
-            engines_by_status: {
-                [key: string]: number;
-            };
-            halted_rollouts: number;
-            engine_groups: {
-                /** Format: uuid */
-                id: string;
-                name: string;
-                engines: number;
-                connected: number;
-                /** @enum {string} */
-                rollout_strategy: "all_at_once" | "canary";
-                rollouts_paused: boolean;
-                /** Format: int64 */
-                stable_version?: number | null;
-                active_rollout?: components["schemas"]["Rollout"] | null;
-            }[];
-        };
-        /** @enum {string} */
-        AiAgentName: "querylog_anomalies" | "dashboard_insights" | "filter_recommendations" | "upstream_prediction" | "rollout_risk" | "threat_classification" | "capacity_forecast" | "rpz_suggestions";
-        AiAgentState: {
-            name: components["schemas"]["AiAgentName"];
-            enabled: boolean;
-            /** Format: int64 */
-            interval_seconds: number;
-            /** Format: date-time */
-            last_started_at: string | null;
-            /** Format: date-time */
-            last_finished_at: string | null;
-            last_outcome: string;
-            last_error: string;
-            /** Format: date-time */
-            next_run_at: string | null;
-            running: boolean;
-        };
-        /** @description The AI layer's state. It never contains the API key. */
-        AiStatus: {
-            enabled: boolean;
-            /** @enum {string} */
-            reason: "" | "not_configured" | "incomplete_configuration" | "endpoint_not_private";
-            model: string;
-            endpoint_host: string;
-            structured_output: string;
-            budget: {
-                /** Format: date */
-                day: string;
-                /** Format: int64 */
-                limit_tokens: number;
-                /** Format: int64 */
-                used_tokens: number;
-                /** Format: int64 */
-                background_limit_tokens: number;
-            };
-            agents: components["schemas"]["AiAgentState"][];
-            features: {
-                querylog_search: boolean;
-                config_assistant: boolean;
-                threat_check: boolean;
-            };
-            mcp: {
-                enabled: boolean;
-                read_only: boolean;
-            };
-        };
-        AiTask: {
-            /** Format: uuid */
-            id: string;
-            /** @enum {string} */
-            kind: "querylog_search" | "threat_check" | "assistant_message";
-            /** @enum {string} */
-            status: "queued" | "running" | "succeeded" | "failed";
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            started_at: string | null;
-            /** Format: date-time */
-            finished_at: string | null;
-            error_code: string;
-            error_message: string;
-            /** @description The kind's result (AiQueryLogSearchResult, AiThreatCheckResult or AiAssistantTurnResult) once succeeded. */
-            result: Record<string, never> | null;
-        };
-        AiQueryLogFilters: {
-            /** Format: date-time */
-            from?: string;
-            /** Format: date-time */
-            to?: string;
-            client?: string;
-            name?: string;
-            qtype?: string[];
-            rcode?: string[];
-            cache?: string[];
-            filter?: string[];
-            category?: string[];
-            source?: string[];
-            list_id?: string[];
-            policy_group?: string[];
-            engine_id?: string[];
-        };
-        AiQueryLogSearchResult: {
-            filters: components["schemas"]["AiQueryLogFilters"];
-            explanation: string;
-            summary: string;
-            suggestions: string[];
-            total_shown: number;
-        };
-        AiThreatVerdict: {
-            name: string;
-            is_threat: boolean;
-            categories: string[];
-            confidence: number;
-            reasoning: string;
-            /** Format: int64 */
-            query_count: number;
-            /** Format: int64 */
-            client_count: number;
-            /** Format: date-time */
-            first_seen: string | null;
-            /** Format: date-time */
-            last_seen: string | null;
-            blocked_by: string;
-            cached: boolean;
-        };
-        AiThreatCheckResult: {
-            results: components["schemas"]["AiThreatVerdict"][];
-        };
-        AiAssistantTurnResult: {
-            /** Format: int64 */
-            message_id: number;
-            /** Format: uuid */
-            proposal_id: string | null;
-        };
-        AiQueryLogSearchRequest: {
-            query: string;
-            /** Format: date-time */
-            from?: string;
-            /** Format: date-time */
-            to?: string;
-        };
-        AiThreatCheckRequest: {
-            domains: string[];
-        };
-        AiFinding: {
-            /** Format: uuid */
-            id: string;
-            /** @enum {string} */
-            kind: "anomaly" | "insight";
-            candidate_id: string;
-            type: string;
-            /** @enum {string} */
-            status: "open" | "acknowledged" | "dismissed" | "resolved";
-            /** @enum {string} */
-            severity: "info" | "warning" | "critical";
-            confidence: number;
-            title: string;
-            description: string;
-            explained: boolean;
-            detail: {
-                [key: string]: unknown;
-            };
-            /** Format: date-time */
-            first_seen: string;
-            /** Format: date-time */
-            last_seen: string;
-            updated_by: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        AiFindingUpdate: {
-            /** @enum {string} */
-            status: "acknowledged" | "dismissed";
-        };
-        AiInsights: {
-            insights: components["schemas"]["AiFinding"][];
-            summary: string;
-            score: number;
-            /** Format: date-time */
-            generated_at: string | null;
-        };
-        AiProposalAction: {
-            operation_id: string;
-            path_params: {
-                [key: string]: string;
-            };
-            body: Record<string, never> | null;
-            explanation: string;
-            /** @description The live resource the action changes (getAiProposal only; null in lists and for creations). */
-            current: Record<string, never> | null;
-        };
-        AiProposal: {
-            /** Format: uuid */
-            id: string;
-            /** @enum {string} */
-            source: "filter_recommendations" | "config_assistant" | "upstream_prediction" | "rollout_risk" | "capacity_forecast" | "rpz_suggestions";
-            /** @enum {string} */
-            status: "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
-            title: string;
-            description: string;
-            /** @enum {string} */
-            priority: "low" | "medium" | "high";
-            impact: {
-                [key: string]: unknown;
-            };
-            evidence: {
-                [key: string]: unknown;
-            };
-            actions: components["schemas"]["AiProposalAction"][];
-            risk: {
-                [key: string]: unknown;
-            };
-            /** Format: uuid */
-            session_id: string | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-            reviewed_by: string;
-            /** Format: date-time */
-            reviewed_at: string | null;
-            result: Record<string, never> | null;
-            dismiss_reason: string;
-        };
-        AiApplyRequest: {
-            ids: string[];
-            /** @default false */
-            acknowledge_license: boolean;
-        };
-        AiApplyResponse: {
-            results: {
-                /** Format: uuid */
-                id: string;
-                status: string;
-                actions: {
-                    operation_id: string;
-                    http_status: number;
-                    code: string;
-                    message: string;
-                }[];
-            }[];
-        };
-        AiDismissRequest: {
-            ids: string[];
-            reason?: string;
-        };
-        AiDismissResponse: {
-            results: {
-                /** Format: uuid */
-                id: string;
-                status: string;
-                code: string;
-            }[];
-        };
-        AiAssistantMessage: {
-            /** Format: int64 */
-            id: number;
-            /** @enum {string} */
-            role: "user" | "assistant";
-            content: string;
-            /** Format: uuid */
-            proposal_id: string | null;
-            /** Format: date-time */
-            created_at: string;
-        };
-        AiAssistantMessageInput: {
-            content: string;
-        };
-        AiAssistantSession: {
-            /** Format: uuid */
-            id: string;
-            title: string;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-            messages: components["schemas"]["AiAssistantMessage"][];
-            proposal: components["schemas"]["AiProposal"] | null;
-            task: components["schemas"]["AiTask"] | null;
-        };
-        AiUpstreamPrediction: {
-            upstream_id: string;
-            upstream_name: string;
-            /** @enum {string} */
-            trend: "stable" | "degrading" | "improving" | "periodic" | "failing" | "insufficient_data";
-            confidence: number;
-            current_rtt_p50_ms: number;
-            current_rtt_p99_ms: number;
-            slope_ms_per_hour: number;
-            step_change: boolean;
-            periodic_hours: number[];
-            /** Format: date-time */
-            projected_time_to_threshold: string | null;
-            data_points_analyzed: number;
-            reasoning: string;
-            recommendation: {
-                /** @enum {string} */
-                type: "switch_strategy" | "reorder" | "disable" | "none";
-                description: string;
-            };
-        };
-        AiCapacityForecast: {
-            /** @enum {string} */
-            resource: "filter_index" | "cache" | "recursor_cache" | "engine_memory" | "blocklist_entries" | "query_volume";
-            current_value: number;
-            max_value: number | null;
-            growth_per_day: number;
-            growth_per_week: number;
-            /** Format: date-time */
-            projected_exhaustion_date: string | null;
-            days_remaining: number | null;
-            /** @enum {string} */
-            trend: "stable" | "growing" | "shrinking" | "insufficient_data";
-            confidence: number;
-            recommendation: string;
-            points_analyzed: number;
-        };
-        AiForecast: {
-            /** Format: uuid */
-            id: string;
-            /** @enum {string} */
-            kind: "upstream" | "capacity";
-            subject: string;
-            /** Format: date-time */
-            generated_at: string;
-            /** Format: date-time */
-            valid_until: string;
-            /** Format: uuid */
-            proposal_id: string | null;
-            upstream: components["schemas"]["AiUpstreamPrediction"] | null;
-            capacity: components["schemas"]["AiCapacityForecast"] | null;
-        };
-        AiRolloutRisk: {
-            /** Format: uuid */
-            rollout_id: string;
-            /** @enum {string} */
-            status: "pending" | "assessed" | "failed" | "skipped";
-            risk_score: number | null;
-            /** @enum {string|null} */
-            risk_level: "low" | "medium" | "high" | null;
-            analysis: string;
-            historical_patterns: {
-                /** Format: int64 */
-                config_version: number;
-                description: string;
-                outcome: string;
-                canary_rejected: boolean;
-                max_servfail_ratio: number;
-            }[];
-            recommendation: {
-                strategy: string;
-                canary_count: number;
-                min_health_queries: number;
-                max_servfail_ratio: number;
-                reasoning: string;
-            } | null;
-            /** Format: uuid */
-            proposal_id: string | null;
-            /** Format: date-time */
-            assessed_at: string | null;
-            error: string;
-        };
-        AiListClassification: {
-            /** Format: uuid */
-            list_id: string;
-            blob_sha256: string;
-            sample_size: number;
-            /** Format: int64 */
-            entry_count: number;
-            /** Format: date-time */
-            classified_at: string | null;
-            breakdown: {
-                category: string;
-                sampled: number;
-                /** Format: int64 */
-                estimated: number;
-            }[];
-        };
+  schemas: {
+    Error: {
+      code: string;
+      message: string;
+      /** @description Per-line problems of submitted zone data; for license_acknowledgement_required one entry per source (line 0, message "<source key>: <notice>"). */
+      details?: {
+        line: number;
+        message: string;
+      }[];
     };
-    responses: {
-        /** @description error */
-        Error: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
+    Health: {
+      /** @enum {string} */
+      status: "ok" | "degraded";
+      /** @enum {string} */
+      database: "ok" | "unavailable";
+      version: string;
+    };
+    SetupStatus: {
+      required: boolean;
+    };
+    SetupRequest: {
+      token: string;
+      username: string;
+      email: string;
+      password: string;
+    };
+    LoginRequest: {
+      username: string;
+      password: string;
+    };
+    AuthProviders: {
+      local: boolean;
+      oidc: boolean;
+    };
+    /** @enum {string} */
+    Role: "viewer" | "operator" | "admin";
+    User: {
+      /** Format: uuid */
+      id: string;
+      username: string;
+      email: string;
+      role: components["schemas"]["Role"];
+      /** @enum {string} */
+      source: "local" | "oidc";
+      disabled: boolean;
+      /** Format: int64 */
+      revision: number;
+      /** Format: date-time */
+      created_at: string;
+      display_name: string;
+      /** Format: date-time */
+      last_login_at: string | null;
+      preferences: components["schemas"]["UserPreferences"];
+    };
+    UserPreferences: {
+      /** @enum {string} */
+      theme: "system" | "light" | "dark";
+      /** @description IANA name; empty uses the browser */
+      time_zone: string;
+      clock_24h: boolean;
+      querylog_live: boolean;
+    };
+    CurrentUserUpdate: {
+      /** Format: int64 */
+      revision: number;
+      email?: string;
+      display_name?: string;
+      preferences?: components["schemas"]["UserPreferences"];
+    };
+    PasswordChange: {
+      current_password: string;
+      new_password: string;
+      /** @default true */
+      revoke_other_sessions: boolean;
+    };
+    VersionInfo: {
+      version: string;
+      commit: string;
+      build_date: string;
+      repository_url: string;
+      engines: {
+        version: string;
+        count: number;
+      }[];
+    };
+    UserCreate: {
+      username: string;
+      email: string;
+      password: string;
+      role: components["schemas"]["Role"];
+    };
+    UserUpdate: {
+      /** Format: int64 */
+      revision: number;
+      email: string;
+      role: components["schemas"]["Role"];
+      disabled: boolean;
+      password?: string;
+    };
+    Upstream: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      /** @enum {string} */
+      protocol: "udp" | "tcp" | "dot" | "doh";
+      address: string;
+      tls_server_name: string;
+      doh_url: string;
+      timeout_ms: number;
+      ca_certificate_pem: string;
+      position: number;
+      enabled: boolean;
+      /** Format: int64 */
+      revision: number;
+    };
+    UpstreamInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      name: string;
+      /** @enum {string} */
+      protocol: "udp" | "tcp" | "dot" | "doh";
+      address?: string;
+      tls_server_name?: string;
+      doh_url?: string;
+      timeout_ms: number;
+      ca_certificate_pem?: string;
+      position: number;
+      enabled: boolean;
+      /**
+       * Format: int64
+       * @description required on update
+       */
+      revision?: number;
+    };
+    ResolverSettings: {
+      /** @enum {string} */
+      strategy: "ordered" | "fastest" | "parallel";
+      /** @description parallel strategy: upstreams queried at once; 0 = every candidate, engines cap at 8 */
+      parallel_max?: number;
+      /** Format: int64 */
+      cache_max_bytes: number;
+      cache_min_ttl: number;
+      cache_max_ttl: number;
+      cache_negative_max_ttl: number;
+      cache_stale_window: number;
+      /** @enum {string} */
+      block_mode: "null_ip" | "nxdomain" | "refused";
+      block_ttl: number;
+      otlp_endpoint: string;
+      trace_sample_one_in: number;
+      trace_slow_threshold_us: number;
+      /** Format: int64 */
+      revision: number;
+    };
+    AccessControl: {
+      allow_cidrs: string[];
+      /** @description Clients allowed to query hosted zones that set no allow_query_cidrs; omitted on update keeps the current value. */
+      authoritative_allow_cidrs?: string[];
+      /** Format: int64 */
+      revision: number;
+    };
+    FilterList: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** @description filter category of a catalog-managed list; null for custom lists */
+      category_key: string | null;
+      /** @description mirrors a filter category catalog source; read-only (toggle it through /filter-categories) */
+      managed_by_catalog: boolean;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      /** @enum {string} */
+      kind: "block" | "allow";
+      url: string;
+      refresh_interval_seconds: number;
+      enabled: boolean;
+      current_blob_sha256?: string | null;
+      entry_count: number;
+      invalid_line_count: number;
+      /** Format: date-time */
+      last_success_at?: string | null;
+      /** Format: date-time */
+      last_attempt_at?: string | null;
+      last_error: string;
+      /** @description last attempt failed or last success older than 2 x refresh interval */
+      stale: boolean;
+      /** Format: int64 */
+      revision: number;
+    };
+    FilterListInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      name: string;
+      /** @enum {string} */
+      kind: "block" | "allow";
+      url: string;
+      refresh_interval_seconds: number;
+      enabled: boolean;
+      /** Format: int64 */
+      revision?: number;
+    };
+    FilterCategorySource: {
+      key: string;
+      name: string;
+      url: string;
+      /** @enum {string} */
+      format: "domains" | "hosts" | "wildcard";
+      /** @description member of a .tar.gz archive; empty for plain lists */
+      archive_member: string;
+      license: string;
+      license_url: string;
+      attribution: string;
+      /** @description false: enabling needs acknowledge_license */
+      commercial_use: boolean;
+      notice: string;
+      enabled: boolean;
+      /** Format: uuid */
+      list_id: string;
+      entry_count: number;
+      /** Format: date-time */
+      last_success_at: string | null;
+      last_error: string;
+      stale: boolean;
+    };
+    FilterCategory: {
+      key: string;
+      name: string;
+      description: string;
+      enabled: boolean;
+      /** @description an enabled source failed its last refresh or is older than two intervals */
+      stale: boolean;
+      /** Format: int64 */
+      revision: number;
+      sources: components["schemas"]["FilterCategorySource"][];
+    };
+    FilterCategoryUpdate: {
+      enabled: boolean;
+      /** Format: int64 */
+      revision: number;
+      /** @default false */
+      acknowledge_license: boolean;
+      sources?: {
+        key: string;
+        enabled: boolean;
+      }[];
+    };
+    Allowlist: {
+      domains: string[];
+      /** Format: int64 */
+      revision: number;
+    };
+    Engine: {
+      /** Format: uuid */
+      id: string;
+      node_name: string;
+      engine_version: string;
+      /** Format: date-time */
+      enrolled_at: string;
+      /** Format: date-time */
+      last_seen_at?: string | null;
+      connected: boolean;
+      /** Format: int64 */
+      applied_version: number;
+      /** Format: int64 */
+      rejected_version?: number | null;
+      rejected_reason: string;
+      persist_error: string;
+      version_ahead: boolean;
+      /** @enum {string} */
+      status:
+        | "current"
+        | "behind"
+        | "rejected"
+        | "ahead"
+        | "disconnected"
+        | "revoked";
+      /** Format: uuid */
+      engine_group_id: string;
+      engine_group_name: string;
+      labels: {
+        [key: string]: string;
+      };
+      /** Format: int64 */
+      revision: number;
+      /** Format: int64 */
+      target_version: number;
+      certificate_serial: string;
+      /** Format: date-time */
+      revoked_at?: string | null;
+      /** Format: date-time */
+      cert_rotate_requested_at?: string | null;
+      /** Format: date-time */
+      certificate_not_after?: string | null;
+    };
+    JoinToken: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      created_by: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      expires_at: string;
+      /** Format: date-time */
+      revoked_at?: string | null;
+      uses: number;
+      /** Format: uuid */
+      engine_group_id: string;
+      engine_group_name: string;
+      labels: {
+        [key: string]: string;
+      };
+      /** @enum {string} */
+      state: "active" | "expired" | "exhausted" | "revoked";
+      max_uses?: number | null;
+    };
+    JoinTokenCreate: {
+      name: string;
+      ttl_seconds: number;
+      /** Format: uuid */
+      engine_group_id?: string;
+      max_uses?: number;
+      labels?: {
+        [key: string]: string;
+      };
+    };
+    JoinTokenCreated: {
+      join_token: components["schemas"]["JoinToken"];
+      token: string;
+    };
+    ConfigVersion: {
+      /** Format: int64 */
+      version: number;
+      /** Format: date-time */
+      created_at: string;
+      created_by: string;
+      summary: string;
+    };
+    ApiToken: {
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      user_id: string;
+      name: string;
+      prefix: string;
+      role: components["schemas"]["Role"];
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      expires_at?: string | null;
+      /** Format: date-time */
+      last_used_at?: string | null;
+      /** Format: date-time */
+      revoked_at?: string | null;
+    };
+    ApiTokenCreate: {
+      name: string;
+      role: components["schemas"]["Role"];
+      /** Format: date-time */
+      expires_at?: string | null;
+    };
+    ApiTokenCreated: {
+      api_token: components["schemas"]["ApiToken"];
+      token: string;
+    };
+    AuditEvent: {
+      /** Format: int64 */
+      id: number;
+      /** Format: date-time */
+      at: string;
+      /** @enum {string} */
+      actor_type: "user" | "api_token" | "system";
+      actor_id: string;
+      actor_name: string;
+      action: string;
+      target_type: string;
+      target_id: string;
+      diff: {
+        [key: string]: unknown;
+      };
+      /** Format: int64 */
+      config_version?: number | null;
+    };
+    QueryLogRecord: {
+      /** Format: date-time */
+      time: string;
+      client: string;
+      name: string;
+      qtype: string;
+      rcode: string;
+      /** @enum {string} */
+      cache: "hit" | "miss" | "stale" | "none" | "auth";
+      /** @enum {string} */
+      filter: "none" | "blocked" | "allowed" | "rewritten";
+      upstream: string;
+      transport: string;
+      engine_id: string;
+      /** Format: int64 */
+      duration_us: number;
+      list_id: string;
+      category: string;
+      /** @enum {string} */
+      source:
+        "" | "blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl";
+      list_name: string;
+      rule: string;
+      policy_group_id: string;
+      policy_group_name: string;
+      rpz_zone_id: string;
+      rpz_zone_name: string;
+      rpz_action: string;
+      rewrite_answer: string;
+      upstreams_raced: number;
+      /** @description The cached AI threat verdict for the name; null when none is cached or AI is off. */
+      threat: {
+        is_threat: boolean;
+        categories: string[];
+        confidence: number;
+        /** Format: date-time */
+        checked_at: string;
+      } | null;
+    };
+    QueryLogPage: {
+      backend: string;
+      records: components["schemas"]["QueryLogRecord"][];
+      next_cursor: string;
+    };
+    Dashboard: {
+      /** Format: int64 */
+      queries_total: number;
+      /** Format: int64 */
+      blocked_total: number;
+      qps: number;
+      cache_hit_ratio: number;
+      engines_total: number;
+      engines_connected: number;
+      upstreams: {
+        name: string;
+        up_engines: number;
+        total_engines: number;
+        rtt_ms: number;
+      }[];
+      series: {
+        /** Format: date-time */
+        at: string;
+        qps: number;
+      }[];
+    };
+    SafeSearch: {
+      google: boolean;
+      bing: boolean;
+      duckduckgo: boolean;
+      /** @enum {string} */
+      youtube: "off" | "moderate" | "strict";
+    };
+    GlobalSafeSearch: components["schemas"]["SafeSearch"] & {
+      /** Format: int64 */
+      revision: number;
+    };
+    PolicyGroupInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      name: string;
+      /** @default  */
+      description: string;
+      cidrs: string[];
+      /** @default [] */
+      filter_list_ids: string[];
+      /** @default [] */
+      allowlist: string[];
+      /**
+       * @description filter categories whose enabled catalog sources this group blocks
+       * @default []
+       */
+      category_keys: string[];
+      /**
+       * @description required when a newly selected category has enabled sources that are not free for commercial use
+       * @default false
+       */
+      acknowledge_license: boolean;
+      safe_search?: components["schemas"]["SafeSearch"];
+    };
+    PolicyGroupUpdate: components["schemas"]["PolicyGroupInput"] & {
+      /** Format: int64 */
+      revision: number;
+    };
+    PolicyGroup: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      description: string;
+      cidrs: string[];
+      filter_list_ids: string[];
+      allowlist: string[];
+      category_keys: string[];
+      safe_search: components["schemas"]["SafeSearch"];
+      /** Format: int64 */
+      revision: number;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    RewriteInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      /**
+       * Format: uuid
+       * @description null means global
+       */
+      group_id?: string | null;
+      /** @description Domain or *.domain */
+      name: string;
+      /** @enum {string} */
+      type: "A" | "AAAA" | "CNAME";
+      value: string;
+      /** @default 300 */
+      ttl: number;
+    };
+    RewriteUpdate: components["schemas"]["RewriteInput"] & {
+      /** Format: int64 */
+      revision: number;
+    };
+    Rewrite: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      group_id: string | null;
+      name: string;
+      /** @enum {string} */
+      type: "A" | "AAAA" | "CNAME";
+      value: string;
+      ttl: number;
+      /** Format: int64 */
+      revision: number;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    DnsTlsStatus: {
+      configured: boolean;
+      certificate: {
+        subject: string;
+        dns_names: string[];
+        ip_addresses: string[];
+        /** Format: date-time */
+        not_before: string;
+        /** Format: date-time */
+        not_after: string;
+        fingerprint_sha256: string;
+      } | null;
+      engines: {
+        /** Format: uuid */
+        engine_id: string;
+        node_name: string;
+        fingerprint_sha256: string;
+        applied: boolean;
+        error: string;
+        /** Format: date-time */
+        updated_at: string;
+      }[];
+    };
+    ResolutionSettings: {
+      /** @enum {string} */
+      mode: "forward" | "recursive";
+      qname_minimisation: boolean;
+      aggressive_nsec: boolean;
+      max_upstream_queries: number;
+      max_delegation_depth: number;
+      authority_port: number;
+      /**
+       * Format: int64
+       * @description Memory for the RRset, aggressive NSEC and server caches of recursive resolution, in bytes.
+       */
+      recursor_cache_max_bytes: number;
+      root_hints: components["schemas"]["RootHint"][];
+      /** Format: int64 */
+      revision: number;
+    };
+    RootHint: {
+      name: string;
+      addresses: string[];
+    };
+    ForwardZoneInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      domain: string;
+      addresses: string[];
+      validate: boolean;
+    };
+    ForwardZoneUpdate: components["schemas"]["ForwardZoneInput"] & {
+      /** Format: int64 */
+      revision: number;
+    };
+    ForwardZone: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      domain: string;
+      addresses: string[];
+      validate: boolean;
+      /** Format: int64 */
+      revision: number;
+    };
+    DnssecSettings: {
+      validation: boolean;
+      /** @description Validate answers from the global upstreams (forward mode) up to the root trust anchor; effective only with validation */
+      validate_forwarded: boolean;
+      rfc5011: boolean;
+      /** Format: int64 */
+      revision: number;
+    };
+    TrustAnchorInput: {
+      zone: string;
+      ds: string;
+    };
+    TrustAnchor: {
+      /** Format: uuid */
+      id: string;
+      zone: string;
+      ds: string;
+      /** @enum {string} */
+      source: "iana" | "operator";
+      /** Format: date-time */
+      created_at: string;
+    };
+    NegativeTrustAnchorInput: {
+      domain: string;
+      /** @default  */
+      reason: string;
+      /**
+       * Format: date-time
+       * @description in the future and at most 30 days ahead
+       */
+      expires_at: string;
+    };
+    NegativeTrustAnchor: {
+      /** Format: uuid */
+      id: string;
+      domain: string;
+      reason: string;
+      /** Format: date-time */
+      expires_at: string;
+      created_by: string;
+      /** Format: date-time */
+      created_at: string;
+    };
+    DnssecStatus: {
+      engines: {
+        /** Format: uuid */
+        engine_id: string;
+        engine_name: string;
+        /** Format: date-time */
+        reported_at: string;
+        /** Format: int64 */
+        secure: number;
+        /** Format: int64 */
+        insecure: number;
+        /** Format: int64 */
+        bogus: number;
+        /** Format: int64 */
+        indeterminate: number;
+        active_negative_trust_anchors: number;
+        trust_anchors: {
+          zone: string;
+          key_tag: number;
+          algorithm: number;
+          /** @enum {string} */
+          state: "configured" | "add_pend" | "valid" | "missing" | "revoked";
+          /** Format: date-time */
+          last_refresh_success: string | null;
+          /** Format: date-time */
+          hold_down_until: string | null;
+          last_error: string;
+        }[];
+      }[];
+    };
+    RpzZoneInput: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      name: string;
+      /** @enum {string} */
+      source_type: "file" | "transfer";
+      /** @description ip:port, transfer only */
+      primary?: string | null;
+      tsig_key_name?: string | null;
+      /** @enum {string|null} */
+      tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
+      /** @description base64, 16-64 bytes; stored sealed under NEXORA_KEK_FILE; omit on update to keep the stored secret */
+      tsig_secret?: string | null;
+      min_refresh_seconds: number;
+      /** @enum {string} */
+      policy_override:
+        | "given"
+        | "disabled"
+        | "nxdomain"
+        | "nodata"
+        | "passthru"
+        | "drop"
+        | "tcp_only";
+    };
+    RpzZoneUpdate: {
+      primary?: string | null;
+      tsig_key_name?: string | null;
+      /** @enum {string|null} */
+      tsig_algorithm?: "hmac-sha256" | "hmac-sha512" | null;
+      tsig_secret?: string | null;
+      min_refresh_seconds: number;
+      /** @enum {string} */
+      policy_override:
+        | "given"
+        | "disabled"
+        | "nxdomain"
+        | "nodata"
+        | "passthru"
+        | "drop"
+        | "tcp_only";
+      /** Format: int64 */
+      revision: number;
+    };
+    RpzZone: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      position: number;
+      /** @enum {string} */
+      source_type: "file" | "transfer";
+      primary: string | null;
+      tsig_key_name: string | null;
+      tsig_algorithm: string | null;
+      tsig_secret_set: boolean;
+      min_refresh_seconds: number;
+      policy_override: string;
+      file_records: number | null;
+      /** Format: int64 */
+      revision: number;
+      status: {
+        /** Format: uuid */
+        engine_id: string;
+        engine_name: string;
+        /** Format: int64 */
+        serial: number;
+        /** Format: int64 */
+        records: number;
+        /** Format: int64 */
+        skipped: number;
+        /** Format: int64 */
+        hits: number;
+        /** Format: date-time */
+        last_success: string | null;
+        last_error: string;
+        stale: boolean;
+      }[];
+    };
+    RpzZoneFile: {
+      content: string;
+      /** Format: int64 */
+      revision: number;
+    };
+    RpzZoneOrder: {
+      ids: string[];
+    };
+    ZoneEndpoint: {
+      /** @description ip:port */
+      address: string;
+      /** Format: uuid */
+      tsig_key_id?: string | null;
+    };
+    ZoneTransfer: {
+      /** @description Clients allowed to transfer the zone; empty refuses transfers. */
+      allow_cidrs: string[];
+      /** Format: uuid */
+      tsig_key_id?: string | null;
+    };
+    ZoneUpdatePolicy: {
+      /** @description TSIG keys allowed to send dynamic updates; empty refuses updates. */
+      tsig_key_ids: string[];
+      /** @description Sources allowed to send updates; empty allows any source. TSIG is always required. */
+      allow_cidrs?: string[];
+    };
+    ZoneSOA: {
+      mname: string;
+      rname: string;
+      /** Format: int64 */
+      refresh: number;
+      /** Format: int64 */
+      retry: number;
+      /** Format: int64 */
+      expire: number;
+      /** Format: int64 */
+      minimum: number;
+      /** Format: int64 */
+      ttl: number;
+    };
+    /** @description Omitted or zero timers take the defaults (refresh 10800, retry 3600, expire 1209600, minimum 3600, ttl 3600) on create and keep the current values on update. */
+    ZoneSOAInput: {
+      mname: string;
+      rname: string;
+      /** Format: int64 */
+      refresh?: number;
+      /** Format: int64 */
+      retry?: number;
+      /** Format: int64 */
+      expire?: number;
+      /** Format: int64 */
+      minimum?: number;
+      /** Format: int64 */
+      ttl?: number;
+    };
+    ZoneSecondaryStatus: {
+      /** Format: date-time */
+      last_refresh_at: string | null;
+      /** Format: date-time */
+      last_success_at: string | null;
+      /** Format: date-time */
+      next_refresh_at: string | null;
+      /** Format: date-time */
+      expires_at: string | null;
+      expired: boolean;
+      last_error: string;
+      last_trigger: string;
+    };
+    Zone: {
+      /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+      allow_query_cidrs: string[];
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id: string | null;
+      /** Format: uuid */
+      id: string;
+      name: string;
+      /** @enum {string} */
+      kind: "primary" | "secondary";
+      /** Format: int64 */
+      revision: number;
+      /** Format: int64 */
+      serial: number;
+      /** Format: int64 */
+      default_ttl: number;
+      soa: components["schemas"]["ZoneSOA"];
+      transfer: components["schemas"]["ZoneTransfer"];
+      notify: components["schemas"]["ZoneEndpoint"][];
+      update: components["schemas"]["ZoneUpdatePolicy"];
+      primaries: components["schemas"]["ZoneEndpoint"][];
+      /** @description Present for secondary zones only. */
+      secondary_status?: components["schemas"]["ZoneSecondaryStatus"];
+      dnssec_enabled: boolean;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    ZoneCreate: {
+      /**
+       * Format: uuid
+       * @description engine group; null applies to every group
+       */
+      engine_group_id?: string | null;
+      /** @description Absolute zone name. */
+      name: string;
+      /** @enum {string} */
+      kind: "primary" | "secondary";
+      /**
+       * Format: int64
+       * @description Default 3600 when omitted.
+       */
+      default_ttl?: number;
+      /** @description Required for primary zones; secondary zones take the SOA of their primary. */
+      soa?: components["schemas"]["ZoneSOAInput"];
+      /** @description Primary zones: at least one apex NS target. */
+      nameservers?: string[];
+      /** @description Secondary zones: at least one primary. */
+      primaries?: components["schemas"]["ZoneEndpoint"][];
+      transfer?: components["schemas"]["ZoneTransfer"];
+      notify?: components["schemas"]["ZoneEndpoint"][];
+      update?: components["schemas"]["ZoneUpdatePolicy"];
+      /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+      allow_query_cidrs?: string[];
+    };
+    ZoneUpdate: {
+      /** Format: int64 */
+      revision: number;
+      /** Format: int64 */
+      default_ttl?: number;
+      soa?: components["schemas"]["ZoneSOAInput"];
+      primaries?: components["schemas"]["ZoneEndpoint"][];
+      transfer?: components["schemas"]["ZoneTransfer"];
+      notify?: components["schemas"]["ZoneEndpoint"][];
+      update?: components["schemas"]["ZoneUpdatePolicy"];
+      /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
+      allow_query_cidrs?: string[];
+    };
+    RecordInput: {
+      /** @description Absolute owner name inside the zone. */
+      name: string;
+      /** @enum {string} */
+      type:
+        | "A"
+        | "AAAA"
+        | "CAA"
+        | "CNAME"
+        | "DNAME"
+        | "DS"
+        | "HTTPS"
+        | "LOC"
+        | "MX"
+        | "NAPTR"
+        | "NS"
+        | "PTR"
+        | "SRV"
+        | "SSHFP"
+        | "SVCB"
+        | "TLSA"
+        | "TXT";
+      /** Format: int64 */
+      ttl: number;
+      /** @description RDATA in presentation format. */
+      data: string;
+    };
+    RecordUpdate: {
+      name: string;
+      /** @enum {string} */
+      type:
+        | "A"
+        | "AAAA"
+        | "CAA"
+        | "CNAME"
+        | "DNAME"
+        | "DS"
+        | "HTTPS"
+        | "LOC"
+        | "MX"
+        | "NAPTR"
+        | "NS"
+        | "PTR"
+        | "SRV"
+        | "SSHFP"
+        | "SVCB"
+        | "TLSA"
+        | "TXT";
+      /** Format: int64 */
+      ttl: number;
+      data: string;
+      /** Format: int64 */
+      revision: number;
+    };
+    Record: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      type: string;
+      /** Format: int64 */
+      ttl: number;
+      data: string;
+      /** Format: int64 */
+      revision: number;
+    };
+    ZoneImport: {
+      /** Format: int64 */
+      revision: number;
+      /** @description BIND master file; $INCLUDE and $GENERATE are refused. Request bodies may be up to 64 MiB. */
+      content: string;
+    };
+    ZoneImportResult: {
+      zone: components["schemas"]["Zone"];
+      records_imported: number;
+    };
+    RecordPage: {
+      items: components["schemas"]["Record"][];
+      next_cursor: string | null;
+    };
+    ZoneDnssecKey: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      role: "ksk" | "zsk";
+      algorithm: number;
+      key_tag: number;
+      flags: number;
+      /** @enum {string} */
+      state: "published" | "active" | "retired" | "removed";
+      /**
+       * @description KSKs: whether the parent's DS for this key is pending or was confirmed.
+       * @enum {string}
+       */
+      ds_state: "none" | "pending" | "seen";
+      /** @enum {string} */
+      backend: "kek" | "pkcs11";
+      /** @description DNSKEY public key field (base64). */
+      public_key: string;
+      /** Format: date-time */
+      published_at: string;
+      /** Format: date-time */
+      activated_at: string | null;
+      /** Format: date-time */
+      retired_at: string | null;
+      /** Format: date-time */
+      removed_at: string | null;
+    };
+    ZoneDnssec: {
+      enabled: boolean;
+      /** @enum {integer} */
+      algorithm: 8 | 13;
+      /** @enum {string} */
+      nsec_mode: "nsec" | "nsec3";
+      /** @description kek or pkcs11; empty when no key storage is configured. */
+      key_backend: string;
+      propagation_delay_seconds: number;
+      parent_ds_ttl_seconds: number;
+      /** @description 0 means manual ZSK rollovers only. */
+      zsk_lifetime_days: number;
+      keys: components["schemas"]["ZoneDnssecKey"][];
+      /** @description DS records (SHA-256) of the newest active KSK, to publish at the parent. */
+      ds: string[];
+      /** @description The served DNSKEY RRset in presentation form. */
+      dnskeys: string[];
+    };
+    ZoneDnssecUpdate: {
+      /**
+       * Format: int64
+       * @description Zone revision.
+       */
+      revision: number;
+      enabled: boolean;
+      /**
+       * @description Default 13 (ECDSA P-256); cannot change while signing is enabled.
+       * @enum {integer}
+       */
+      algorithm?: 8 | 13;
+      /**
+       * @description Default nsec3.
+       * @enum {string}
+       */
+      nsec_mode?: "nsec" | "nsec3";
+      /**
+       * @description Default pkcs11 when a token is configured, else kek.
+       * @enum {string}
+       */
+      key_backend?: "kek" | "pkcs11";
+      propagation_delay_seconds?: number;
+      parent_ds_ttl_seconds?: number;
+      zsk_lifetime_days?: number;
+    };
+    ZoneKeyRollover: {
+      /** @enum {string} */
+      role: "zsk" | "ksk";
+    };
+    ZoneKskDsPublished: {
+      /** Format: uuid */
+      key_id: string;
+    };
+    /** @enum {string} */
+    TsigKeyAlgorithm: "hmac-sha256" | "hmac-sha384" | "hmac-sha512";
+    /** @description A TSIG key. The secret is write-only and returned once, on create. */
+    TsigKey: {
+      /** Format: uuid */
+      id: string;
+      /** @description Absolute key name, lowercase (e.g. xfr-key.). */
+      name: string;
+      algorithm: components["schemas"]["TsigKeyAlgorithm"];
+      /** Format: int64 */
+      revision: number;
+      /** Format: date-time */
+      created_at: string;
+    };
+    TsigKeyCreate: {
+      name: string;
+      algorithm: components["schemas"]["TsigKeyAlgorithm"];
+      /** @description Base64 of 16..64 bytes; omitted, a random secret of the HMAC output size is generated. */
+      secret?: string;
+    };
+    TsigKeyCreated: components["schemas"]["TsigKey"] & {
+      /** @description Base64 secret; shown only in this response. */
+      secret: string;
+    };
+    /** @enum {string} */
+    RolloutState:
+      | "pending"
+      | "canary"
+      | "verifying"
+      | "rolling"
+      | "completed"
+      | "halted"
+      | "rolled_back"
+      | "superseded";
+    EngineGroupInput: {
+      name: string;
+      description?: string;
+      /** @enum {string} */
+      upstream_mode?: "inherit" | "override";
+      extra_acl_cidrs?: string[];
+      otlp_endpoint?: string;
+      /** @enum {string} */
+      rollout_strategy?: "all_at_once" | "canary";
+      canary_count?: number;
+      canary_percent?: number;
+      ack_timeout_seconds?: number;
+      health_window_seconds?: number;
+      max_servfail_ratio?: number;
+      min_health_queries?: number;
+      /**
+       * Format: int64
+       * @description filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216
+       */
+      filter_index_max_bytes?: number;
+    };
+    EngineGroupUpdate: components["schemas"]["EngineGroupInput"] & {
+      /** Format: int64 */
+      revision: number;
+    };
+    EngineGroup: {
+      /** Format: uuid */
+      id: string;
+      name: string;
+      description: string;
+      /** @enum {string} */
+      upstream_mode: "inherit" | "override";
+      extra_acl_cidrs: string[];
+      otlp_endpoint: string;
+      /** @enum {string} */
+      rollout_strategy: "all_at_once" | "canary";
+      canary_count: number;
+      canary_percent: number;
+      ack_timeout_seconds: number;
+      health_window_seconds: number;
+      max_servfail_ratio: number;
+      min_health_queries: number;
+      rollouts_paused: boolean;
+      /** Format: int64 */
+      filter_index_max_bytes: number;
+      /** Format: int64 */
+      stable_version?: number | null;
+      engine_count: number;
+      active_rollout?: components["schemas"]["Rollout"] | null;
+      /** Format: int64 */
+      revision: number;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    Rollout: {
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      engine_group_id: string;
+      engine_group_name: string;
+      /** Format: int64 */
+      version: number;
+      /** Format: int64 */
+      from_version?: number | null;
+      /** @enum {string} */
+      kind: "change" | "rollback" | "republish";
+      /** @enum {string} */
+      strategy: "all_at_once" | "canary";
+      state: components["schemas"]["RolloutState"];
+      canary_engine_ids: string[];
+      /** Format: date-time */
+      phase_started_at?: string | null;
+      halt_reason: string;
+      created_by: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      finished_at?: string | null;
+      progress: {
+        total: number;
+        applied: number;
+        rejected: number;
+      };
+    };
+    RolloutDetail: components["schemas"]["Rollout"] & {
+      engines: {
+        /** Format: uuid */
+        engine_id: string;
+        node_name: string;
+        canary: boolean;
+        connected: boolean;
+        /** Format: int64 */
+        applied_version: number;
+        /** @enum {string} */
+        progress: "waiting" | "applied" | "rejected" | "disconnected";
+        rejected_reason: string;
+      }[];
+    };
+    EngineUpdate: {
+      /** Format: int64 */
+      revision: number;
+      /** Format: uuid */
+      engine_group_id?: string;
+      labels?: {
+        [key: string]: string;
+      };
+    };
+    EngineStats: {
+      /** @enum {string} */
+      window: "5m" | "1h" | "24h";
+      samples: {
+        /** Format: date-time */
+        at: string;
+        qps: number;
+        cache_hit_ratio: number;
+        servfail_ratio: number;
+        p99_ms: number;
+      }[];
+      filter_index?: {
+        /** Format: date-time */
+        at: string;
+        /** Format: int64 */
+        entries: number;
+        /** Format: int64 */
+        bytes: number;
+        /** Format: int64 */
+        max_bytes: number;
+        build_seconds: number;
+        decision_ns_blocked: number;
+        decision_ns_clean: number;
+        cpu: string;
+      } | null;
+    };
+    DashboardSeries: {
+      /** @enum {string} */
+      range: "15m" | "1h" | "6h" | "24h" | "7d";
+      step_seconds: number;
+      points: {
+        /** Format: date-time */
+        at: string;
+        qps: number;
+        qps_by_transport: {
+          [key: string]: number;
         };
+        qps_by_rcode: {
+          [key: string]: number;
+        };
+        p50_ms: number;
+        p95_ms: number;
+        p99_ms: number;
+        miss_p50_ms: number;
+        miss_p95_ms: number;
+        miss_p99_ms: number;
+        cache_hit_ratio: number;
+        cache_miss_ratio: number;
+        cache_stale_ratio: number;
+        blocked_qps: number;
+        rewritten_qps: number;
+        blocked_by_category: {
+          [key: string]: number;
+        };
+        answers_by_route: {
+          [key: string]: number;
+        };
+        recursion_upstream_qps: number;
+        recursion_timeouts_qps: number;
+        lame_marked: number;
+        resolution_failures_qps: number;
+        dnssec_secure_qps: number;
+        dnssec_insecure_qps: number;
+        dnssec_bogus_qps: number;
+      }[];
+      engines: {
+        /** Format: uuid */
+        engine_id: string;
+        node_name: string;
+        /** Format: int64 */
+        cache_entries: number;
+        /** Format: int64 */
+        cache_bytes: number;
+        /** Format: int64 */
+        filter_index_bytes: number;
+      }[];
     };
-    parameters: {
-        Id: string;
-        Revision: number;
+    DashboardTop: {
+      /** @enum {string} */
+      range: "15m" | "1h" | "6h" | "24h" | "7d";
+      /** @description false when the query log backend cannot aggregate; the lists are then empty */
+      available: boolean;
+      domains: {
+        key: string;
+        /** Format: int64 */
+        count: number;
+      }[];
+      blocked_domains: {
+        key: string;
+        /** Format: int64 */
+        count: number;
+      }[];
+      clients: {
+        key: string;
+        /** Format: int64 */
+        count: number;
+      }[];
+      categories: {
+        key: string;
+        /** Format: int64 */
+        count: number;
+      }[];
     };
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+    DashboardHealth: {
+      engines: {
+        /** Format: uuid */
+        id: string;
+        node_name: string;
+        engine_group_name: string;
+        status: string;
+        qps: number;
+        p99_ms: number;
+        cache_hit_ratio: number;
+        /** Format: int64 */
+        filter_index_bytes: number;
+        /** Format: int64 */
+        applied_version: number;
+        /** Format: int64 */
+        target_version: number;
+      }[];
+      groups: {
+        /** Format: uuid */
+        id: string;
+        name: string;
+        engines: number;
+        connected: number;
+      }[];
+      alerts: {
+        /** @enum {string} */
+        kind:
+          | "engine_disconnected"
+          | "category_stale"
+          | "upstream_down"
+          | "certificate_expiring"
+          | "trust_anchor_refresh_failed"
+          | "export_dropped";
+        /** @enum {string} */
+        severity: "warning" | "critical";
+        subject: string;
+        message: string;
+      }[];
+    };
+    EngineMetrics: {
+      /** @enum {string} */
+      window: "5m" | "1h" | "24h";
+      samples: {
+        /** Format: date-time */
+        at: string;
+        qps: number;
+        p50_ms: number;
+        p99_ms: number;
+        cache_hit_ratio: number;
+        servfail_ratio: number;
+        nxdomain_ratio: number;
+        refused_ratio: number;
+        blocked_qps: number;
+        cpu_cores: number;
+        /** Format: int64 */
+        resident_bytes: number;
+        /** Format: int64 */
+        memory_limit_bytes: number;
+        connections: {
+          [key: string]: number;
+        };
+      }[];
+      upstreams: {
+        name: string;
+        samples: {
+          /** Format: date-time */
+          at: string;
+          rtt_ms: number;
+          failures_per_second: number;
+          race_wins_per_second: number;
+        }[];
+      }[];
+      /** Format: date-time */
+      started_at: string | null;
+      restarts: number;
+      filter_index: {
+        /** Format: date-time */
+        at: string;
+        /** Format: int64 */
+        entries: number;
+        /** Format: int64 */
+        bytes: number;
+        /** Format: int64 */
+        max_bytes: number;
+        build_seconds: number;
+        decision_ns_blocked: number;
+        decision_ns_clean: number;
+        cpu: string;
+      } | null;
+    };
+    EngineLogs: {
+      /** Format: uuid */
+      engine_id: string;
+      lines: {
+        /** Format: int64 */
+        seq: number;
+        /** Format: date-time */
+        time: string;
+        /** @enum {string} */
+        level: "error" | "warn" | "info" | "debug";
+        message: string;
+      }[];
+      /** Format: int64 */
+      last_seq: number;
+      /** Format: int64 */
+      oldest_seq: number;
+    };
+    FleetSummary: {
+      engines_total: number;
+      engines_by_status: {
+        [key: string]: number;
+      };
+      halted_rollouts: number;
+      engine_groups: {
+        /** Format: uuid */
+        id: string;
+        name: string;
+        engines: number;
+        connected: number;
+        /** @enum {string} */
+        rollout_strategy: "all_at_once" | "canary";
+        rollouts_paused: boolean;
+        /** Format: int64 */
+        stable_version?: number | null;
+        active_rollout?: components["schemas"]["Rollout"] | null;
+      }[];
+    };
+    /** @enum {string} */
+    AiAgentName:
+      | "querylog_anomalies"
+      | "dashboard_insights"
+      | "filter_recommendations"
+      | "upstream_prediction"
+      | "rollout_risk"
+      | "threat_classification"
+      | "capacity_forecast"
+      | "rpz_suggestions";
+    AiAgentState: {
+      name: components["schemas"]["AiAgentName"];
+      enabled: boolean;
+      /** Format: int64 */
+      interval_seconds: number;
+      /** Format: date-time */
+      last_started_at: string | null;
+      /** Format: date-time */
+      last_finished_at: string | null;
+      last_outcome: string;
+      last_error: string;
+      /** Format: date-time */
+      next_run_at: string | null;
+      running: boolean;
+    };
+    /** @description The AI layer's state. It never contains the API key. */
+    AiStatus: {
+      enabled: boolean;
+      /** @enum {string} */
+      reason:
+        | ""
+        | "not_configured"
+        | "incomplete_configuration"
+        | "endpoint_not_private";
+      model: string;
+      endpoint_host: string;
+      structured_output: string;
+      budget: {
+        /** Format: date */
+        day: string;
+        /** Format: int64 */
+        limit_tokens: number;
+        /** Format: int64 */
+        used_tokens: number;
+        /** Format: int64 */
+        background_limit_tokens: number;
+      };
+      agents: components["schemas"]["AiAgentState"][];
+      features: {
+        querylog_search: boolean;
+        config_assistant: boolean;
+        threat_check: boolean;
+      };
+      mcp: {
+        enabled: boolean;
+        read_only: boolean;
+      };
+    };
+    AiTask: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "querylog_search" | "threat_check" | "assistant_message";
+      /** @enum {string} */
+      status: "queued" | "running" | "succeeded" | "failed";
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      started_at: string | null;
+      /** Format: date-time */
+      finished_at: string | null;
+      error_code: string;
+      error_message: string;
+      /** @description The kind's result (AiQueryLogSearchResult, AiThreatCheckResult or AiAssistantTurnResult) once succeeded. */
+      result: Record<string, never> | null;
+    };
+    AiQueryLogFilters: {
+      /** Format: date-time */
+      from?: string;
+      /** Format: date-time */
+      to?: string;
+      client?: string;
+      name?: string;
+      qtype?: string[];
+      rcode?: string[];
+      cache?: string[];
+      filter?: string[];
+      category?: string[];
+      source?: string[];
+      list_id?: string[];
+      policy_group?: string[];
+      engine_id?: string[];
+    };
+    AiQueryLogSearchResult: {
+      filters: components["schemas"]["AiQueryLogFilters"];
+      explanation: string;
+      summary: string;
+      suggestions: string[];
+      total_shown: number;
+    };
+    AiThreatVerdict: {
+      name: string;
+      is_threat: boolean;
+      categories: string[];
+      confidence: number;
+      reasoning: string;
+      /** Format: int64 */
+      query_count: number;
+      /** Format: int64 */
+      client_count: number;
+      /** Format: date-time */
+      first_seen: string | null;
+      /** Format: date-time */
+      last_seen: string | null;
+      blocked_by: string;
+      cached: boolean;
+    };
+    AiThreatCheckResult: {
+      results: components["schemas"]["AiThreatVerdict"][];
+    };
+    AiAssistantTurnResult: {
+      /** Format: int64 */
+      message_id: number;
+      /** Format: uuid */
+      proposal_id: string | null;
+    };
+    AiQueryLogSearchRequest: {
+      query: string;
+      /** Format: date-time */
+      from?: string;
+      /** Format: date-time */
+      to?: string;
+    };
+    AiThreatCheckRequest: {
+      domains: string[];
+    };
+    AiFinding: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "anomaly" | "insight";
+      candidate_id: string;
+      type: string;
+      /** @enum {string} */
+      status: "open" | "acknowledged" | "dismissed" | "resolved";
+      /** @enum {string} */
+      severity: "info" | "warning" | "critical";
+      confidence: number;
+      title: string;
+      description: string;
+      explained: boolean;
+      detail: {
+        [key: string]: unknown;
+      };
+      /** Format: date-time */
+      first_seen: string;
+      /** Format: date-time */
+      last_seen: string;
+      updated_by: string;
+      /** Format: date-time */
+      updated_at: string;
+    };
+    AiFindingUpdate: {
+      /** @enum {string} */
+      status: "acknowledged" | "dismissed";
+    };
+    AiInsights: {
+      insights: components["schemas"]["AiFinding"][];
+      summary: string;
+      score: number;
+      /** Format: date-time */
+      generated_at: string | null;
+    };
+    AiProposalAction: {
+      operation_id: string;
+      path_params: {
+        [key: string]: string;
+      };
+      body: Record<string, never> | null;
+      explanation: string;
+      /** @description The live resource the action changes (getAiProposal only; null in lists and for creations). */
+      current: Record<string, never> | null;
+    };
+    AiProposal: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      source:
+        | "filter_recommendations"
+        | "config_assistant"
+        | "upstream_prediction"
+        | "rollout_risk"
+        | "capacity_forecast"
+        | "rpz_suggestions";
+      /** @enum {string} */
+      status:
+        "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
+      title: string;
+      description: string;
+      /** @enum {string} */
+      priority: "low" | "medium" | "high";
+      impact: {
+        [key: string]: unknown;
+      };
+      evidence: {
+        [key: string]: unknown;
+      };
+      actions: components["schemas"]["AiProposalAction"][];
+      risk: {
+        [key: string]: unknown;
+      };
+      /** Format: uuid */
+      session_id: string | null;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+      reviewed_by: string;
+      /** Format: date-time */
+      reviewed_at: string | null;
+      result: Record<string, never> | null;
+      dismiss_reason: string;
+    };
+    AiApplyRequest: {
+      ids: string[];
+      /** @default false */
+      acknowledge_license: boolean;
+    };
+    AiApplyResponse: {
+      results: {
+        /** Format: uuid */
+        id: string;
+        status: string;
+        actions: {
+          operation_id: string;
+          http_status: number;
+          code: string;
+          message: string;
+        }[];
+      }[];
+    };
+    AiDismissRequest: {
+      ids: string[];
+      reason?: string;
+    };
+    AiDismissResponse: {
+      results: {
+        /** Format: uuid */
+        id: string;
+        status: string;
+        code: string;
+      }[];
+    };
+    AiAssistantMessage: {
+      /** Format: int64 */
+      id: number;
+      /** @enum {string} */
+      role: "user" | "assistant";
+      content: string;
+      /** Format: uuid */
+      proposal_id: string | null;
+      /** Format: date-time */
+      created_at: string;
+    };
+    AiAssistantMessageInput: {
+      content: string;
+    };
+    AiAssistantSession: {
+      /** Format: uuid */
+      id: string;
+      title: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      updated_at: string;
+      messages: components["schemas"]["AiAssistantMessage"][];
+      proposal: components["schemas"]["AiProposal"] | null;
+      task: components["schemas"]["AiTask"] | null;
+    };
+    AiUpstreamPrediction: {
+      upstream_id: string;
+      upstream_name: string;
+      /** @enum {string} */
+      trend:
+        | "stable"
+        | "degrading"
+        | "improving"
+        | "periodic"
+        | "failing"
+        | "insufficient_data";
+      confidence: number;
+      current_rtt_p50_ms: number;
+      current_rtt_p99_ms: number;
+      slope_ms_per_hour: number;
+      step_change: boolean;
+      periodic_hours: number[];
+      /** Format: date-time */
+      projected_time_to_threshold: string | null;
+      data_points_analyzed: number;
+      reasoning: string;
+      recommendation: {
+        /** @enum {string} */
+        type: "switch_strategy" | "reorder" | "disable" | "none";
+        description: string;
+      };
+    };
+    AiCapacityForecast: {
+      /** @enum {string} */
+      resource:
+        | "filter_index"
+        | "cache"
+        | "recursor_cache"
+        | "engine_memory"
+        | "blocklist_entries"
+        | "query_volume";
+      current_value: number;
+      max_value: number | null;
+      growth_per_day: number;
+      growth_per_week: number;
+      /** Format: date-time */
+      projected_exhaustion_date: string | null;
+      days_remaining: number | null;
+      /** @enum {string} */
+      trend: "stable" | "growing" | "shrinking" | "insufficient_data";
+      confidence: number;
+      recommendation: string;
+      points_analyzed: number;
+    };
+    AiForecast: {
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: "upstream" | "capacity";
+      subject: string;
+      /** Format: date-time */
+      generated_at: string;
+      /** Format: date-time */
+      valid_until: string;
+      /** Format: uuid */
+      proposal_id: string | null;
+      upstream: components["schemas"]["AiUpstreamPrediction"] | null;
+      capacity: components["schemas"]["AiCapacityForecast"] | null;
+    };
+    AiRolloutRisk: {
+      /** Format: uuid */
+      rollout_id: string;
+      /** @enum {string} */
+      status: "pending" | "assessed" | "failed" | "skipped";
+      risk_score: number | null;
+      /** @enum {string|null} */
+      risk_level: "low" | "medium" | "high" | null;
+      analysis: string;
+      historical_patterns: {
+        /** Format: int64 */
+        config_version: number;
+        description: string;
+        outcome: string;
+        canary_rejected: boolean;
+        max_servfail_ratio: number;
+      }[];
+      recommendation: {
+        strategy: string;
+        canary_count: number;
+        min_health_queries: number;
+        max_servfail_ratio: number;
+        reasoning: string;
+      } | null;
+      /** Format: uuid */
+      proposal_id: string | null;
+      /** Format: date-time */
+      assessed_at: string | null;
+      error: string;
+    };
+    AiListClassification: {
+      /** Format: uuid */
+      list_id: string;
+      blob_sha256: string;
+      sample_size: number;
+      /** Format: int64 */
+      entry_count: number;
+      /** Format: date-time */
+      classified_at: string | null;
+      breakdown: {
+        category: string;
+        sampled: number;
+        /** Format: int64 */
+        estimated: number;
+      }[];
+    };
+  };
+  responses: {
+    /** @description error */
+    Error: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/json": components["schemas"]["Error"];
+      };
+    };
+  };
+  parameters: {
+    Id: string;
+    Revision: number;
+  };
+  requestBodies: never;
+  headers: never;
+  pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getHealth: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Health"];
-                };
-            };
-            /** @description degraded */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Health"];
-                };
-            };
-        };
-    };
-    getVersion: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["VersionInfo"];
-                };
-            };
-        };
-    };
-    getSetupStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SetupStatus"];
-                };
-            };
-        };
-    };
-    completeSetup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetupRequest"];
-            };
-        };
-        responses: {
-            /** @description created; sets the session cookie */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginRequest"];
-            };
-        };
-        responses: {
-            /** @description logged in; sets the session cookie */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            401: components["responses"]["Error"];
-        };
-    };
-    logout: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description logged out */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    getCurrentUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            401: components["responses"]["Error"];
-        };
-    };
-    updateCurrentUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CurrentUserUpdate"];
-            };
-        };
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            400: components["responses"]["Error"];
-            401: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    changeOwnPassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PasswordChange"];
-            };
-        };
-        responses: {
-            /** @description password changed */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["Error"];
-            401: components["responses"]["Error"];
-            403: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            429: components["responses"]["Error"];
-        };
-    };
-    listAuthProviders: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthProviders"];
-                };
-            };
-        };
-    };
-    startOidcLogin: {
-        parameters: {
-            query?: {
-                return_to?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description redirect to the identity provider */
-            302: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            503: components["responses"]["Error"];
-        };
-    };
-    oidcCallback: {
-        parameters: {
-            query: {
-                state: string;
-                code: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description redirect into the GUI with the session cookie set */
-            302: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            401: components["responses"]["Error"];
-        };
-    };
-    getDashboard: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Dashboard"];
-                };
-            };
-        };
-    };
-    getDashboardSeries: {
-        parameters: {
-            query: {
-                range: "15m" | "1h" | "6h" | "24h" | "7d";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DashboardSeries"];
-                };
-            };
-            400: components["responses"]["Error"];
-        };
-    };
-    getDashboardTop: {
-        parameters: {
-            query: {
-                range: "15m" | "1h" | "6h" | "24h" | "7d";
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DashboardTop"];
-                };
-            };
-            400: components["responses"]["Error"];
-        };
-    };
-    getDashboardHealth: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DashboardHealth"];
-                };
-            };
-        };
-    };
-    listUpstreams: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Upstream"][];
-                };
-            };
-        };
-    };
-    createUpstream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpstreamInput"];
-            };
-        };
-        responses: {
-            /** @description created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Upstream"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    updateUpstream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpstreamInput"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Upstream"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deleteUpstream: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getResolverSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResolverSettings"];
-                };
-            };
-        };
-    };
-    updateResolverSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResolverSettings"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResolverSettings"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getAccessControl: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AccessControl"];
-                };
-            };
-        };
-    };
-    updateAccessControl: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccessControl"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AccessControl"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listFilterLists: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterList"][];
-                };
-            };
-        };
-    };
-    createFilterList: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FilterListInput"];
-            };
-        };
-        responses: {
-            /** @description created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterList"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    getFilterList: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterList"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updateFilterList: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FilterListInput"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterList"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deleteFilterList: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    refreshFilterList: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description refresh attempted; body is the list after the attempt */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterList"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    listFilterCategories: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description the catalog in catalog order, with enabled state and fetch status per source */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterCategory"][];
-                };
-            };
-        };
-    };
-    updateFilterCategory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FilterCategoryUpdate"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FilterCategory"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    getAllowlist: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Allowlist"];
-                };
-            };
-        };
-    };
-    updateAllowlist: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Allowlist"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Allowlist"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listEngines: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Engine"][];
-                };
-            };
-        };
-    };
-    getEngine: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Engine"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    deleteEngine: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updateEngine: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EngineUpdate"];
-            };
-        };
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Engine"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    listJoinTokens: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JoinToken"][];
-                };
-            };
-        };
-    };
-    createJoinToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["JoinTokenCreate"];
-            };
-        };
-        responses: {
-            /** @description created; token shown once */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JoinTokenCreated"];
-                };
-            };
-            400: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    revokeJoinToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description revoked */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    listConfigVersions: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConfigVersion"][];
-                };
-            };
-        };
-    };
-    listUsers: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"][];
-                };
-            };
-        };
-    };
-    createUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserCreate"];
-            };
-        };
-        responses: {
-            /** @description created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    updateUser: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserUpdate"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["User"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    deleteUser: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listApiTokens: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiToken"][];
-                };
-            };
-        };
-    };
-    createApiToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApiTokenCreate"];
-            };
-        };
-        responses: {
-            /** @description created; token shown once */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiTokenCreated"];
-                };
-            };
-            400: components["responses"]["Error"];
-            403: components["responses"]["Error"];
-        };
-    };
-    revokeApiToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description revoked */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    listAuditEvents: {
-        parameters: {
-            query?: {
-                limit?: number;
-                before_id?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditEvent"][];
-                };
-            };
-        };
-    };
-    searchQueryLog: {
-        parameters: {
-            query?: {
-                from?: string;
-                to?: string;
-                client?: string;
-                /** @description Case-insensitive substring of the query name; a trailing dot is ignored. */
-                name?: string;
-                qtype?: string[];
-                rcode?: string[];
-                cache?: ("hit" | "miss" | "stale" | "none" | "auth")[];
-                filter?: ("none" | "blocked" | "allowed" | "rewritten")[];
-                category?: string[];
-                source?: ("blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl")[];
-                list_id?: string[];
-                policy_group?: string[];
-                engine_id?: string[];
-                limit?: number;
-                cursor?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QueryLogPage"];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    listPolicyGroups: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description All client policy groups ordered by name. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicyGroup"][];
-                };
-            };
-        };
-    };
-    createPolicyGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PolicyGroupInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicyGroup"];
-                };
-            };
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    getPolicyGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The group. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicyGroup"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updatePolicyGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PolicyGroupUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PolicyGroup"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deletePolicyGroup: {
-        parameters: {
-            query: {
-                revision: number;
-            };
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted; the group's rewrites are deleted with it. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getGlobalSafeSearch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Safe search for clients in no group. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GlobalSafeSearch"];
-                };
-            };
-        };
-    };
-    updateGlobalSafeSearch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GlobalSafeSearch"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GlobalSafeSearch"];
-                };
-            };
-            409: components["responses"]["Error"];
-        };
-    };
-    listRewrites: {
-        parameters: {
-            query?: {
-                /** @description `all` (default), `global`, or a policy group id. */
-                scope?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Rewrites ordered by scope, name, type, value. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rewrite"][];
-                };
-            };
-            422: components["responses"]["Error"];
-        };
-    };
-    createRewrite: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RewriteInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rewrite"];
-                };
-            };
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    updateRewrite: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RewriteUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rewrite"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deleteRewrite: {
-        parameters: {
-            query: {
-                revision: number;
-            };
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getDnsTlsStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description DNS serving certificate loaded by this instance and per-engine acceptance. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DnsTlsStatus"];
-                };
-            };
-        };
-    };
-    getResolutionSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Global resolution mode and recursion settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResolutionSettings"];
-                };
-            };
-        };
-    };
-    updateResolutionSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResolutionSettings"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResolutionSettings"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listForwardZones: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Forward zones ordered by domain. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForwardZone"][];
-                };
-            };
-        };
-    };
-    createForwardZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForwardZoneInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForwardZone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    updateForwardZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForwardZoneUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForwardZone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deleteForwardZone: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getDnssecSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Global DNSSEC validation settings. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DnssecSettings"];
-                };
-            };
-        };
-    };
-    updateDnssecSettings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DnssecSettings"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DnssecSettings"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getDnssecStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Latest DNSSEC report of every engine. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DnssecStatus"];
-                };
-            };
-        };
-    };
-    listTrustAnchors: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Trust anchors ordered by zone and DS. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrustAnchor"][];
-                };
-            };
-        };
-    };
-    createTrustAnchor: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TrustAnchorInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TrustAnchor"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    deleteTrustAnchor: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listNegativeTrustAnchors: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Negative trust anchors ordered by domain. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NegativeTrustAnchor"][];
-                };
-            };
-        };
-    };
-    createNegativeTrustAnchor: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NegativeTrustAnchorInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NegativeTrustAnchor"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    deleteNegativeTrustAnchor: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    listRpzZones: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description RPZ zones in policy order with per-engine status. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RpzZone"][];
-                };
-            };
-        };
-    };
-    createRpzZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RpzZoneInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RpzZone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    reorderRpzZones: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RpzZoneOrder"];
-            };
-        };
-        responses: {
-            /** @description Reordered. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["Error"];
-        };
-    };
-    getRpzZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The zone. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RpzZone"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updateRpzZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RpzZoneUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RpzZone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    deleteRpzZone: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    uploadRpzZoneFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RpzZoneFile"];
-            };
-        };
-        responses: {
-            /** @description Uploaded and validated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RpzZone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    refreshRpzZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Engines refresh the zone now. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listZones: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Hosted zones ordered by name. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Zone"][];
-                };
-            };
-        };
-    };
-    createZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneCreate"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Zone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    getZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The zone. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Zone"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    deleteZone: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    updateZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Zone"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    refreshZone: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Refresh scheduled. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    listZoneRecords: {
-        parameters: {
-            query?: {
-                name?: string;
-                type?: string;
-                cursor?: string;
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description One page of records ordered by owner and type. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecordPage"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    createZoneRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecordInput"];
-            };
-        };
-        responses: {
-            /** @description Created. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Record"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    updateZoneRecord: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-                recordId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecordUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Record"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    deleteZoneRecord: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                zoneId: string;
-                recordId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    importZoneFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneImport"];
-            };
-        };
-        responses: {
-            /** @description Every record and the SOA fields replaced by the file. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ZoneImportResult"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    exportZoneFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The zone as a BIND master file. */
-            200: {
-                headers: {
-                    "Content-Disposition": string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain; charset=utf-8": string;
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    getZoneDnssec: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description DNSSEC settings, keys, DS records and DNSKEYs of the zone. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ZoneDnssec"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updateZoneDnssec: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneDnssecUpdate"];
-            };
-        };
-        responses: {
-            /** @description Updated; the zone is re-signed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ZoneDnssec"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    startZoneKeyRollover: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneKeyRollover"];
-            };
-        };
-        responses: {
-            /** @description Rollover started. */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ZoneDnssec"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    confirmZoneKskDs: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                zoneId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ZoneKskDsPublished"];
-            };
-        };
-        responses: {
-            /** @description Confirmed. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ZoneDnssec"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-        };
-    };
-    listTsigKeys: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description TSIG keys ordered by name, without secrets. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TsigKey"][];
-                };
-            };
-        };
-    };
-    createTsigKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TsigKeyCreate"];
-            };
-        };
-        responses: {
-            /** @description Created; the only response that carries the secret. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TsigKeyCreated"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    deleteTsigKey: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                keyId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted. */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listEngineGroups: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineGroup"][];
-                };
-            };
-        };
-    };
-    createEngineGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EngineGroupInput"];
-            };
-        };
-        responses: {
-            /** @description created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineGroup"];
-                };
-            };
-            400: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getEngineGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineGroup"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    updateEngineGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EngineGroupUpdate"];
-            };
-        };
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineGroup"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    deleteEngineGroup: {
-        parameters: {
-            query: {
-                revision: components["parameters"]["Revision"];
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    rollbackEngineGroup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** Format: int64 */
-                    to_version: number;
-                };
-            };
-        };
-        responses: {
-            /** @description rollback rollout created */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rollout"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-        };
-    };
-    resumeEngineGroupRollouts: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description fresh version published */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rollout"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    listRollouts: {
-        parameters: {
-            query?: {
-                engine_group_id?: string;
-                state?: components["schemas"]["RolloutState"];
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description newest version first */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Rollout"][];
-                };
-            };
-            400: components["responses"]["Error"];
-        };
-    };
-    getRollout: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RolloutDetail"];
-                };
-            };
-            404: components["responses"]["Error"];
-        };
-    };
-    getFleetSummary: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FleetSummary"];
-                };
-            };
-        };
-    };
-    getEngineStats: {
-        parameters: {
-            query?: {
-                window?: "5m" | "1h" | "24h";
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineStats"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-        };
-    };
-    getEngineMetrics: {
-        parameters: {
-            query?: {
-                window?: "5m" | "1h" | "24h";
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineMetrics"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-        };
-    };
-    getEngineLogs: {
-        parameters: {
-            query?: {
-                /** @description Only lines with a larger sequence number. */
-                after?: number;
-                /** @description Minimum level. */
-                level?: "error" | "warn" | "info" | "debug";
-                /** @description Case-insensitive substring of the message. */
-                q?: string;
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EngineLogs"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-            501: components["responses"]["Error"];
-            504: components["responses"]["Error"];
-        };
-    };
-    revokeEngine: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description revoked; its streams are closed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Engine"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    rotateEngineCertificate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description rotation requested */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Engine"];
-                };
-            };
-            404: components["responses"]["Error"];
-            409: components["responses"]["Error"];
-        };
-    };
-    getAiStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiStatus"];
-                };
-            };
-            503: components["responses"]["Error"];
-        };
-    };
-    runAiAgent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                agent: components["schemas"]["AiAgentName"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description run requested */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiTask: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiTask"];
-                };
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    startAiQueryLogSearch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiQueryLogSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description task started */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiTask"];
-                };
-            };
-            400: components["responses"]["Error"];
-            429: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    listAiFindings: {
-        parameters: {
-            query?: {
-                kind?: "anomaly" | "insight";
-                status?: "open" | "acknowledged" | "dismissed" | "resolved";
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description newest first */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiFinding"][];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    updateAiFinding: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiFindingUpdate"];
-            };
-        };
-        responses: {
-            /** @description updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiFinding"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiInsights: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiInsights"];
-                };
-            };
-            503: components["responses"]["Error"];
-        };
-    };
-    listAiProposals: {
-        parameters: {
-            query?: {
-                source?: "filter_recommendations" | "config_assistant" | "upstream_prediction" | "rollout_risk" | "capacity_forecast" | "rpz_suggestions";
-                status?: "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description newest first */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiProposal"][];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiProposal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiProposal"];
-                };
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    applyAiProposals: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiApplyRequest"];
-            };
-        };
-        responses: {
-            /** @description per-proposal results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiApplyResponse"];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    dismissAiProposals: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiDismissRequest"];
-            };
-        };
-        responses: {
-            /** @description per-proposal results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiDismissResponse"];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    createAiAssistantSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiAssistantSession"];
-                };
-            };
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiAssistantSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiAssistantSession"];
-                };
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    postAiAssistantMessage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiAssistantMessageInput"];
-            };
-        };
-        responses: {
-            /** @description task started */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiTask"];
-                };
-            };
-            400: components["responses"]["Error"];
-            404: components["responses"]["Error"];
-            429: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    listAiForecasts: {
-        parameters: {
-            query?: {
-                kind?: "upstream" | "capacity";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiForecast"][];
-                };
-            };
-            400: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiRolloutRisk: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiRolloutRisk"];
-                };
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    startAiThreatCheck: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiThreatCheckRequest"];
-            };
-        };
-        responses: {
-            /** @description task started */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiTask"];
-                };
-            };
-            400: components["responses"]["Error"];
-            429: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
-    getAiFilterListClassification: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["Id"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description ok */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiListClassification"];
-                };
-            };
-            404: components["responses"]["Error"];
-            503: components["responses"]["Error"];
-        };
-    };
+  getHealth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Health"];
+        };
+      };
+      /** @description degraded */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Health"];
+        };
+      };
+    };
+  };
+  getVersion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["VersionInfo"];
+        };
+      };
+    };
+  };
+  getSetupStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SetupStatus"];
+        };
+      };
+    };
+  };
+  completeSetup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SetupRequest"];
+      };
+    };
+    responses: {
+      /** @description created; sets the session cookie */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  login: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LoginRequest"];
+      };
+    };
+    responses: {
+      /** @description logged in; sets the session cookie */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      401: components["responses"]["Error"];
+    };
+  };
+  logout: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description logged out */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  getCurrentUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      401: components["responses"]["Error"];
+    };
+  };
+  updateCurrentUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CurrentUserUpdate"];
+      };
+    };
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      400: components["responses"]["Error"];
+      401: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  changeOwnPassword: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PasswordChange"];
+      };
+    };
+    responses: {
+      /** @description password changed */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["Error"];
+      401: components["responses"]["Error"];
+      403: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      429: components["responses"]["Error"];
+    };
+  };
+  listAuthProviders: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthProviders"];
+        };
+      };
+    };
+  };
+  startOidcLogin: {
+    parameters: {
+      query?: {
+        return_to?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description redirect to the identity provider */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      503: components["responses"]["Error"];
+    };
+  };
+  oidcCallback: {
+    parameters: {
+      query: {
+        state: string;
+        code: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description redirect into the GUI with the session cookie set */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Error"];
+    };
+  };
+  getDashboard: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Dashboard"];
+        };
+      };
+    };
+  };
+  getDashboardSeries: {
+    parameters: {
+      query: {
+        range: "15m" | "1h" | "6h" | "24h" | "7d";
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DashboardSeries"];
+        };
+      };
+      400: components["responses"]["Error"];
+    };
+  };
+  getDashboardTop: {
+    parameters: {
+      query: {
+        range: "15m" | "1h" | "6h" | "24h" | "7d";
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DashboardTop"];
+        };
+      };
+      400: components["responses"]["Error"];
+    };
+  };
+  getDashboardHealth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DashboardHealth"];
+        };
+      };
+    };
+  };
+  listUpstreams: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Upstream"][];
+        };
+      };
+    };
+  };
+  createUpstream: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpstreamInput"];
+      };
+    };
+    responses: {
+      /** @description created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Upstream"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  updateUpstream: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpstreamInput"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Upstream"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deleteUpstream: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getResolverSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResolverSettings"];
+        };
+      };
+    };
+  };
+  updateResolverSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolverSettings"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResolverSettings"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getAccessControl: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AccessControl"];
+        };
+      };
+    };
+  };
+  updateAccessControl: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AccessControl"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AccessControl"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listFilterLists: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterList"][];
+        };
+      };
+    };
+  };
+  createFilterList: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FilterListInput"];
+      };
+    };
+    responses: {
+      /** @description created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterList"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  getFilterList: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterList"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updateFilterList: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FilterListInput"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterList"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deleteFilterList: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  refreshFilterList: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description refresh attempted; body is the list after the attempt */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterList"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  listFilterCategories: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description the catalog in catalog order, with enabled state and fetch status per source */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterCategory"][];
+        };
+      };
+    };
+  };
+  updateFilterCategory: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FilterCategoryUpdate"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FilterCategory"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  getAllowlist: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Allowlist"];
+        };
+      };
+    };
+  };
+  updateAllowlist: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["Allowlist"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Allowlist"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listEngines: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Engine"][];
+        };
+      };
+    };
+  };
+  getEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Engine"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  deleteEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updateEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EngineUpdate"];
+      };
+    };
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Engine"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  listJoinTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JoinToken"][];
+        };
+      };
+    };
+  };
+  createJoinToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["JoinTokenCreate"];
+      };
+    };
+    responses: {
+      /** @description created; token shown once */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JoinTokenCreated"];
+        };
+      };
+      400: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  revokeJoinToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description revoked */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  listConfigVersions: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ConfigVersion"][];
+        };
+      };
+    };
+  };
+  listUsers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"][];
+        };
+      };
+    };
+  };
+  createUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UserCreate"];
+      };
+    };
+    responses: {
+      /** @description created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  updateUser: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UserUpdate"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["User"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  deleteUser: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listApiTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiToken"][];
+        };
+      };
+    };
+  };
+  createApiToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApiTokenCreate"];
+      };
+    };
+    responses: {
+      /** @description created; token shown once */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenCreated"];
+        };
+      };
+      400: components["responses"]["Error"];
+      403: components["responses"]["Error"];
+    };
+  };
+  revokeApiToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description revoked */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  listAuditEvents: {
+    parameters: {
+      query?: {
+        limit?: number;
+        before_id?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuditEvent"][];
+        };
+      };
+    };
+  };
+  searchQueryLog: {
+    parameters: {
+      query?: {
+        from?: string;
+        to?: string;
+        client?: string;
+        /** @description Case-insensitive substring of the query name; a trailing dot is ignored. */
+        name?: string;
+        qtype?: string[];
+        rcode?: string[];
+        cache?: ("hit" | "miss" | "stale" | "none" | "auth")[];
+        filter?: ("none" | "blocked" | "allowed" | "rewritten")[];
+        category?: string[];
+        source?: (
+          "blocklist" | "category" | "allowlist" | "rpz" | "rewrite" | "acl"
+        )[];
+        list_id?: string[];
+        policy_group?: string[];
+        engine_id?: string[];
+        limit?: number;
+        cursor?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QueryLogPage"];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  listPolicyGroups: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All client policy groups ordered by name. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PolicyGroup"][];
+        };
+      };
+    };
+  };
+  createPolicyGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PolicyGroupInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PolicyGroup"];
+        };
+      };
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  getPolicyGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The group. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PolicyGroup"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updatePolicyGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PolicyGroupUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PolicyGroup"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deletePolicyGroup: {
+    parameters: {
+      query: {
+        revision: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted; the group's rewrites are deleted with it. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getGlobalSafeSearch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Safe search for clients in no group. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GlobalSafeSearch"];
+        };
+      };
+    };
+  };
+  updateGlobalSafeSearch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GlobalSafeSearch"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GlobalSafeSearch"];
+        };
+      };
+      409: components["responses"]["Error"];
+    };
+  };
+  listRewrites: {
+    parameters: {
+      query?: {
+        /** @description `all` (default), `global`, or a policy group id. */
+        scope?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Rewrites ordered by scope, name, type, value. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rewrite"][];
+        };
+      };
+      422: components["responses"]["Error"];
+    };
+  };
+  createRewrite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RewriteInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rewrite"];
+        };
+      };
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  updateRewrite: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RewriteUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rewrite"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deleteRewrite: {
+    parameters: {
+      query: {
+        revision: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getDnsTlsStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description DNS serving certificate loaded by this instance and per-engine acceptance. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DnsTlsStatus"];
+        };
+      };
+    };
+  };
+  getResolutionSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Global resolution mode and recursion settings. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResolutionSettings"];
+        };
+      };
+    };
+  };
+  updateResolutionSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolutionSettings"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResolutionSettings"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listForwardZones: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Forward zones ordered by domain. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ForwardZone"][];
+        };
+      };
+    };
+  };
+  createForwardZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ForwardZoneInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ForwardZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  updateForwardZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ForwardZoneUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ForwardZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deleteForwardZone: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getDnssecSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Global DNSSEC validation settings. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DnssecSettings"];
+        };
+      };
+    };
+  };
+  updateDnssecSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DnssecSettings"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DnssecSettings"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getDnssecStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Latest DNSSEC report of every engine. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DnssecStatus"];
+        };
+      };
+    };
+  };
+  listTrustAnchors: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Trust anchors ordered by zone and DS. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrustAnchor"][];
+        };
+      };
+    };
+  };
+  createTrustAnchor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TrustAnchorInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrustAnchor"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  deleteTrustAnchor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listNegativeTrustAnchors: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Negative trust anchors ordered by domain. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NegativeTrustAnchor"][];
+        };
+      };
+    };
+  };
+  createNegativeTrustAnchor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NegativeTrustAnchorInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NegativeTrustAnchor"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  deleteNegativeTrustAnchor: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  listRpzZones: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description RPZ zones in policy order with per-engine status. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RpzZone"][];
+        };
+      };
+    };
+  };
+  createRpzZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RpzZoneInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RpzZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  reorderRpzZones: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RpzZoneOrder"];
+      };
+    };
+    responses: {
+      /** @description Reordered. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      400: components["responses"]["Error"];
+    };
+  };
+  getRpzZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The zone. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RpzZone"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updateRpzZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RpzZoneUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RpzZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  deleteRpzZone: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  uploadRpzZoneFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RpzZoneFile"];
+      };
+    };
+    responses: {
+      /** @description Uploaded and validated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RpzZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  refreshRpzZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Engines refresh the zone now. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listZones: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Hosted zones ordered by name. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Zone"][];
+        };
+      };
+    };
+  };
+  createZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneCreate"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Zone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  getZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The zone. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Zone"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  deleteZone: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  updateZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Zone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  refreshZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Refresh scheduled. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  listZoneRecords: {
+    parameters: {
+      query?: {
+        name?: string;
+        type?: string;
+        cursor?: string;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page of records ordered by owner and type. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RecordPage"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  createZoneRecord: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RecordInput"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Record"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  updateZoneRecord: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+        recordId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RecordUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Record"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  deleteZoneRecord: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        zoneId: string;
+        recordId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  importZoneFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneImport"];
+      };
+    };
+    responses: {
+      /** @description Every record and the SOA fields replaced by the file. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZoneImportResult"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  exportZoneFile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The zone as a BIND master file. */
+      200: {
+        headers: {
+          "Content-Disposition": string;
+          [name: string]: unknown;
+        };
+        content: {
+          "text/plain; charset=utf-8": string;
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  getZoneDnssec: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description DNSSEC settings, keys, DS records and DNSKEYs of the zone. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZoneDnssec"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updateZoneDnssec: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneDnssecUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated; the zone is re-signed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZoneDnssec"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  startZoneKeyRollover: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneKeyRollover"];
+      };
+    };
+    responses: {
+      /** @description Rollover started. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZoneDnssec"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  confirmZoneKskDs: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        zoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ZoneKskDsPublished"];
+      };
+    };
+    responses: {
+      /** @description Confirmed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ZoneDnssec"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      422: components["responses"]["Error"];
+    };
+  };
+  listTsigKeys: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description TSIG keys ordered by name, without secrets. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TsigKey"][];
+        };
+      };
+    };
+  };
+  createTsigKey: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TsigKeyCreate"];
+      };
+    };
+    responses: {
+      /** @description Created; the only response that carries the secret. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TsigKeyCreated"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  deleteTsigKey: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        keyId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listEngineGroups: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineGroup"][];
+        };
+      };
+    };
+  };
+  createEngineGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EngineGroupInput"];
+      };
+    };
+    responses: {
+      /** @description created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineGroup"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getEngineGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineGroup"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  updateEngineGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EngineGroupUpdate"];
+      };
+    };
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineGroup"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  deleteEngineGroup: {
+    parameters: {
+      query: {
+        revision: components["parameters"]["Revision"];
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  rollbackEngineGroup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** Format: int64 */
+          to_version: number;
+        };
+      };
+    };
+    responses: {
+      /** @description rollback rollout created */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rollout"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+    };
+  };
+  resumeEngineGroupRollouts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description fresh version published */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rollout"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  listRollouts: {
+    parameters: {
+      query?: {
+        engine_group_id?: string;
+        state?: components["schemas"]["RolloutState"];
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description newest version first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Rollout"][];
+        };
+      };
+      400: components["responses"]["Error"];
+    };
+  };
+  getRollout: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RolloutDetail"];
+        };
+      };
+      404: components["responses"]["Error"];
+    };
+  };
+  getFleetSummary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FleetSummary"];
+        };
+      };
+    };
+  };
+  getEngineStats: {
+    parameters: {
+      query?: {
+        window?: "5m" | "1h" | "24h";
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineStats"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+    };
+  };
+  getEngineMetrics: {
+    parameters: {
+      query?: {
+        window?: "5m" | "1h" | "24h";
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineMetrics"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+    };
+  };
+  getEngineLogs: {
+    parameters: {
+      query?: {
+        /** @description Only lines with a larger sequence number. */
+        after?: number;
+        /** @description Minimum level. */
+        level?: "error" | "warn" | "info" | "debug";
+        /** @description Case-insensitive substring of the message. */
+        q?: string;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EngineLogs"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+      504: components["responses"]["Error"];
+    };
+  };
+  revokeEngine: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description revoked; its streams are closed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Engine"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  rotateEngineCertificate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description rotation requested */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Engine"];
+        };
+      };
+      404: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+    };
+  };
+  getAiStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiStatus"];
+        };
+      };
+      503: components["responses"]["Error"];
+    };
+  };
+  runAiAgent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent: components["schemas"]["AiAgentName"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description run requested */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiTask: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiTask"];
+        };
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  startAiQueryLogSearch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiQueryLogSearchRequest"];
+      };
+    };
+    responses: {
+      /** @description task started */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiTask"];
+        };
+      };
+      400: components["responses"]["Error"];
+      429: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  listAiFindings: {
+    parameters: {
+      query?: {
+        kind?: "anomaly" | "insight";
+        status?: "open" | "acknowledged" | "dismissed" | "resolved";
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description newest first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiFinding"][];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  updateAiFinding: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiFindingUpdate"];
+      };
+    };
+    responses: {
+      /** @description updated */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiFinding"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiInsights: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiInsights"];
+        };
+      };
+      503: components["responses"]["Error"];
+    };
+  };
+  listAiProposals: {
+    parameters: {
+      query?: {
+        source?:
+          | "filter_recommendations"
+          | "config_assistant"
+          | "upstream_prediction"
+          | "rollout_risk"
+          | "capacity_forecast"
+          | "rpz_suggestions";
+        status?:
+          "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description newest first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiProposal"][];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiProposal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiProposal"];
+        };
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  applyAiProposals: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiApplyRequest"];
+      };
+    };
+    responses: {
+      /** @description per-proposal results */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiApplyResponse"];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  dismissAiProposals: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiDismissRequest"];
+      };
+    };
+    responses: {
+      /** @description per-proposal results */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiDismissResponse"];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  createAiAssistantSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiAssistantSession"];
+        };
+      };
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiAssistantSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiAssistantSession"];
+        };
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  postAiAssistantMessage: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiAssistantMessageInput"];
+      };
+    };
+    responses: {
+      /** @description task started */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiTask"];
+        };
+      };
+      400: components["responses"]["Error"];
+      404: components["responses"]["Error"];
+      429: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  listAiForecasts: {
+    parameters: {
+      query?: {
+        kind?: "upstream" | "capacity";
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiForecast"][];
+        };
+      };
+      400: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiRolloutRisk: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiRolloutRisk"];
+        };
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  startAiThreatCheck: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AiThreatCheckRequest"];
+      };
+    };
+    responses: {
+      /** @description task started */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiTask"];
+        };
+      };
+      400: components["responses"]["Error"];
+      429: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
+  getAiFilterListClassification: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["Id"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ok */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AiListClassification"];
+        };
+      };
+      404: components["responses"]["Error"];
+      503: components["responses"]["Error"];
+    };
+  };
 }

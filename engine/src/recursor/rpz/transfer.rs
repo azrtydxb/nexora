@@ -51,8 +51,16 @@ fn soa_of(r: &Record) -> Option<&SOA> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Number of `record_key` calls on this thread, for the IXFR key-count test.
+    pub(super) static KEYS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Record identity for IXFR deletions (RFC 2136 equality: TTL ignored).
 fn record_key(r: &Record) -> String {
+    #[cfg(test)]
+    KEYS_BUILT.with(|c| c.set(c.get() + 1));
     format!(
         "{} {} {} {}",
         r.name.to_lowercase(),
@@ -111,6 +119,8 @@ pub fn apply_ixfr(current: &ZoneData, answers: &[Record]) -> Result<ZoneData, St
             i += 1;
         }
         let deletions: FxHashSet<String> = body[del_start..i].iter().map(record_key).collect();
+        // hickory's Name hashes and compares case-insensitively.
+        let deleted_owners: FxHashSet<&Name> = body[del_start..i].iter().map(|r| &r.name).collect();
         let new_soa = body.get(i).ok_or("IXFR difference has no new SOA")?;
         serial = soa_of(new_soa)
             .ok_or("IXFR difference has no new SOA")?
@@ -128,10 +138,9 @@ pub fn apply_ixfr(current: &ZoneData, answers: &[Record]) -> Result<ZoneData, St
         if deletions.is_empty() {
             records.retain(|r| r.record_type() != RecordType::SOA);
         } else {
-            // debt: one string key per zone record per difference; revisit if IXFR of
-            // multi-million-record zones shows up in refresh timings.
             records.retain(|r| {
-                r.record_type() != RecordType::SOA && !deletions.contains(&record_key(r))
+                r.record_type() != RecordType::SOA
+                    && !(deleted_owners.contains(&r.name) && deletions.contains(&record_key(r)))
             });
         }
         if before - records.len() - soas < deletions.len() {

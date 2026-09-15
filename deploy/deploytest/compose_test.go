@@ -24,8 +24,7 @@ type composeService struct {
 	} `yaml:"healthcheck"`
 }
 
-// TestComposeExample checks deploy/compose statically; the example is not started here (no Docker
-// in the build environment).
+// TestComposeExample checks deploy/compose statically; scripts/compose-verify.sh starts it on a Docker host.
 func TestComposeExample(t *testing.T) {
 	raw, err := os.ReadFile("../compose/docker-compose.yml")
 	if err != nil {
@@ -89,5 +88,12 @@ func TestComposeExample(t *testing.T) {
 	toml, err := os.ReadFile("../compose/engine.toml")
 	if err != nil || !strings.Contains(string(toml), `management_urls = ["https://mgmt:9443"]`) {
 		t.Errorf("engine.toml: %v %q", err, toml)
+	}
+	ops, err := os.ReadFile("../../docs/operations.md")
+	if err != nil || strings.Contains(string(ops), "it is not started") || !strings.Contains(string(ops), "scripts/compose-verify.sh") {
+		t.Errorf("docs/operations.md must describe the real Compose run (scripts/compose-verify.sh): %v", err)
+	}
+	if _, err := os.Stat("../../scripts/compose-verify.sh"); err != nil {
+		t.Errorf("scripts/compose-verify.sh: %v", err)
 	}
 }

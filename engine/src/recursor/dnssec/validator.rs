@@ -27,8 +27,6 @@ use std::sync::Arc;
 const ZONE_CACHE_CAPACITY: usize = 4096;
 const MAX_ZONE_CACHE_SECS: u64 = 3600;
 const BOGUS_CACHE_SECS: u64 = 60;
-/// Zones kept by the aggressive NSEC cache.
-const NSEC_CACHE_ZONES: usize = 10_000;
 /// EDE 23 (Network Error) marks a chain walk that failed to fetch; it is reported as
 /// indeterminate and never cached.
 const EDE_NETWORK_ERROR: u16 = 23;
@@ -447,7 +445,10 @@ enum Descend {
 impl Validator {
     pub fn new(metrics: Arc<RecursorMetrics>) -> Self {
         Validator {
-            nsec: AggressiveNsecCache::new(NSEC_CACHE_ZONES, metrics.clone()),
+            nsec: AggressiveNsecCache::new(
+                crate::recursor::memory::shares(0).nsec,
+                metrics.clone(),
+            ),
             metrics,
             zones: quick_cache::sync::Cache::new(ZONE_CACHE_CAPACITY),
         }

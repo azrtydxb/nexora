@@ -1,8 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"context"
+	"io"
 	"strings"
 )
 
@@ -19,14 +19,13 @@ func (h *handlers) ExportZoneFile(ctx context.Context, req ExportZoneFileRequest
 	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if err := h.d.Zones.Export(ctx, req.ZoneId, &buf); err != nil {
-		return nil, err
-	}
 	filename := strings.NewReplacer(`"`, "_", `\`, "_").Replace(z.Name) + "zone"
+	// The body streams: no Content-Length. A failure after the status line truncates the body and
+	// the response error handler logs it; a client that goes away closes the pipe and the query.
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(h.d.Zones.ExportTo(ctx, req.ZoneId, pw)) }()
 	return ExportZoneFile200TextplainCharsetUtf8Response{
-		Body:          &buf,
-		ContentLength: int64(buf.Len()),
-		Headers:       ExportZoneFile200ResponseHeaders{ContentDisposition: `attachment; filename="` + filename + `"`},
+		Body:    pr,
+		Headers: ExportZoneFile200ResponseHeaders{ContentDisposition: `attachment; filename="` + filename + `"`},
 	}, nil
 }

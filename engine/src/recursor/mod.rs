@@ -5,6 +5,7 @@ pub mod dispatch;
 pub mod dnssec;
 pub mod infra;
 pub mod iterate;
+pub mod memory;
 pub mod metrics;
 pub mod roothints;
 pub mod rpz;
@@ -136,9 +137,14 @@ impl RecursorState {
         })
     }
 
-    /// Takes the process-wide parts of an applied runtime: trust anchors (a persist failure is
-    /// reported through the anchors' `last_error`, never rejecting the snapshot) and RPZ zones.
+    /// Takes the process-wide parts of an applied runtime: the cache memory budget, trust anchors
+    /// (a persist failure is reported through the anchors' `last_error`, never rejecting the
+    /// snapshot) and RPZ zones.
     pub fn sync(&self, rt: &Runtime) {
+        let shares = memory::shares(rt.resolution.params.cache_max_bytes);
+        self.recursor.rrcache.set_capacity(shares.rrset);
+        self.recursor.infra.set_capacity(shares.infra);
+        self.validator.nsec.set_capacity(shares.nsec);
         let before = self.anchors.trust_points();
         let d = &rt.resolution.dnssec;
         let _ = self

@@ -117,6 +117,7 @@ covering `mgmt/`, `e2e/`, `bench/`, `gen/go/`.
 - A dedicated `nexora-telemetry` thread drains query-log rings and exports.
 - A dedicated `nexora-control` tokio multi-thread runtime (2 threads) runs the
   management-plane client and metrics HTTP server.
+- TCP, DoT and DoQ queries take their query, 64 KiB answer and frame buffers from a per-worker pool (`server::buffers`, at most 256 buffers of 65,537 octets). Zone transfers are built on tokio's blocking pool.
 
 ### Bootstrap file (`engine.toml`)
 
@@ -161,6 +162,7 @@ host concerns and are not part of the snapshot.
   record. It produces a lowercase `NameKey` (inline `[u8; 255]`, no allocation).
 - Opcodes other than QUERY -> NOTIMP (M4 adds NOTIFY and UPDATE).
 - Malformed header with >= 12 bytes -> FORMERR echoing the ID; < 12 -> drop.
+- An OPT record with an EDNS version other than 0 -> extended RCODE BADVERS (header RCODE 0, OPT extended RCODE 1, version 0, no answer), before the authoritative, ACL, filter, cache and resolution stages.
 - hickory-proto (`0.26`) decodes upstream responses (validation, CNAME and SOA
   extraction) and is used for tests/fixtures; the query fast path and cache
   writer are Nexora code.
@@ -300,7 +302,8 @@ recursion ACL allows. Transfers keep `TransferPolicy`; UPDATE additionally requi
 `update_allow_cidrs` when non-empty. Refusals count in `nexora_acl_refused_total{acl}` and carry
 `nexora.acl.refused` in the query log. The management plane seeds recursion access with
 127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7,
-fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
+fe80::/10 and authoritative access with 0.0.0.0/0, ::/0. The allow list is kept as sorted, merged
+address ranges per family and looked up by binary search.
 
 ### Snapshot application
 
@@ -315,6 +318,10 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
   `state_dir/rpz/<zone id>.zone` (last good copy of each transfer RPZ zone).
 - Ack `Applied{version}` or `Rejected{version, reason}`; a rejected snapshot
   leaves the previous runtime in place.
+
+### Recursor memory
+
+One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), split 12/16 RRset cache, 3/16 aggressive NSEC cache, 1/16 infrastructure caches, each weighted by estimated bytes (`recursor::memory`). A snapshot resizes the caches in place without clearing them.
 
 ### Telemetry
 
@@ -346,7 +353,7 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
 - Query log: each worker pushes a fixed-size `QueryRecord` into a lock-free
   `crossbeam_queue::ArrayQueue` (capacity 65536); on full, the record is
   dropped and `nexora_export_dropped_total{signal="logs"}` increments.
-- The telemetry thread batches records (max 1000 or 1 s) into OTLP LogRecords
+- The telemetry thread batches records (max 1000 or 1 s) and runs up to 4 exports at once (`MAX_INFLIGHT`) into OTLP LogRecords
   sent to `telemetry.otlp_endpoint` over gRPC. Attributes:
   `client.address`, `dns.question.name`, `dns.question.type`,
   `dns.response.code`, `nexora.cache` (`hit|miss|stale`), `nexora.filter`
@@ -369,6 +376,7 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
   `QueryRecord`.
 - OTLP metrics: the same counters pushed every 15 s.
 - An unreachable exporter endpoint drops data; export never blocks workers.
+- The upstream and policy-group labels of a record come from `Runtime.labels`, the label tables of the 8 newest runtime versions, matched by the record's `config_version`; an older record gets empty labels.
 
 ## Contract (`proto/nexora/control/v1/control.proto`)
 
@@ -420,6 +428,7 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
   latency buckets), `RecursionStats.upstream_timeouts` and `UpstreamStatus.race_wins_total`
   (700). `ServerMessage.log_request` / `EngineMessage.log_batch` (700) read the engine's log
   ring buffer on demand (`LogRequest`, `LogBatch`, `LogLine`, `LogLevel`).
+- M7: fields added to existing messages use 800-899: `RecursionConfig.cache_max_bytes` (800).
 
 ## Management plane
 
@@ -517,6 +526,9 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
   changes per username and client address (more than 10 in 15 minutes: 429; the key includes the
   client IP so a remote attacker cannot lock out the admin). `NEXORA_REPOSITORY_URL` is shown in
   the GUI version details.
+- M7: `GetBlob` streams 1 MiB `substring` reads; `blobs.data` storage is `EXTERNAL` (migration 00801). `resolution_settings.recursor_cache_max_bytes` (migration 00800).
+- The OpenSearch adapter sorts by `@timestamp` then `_id`; its cursor is `[timestamp, _id]`.
+- Zone export streams rows (apex first, then owners byte-wise); record edits validate only the edited owners and, for unsigned primary zones, write the journal delta from the edited RRsets.
 
 ## GUI
 
@@ -701,6 +713,7 @@ The build is embedded into `nexora-mgmt`.
   digests into `:sha-<7>` (`:v*` on tags) plus `:main` on main.
 - `deploy/compose/` runs PostgreSQL, one mgmt, one engine (profile `engine`)
   and an optional OpenTelemetry Collector (profile `otel`).
+- `scripts/compose-verify.sh <user@host>` runs the documented Compose install, backup and restore on a Docker host.
 - `deploy/helm/nexora`: mgmt Deployment (`migrate` init container), one
   engine workload per engine group (`DaemonSet` or `Deployment`, node
   selector, hostPath state), per-group DNS Service, or with `instances` one

@@ -55,6 +55,15 @@ export const resolverHelp: HelpArea = {
       topic: "resolution",
       anchor: "resolution-mode",
     },
+    "resolution-recursor-cache": {
+      text: "Memory for the caches of recursive resolution: RRsets (3/4), aggressive NSEC proofs (3/16) and authoritative server state (1/16). Entries beyond it are evicted.",
+      default: "64 MiB",
+      range: "4–16384 MiB",
+      effect:
+        "Saving publishes a new configuration; lowering it evicts cached entries above the new size at once.",
+      topic: "resolution",
+      anchor: "resolution-mode",
+    },
     "resolution-root-hints": {
       text: "The root servers recursion starts from: a name and its IPv4 and IPv6 addresses per row. Leave empty for the built-in IANA root servers.",
       default: "Empty (built-in IANA root servers)",

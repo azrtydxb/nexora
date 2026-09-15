@@ -29,6 +29,37 @@ func TestDNSSECValidation(t *testing.T) {
 			t.Fatalf("NXDOMAIN proof: rcode=%s ad=%v", dns.RcodeToString[nx.Rcode], nx.AuthenticatedData)
 		}
 	})
+	t.Run("wildcard answer validates with AD", func(t *testing.T) {
+		m := query(t, addr, "x.w.good.test", dns.TypeA, qopt{DO: true})
+		wantA(t, m, "192.0.2.60")
+		if !m.AuthenticatedData {
+			t.Fatal("AD=0 for a validated NSEC wildcard answer")
+		}
+		n := query(t, addr, "x.w.n3.test", dns.TypeA, qopt{DO: true})
+		wantA(t, n, "192.0.2.61")
+		if !n.AuthenticatedData {
+			t.Fatal("AD=0 for a validated NSEC3 wildcard answer")
+		}
+	})
+	t.Run("wildcard NODATA is proven", func(t *testing.T) {
+		m := query(t, addr, "x.w.good.test", dns.TypeAAAA, qopt{DO: true})
+		if m.Rcode != dns.RcodeSuccess || len(m.Answer) != 0 || !m.AuthenticatedData {
+			t.Fatalf("wildcard NODATA: rcode=%s answers=%d ad=%v", dns.RcodeToString[m.Rcode], len(m.Answer), m.AuthenticatedData)
+		}
+	})
+	t.Run("wildcard answer without next-closer proof is bogus", func(t *testing.T) {
+		// Positive path first: the zone itself validates.
+		if ns := query(t, addr, "ns.wild.test", dns.TypeA, qopt{DO: true}); !ns.AuthenticatedData {
+			t.Fatal("wild.test is not a secure zone; the negative check below would prove nothing")
+		}
+		m := query(t, addr, "x.w.wild.test", dns.TypeA, qopt{DO: true})
+		if m.Rcode != dns.RcodeServerFailure || len(aValues(m)) != 0 {
+			t.Fatalf("unproven wildcard served: rcode=%s answers=%v", dns.RcodeToString[m.Rcode], aValues(m))
+		}
+		if code, ok := edeCode(m); !ok || code != 12 {
+			t.Fatalf("EDE = %d (present %v), want 12", code, ok)
+		}
+	})
 	t.Run("broken signature returns SERVFAIL with EDE", func(t *testing.T) {
 		m := query(t, addr, "www.bad.test", dns.TypeA, qopt{DO: true})
 		if m.Rcode != dns.RcodeServerFailure || len(aValues(m)) != 0 {

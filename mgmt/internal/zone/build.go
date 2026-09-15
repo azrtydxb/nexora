@@ -29,8 +29,13 @@ const (
 
 // Rebuild computes the served RR set of z (SOA from the zone row plus its records, signed when
 // DNSSEC is on), diffs it against the current served version and, when anything changed (or
-// opts force it), writes the next serial as a journal delta and, when due, a full image.
+// opts force it), writes the next serial as a journal delta and, when due, a full image. A record
+// edit (opts.Edit) of an unsigned primary zone writes its delta from the edited RRsets instead.
 func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts RebuildOptions, now time.Time) (bool, error) {
+	// debt: DNSSEC-signed zones still rebuild from the whole record set per edit (NSEC/NSEC3 chain and RRSIG maintenance need the ordered owner set; zone_signatures limits re-signing); revisit when signed zones with hundreds of thousands of records are edited record by record.
+	if opts.Edit != nil && !z.DNSSECEnabled && z.Kind == "primary" && z.CurrentSeq > 0 && !opts.Force {
+		return rebuildEdit(ctx, tx, z, opts)
+	}
 	desired, err := desiredRRs(ctx, tx, z)
 	if err != nil {
 		return false, err
@@ -56,17 +61,9 @@ func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts Rebuil
 		return false, nil
 	}
 	oldSerial := z.Serial
-	newSerial := SerialNext(oldSerial)
-	if z.Kind == "secondary" {
-		if opts.Serial == nil {
-			return false, fmt.Errorf("zone %s: a secondary rebuild needs the transferred serial", z.Name)
-		}
-		newSerial = *opts.Serial
-	} else if opts.Serial != nil && SerialLess(oldSerial, *opts.Serial) {
-		newSerial = *opts.Serial
-	}
-	if z.CurrentSeq == 0 && opts.Serial == nil {
-		newSerial = oldSerial // the first version keeps the initial serial
+	newSerial, err := nextSerial(z, opts)
+	if err != nil {
+		return false, err
 	}
 	desired = setSOASerial(desired, newSerial)
 	if z.DNSSECEnabled && signer != nil {
@@ -81,10 +78,10 @@ func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts Rebuil
 	if err != nil {
 		return false, err
 	}
-	seq := z.CurrentSeq + 1
+	var d *nzf.Delta
 	forceImage := false
 	if z.CurrentSeq > 0 {
-		d := nzf.Delta{Origin: origin, FromSerial: oldSerial, ToSerial: newSerial}
+		d = &nzf.Delta{Origin: origin, FromSerial: oldSerial, ToSerial: newSerial}
 		d.Deleted = append(soaWithSigs(previous), deleted...)
 		if servedSerial(d.Deleted) != oldSerial {
 			// The zone row's serial was changed outside Rebuild: the delta states the row's serial
@@ -93,48 +90,142 @@ func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts Rebuil
 			forceImage = true
 		}
 		d.Added = append(soaWithSigs(desiredRecs), added...)
-		raw, err := nzf.EncodeDelta(d)
+	}
+	return true, writeVersion(ctx, tx, z, origin, newSerial, d, forceImage, func() ([]nzf.Record, error) { return desiredRecs, nil })
+}
+
+// rebuildEdit writes the next version of unsigned primary zone z from a record edit: the delta is
+// the difference of the edited RRsets, and the whole record set is read only for a due image.
+func rebuildEdit(ctx context.Context, tx pgx.Tx, z *Zone, opts RebuildOptions) (bool, error) {
+	before, err := toRecords(opts.Edit.Before)
+	if err != nil {
+		return false, err
+	}
+	after, err := toRecords(opts.Edit.After)
+	if err != nil {
+		return false, err
+	}
+	deleted, added := diffIgnoringSOA(before, after)
+	if len(deleted) == 0 && len(added) == 0 && opts.Serial == nil {
+		return false, nil
+	}
+	oldSerial := z.Serial
+	newSerial, err := nextSerial(z, opts)
+	if err != nil {
+		return false, err
+	}
+	var served int64
+	err = tx.QueryRow(ctx, `SELECT coalesce((SELECT to_serial FROM zone_journal WHERE zone_id = $1 AND seq = $2),
+		(SELECT serial FROM zone_images WHERE zone_id = $1 AND seq = $2))`, z.ID, z.CurrentSeq).Scan(&served)
+	if err != nil {
+		return false, fmt.Errorf("zone %s serial at seq %d: %w", z.Name, z.CurrentSeq, store.MapError(err))
+	}
+	oldSOA, err := nzf.FromRR(soaRR(z))
+	if err != nil {
+		return false, err
+	}
+	next := soaRR(z)
+	next.Serial = newSerial
+	newSOA, err := nzf.FromRR(next)
+	if err != nil {
+		return false, err
+	}
+	origin, err := wireName(z.Name)
+	if err != nil {
+		return false, err
+	}
+	d := &nzf.Delta{Origin: origin, FromSerial: oldSerial, ToSerial: newSerial,
+		Deleted: append([]nzf.Record{oldSOA}, deleted...), Added: append([]nzf.Record{newSOA}, added...)}
+	// A served serial other than the row's (the row was changed outside Rebuild) forces an image,
+	// as in Rebuild.
+	return true, writeVersion(ctx, tx, z, origin, newSerial, d, uint32(served) != oldSerial, func() ([]nzf.Record, error) {
+		desired, err := desiredRRs(ctx, tx, z)
 		if err != nil {
-			return false, fmt.Errorf("zone %s delta: %w", z.Name, err)
+			return nil, err
+		}
+		return toRecords(setSOASerial(desired, newSerial))
+	})
+}
+
+// nextSerial is the serial of the next version of z: the RFC 1982 successor, the proposed
+// opts.Serial when greater (always for secondaries), and the current serial for the first version.
+func nextSerial(z *Zone, opts RebuildOptions) (uint32, error) {
+	newSerial := SerialNext(z.Serial)
+	if z.Kind == "secondary" {
+		if opts.Serial == nil {
+			return 0, fmt.Errorf("zone %s: a secondary rebuild needs the transferred serial", z.Name)
+		}
+		newSerial = *opts.Serial
+	} else if opts.Serial != nil && SerialLess(z.Serial, *opts.Serial) {
+		newSerial = *opts.Serial
+	}
+	if z.CurrentSeq == 0 && opts.Serial == nil {
+		newSerial = z.Serial // the first version keeps the initial serial
+	}
+	return newSerial, nil
+}
+
+// writeVersion writes version z.CurrentSeq+1 of z at newSerial: the journal delta d (nil for the
+// first version), a full image of image() when one is due or forced, the journal pruning and the
+// zone row.
+func writeVersion(ctx context.Context, tx pgx.Tx, z *Zone, origin []byte, newSerial uint32, d *nzf.Delta, forceImage bool, image func() ([]nzf.Record, error)) error {
+	seq := z.CurrentSeq + 1
+	if d != nil {
+		raw, err := nzf.EncodeDelta(*d)
+		if err != nil {
+			return fmt.Errorf("zone %s delta: %w", z.Name, err)
 		}
 		sha, err := putBlob(ctx, tx, raw)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO zone_journal (zone_id, seq, from_serial, to_serial, blob_sha256, raw_size) VALUES ($1,$2,$3,$4,$5,$6)`,
-			z.ID, seq, int64(oldSerial), int64(newSerial), sha, len(raw)); err != nil {
-			return false, err
+			z.ID, seq, int64(d.FromSerial), int64(d.ToSerial), sha, len(raw)); err != nil {
+			return err
 		}
 	}
 	due, err := needImage(ctx, tx, z, seq)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if due || forceImage {
-		raw, err := nzf.EncodeFull(nzf.Image{Origin: origin, Serial: newSerial, Records: desiredRecs})
+		recs, err := image()
 		if err != nil {
-			return false, fmt.Errorf("zone %s image: %w", z.Name, err)
+			return err
 		}
-		sha, err := putBlob(ctx, tx, raw)
-		if err != nil {
-			return false, err
+		if err := writeImage(ctx, tx, z, origin, seq, newSerial, recs); err != nil {
+			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO zone_images (zone_id, seq, serial, blob_sha256, raw_size) VALUES ($1,$2,$3,$4,$5)`,
-			z.ID, seq, int64(newSerial), sha, len(raw)); err != nil {
-			return false, err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM zone_images WHERE zone_id = $1 AND seq < $2`, z.ID, seq); err != nil {
-			return false, err
-		}
-		z.ImageSeq = seq
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM zone_journal WHERE zone_id = $1 AND seq <= $2 AND seq <= $3`, z.ID, seq-journalKept, z.ImageSeq); err != nil {
-		return false, err
+		return err
 	}
 	z.Serial, z.CurrentSeq = newSerial, seq
 	_, err = tx.Exec(ctx, `UPDATE zones SET serial = $2, current_seq = $3, image_seq = $4, updated_at = now() WHERE id = $1`,
 		z.ID, int64(newSerial), seq, z.ImageSeq)
-	return true, err
+	return err
+}
+
+// writeImage stores recs as the full image of version seq of z at serial, drops older images and
+// sets z.ImageSeq (the caller writes the zone row).
+func writeImage(ctx context.Context, tx pgx.Tx, z *Zone, origin []byte, seq int64, serial uint32, recs []nzf.Record) error {
+	raw, err := nzf.EncodeFull(nzf.Image{Origin: origin, Serial: serial, Records: recs})
+	if err != nil {
+		return fmt.Errorf("zone %s image: %w", z.Name, err)
+	}
+	sha, err := putBlob(ctx, tx, raw)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO zone_images (zone_id, seq, serial, blob_sha256, raw_size) VALUES ($1,$2,$3,$4,$5)`,
+		z.ID, seq, int64(serial), sha, len(raw)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM zone_images WHERE zone_id = $1 AND seq < $2`, z.ID, seq); err != nil {
+		return err
+	}
+	z.ImageSeq = seq
+	return nil
 }
 
 // LoadServed returns the current served RR set of z: the image at image_seq with the later

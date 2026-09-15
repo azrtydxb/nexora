@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"sync"
 
 	"github.com/miekg/dns"
 	"github.com/miekg/pkcs11"
@@ -29,10 +30,15 @@ const (
 // HSM is one logged-in PKCS#11 token with a small pool of read-write sessions.
 type HSM struct {
 	ctx          *pkcs11.Ctx
-	slot         uint
+	label        string // token label, looked up again when sessions are replaced
+	pinFile      string // re-read for every login, never kept in memory
 	kekID        []byte
 	signingLabel string // CKA_LABEL of this installation's DNSSEC key objects
 	pool         chan pkcs11.SessionHandle
+
+	mu   sync.Mutex // guards slot and gen, serialises session replacement
+	slot uint
+	gen  uint64 // incremented by each successful re-login
 }
 
 func openHSM(module, label, pinFile, signingLabel string) (*HSM, error) {
@@ -49,24 +55,13 @@ func openHSM(module, label, pinFile, signingLabel string) (*HSM, error) {
 		p.Destroy()
 		return nil, fmt.Errorf("pkcs11 initialize: %w", err)
 	}
-	h := &HSM{ctx: p, signingLabel: signingLabel, pool: make(chan pkcs11.SessionHandle, hsmSessions)}
+	h := &HSM{ctx: p, label: label, pinFile: pinFile, signingLabel: signingLabel, pool: make(chan pkcs11.SessionHandle, hsmSessions)}
 	fail := func(err error) (*HSM, error) {
 		_ = h.close()
 		return nil, err
 	}
-	slots, err := p.GetSlotList(true)
-	if err != nil {
-		return fail(fmt.Errorf("pkcs11 slot list: %w", err))
-	}
-	found := false
-	for _, s := range slots {
-		if ti, err := p.GetTokenInfo(s); err == nil && strings.TrimRight(ti.Label, " \x00") == label {
-			h.slot, found = s, true
-			break
-		}
-	}
-	if !found {
-		return fail(fmt.Errorf("NEXORA_PKCS11_TOKEN_LABEL %q: no such token", label))
+	if h.slot, err = h.findSlot(); err != nil {
+		return fail(err)
 	}
 	for i := 0; i < hsmSessions; i++ {
 		sh, err := p.OpenSession(h.slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
@@ -76,8 +71,8 @@ func openHSM(module, label, pinFile, signingLabel string) (*HSM, error) {
 		h.pool <- sh
 		if i == 0 {
 			// Login applies to every session of this application on the token.
-			if err := p.Login(sh, pkcs11.CKU_USER, strings.TrimSpace(string(pinRaw))); err != nil && !errors.Is(err, pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN)) {
-				return fail(fmt.Errorf("pkcs11 login: %w", err))
+			if err := h.login(sh, pinRaw); err != nil {
+				return fail(err)
 			}
 		}
 	}
@@ -86,7 +81,31 @@ func openHSM(module, label, pinFile, signingLabel string) (*HSM, error) {
 	return h, nil
 }
 
+// findSlot returns the slot holding the token labelled h.label.
+func (h *HSM) findSlot() (uint, error) {
+	slots, err := h.ctx.GetSlotList(true)
+	if err != nil {
+		return 0, fmt.Errorf("pkcs11 slot list: %w", err)
+	}
+	for _, s := range slots {
+		if ti, err := h.ctx.GetTokenInfo(s); err == nil && strings.TrimRight(ti.Label, " \x00") == h.label {
+			return s, nil
+		}
+	}
+	return 0, fmt.Errorf("NEXORA_PKCS11_TOKEN_LABEL %q: no such token", h.label)
+}
+
+// login logs the application in as CKU_USER; it applies to every session of the application on the token.
+func (h *HSM) login(sh pkcs11.SessionHandle, pinRaw []byte) error {
+	if err := h.ctx.Login(sh, pkcs11.CKU_USER, strings.TrimSpace(string(pinRaw))); err != nil && !errors.Is(err, pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN)) {
+		return fmt.Errorf("pkcs11 login: %w", err)
+	}
+	return nil
+}
+
 func (h *HSM) close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	err := h.ctx.CloseAllSessions(h.slot)
 	if ferr := h.ctx.Finalize(); err == nil {
 		err = ferr
@@ -95,13 +114,71 @@ func (h *HSM) close() error {
 	return err
 }
 
-// with runs fn on a pooled session.
-// debt: a session invalidated by the token (removal, reset) stays in the pool and fails every
-// call it serves; revisit when an HSM deployment needs reconnection without a restart.
+// invalidated reports PKCS#11 errors after which a session can never succeed again.
+func invalidated(err error) bool {
+	for _, code := range []uint{pkcs11.CKR_SESSION_HANDLE_INVALID, pkcs11.CKR_SESSION_CLOSED, pkcs11.CKR_DEVICE_REMOVED,
+		pkcs11.CKR_TOKEN_NOT_PRESENT, pkcs11.CKR_USER_NOT_LOGGED_IN} {
+		if errors.Is(err, pkcs11.Error(code)) {
+			return true
+		}
+	}
+	return false
+}
+
+// with runs fn on a pooled session. A session the token invalidated (removal, reset) is replaced
+// and fn retried once; a failed call changed nothing on the token, so the retry is safe.
 func (h *HSM) with(fn func(sh pkcs11.SessionHandle) error) error {
 	sh := <-h.pool
-	defer func() { h.pool <- sh }()
-	return fn(sh)
+	gen := h.generation()
+	err := fn(sh)
+	if !invalidated(err) {
+		h.pool <- sh
+		return err
+	}
+	fresh, rerr := h.reopen(sh, gen)
+	if rerr != nil {
+		h.pool <- sh // the pool never shrinks; later calls try to recover again
+		return fmt.Errorf("%w: pkcs11 session lost and not recovered: %v", ErrBackendUnavailable, rerr)
+	}
+	err = fn(fresh)
+	h.pool <- fresh
+	return err
+}
+
+func (h *HSM) generation() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.gen
+}
+
+// reopen replaces the invalidated session old. It logs in again unless another call already did
+// since seenGen was read, so concurrent failures from one token event log in once.
+func (h *HSM) reopen(old pkcs11.SessionHandle, seenGen uint64) (pkcs11.SessionHandle, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_ = h.ctx.CloseSession(old)
+	slot, err := h.findSlot() // the slot id can change when the token is inserted again
+	if err != nil {
+		return 0, err
+	}
+	h.slot = slot
+	sh, err := h.ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	if err != nil {
+		return 0, fmt.Errorf("pkcs11 open session: %w", err)
+	}
+	if seenGen == h.gen {
+		pinRaw, err := readSecretFile("NEXORA_PKCS11_PIN_FILE", h.pinFile)
+		if err == nil {
+			err = h.login(sh, pinRaw)
+			clear(pinRaw)
+		}
+		if err != nil {
+			_ = h.ctx.CloseSession(sh)
+			return 0, err
+		}
+		h.gen++
+	}
+	return sh, nil
 }
 
 // find returns the handles of the objects of class with CKA_ID id (at most 2).

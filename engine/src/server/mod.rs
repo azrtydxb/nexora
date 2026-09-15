@@ -2,6 +2,7 @@
 //! inline by the listeners, miss resolution in `spawn_local` tasks, and the
 //! per-core worker threads.
 
+pub mod buffers;
 pub mod doh;
 pub mod doq;
 pub mod dot;
@@ -52,6 +53,8 @@ use std::time::{Duration, Instant, SystemTime};
 /// The UDP payload size advertised in reply OPT records.
 const ADVERTISED_UDP_SIZE: u16 = 1232;
 const HEADER_LEN: usize = 12;
+/// RFC 6891 extended RCODE BADVERS: header RCODE 0, OPT extended RCODE octet 1.
+pub const RCODE_BADVERS: u8 = 16;
 
 pub struct Shared {
     pub runtime: ArcSwap<Runtime>,
@@ -217,9 +220,11 @@ impl Answerer for WorkerAnswerer {
 
     async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>) {
         let rt = self.0.shared.runtime.load_full();
-        let mut out = vec![0u8; 65535];
+        let mut out = buffers::take();
+        out.resize(65535, 0);
         match handle_packet(&self.0, &rt, query, client.addr, client.transport, &mut out) {
             FastOutcome::Slow(job) => {
+                buffers::give(out);
                 frames.extend(auth_dispatch::run_slow(self.0.clone(), rt, job).await);
             }
             outcome => {
@@ -303,8 +308,14 @@ impl Scope<'_> {
     }
 
     /// Counts and logs `reply`; allocation-free.
-    fn finish(&self, mut r: QueryRecord, reply: &[u8]) {
-        r.rcode = reply.get(3).map_or(wire::RCODE_SERVFAIL, |b| b & 0x0f);
+    fn finish(&self, r: QueryRecord, reply: &[u8]) {
+        let rcode = reply.get(3).map_or(wire::RCODE_SERVFAIL, |b| b & 0x0f);
+        self.finish_rcode(r, reply, rcode);
+    }
+
+    /// Counts and logs `reply` with `rcode`, which may be an extended RCODE; allocation-free.
+    fn finish_rcode(&self, mut r: QueryRecord, _reply: &[u8], rcode: u8) {
+        r.rcode = rcode;
         r.duration_us = micros(self.started.elapsed());
         r.unix_micros = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -376,8 +387,23 @@ pub fn handle_packet(
         cookie: None,
         ede: None,
     });
-    // debt: EDNS versions other than 0 are answered as version 0 instead of
-    // BADVERS; revisit when a client that sends EDNS1 shows up.
+    // RFC 6891 §6.1.3: only EDNS version 0 is implemented.
+    if let Some(o) = q.opt.filter(|o| o.version != 0) {
+        let badvers = ReplyOpt {
+            udp_size: ADVERTISED_UDP_SIZE,
+            do_bit: o.do_bit,
+            ext_rcode: RCODE_BADVERS >> 4,
+            cookie: None,
+            ede: None,
+        };
+        let n =
+            wire::write_rcode_reply(&q, RCODE_BADVERS & 0x0f, &mut out[..limit], Some(&badvers));
+        if n < HEADER_LEN {
+            return FastOutcome::Drop;
+        }
+        scope.finish_rcode(rec, &out[..n], RCODE_BADVERS);
+        return FastOutcome::Reply(n);
+    }
     if q.opt.is_some_and(|o| o.bad_cookie_len) {
         let n = wire::write_rcode_reply(&q, wire::RCODE_FORMERR, &mut out[..limit], opt.as_ref());
         return reply(&scope, rec, out, n);

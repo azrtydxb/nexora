@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -611,7 +612,13 @@ func setRRsetTTL(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID, owner string,
 
 // loadRecordRRs returns the stored records of zoneID as RRs.
 func loadRecordRRs(ctx context.Context, q querier, zoneID uuid.UUID) ([]dns.RR, error) {
-	rows, err := q.Query(ctx, "SELECT owner, rtype, ttl, rdata_wire FROM zone_records WHERE zone_id = $1", zoneID)
+	return queryRRs(ctx, q, "SELECT owner, rtype, ttl, rdata_wire FROM zone_records WHERE zone_id = $1", zoneID)
+}
+
+// queryRRs runs sql, which selects owner, rtype, ttl and rdata_wire of zone_records, and returns
+// the rows as RRs.
+func queryRRs(ctx context.Context, q querier, sql string, args ...any) ([]dns.RR, error) {
+	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -639,15 +646,90 @@ func loadRecordRRs(ctx context.Context, q querier, zoneID uuid.UUID) ([]dns.RR, 
 	return out, rows.Err()
 }
 
-// checkZoneRecords applies CheckSet to the stored records of z.
-// debt: loads the whole zone per record edit (Rebuild does as well); revisit when zones with
-// hundreds of thousands of records are edited record by record through the API.
-func checkZoneRecords(ctx context.Context, tx pgx.Tx, z *Zone) error {
-	rrs, err := loadRecordRRs(ctx, tx, z.ID)
+// rrset names one RRset of a zone; owners compare case-insensitively.
+type rrset struct {
+	owner string
+	rtype uint16
+}
+
+// loadRRsets returns the stored records of the RRsets sets of zoneID, each RRset once.
+func loadRRsets(ctx context.Context, tx pgx.Tx, zoneID uuid.UUID, sets ...rrset) ([]dns.RR, error) {
+	var out []dns.RR
+	for i, set := range sets {
+		if slices.ContainsFunc(sets[:i], func(o rrset) bool { return o.rtype == set.rtype && strings.EqualFold(o.owner, set.owner) }) {
+			continue
+		}
+		rrs, err := queryRRs(ctx, tx, "SELECT owner, rtype, ttl, rdata_wire FROM zone_records WHERE zone_id = $1 AND lower(owner) = lower($2) AND rtype = $3",
+			zoneID, set.owner, int32(set.rtype))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rrs...)
+	}
+	return out, nil
+}
+
+// checkOwners applies CheckSet's rules to the edited owners of z, reading only the records at the
+// owners and their ancestors up to the apex (which covers the apex NS count) and, for an owner
+// holding a DNAME, whether any name lies below it.
+func checkOwners(ctx context.Context, tx pgx.Tx, z *Zone, owners ...string) error {
+	apex := strings.ToLower(z.Name)
+	names := []string{apex}
+	lower := make([]string, len(owners))
+	for i, o := range owners {
+		lower[i] = strings.ToLower(o)
+		names = append(append(names, lower[i]), ancestors(apex, lower[i])...)
+	}
+	rows, err := tx.Query(ctx, "SELECT lower(owner), rtype FROM zone_records WHERE zone_id = $1 AND lower(owner) = ANY($2)", z.ID, names)
 	if err != nil {
 		return err
 	}
-	return CheckSet(z.Name, rrs)
+	types := ownerTypes{}
+	var owner string
+	var rtype int32
+	if _, err := pgx.ForEachRow(rows, []any{&owner, &rtype}, func() error {
+		types.add(owner, uint16(rtype))
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := checkApexNS(types[apex][dns.TypeNS]); err != nil {
+		return err
+	}
+	for _, o := range lower {
+		if types[o] == nil {
+			continue // no records left at o
+		}
+		if err := checkOwner(apex, o, types); err != nil {
+			return err
+		}
+		if types[o][dns.TypeDNAME] == 0 {
+			continue
+		}
+		var below string
+		err := tx.QueryRow(ctx, `SELECT lower(owner) FROM zone_records WHERE zone_id = $1 AND lower(owner) LIKE '%.' || $2 ESCAPE '\' LIMIT 1`,
+			z.ID, likeEscaper.Replace(o)).Scan(&below)
+		if err == nil {
+			return invalid("dname_occludes", fmt.Sprintf("%s is below the DNAME at %s", below, o))
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+	return nil
+}
+
+// likeEscaper escapes the LIKE wildcards and the escape character itself.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// rtypeOf returns the numeric type of a record read back by scanRecord.
+func rtypeOf(r *Record) uint16 {
+	if t, ok := dns.StringToType[r.Type]; ok {
+		return t
+	}
+	var t uint16
+	_, _ = fmt.Sscanf(r.Type, "TYPE%d", &t)
+	return t
 }
 
 func writable(z *Zone) error {
@@ -699,18 +781,40 @@ func (s *Service) CreateRecord(ctx context.Context, actor auth.Actor, zoneID uui
 		if err != nil {
 			return "", nil, nil, RebuildOptions{}, err
 		}
-		if rec, err = insertRecord(ctx, tx, z.ID, rr); err != nil {
-			return "", nil, nil, RebuildOptions{}, err
-		}
-		if err := setRRsetTTL(ctx, tx, z.ID, rr.Header().Name, rr.Header().Rrtype, rr.Header().Ttl); err != nil {
-			return "", nil, nil, RebuildOptions{}, err
-		}
-		return "createZoneRecord", nil, rec, RebuildOptions{}, checkZoneRecords(ctx, tx, z)
+		h := rr.Header()
+		set := rrset{h.Name, h.Rrtype}
+		edit, err := recordEdit(ctx, tx, z, []string{h.Name}, []rrset{set}, func() error {
+			if rec, err = insertRecord(ctx, tx, z.ID, rr); err != nil {
+				return err
+			}
+			return setRRsetTTL(ctx, tx, z.ID, h.Name, h.Rrtype, h.Ttl)
+		})
+		return "createZoneRecord", nil, rec, RebuildOptions{Edit: edit}, err
 	}, actor)
 	if err != nil {
 		return nil, err
 	}
 	return rec, nil
+}
+
+// recordEdit runs change, a record edit of z, between reads of the RRsets sets, then checks the
+// zone rules at owners. It returns the RRsets before and after the edit.
+func recordEdit(ctx context.Context, tx pgx.Tx, z *Zone, owners []string, sets []rrset, change func() error) (*EditDelta, error) {
+	before, err := loadRRsets(ctx, tx, z.ID, sets...)
+	if err != nil {
+		return nil, err
+	}
+	if err := change(); err != nil {
+		return nil, err
+	}
+	if err := checkOwners(ctx, tx, z, owners...); err != nil {
+		return nil, err
+	}
+	after, err := loadRRsets(ctx, tx, z.ID, sets...)
+	if err != nil {
+		return nil, err
+	}
+	return &EditDelta{Before: before, After: after}, nil
 }
 
 // UpdateRecord replaces record recordID at revision.
@@ -733,16 +837,17 @@ func (s *Service) UpdateRecord(ctx context.Context, actor auth.Actor, zoneID, re
 			return "", nil, nil, RebuildOptions{}, invalid("invalid_rdata", err.Error())
 		}
 		h := rr.Header()
-		rec, err = scanRecord(tx.QueryRow(ctx, `UPDATE zone_records SET owner = $3, rtype = $4, ttl = $5, rdata = $6, rdata_wire = $7,
-			revision = revision + 1, updated_at = now() WHERE id = $1 AND zone_id = $2 RETURNING `+recordColumns,
-			recordID, zoneID, h.Name, int32(h.Rrtype), int64(h.Ttl), data, wire.RData))
-		if err != nil {
-			return "", nil, nil, RebuildOptions{}, err
-		}
-		if err := setRRsetTTL(ctx, tx, z.ID, h.Name, h.Rrtype, h.Ttl); err != nil {
-			return "", nil, nil, RebuildOptions{}, err
-		}
-		return "updateZoneRecord", before, rec, RebuildOptions{}, checkZoneRecords(ctx, tx, z)
+		sets := []rrset{{before.Name, rtypeOf(before)}, {h.Name, h.Rrtype}}
+		edit, err := recordEdit(ctx, tx, z, []string{before.Name, h.Name}, sets, func() error {
+			rec, err = scanRecord(tx.QueryRow(ctx, `UPDATE zone_records SET owner = $3, rtype = $4, ttl = $5, rdata = $6, rdata_wire = $7,
+				revision = revision + 1, updated_at = now() WHERE id = $1 AND zone_id = $2 RETURNING `+recordColumns,
+				recordID, zoneID, h.Name, int32(h.Rrtype), int64(h.Ttl), data, wire.RData))
+			if err != nil {
+				return err
+			}
+			return setRRsetTTL(ctx, tx, z.ID, h.Name, h.Rrtype, h.Ttl)
+		})
+		return "updateZoneRecord", before, rec, RebuildOptions{Edit: edit}, err
 	}, actor)
 	if err != nil {
 		return nil, err
@@ -760,10 +865,11 @@ func (s *Service) DeleteRecord(ctx context.Context, actor auth.Actor, zoneID, re
 		if err != nil {
 			return "", nil, nil, RebuildOptions{}, err
 		}
-		if _, err := tx.Exec(ctx, "DELETE FROM zone_records WHERE id = $1", recordID); err != nil {
-			return "", nil, nil, RebuildOptions{}, err
-		}
-		return "deleteZoneRecord", before, map[string]string{"deleted": recordID.String()}, RebuildOptions{}, checkZoneRecords(ctx, tx, z)
+		edit, err := recordEdit(ctx, tx, z, []string{before.Name}, []rrset{{before.Name, rtypeOf(before)}}, func() error {
+			_, err := tx.Exec(ctx, "DELETE FROM zone_records WHERE id = $1", recordID)
+			return err
+		})
+		return "deleteZoneRecord", before, map[string]string{"deleted": recordID.String()}, RebuildOptions{Edit: edit}, err
 	}, actor)
 	return err
 }

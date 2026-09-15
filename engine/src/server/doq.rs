@@ -1,7 +1,7 @@
 //! DNS over QUIC (RFC 9250): one bidirectional stream per query on per-worker endpoints.
 
 use crate::edns::Transport;
-use crate::server::{Answerer, ClientInfo, proxy::normalize_peer, tls::CertStore};
+use crate::server::{Answerer, ClientInfo, buffers, proxy::normalize_peer, tls::CertStore};
 use crate::telemetry::metrics::{ConnectionGuard, ENCRYPTED, HandshakeResult};
 use quinn::VarInt;
 use std::net::SocketAddr;
@@ -122,37 +122,45 @@ pub async fn run_doq<A: Answerer + 'static>(
             while let Ok((mut send, mut recv)) = conn.accept_bi().await {
                 let (answerer, conn) = (answerer.clone(), conn.clone());
                 tokio::task::spawn_local(async move {
-                    let buf = match recv.read_to_end(MAX_STREAM).await {
-                        Ok(b) => b,
-                        Err(quinn::ReadToEndError::TooLong) => {
-                            ENCRYPTED.doq_protocol_error();
-                            conn.close(VarInt::from_u32(DOQ_PROTOCOL_ERROR), b"message too long");
-                            return;
+                    let mut buf = buffers::take();
+                    loop {
+                        match recv.read_chunk(MAX_STREAM + 1 - buf.len(), true).await {
+                            Ok(Some(chunk)) if buf.len() + chunk.bytes.len() > MAX_STREAM => {
+                                ENCRYPTED.doq_protocol_error();
+                                conn.close(
+                                    VarInt::from_u32(DOQ_PROTOCOL_ERROR),
+                                    b"message too long",
+                                );
+                                return;
+                            }
+                            Ok(Some(chunk)) => buf.extend_from_slice(&chunk.bytes),
+                            Ok(None) => break,
+                            Err(_) => {
+                                let _ = send.reset(VarInt::from_u32(DOQ_REQUEST_CANCELLED));
+                                return;
+                            }
                         }
-                        Err(_) => {
-                            let _ = send.reset(VarInt::from_u32(DOQ_REQUEST_CANCELLED));
-                            return;
-                        }
-                    };
+                    }
                     let Ok(query) = decode_query(&buf) else {
                         ENCRYPTED.doq_protocol_error();
                         conn.close(VarInt::from_u32(DOQ_PROTOCOL_ERROR), b"malformed query");
                         return;
                     };
-                    // debt: one stream buffer, answer buffer and frame per DoQ query;
-                    // pool them if DoQ shows up in the perf gate.
-                    let mut out = Vec::with_capacity(512);
+                    let mut out = buffers::take();
                     answerer.answer(client, query, &mut out).await;
                     if out.is_empty() || out.len() > 65535 {
                         let _ = send.reset(VarInt::from_u32(DOQ_INTERNAL_ERROR));
                         return;
                     }
-                    let mut frame = Vec::with_capacity(out.len() + 2);
+                    let mut frame = buffers::take();
                     frame.extend_from_slice(&(out.len() as u16).to_be_bytes());
                     frame.extend_from_slice(&out);
                     if send.write_all(&frame).await.is_ok() {
                         let _ = send.finish();
                     }
+                    buffers::give(buf);
+                    buffers::give(out);
+                    buffers::give(frame);
                 });
             }
         });
@@ -201,35 +209,61 @@ mod tests {
         ep
     }
 
+    /// Starts an echoing DoQ server on the current `LocalSet` and connects a client to it.
+    async fn connect_echo_server() -> (quinn::Endpoint, quinn::Connection) {
+        let ck = rcgen::generate_simple_self_signed(vec!["dns.test".to_string()]).unwrap();
+        let store = Arc::new(CertStore::new());
+        let store_for_run = store.clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        store
+            .install_pem(
+                ck.cert.pem().as_bytes(),
+                ck.signing_key.serialize_pem().as_bytes(),
+                now,
+            )
+            .unwrap();
+        let server = bind_doq(
+            "127.0.0.1:0".parse().unwrap(),
+            crate::server::tls::quic_server_config(store),
+            endpoint_config(&[7u8; 64]),
+        )
+        .unwrap();
+        let addr = server.local_addr().unwrap();
+        tokio::task::spawn_local(run_doq(server, Rc::new(EchoAnswerer), store_for_run));
+        let client = client_endpoint(ck.cert.der().clone());
+        let conn = client.connect(addr, "dns.test").unwrap().await.unwrap();
+        (client, conn)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn oversized_stream_closes_connection_with_protocol_error() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (_client, conn) = connect_echo_server().await;
+                let (mut send, _recv) = conn.open_bi().await.unwrap();
+                let mut big = framed(&test_query(0, "example.com."));
+                big.resize(MAX_STREAM + 1, 0);
+                let _ = send.write_all(&big).await;
+                let _ = send.finish();
+                match conn.closed().await {
+                    quinn::ConnectionError::ApplicationClosed(c) => {
+                        assert_eq!(c.error_code, quinn::VarInt::from_u32(DOQ_PROTOCOL_ERROR));
+                        assert_eq!(&c.reason[..], b"message too long");
+                    }
+                    other => panic!("unexpected close: {other:?}"),
+                }
+            })
+            .await;
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn one_stream_per_query_and_nonzero_id_closes_connection() {
         tokio::task::LocalSet::new()
             .run_until(async {
-                let ck = rcgen::generate_simple_self_signed(vec!["dns.test".to_string()]).unwrap();
-                let store = Arc::new(CertStore::new());
-                let store_for_run = store.clone();
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                store
-                    .install_pem(
-                        ck.cert.pem().as_bytes(),
-                        ck.signing_key.serialize_pem().as_bytes(),
-                        now,
-                    )
-                    .unwrap();
-                let server = bind_doq(
-                    "127.0.0.1:0".parse().unwrap(),
-                    crate::server::tls::quic_server_config(store),
-                    endpoint_config(&[7u8; 64]),
-                )
-                .unwrap();
-                let addr = server.local_addr().unwrap();
-                tokio::task::spawn_local(run_doq(server, Rc::new(EchoAnswerer), store_for_run));
-
-                let client = client_endpoint(ck.cert.der().clone());
-                let conn = client.connect(addr, "dns.test").unwrap().await.unwrap();
+                let (_client, conn) = connect_echo_server().await;
                 let mut tasks = Vec::new();
                 for _ in 0..20 {
                     let conn = conn.clone();

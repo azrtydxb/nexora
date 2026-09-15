@@ -209,6 +209,34 @@ fn ixfr_applies_deletions_and_additions() {
     );
 }
 
+#[test]
+fn ixfr_builds_keys_only_for_records_at_deleted_owners() {
+    let mut records = vec![soa(1)];
+    records.extend((0..100_000).map(|i| block(&format!("n{i}"))));
+    let cur = ZoneData { serial: 1, records };
+    let answers = vec![
+        soa(2),
+        soa(1),
+        block("N500"),
+        soa(2),
+        block("added"),
+        soa(2),
+    ];
+    KEYS_BUILT.with(|c| c.set(0));
+    let next = apply_ixfr(&cur, &answers).unwrap();
+    assert!(
+        !next.records.contains(&block("n500")),
+        "the deletion matches case-insensitively"
+    );
+    assert!(next.records.contains(&block("added")));
+    assert_eq!(next.records.len(), 100_001);
+    let built = KEYS_BUILT.with(|c| c.get());
+    assert!(
+        built <= 2,
+        "built {built} record keys for a one-record deletion"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn axfr_with_tsig_then_incremental_update() {
     let zone = Arc::new(Mutex::new((5u32, vec![block("a"), block("b")])));
