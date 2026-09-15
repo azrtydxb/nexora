@@ -308,12 +308,13 @@ DNS content filter that redirected all outbound port-53 traffic to its own resol
 
 Node resolvers: the kw nodes' netplan (`/etc/netplan/netcfg.yaml`, backup `netcfg.yaml.bak-nexora`)
 uses `192.168.10.1` as nameserver; they previously listed 8.8.8.8/1.1.1.1, which only worked while
-the gateway intercepted DNS. UniFi does not serve `watteel.lab`: the `watteel.lab.` primary zone
-(with `kw` a subdomain inside it, `*.kw.watteel.lab` -> 192.168.10.120) is served by Nexora itself
-on 192.168.10.136 and .139. CoreDNS forwards `.` to the node resolver, so pods in the cluster cannot
-resolve `nexora.kw.watteel.lab` or any other `watteel.lab` name. In-cluster resolution needs a
-CoreDNS conditional forward for `watteel.lab` to 192.168.10.136 and 192.168.10.139; it is not
-configured.
+the gateway intercepted DNS. The `watteel.lab.` primary zone (with `kw` a subdomain inside
+it, `*.kw.watteel.lab` -> 192.168.10.120) is served by Nexora itself on 192.168.10.136 and .139,
+and the UniFi gateway forwards `watteel.lab` back to those two addresses. CoreDNS forwards `.` to
+the node resolver, so the chain pod -> CoreDNS -> 192.168.10.1 -> Nexora resolves every
+`watteel.lab` name from inside the cluster; no CoreDNS conditional forward is needed. Note the
+circularity this creates: Nexora serves the hostname of its own management GUI, so while both
+engines are down, reach it by address (the ingress is 192.168.10.120).
 
 ## Known limits
 
