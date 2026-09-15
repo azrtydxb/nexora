@@ -141,7 +141,7 @@ func (r *Reconciler) nextWake(eg *v1alpha1.NexoraEngineGroup) time.Duration {
 	return max(wait, requeueMin)
 }
 
-// finalize revokes the CR's join tokens, deletes the group under deletionPolicy Delete (never
+// finalize revokes the CR's join tokens (recorded or carrying its marker), deletes the group under deletionPolicy Delete (never
 // "default", and only a group this CR synced) and removes the finalizer.
 func (r *Reconciler) finalize(ctx context.Context, eg *v1alpha1.NexoraEngineGroup) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(eg, v1alpha1.FinalizerEngineGroup) {
@@ -157,10 +157,8 @@ func (r *Reconciler) finalize(ctx context.Context, eg *v1alpha1.NexoraEngineGrou
 		if err != nil {
 			return r.fail(ctx, eg, base, v1alpha1.ReasonManagementUnavailable, "management API client: "+err.Error(), requeueManagement)
 		}
-		for _, id := range []string{eg.Status.JoinTokenID, eg.Status.PreviousJoinTokenID} {
-			if err := revoke(ctx, api, id); err != nil {
-				return r.apiFailure(ctx, eg, base, err)
-			}
+		if err := revokeAll(ctx, api, eg); err != nil {
+			return r.apiFailure(ctx, eg, base, err)
 		}
 		if eg.Spec.DeletionPolicy == policyDelete && groupName(eg) != defaultGroupName && eg.Status.GroupID != "" {
 			if err := deleteGroup(ctx, api, eg.Status.GroupID); errors.Is(err, mgmtapi.ErrConflict) {

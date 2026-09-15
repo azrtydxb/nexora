@@ -417,3 +417,31 @@ func TestEngineGroupRevokesUnrecordedToken(t *testing.T) {
 		}
 	}
 }
+
+// Catches: an unrecorded join token of the CR (status write failed right after creation) staying valid
+// after the CR is deleted.
+func TestEngineGroupDeletionRevokesUnrecordedToken(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	fail := true
+	e.r.Client = failStatus{e.c, &fail}
+	eg := e.create(&v1alpha1.NexoraEngineGroup{ObjectMeta: metav1.ObjectMeta{Name: "edge"}})
+	if _, err := e.r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: e.ns, Name: "edge"}}); err == nil {
+		t.Fatal("the injected status write failure was not returned")
+	}
+	tokens := e.f.Tokens()
+	if len(tokens) != 1 {
+		t.Fatalf("tokens after the failed reconcile: %+v", tokens)
+	}
+	if err := e.c.Delete(ctx, eg); err != nil {
+		t.Fatal(err)
+	}
+	if _, g := e.reconcile("edge"); g != nil {
+		t.Fatalf("finalizer kept: %v", g.Finalizers)
+	}
+	for _, tok := range e.f.Tokens() {
+		if tok.Id == tokens[0].Id && tok.State != "revoked" {
+			t.Fatalf("unrecorded token after deletion is %q, want revoked", tok.State)
+		}
+	}
+}

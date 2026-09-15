@@ -82,6 +82,27 @@ func revoke(ctx context.Context, api API, id string) error {
 	return nil
 }
 
+// revokeAll revokes the recorded tokens of eg and every active token carrying its marker, in any group:
+// status may not record the group either when the first status write failed, and the uid is unique to eg.
+func revokeAll(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup) error {
+	ids := []string{eg.Status.JoinTokenID, eg.Status.PreviousJoinTokenID}
+	tokens, err := api.JoinTokens(ctx)
+	if err != nil {
+		return err
+	}
+	for _, t := range tokens {
+		if t.State == tokenActive && strings.HasPrefix(t.Name, tokenPrefix(eg)) {
+			ids = append(ids, t.Id.String())
+		}
+	}
+	for _, id := range ids {
+		if err := revoke(ctx, api, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // syncJoinToken keeps an active join token of group in the CR-owned Secret, rotating it before expiry
 // and revoking the previous token after the grace period. It records the result in eg.Status. A non-empty
 // conflict means the Secret name is taken by an object this CR does not control; nothing was changed.

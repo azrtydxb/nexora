@@ -2150,6 +2150,9 @@ As built (details the order above leaves open):
   `created_at`) before the recorded token: a token left unrecorded by a failed status write. A newer
   marked token is kept, because a reconcile reading a stale cached status sees the recorded token as
   unrecorded. `TestEngineGroupRevokesUnrecordedToken`.
+- Deletion revokes `joinTokenID`, `previousJoinTokenID` and every active token carrying the marker, in
+  any group (a failed first status write leaves `groupID` unrecorded too; the uid is unique to the CR).
+  `TestEngineGroupDeletionRevokesUnrecordedToken`.
 - Deletion deletes only the group whose id is `status.groupID`, looked up for its current revision, so
   a `DuplicateGroupName` CR (no `groupID`) never deletes the group another CR manages.
 - The watch on `NexoraInstallation` enqueues every `NexoraEngineGroup` in its namespace referencing it.
