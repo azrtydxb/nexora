@@ -2606,10 +2606,9 @@ DROP TABLE ai_assistant_messages, ai_assistant_sessions;
   - a second operator gets 404 on `GET /ai/assistant/sessions/{id}`, and a viewer gets 403 on
     `POST /ai/assistant/sessions`.
 - [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestAIConfigAssistant -count=1 -v'` and expect PASS.
-      Blocked (2026-09-15): the apply answers `open` because `licenseOperations` in
-      `mgmt/internal/api/ai_proposals.go` (Task 6) does not merge `acknowledge_license` into
-      `createPolicyGroup`, and the `adult` category has the non-commercial `oisd-nsfw` source enabled by
-      default. Adding `"createPolicyGroup": true` there unblocks it.
+      This needs `licenseOperations` in `mgmt/internal/api/ai_proposals.go` (Task 6) to include
+      `createPolicyGroup` (commit 52b049b): the `adult` category has the non-commercial `oisd-nsfw`
+      source enabled by default, so without it the apply answers `open`.
 - [ ] Report the paths. Commit message: `M11 T16: configuration assistant`.
 
 ## Task 17: Upstream health prediction agent
