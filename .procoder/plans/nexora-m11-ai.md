@@ -3666,12 +3666,14 @@ Interfaces:
 - As built: the tab lists `useAiProposals("rpz_suggestions", "open")`, one row per rule of each
   `appendAiRpzRules` action; a row checkbox selects its proposal. The empty list shows
   `ai-rpz-empty`. The "New zone" header button shows on the Zones tab only; choosing the Zones tab
-  drops `?tab`. Viewers see the rows without checkboxes or buttons.
+  drops `?tab`. Viewers see the rows without checkboxes or buttons. The apply and reject dialogs
+  keep the ids chosen when they opened: an apply invalidates every query, the open list drops the
+  applied rows, and a dialog fed from the live selection would lose its results.
 
-- [ ] Create `e2e/gui_seed_ai_rpz_test.go`, inserting three open `rpz_suggestions` proposals for
+- [x] Create `e2e/gui_seed_ai_rpz_test.go`, inserting three open `rpz_suggestions` proposals for
       `c2.gui-rpz.test`, `phish.gui-rpz.test` and `keep.gui-rpz.test`, each with one
       `appendAiRpzRules` rule.
-- [ ] Create `web/e2e/screens/58-ai-rpz-suggestions.spec.ts`. As operator at 1280 px:
+- [x] Create `web/e2e/screens/58-ai-rpz-suggestions.spec.ts`. As operator at 1280 px:
   1. `/rpz`, then `rpz-tab-ai`.
   2. Check `ai-rpz-row-c2.gui-rpz.test` and `ai-rpz-row-phish.gui-rpz.test`, then
      `ai-rpz-apply-selected` and confirm.
@@ -3686,7 +3688,7 @@ Interfaces:
   and uses `ai-rpz-reject-selected`. The 400 px test runs after the writes, so it asserts the notice
   and `ai-rpz-empty`.
 
-- [ ] Run the Task 24 commands. Expect FAIL, implement, and expect specs 58 and 15 to PASS.
+- [x] Run the Task 24 commands. Expect FAIL, implement, and expect specs 58 and 15 to PASS.
 - [ ] Report the paths. Commit message: `M11 T30: RPZ suggestions GUI`.
 
 ## Task 31: Operations guide and AI help topic
