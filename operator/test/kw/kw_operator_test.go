@@ -130,31 +130,36 @@ func TestKwOperator(t *testing.T) {
 	})
 
 	t.Run("rolling-update", func(t *testing.T) {
+		const seconds = 240
 		before := enginePodUIDs(t, c, ns)
 		ips := map[string]string{"a": serviceIP(t, c, ns, "nexora-optest-dns-a"), "b": serviceIP(t, c, ns, "nexora-optest-dns-b")}
-		type result struct {
-			lost    int
-			noerror bool
+		type perf struct {
+			lost             int
+			noerror, aborted bool
+			ended            time.Time
 		}
-		results := map[string]result{}
-		digLost := map[string]int{}
+		perfs := map[string]perf{}
+		probes := map[string]probeResult{}
+		probed := map[string]bool{}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for name, ip := range ips {
 			wg.Add(2)
+			// Authoritative: 5 queries/s, each from a fresh socket, across the whole roll (Task 10 findings).
 			go func() {
 				defer wg.Done()
-				lost, ok := dnsperf(t, ip, 240)
+				r, ok := digLoop(t, ip, seconds)
 				mu.Lock()
-				results[name] = result{lost, ok}
+				probes[name], probed[name] = r, ok
 				mu.Unlock()
 			}()
-			// The same rate with a fresh socket per query: a client that is not a single connected socket.
+			// dnsperf's single connected socket is destroyed by Cilium's socket LB when its backend leaves; it
+			// is held to zero loss only when it survives the roll.
 			go func() {
 				defer wg.Done()
-				lost := digLoop(t, ip, 240)
+				lost, ok, aborted := dnsperf(t, ip, seconds)
 				mu.Lock()
-				digLost[name] = lost
+				perfs[name] = perf{lost, ok, aborted, time.Now()}
 				mu.Unlock()
 			}()
 		}
@@ -176,16 +181,35 @@ func TestKwOperator(t *testing.T) {
 			}
 			return enginesReady(t, c, ns), nil
 		})
-		t.Logf("every engine pod replaced after %s", time.Since(start).Round(time.Second))
+		rolled := time.Now()
+		t.Logf("every engine pod replaced after %s", rolled.Sub(start).Round(time.Second))
 		wg.Wait()
 		for _, name := range []string{"a", "b"} {
-			r := results[name]
-			t.Logf("instance %s during the roll: %d lost, NOERROR only=%v", name, r.lost, r.noerror)
-			if r.lost != 0 || !r.noerror {
-				t.Errorf("instance %s during the roll: %d lost, NOERROR only=%v", name, r.lost, r.noerror)
+			r := probes[name]
+			if !probed[name] {
+				continue // digLoop reported the error
 			}
-			if digLost[name] != 0 {
-				t.Errorf("instance %s during the roll: dig loop lost or failed %d queries", name, digLost[name])
+			t.Logf("instance %s during the roll: probe sent %d, lost %d", name, r.sent, r.lost)
+			if r.lost != 0 {
+				t.Errorf("instance %s during the roll: the probe lost or got a wrong answer for %d of %d queries", name, r.lost, r.sent)
+			}
+			// The probe must have been sending, without a pause, from before the change until every pod was
+			// replaced and ready: 5 queries/s allows 20% fork overhead, a gap is at most one clock second.
+			if r.sent < 4*seconds || r.maxGap > 1 {
+				t.Errorf("instance %s: the probe sent %d queries in %ds with a longest gap of %ds, not continuously", name, r.sent, seconds, r.maxGap)
+			}
+			if r.first >= start.Unix() || r.last <= rolled.Unix() {
+				t.Errorf("instance %s: the probe sent from %d to %d, which does not cover the roll %d..%d", name, r.first, r.last, start.Unix(), rolled.Unix())
+			}
+			p := perfs[name]
+			switch {
+			case p.aborted:
+				t.Logf("instance %s: dnsperf aborted (ECONNABORTED from the destroyed connected socket) %s after the change, the roll took %s; the probe is the measure",
+					name, p.ended.Sub(start).Round(time.Second), rolled.Sub(start).Round(time.Second))
+			case p.lost != 0 || !p.noerror:
+				t.Errorf("instance %s during the roll: dnsperf %d lost, NOERROR only=%v", name, p.lost, p.noerror)
+			default:
+				t.Logf("instance %s during the roll: dnsperf 0 lost, NOERROR only", name)
 			}
 		}
 	})

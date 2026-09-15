@@ -3541,12 +3541,17 @@ As built, differing from the draft above:
 - `newClient(t) client.Client` (`config.GetConfigWithContext(ctx)` plus the v1alpha1 scheme);
 - `waitFor(t, timeout, what string, cond func() (bool, error))`;
 - `condTrue(inst, typ) bool`;
-- `dnsperf(t, serviceIP string, seconds int) (lost int, noerror bool)` running
+- `dnsperf(t, serviceIP string, seconds int) (lost int, noerror, aborted bool)` running
   `printf 'www.optest.nexora.test. A\n' > $q; dnsperf -s IP -d $q -Q 5 -l SECONDS -t 2`
-  in the probe and parsing `Queries lost:`, `Queries completed:` and the response codes;
-- `digLoop(t, serviceIP string, seconds int) int`: the same 5 queries/s from a fresh `dig
-  +short +tries=1 +time=2` per query, returning how many did not answer `192.0.2.10`. It measures the
-  same loss for a client that is not one long-lived connected socket (see the kw finding below);
+  in the probe and parsing `Queries lost:`, `Queries completed:` and the response codes; `aborted` is
+  true (no test error) only when dnsperf died with `Software caused connection abort`, any other failure
+  is a test error;
+- `digLoop(t, serviceIP string, seconds int) (probeResult, bool)`: the authoritative zero-loss probe.
+  5 queries/s, each from a fresh `dig +short +tries=1 +time=2` (a fresh socket per query), counting
+  every query that did not answer `192.0.2.10` (timeout, refusal, a socket destroyed in flight, a wrong
+  answer). `probeResult` also carries the queries sent, the first and last send (Unix seconds) and the
+  longest gap between two sends in whole seconds, so the subtest can prove the probe sent continuously
+  across the whole roll (see the kw finding below);
 - `updateRetry(t, c, key, obj, mutate)`, which retries on the conflicts the operator's status writes
   cause;
 - `kubectlErr`/`probeErr`, the error-returning forms the dnsperf and dig goroutines use (`t.Fatal` is
@@ -3686,31 +3691,36 @@ func TestKwOperator(t *testing.T) {
 	})
 
 	t.Run("rolling-update", func(t *testing.T) {
+		const seconds = 240
 		before := enginePodUIDs(t, c, ns)
 		ips := map[string]string{"a": serviceIP(t, c, ns, "nexora-optest-dns-a"), "b": serviceIP(t, c, ns, "nexora-optest-dns-b")}
-		type result struct {
-			lost    int
-			noerror bool
+		type perf struct {
+			lost             int
+			noerror, aborted bool
+			ended            time.Time
 		}
-		results := map[string]result{}
-		digLost := map[string]int{}
+		perfs := map[string]perf{}
+		probes := map[string]probeResult{}
+		probed := map[string]bool{}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for name, ip := range ips {
 			wg.Add(2)
+			// Authoritative: 5 queries/s, each from a fresh socket, across the whole roll (Task 10 findings).
 			go func() {
 				defer wg.Done()
-				lost, ok := dnsperf(t, ip, 240)
+				r, ok := digLoop(t, ip, seconds)
 				mu.Lock()
-				results[name] = result{lost, ok}
+				probes[name], probed[name] = r, ok
 				mu.Unlock()
 			}()
-			// The same rate with a fresh socket per query: a client that is not a single connected socket.
+			// dnsperf's single connected socket is destroyed by Cilium's socket LB when its backend leaves; it
+			// is held to zero loss only when it survives the roll.
 			go func() {
 				defer wg.Done()
-				lost := digLoop(t, ip, 240)
+				lost, ok, aborted := dnsperf(t, ip, seconds)
 				mu.Lock()
-				digLost[name] = lost
+				perfs[name] = perf{lost, ok, aborted, time.Now()}
 				mu.Unlock()
 			}()
 		}
@@ -3732,16 +3742,35 @@ func TestKwOperator(t *testing.T) {
 			}
 			return enginesReady(t, c, ns), nil
 		})
-		t.Logf("every engine pod replaced after %s", time.Since(start).Round(time.Second))
+		rolled := time.Now()
+		t.Logf("every engine pod replaced after %s", rolled.Sub(start).Round(time.Second))
 		wg.Wait()
 		for _, name := range []string{"a", "b"} {
-			r := results[name]
-			t.Logf("instance %s during the roll: %d lost, NOERROR only=%v", name, r.lost, r.noerror)
-			if r.lost != 0 || !r.noerror {
-				t.Errorf("instance %s during the roll: %d lost, NOERROR only=%v", name, r.lost, r.noerror)
+			r := probes[name]
+			if !probed[name] {
+				continue // digLoop reported the error
 			}
-			if digLost[name] != 0 {
-				t.Errorf("instance %s during the roll: dig loop lost or failed %d queries", name, digLost[name])
+			t.Logf("instance %s during the roll: probe sent %d, lost %d", name, r.sent, r.lost)
+			if r.lost != 0 {
+				t.Errorf("instance %s during the roll: the probe lost or got a wrong answer for %d of %d queries", name, r.lost, r.sent)
+			}
+			// The probe must have been sending, without a pause, from before the change until every pod was
+			// replaced and ready: 5 queries/s allows 20% fork overhead, a gap is at most one clock second.
+			if r.sent < 4*seconds || r.maxGap > 1 {
+				t.Errorf("instance %s: the probe sent %d queries in %ds with a longest gap of %ds, not continuously", name, r.sent, seconds, r.maxGap)
+			}
+			if r.first >= start.Unix() || r.last <= rolled.Unix() {
+				t.Errorf("instance %s: the probe sent from %d to %d, which does not cover the roll %d..%d", name, r.first, r.last, start.Unix(), rolled.Unix())
+			}
+			p := perfs[name]
+			switch {
+			case p.aborted:
+				t.Logf("instance %s: dnsperf aborted (ECONNABORTED from the destroyed connected socket) %s after the change, the roll took %s; the probe is the measure",
+					name, p.ended.Sub(start).Round(time.Second), rolled.Sub(start).Round(time.Second))
+			case p.lost != 0 || !p.noerror:
+				t.Errorf("instance %s during the roll: dnsperf %d lost, NOERROR only=%v", name, p.lost, p.noerror)
+			default:
+				t.Logf("instance %s during the roll: dnsperf 0 lost, NOERROR only", name)
 			}
 		}
 	})
@@ -4100,8 +4129,12 @@ As built, differing from the draft above:
   renewal-driven rotation about a minute later with the same revocation. Measured: 33 s and 59 s.
 - `cnpg-failover` waits up to 5 minutes for the new primary and then asserts the 120 s requirement, so
   an overrun reports its real duration instead of only a timeout (see the findings).
-- `rolling-update` also runs `digLoop` next to `dnsperf`, because `dnsperf` cannot finish a roll on kw
-  (see the findings).
+- `rolling-update` asserts zero loss with `digLoop`, the fresh-socket probe, and no longer with
+  `dnsperf`, which cannot survive a roll through a ClusterIP on kw (finding 3). Per instance it requires
+  `lost == 0`, at least `4 × 240` queries sent with no gap over one second, and a send window that
+  starts before the `workers` change and ends after every engine pod was replaced and ready. `dnsperf`
+  still runs next to it: it is held to `Queries lost: 0` and NOERROR only when it completes, and an
+  ECONNABORTED abort is logged with its time after the change.
 
 - [ ] Run `cd operator && go vet -tags kwe2e ./test/kw` and expect success. Run
       `scripts/kw-operator-e2e.sh` from the laptop after the lead has committed Tasks 1–9. Expect
@@ -4113,7 +4146,7 @@ As built, differing from the draft above:
       Services `nexora-dns` and `nexora-dns-2` still hold `192.168.10.136` and `192.168.10.139`
       (`kubectl --context kw -n nexora get svc nexora-dns nexora-dns-2 -o wide`).
 - [ ] Record in `.procoder/notes/plan-review.md` under `## M9 operator e2e (<date>)`: the image tag, each
-      subtest's result and duration, the dnsperf lost counts per instance, the failover time
+      subtest's result and duration, the probe's sent and lost counts per instance, the failover time
       (primary change to healthy API) and the backup/restore duration. Report the paths.
 
 ### Findings from the kw runs (2026-09-15)
@@ -4130,9 +4163,9 @@ As built, differing from the draft above:
    run created about 2500 join tokens for `edge` in nine minutes: `rotate` writes the new token into the
    Secret, then revokes the pending predecessor; the failed revoke returns before the status records the
    new token, the Secret write wakes the controller, the recorded (old) token is still due for renewal,
-   and it rotates again. Not fixed here (Task 7's files, being edited in parallel): the controller should
-   record the new token before revoking a predecessor, or treat a revoke failure as a requeue rather than
-   a reason to rotate again.
+   and it rotates again. RESOLVED in Task 7 (revoke before create, cap 3); the re-run created 1 token for
+   `default` and 8 for `edge` in about nine minutes (the install token, the missing-Secret rotation and
+   one renewal a minute under the test's `ttl: 3m`), with 1 active at the end and no operator error.
 3. **`dnsperf` cannot measure a roll through a ClusterIP on kw.** Both instances failed with
    `Error: failed to receive packet: Software caused connection abort` (`ECONNABORTED`) the moment the
    first engine pod left its Service's backends, in both runs. kw runs Cilium 1.19.4 with
@@ -4143,6 +4176,14 @@ As built, differing from the draft above:
    here. Options for the lead: keep `dnsperf` and accept a red subtest on kw, drop the `dnsperf`
    assertion in favour of `digLoop`, or run `dnsperf` against a LoadBalancer address (forbidden in
    `nexora-optest`).
+   Decided (2026-09-15 re-run): the fresh-socket probe is the authoritative measure. Cilium's socket LB
+   is enabled on kw (`cilium-dbg status`: `Socket LB: Enabled`, coverage Full), so `dnsperf`'s abort
+   is a client-side socket event, not a lost query: in the re-run both `dnsperf`s aborted 11 s after the
+   change (the first old pod leaving its Service) while the probe, sending across that same instant,
+   lost 0 of 1174 and 0 of 1173. A query in flight on a destroyed socket still counts as lost in the
+   probe, which keeps the check strict. The subtest additionally proves the probe's continuity (see
+   "As built" above). The spec's wording ("dnsperf reports `Queries lost: 0`") is met in intent (no query
+   lost by the engines); `dnsperf` is still asserted whenever it completes.
 4. **A graceful primary deletion fails over in about 3 minutes, not 120 s.** Measured 3m6s (and 2m9s in
    the first run) from `kubectl delete pod` to `status.currentPrimary` changing, of which the management
    API needed 1 s to answer 200 again and the group change reached every engine 5 s later. CNPG's
@@ -4151,6 +4192,9 @@ As built, differing from the draft above:
    reachable with a graceful delete: either the chart must set `spec.smartShutdownTimeout` (Task 4's
    files), the spec must allow about 200 s, or the subtest must delete the primary with
    `--grace-period=0` (an unplanned loss rather than a graceful shutdown).
+   RESOLVED (Task 4, `smartShutdownTimeout` 30 s and idle pool recycling): the re-run on
+   `dev-m9-8483b44` measured 43 s and 50 s from the pod deletion to the new primary, API healthy 1-5 s
+   later, the group change on every engine 48 s and 58 s after the deletion.
 
 ## Task 11: Operations guide, kw README and docs test
 

@@ -1,5 +1,42 @@
 # Plan review log
 
+## M9 operator e2e re-run (2026-09-15, `dev-m9-8483b44`)
+
+Images built from HEAD `8483b44` by `scripts/kw-operator-e2e.sh --tag dev-m9-8483b44 --keep` (run A,
+test unchanged, exit 1), then `--skip-build --keep` with the changed `rolling-update` (run B, exit 0);
+each run was cleaned up with the script's cleanup sequence after the join tokens were counted.
+
+| Subtest              | A    | B    | B duration | Notes (B)                                                                          |
+| -------------------- | ---- | ---- | ---------- | ---------------------------------------------------------------------------------- |
+| guards               | PASS | PASS | 2.0 s      |                                                                                    |
+| install              | PASS | PASS | 120 s      | Ready after 1m54s                                                                  |
+| engine-groups        | PASS | PASS | 1.5 s      |                                                                                    |
+| rolling-update       | FAIL | PASS | 241 s      | roll 29 s; probe 0 lost of 1174 (a) and 1173 (b), gap <= 1 s; dnsperf ECONNABORTED |
+| join-token-rotation  | PASS | PASS | 95 s       | 31 s and 1m2s                                                                      |
+| prune                | PASS | PASS | 2.8 s      |                                                                                    |
+| cnpg-failover        | PASS | PASS | 59 s       | new primary 50 s after the deletion (A: 43 s), API 200 5 s later, engines at 58 s  |
+| cnpg-backup-restore  | PASS | PASS | 123 s      | backup 32 s, restore verified 1m30s later                                          |
+| delete-retains-state | PASS | PASS | 18 s       |                                                                                    |
+
+- RESOLVED: failover is within the 120 s target (43 s and 50 s, previously 3m6s).
+- RESOLVED: no join token storm. `join_tokens` per group at the end: A `default` 1, `edge` 6; B
+  `default` 1, `edge` 8 (install token, missing-Secret rotation, then one renewal a minute under the
+  test's `ttl: 3m`/`renewBefore: 2m`); one or two active, zero `error` lines in the operator log.
+- DECIDED: `rolling-update` proves zero loss with the fresh-socket probe (`digLoop`), not `dnsperf`.
+  Evidence: kw's Cilium has socket LB enabled (`cilium-dbg status`: `Socket LB: Enabled`, coverage
+  Full), which destroys connected UDP sockets whose ClusterIP backend is removed; both `dnsperf`s died
+  with `ECONNABORTED` 11 s after the change (first old pod leaving), in all four kw runs so far,
+  while the probe sending 5 queries/s through that same instant lost 0 every time. `dnsperf` measures
+  its own socket's fate, not the engines'. The probe is not weaker: each query has one try and 2 s, a
+  query in flight on a destroyed socket counts as lost, and the subtest now also requires >= 960 sent
+  in 240 s, no gap over 1 s, and a send window from before the change to after every pod is ready.
+  `dnsperf` still runs and is asserted (0 lost, NOERROR only) whenever it completes. The spec's
+  "dnsperf reports `Queries lost: 0`" (S line 683) should read "the probe"; left to the lead.
+
+Production untouched before and after both runs (`nexora` has no `NexoraInstallation`; `nexora-dns` and
+`nexora-dns-2` still hold 192.168.10.136 and 192.168.10.139); `nexora-optest` is deleted (NotFound), the
+S3 prefixes and node state directories were removed, and the two CRDs stay installed.
+
 ## M9 operator e2e (2026-09-15)
 
 `scripts/kw-operator-e2e.sh --skip-build --tag dev-m9-749166b-dirty` in `nexora-optest` on kw (images
@@ -40,7 +77,7 @@ Findings (details in the plan, Task 10 "Findings from the kw runs"):
   management plane closes idle pooled sessions within 45 s (`MaxConnIdleTime` 30 s, `HealthCheckPeriod`
   15 s, `MaxConnLifetime` 30 min). The kw production render is byte-identical (kw uses
   `database.mode: external`); kw's own `deploy/kw/cnpg-cluster.yaml` is out of M9 scope and still
-  carries CNPG's 180 s default. OPEN: the 120 s target is re-measured by the next kw operator e2e.
+  carries CNPG's 180 s default. RESOLVED: the re-run above measured 43 s and 50 s.
 
 Production was untouched: `kubectl --context kw -n nexora get nexorainstallations` printed
 `No resources found` before and after, and `nexora-dns`/`nexora-dns-2` still hold 192.168.10.136 and

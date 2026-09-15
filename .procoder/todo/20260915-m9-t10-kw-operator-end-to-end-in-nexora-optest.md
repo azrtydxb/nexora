@@ -1,6 +1,6 @@
 # M9 T10: kw operator end-to-end in nexora-optest
 
-Status: blocked (two subtests red on kw; both need a decision by the lead, see Evidence)
+Status: open (every subtest green on kw with `dev-m9-8483b44`; the test and plan changes await the lead's commit)
 Created: 2026-09-15
 
 ## Description
@@ -15,8 +15,7 @@ Implements Task 10 of `.procoder/plans/nexora-m9-platform.md` (spec `.procoder/s
       wait, workload and `dnsperf` helpers, plus `digLoop` and `updateRetry`.
 - [x] Create `operator/test/kw/kw_operator_test.go`: `TestKwOperator` with the nine subtests.
 - [x] Run `cd operator && go vet -tags kwe2e ./test/kw` and expect success. Run
-      `scripts/kw-operator-e2e.sh`: seven of nine subtests PASS on kw; `rolling-update` and
-      `cnpg-failover` are red for environment reasons recorded below.
+      `scripts/kw-operator-e2e.sh`: all nine subtests PASS on kw (`dev-m9-8483b44`, re-run below).
 - [x] Before and after the run, check that production was not touched.
 - [x] Record in `.procoder/notes/plan-review.md` under `## M9 operator e2e (2026-09-15)`.
 
@@ -53,3 +52,10 @@ Implements Task 10 of `.procoder/plans/nexora-m9-platform.md` (spec `.procoder/s
   starts another rotation).
 - Production untouched before and after: `kubectl --context kw -n nexora get nexorainstallations` →
   `No resources found`; `nexora-dns` 192.168.10.136 and `nexora-dns-2` 192.168.10.139 unchanged.
+- Re-run 2026-09-15 on `dev-m9-8483b44` (see plan-review "M9 operator e2e re-run"): run A (images built
+  by the script, test unchanged) failed only `rolling-update` on `dnsperf`'s ECONNABORTED;
+  `cnpg-failover` 43 s. `rolling-update` now asserts zero loss with the fresh-socket probe plus its
+  continuity (>= 960 sent, gap <= 1 s, window covers the roll) and asserts `dnsperf` only when it
+  completes. Run B (`--skip-build`): `--- PASS: TestKwOperator (662.53s)`, exit 0; probe 0 of 1174 and
+  0 of 1173 lost, both `dnsperf`s aborted 11 s after the change, failover 50 s, join tokens `default` 1
+  and `edge` 8 in nine minutes. `nexora-optest` NotFound afterwards; production Services unchanged.

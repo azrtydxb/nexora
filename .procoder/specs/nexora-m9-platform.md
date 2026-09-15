@@ -680,7 +680,7 @@ delete` in the ClusterRole of `deploy/operator/operator.yaml`, and Secrets and E
     NOERROR from `nexora-optest-dns-a` and `-b`.
   - `engine-groups`: an engine of group `edge` enrolls into `edge`.
   - `rolling-update`: `spec.engine.workers` goes 2→1 while dnsperf sends 5 queries/s to each instance
-    Service. Every engine pod is replaced, and dnsperf reports `Queries lost: 0` on both.
+    Service. Every engine pod is replaced, and a continuous fresh-socket probe on both loses 0 queries (at least 960 sent, no gap over 1 s, from before the change until every pod is ready). dnsperf also runs and must report 0 lost when it finishes; on kw, Cilium's socket load balancer aborts dnsperf's connected UDP socket when its backend leaves, which is a client-socket effect, not an engine loss (lead decision 2026-09-15).
   - `join-token-rotation`: `ttl: 3m`, `renewBefore: 2m`, `revokeGracePeriod: 30s`. The Secret changes
     and the old token shows `revoked`.
   - `prune`: removing group `edge` deletes its DaemonSet.

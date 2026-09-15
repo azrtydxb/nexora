@@ -14,6 +14,24 @@ import (
 
 type pgxTx = pgx.Tx
 
+// Catches: pooled sessions idling long enough to hold up a CloudNativePG failover, which shuts the old
+// primary down smartly first and waits for client sessions to end (pgx's defaults keep an idle
+// connection for 30 minutes and only notice it once a minute).
+func TestOpenClosesIdleConnectionsQuickly(t *testing.T) {
+	st, err := store.Open(context.Background(), "postgres://nexora:pw@127.0.0.1:1/nexora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := st.Pool.Config()
+	if idle := cfg.MaxConnIdleTime + cfg.HealthCheckPeriod; idle > 45*time.Second {
+		t.Errorf("an idle session survives up to %s, want at most 45s", idle)
+	}
+	if cfg.MaxConnLifetime > 30*time.Minute {
+		t.Errorf("MaxConnLifetime = %s, want at most 30m", cfg.MaxConnLifetime)
+	}
+}
+
 func TestMigrateSeedsAndMapsErrors(t *testing.T) {
 	env := harness.New(t)
 	pg := env.StartPostgres()

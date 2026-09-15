@@ -298,46 +298,64 @@ var (
 	rcodesRE    = regexp.MustCompile(`Response codes:\s+(.*)`)
 )
 
-// dnsperf sends 5 queries/s for seconds to serviceIP from the probe. It returns the lost count and
-// whether every completed query answered NOERROR. It never calls t.Fatal, so goroutines may use it.
-func dnsperf(t *testing.T, serviceIP string, seconds int) (lost int, noerror bool) {
+// dnsperf sends 5 queries/s for seconds to serviceIP from the probe. It returns the lost count, whether
+// every completed query answered NOERROR, and aborted when dnsperf died with ECONNABORTED: Cilium's socket
+// load balancer destroys a connected UDP socket whose ClusterIP backend was removed, and dnsperf keeps one
+// such socket for the whole run (see Task 10's kw findings). Any other failure is a test error. It never
+// calls t.Fatal, so goroutines may use it.
+func dnsperf(t *testing.T, serviceIP string, seconds int) (lost int, noerror, aborted bool) {
 	out, err := probeErr("", fmt.Sprintf(`q=$(mktemp); printf 'www.optest.nexora.test. A\n' > "$q"; dnsperf -s %s -d "$q" -Q 5 -l %d -t 2; rc=$?; rm -f "$q"; exit $rc`,
 		serviceIP, seconds))
+	if err != nil && strings.Contains(out, "Software caused connection abort") {
+		t.Logf("dnsperf %s: aborted by the destroyed connected socket (ECONNABORTED)", serviceIP)
+		return -1, false, true
+	}
 	if err != nil {
 		t.Errorf("dnsperf %s: %v\n%s", serviceIP, err, out)
-		return -1, false
+		return -1, false, false
 	}
 	m, c, r := lostRE.FindStringSubmatch(out), completedRE.FindStringSubmatch(out), rcodesRE.FindStringSubmatch(out)
 	if m == nil || c == nil || r == nil {
 		t.Errorf("dnsperf %s: unparsable output\n%s", serviceIP, out)
-		return -1, false
+		return -1, false, false
 	}
 	lost, _ = strconv.Atoi(m[1])
 	completed, _ := strconv.Atoi(c[1])
 	codes := strings.TrimSpace(r[1])
 	t.Logf("dnsperf %s: completed %d, lost %d, response codes %s", serviceIP, completed, lost, codes)
-	return lost, completed > 0 && strings.HasPrefix(codes, "NOERROR") && !strings.Contains(codes, ",")
+	return lost, completed > 0 && strings.HasPrefix(codes, "NOERROR") && !strings.Contains(codes, ","), false
 }
 
-// digLoop sends 5 queries/s for seconds to serviceIP from the probe, each from a fresh dig (one try,
-// 2 s timeout, like dnsperf -t 2), and returns how many did not answer 192.0.2.10. It never calls t.Fatal.
-func digLoop(t *testing.T, serviceIP string, seconds int) int {
-	out, err := probeErr("", fmt.Sprintf(`d=$(mktemp -d); end=$(( $(date +%%s) + %d )); n=0
-while [ "$(date +%%s)" -lt "$end" ]; do
+// probeResult is what digLoop measured: queries sent and lost, the probe's first and last send (Unix
+// seconds, the probe's clock) and the longest gap in whole seconds between two consecutive sends.
+type probeResult struct {
+	sent, lost, maxGap int
+	first, last        int64
+}
+
+// digLoop sends 5 queries/s for seconds to serviceIP from the probe, each from a fresh dig and so a fresh
+// socket (one try, 2 s timeout, like dnsperf -t 2), and counts every query that did not answer 192.0.2.10:
+// a timeout, a refusal, a socket destroyed while the query was in flight or a wrong answer. It is the
+// authoritative zero-loss measure of a roll through a ClusterIP on kw. ok is false (with a test error)
+// when the output cannot be parsed. It never calls t.Fatal.
+func digLoop(t *testing.T, serviceIP string, seconds int) (r probeResult, ok bool) {
+	out, err := probeErr("", fmt.Sprintf(`d=$(mktemp -d); now=$(date +%%s); end=$((now + %d)); first=$now; last=$now; gap=0; n=0
+while [ "$now" -lt "$end" ]; do
+  [ $((now - last)) -gt "$gap" ] && gap=$((now - last)); last=$now
   n=$((n+1)); ( [ "$(dig +short +tries=1 +time=2 @%s www.optest.nexora.test. A)" = 192.0.2.10 ] || touch "$d/lost-$n" ) &
-  sleep 0.2
+  sleep 0.2; now=$(date +%%s)
 done
-wait; echo "sent $n lost $(ls "$d" | wc -l)"; rm -rf "$d"`, seconds, serviceIP))
-	var sent, lost int
+wait; echo "sent $n lost $(ls "$d" | wc -l) first $first last $last maxgap $gap"; rm -rf "$d"`, seconds, serviceIP))
 	i := strings.LastIndex(out, "sent ")
 	if i < 0 {
 		t.Errorf("dig loop %s: %v\n%s", serviceIP, err, out)
-		return -1
+		return r, false
 	}
-	if _, perr := fmt.Sscanf(out[i:], "sent %d lost %d", &sent, &lost); err != nil || perr != nil || sent == 0 {
+	if _, perr := fmt.Sscanf(out[i:], "sent %d lost %d first %d last %d maxgap %d", &r.sent, &r.lost, &r.first, &r.last, &r.maxGap); err != nil || perr != nil || r.sent == 0 {
 		t.Errorf("dig loop %s: %v %v\n%s", serviceIP, err, perr, out)
-		return -1
+		return r, false
 	}
-	t.Logf("dig loop %s: sent %d, lost %d", serviceIP, sent, lost)
-	return lost
+	t.Logf("dig loop %s: sent %d, lost %d, sending from %s to %s, longest gap %ds", serviceIP, r.sent, r.lost,
+		time.Unix(r.first, 0).UTC().Format(time.TimeOnly), time.Unix(r.last, 0).UTC().Format(time.TimeOnly), r.maxGap)
+	return r, true
 }
