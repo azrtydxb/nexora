@@ -80,6 +80,10 @@ func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog
 		if r.Source == string(QueryLogRecordSourceRewrite) {
 			out[i].RewriteAnswer = answers[rewriteKey{r.Rule, r.PolicyGroupID}]
 		}
+		// An ACL refusal names the access list that refused it (recursion or authoritative).
+		if r.Source == "acl" && r.Rule == "" {
+			out[i].Rule = r.ACLRefused
+		}
 	}
 	return out, nil
 }

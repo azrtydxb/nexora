@@ -31,8 +31,8 @@ use crate::recursor::{LocalBoxFuture, RecursorState};
 use crate::runtime::Runtime;
 use crate::telemetry::metrics::{Metrics, WorkerCounters};
 use crate::telemetry::querylog::{
-    self, ACL_NONE, CacheOutcome, FilterOutcome, FilterSource, NO_FILTER_LIST, NO_POLICY_GROUP,
-    NO_RPZ_ZONE, NO_RULE, QueryRecord, RING_CAPACITY,
+    self, ACL_NONE, ACL_RECURSION, CacheOutcome, FilterOutcome, FilterSource, NO_FILTER_LIST,
+    NO_POLICY_GROUP, NO_RPZ_ZONE, NO_RULE, QueryRecord, RING_CAPACITY,
 };
 use crate::upstream::{self, Question, UpstreamSet, WorkerUpstreams};
 use crate::wire::{self, NameKey, ParseError, QueryView};
@@ -342,13 +342,14 @@ pub fn handle_packet(
         Err(ParseError::TooShort | ParseError::IsResponse) => return FastOutcome::Drop,
         Err(e) => {
             if !rt.auth.is_empty() {
-                match auth_dispatch::unparsed(ctx, rt, packet, client, transport, out) {
+                let mut rec = scope.record(NameKey::ROOT, 0);
+                match auth_dispatch::unparsed(ctx, rt, packet, client, transport, out, &mut rec) {
                     None | Some(AuthOutcome::NotHosted) => {}
                     Some(AuthOutcome::Reply(n)) => {
                         if n < HEADER_LEN {
                             return FastOutcome::Drop;
                         }
-                        scope.finish(scope.record(NameKey::ROOT, 0), &out[..n]);
+                        scope.finish(rec, &out[..n]);
                         return FastOutcome::Reply(n);
                     }
                     Some(AuthOutcome::Slow(job)) => return FastOutcome::Slow(job),
@@ -391,7 +392,8 @@ pub fn handle_packet(
         );
         reply_opt.cookie = Some((client_cookie, server));
     }
-    // Hosted zones answer every client: the ACL restricts recursion and forwarding only.
+    // Hosted zones are checked against their allow-query ACL; the recursion ACL guards everything
+    // else.
     if !rt.auth.is_empty() {
         match auth_dispatch::fast(
             ctx,
@@ -402,16 +404,21 @@ pub fn handle_packet(
             transport,
             &mut out[..limit],
             opt.as_ref(),
+            &mut rec,
         ) {
             AuthOutcome::NotHosted => {}
             AuthOutcome::Reply(n) => {
-                rec.cache = CacheOutcome::Auth;
+                if rec.acl_refused == ACL_NONE {
+                    rec.cache = CacheOutcome::Auth;
+                }
                 return reply(&scope, rec, out, n);
             }
             AuthOutcome::Slow(job) => return FastOutcome::Slow(job),
         }
     }
     if !rt.acl.allows(client.ip()) {
+        rec.acl_refused = ACL_RECURSION;
+        rec.filter_source = FilterSource::Acl;
         let n = wire::write_rcode_reply(&q, wire::RCODE_REFUSED, &mut out[..limit], opt.as_ref());
         return reply(&scope, rec, out, n);
     }

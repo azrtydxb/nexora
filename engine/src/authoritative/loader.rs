@@ -6,6 +6,7 @@ use super::name::from_ascii;
 use super::nzf::{self, Kind, NzfError, Parsed};
 use super::set::AuthSet;
 use super::zone::{DeltaRecords, Zone, ZoneError};
+use crate::acl::Acl;
 use crate::proto;
 use crate::snapshot::{BlobSource, SnapshotError, is_sha256_hex};
 use std::collections::HashSet;
@@ -263,7 +264,8 @@ fn load_zone(
     Ok(Arc::new(zone))
 }
 
-/// A zone's transfer ACL, required transfer key, NOTIFY targets, kind, primaries and UPDATE keys
+/// A zone's transfer ACL, required transfer key, NOTIFY targets, kind, primaries, UPDATE keys,
+/// allow-query ACL and UPDATE source ACL
 /// (already validated).
 struct Policy {
     allow: Vec<ipnet::IpNet>,
@@ -272,6 +274,16 @@ struct Policy {
     secondary: bool,
     primaries: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     update_keys: Vec<Box<[u8]>>,
+    allow_query: Option<Acl>,
+    update_allow: Option<Acl>,
+}
+
+/// `None` for an empty list (inherit); the lists are validated by `snapshot::validate`.
+fn acl_of(cidrs: &[String]) -> Option<Acl> {
+    if cidrs.is_empty() {
+        return None;
+    }
+    Acl::parse(cidrs).ok()
 }
 
 /// `None` for an empty name (no key).
@@ -315,6 +327,8 @@ impl Policy {
                 .iter()
                 .filter_map(|k| key_wire(k))
                 .collect(),
+            allow_query: acl_of(&z.allow_query_cidrs),
+            update_allow: acl_of(&z.update_allow_cidrs),
         }
     }
 
@@ -325,6 +339,8 @@ impl Policy {
             && zone.secondary == self.secondary
             && zone.primaries == self.primaries
             && zone.update_keys == self.update_keys
+            && zone.allow_query == self.allow_query
+            && zone.update_allow == self.update_allow
     }
 
     fn set(&self, zone: &mut Zone) {
@@ -334,6 +350,8 @@ impl Policy {
         zone.secondary = self.secondary;
         zone.primaries = self.primaries.clone();
         zone.update_keys = self.update_keys.clone();
+        zone.allow_query = self.allow_query.clone();
+        zone.update_allow = self.update_allow.clone();
     }
 }
 

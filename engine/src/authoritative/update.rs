@@ -21,7 +21,8 @@ const CLASS_IN: u16 = 1;
 const FLAG_QR: u8 = 0x80;
 
 /// `AuthCounters::updates` slots: the management plane answered NOERROR, answered another rcode,
-/// the engine refused before forwarding (format, TSIG, zone or key policy), or no result came.
+/// the engine refused before forwarding (format, TSIG, zone, source or key policy), or no result
+/// came.
 pub const UPDATE_APPLIED: usize = 0;
 pub const UPDATE_REJECTED: usize = 1;
 pub const UPDATE_REFUSED: usize = 2;
@@ -90,6 +91,13 @@ async fn respond(
     let Some(zone) = set.get(zname) else {
         return (answer(wire::RCODE_NOTAUTH), UPDATE_REFUSED);
     };
+    if zone
+        .update_allow
+        .as_ref()
+        .is_some_and(|a| !a.allows(client.ip()))
+    {
+        return (answer(wire::RCODE_REFUSED), UPDATE_REFUSED);
+    }
     let Some(key) = key.as_deref() else {
         return (answer(wire::RCODE_REFUSED), UPDATE_REFUSED);
     };

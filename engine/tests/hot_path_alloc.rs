@@ -95,7 +95,12 @@ fn cache_hit_path_does_not_allocate() {
             ..Default::default()
         }),
         telemetry: Some(TelemetryConfig::default()),
-        resolver: Some(ResolverConfig::default()),
+        resolver: Some(ResolverConfig {
+            strategy: UpstreamStrategy::Parallel as i32,
+            parallel_max: 2,
+        }),
+        authoritative_allow_cidrs: vec!["0.0.0.0/0".into(), "::/0".into()],
+        authoritative_acl_set: true,
         ..Default::default()
     };
     // Forward mode (M1/M2), then recursive mode with DNSSEC validation (M3): a cache hit takes the
@@ -139,10 +144,20 @@ fn cache_hit_path_does_not_allocate() {
         )]));
     measure(&shared);
     measure_blocked(&shared);
+    // A hosted zone behind the "any" authoritative ACL, and behind a list the client must match.
+    use hickory_proto::rr::RecordType;
+    let hosted = [
+        ("www.example.test.", RecordType::A),
+        ("nope.example.test.", RecordType::AAAA),
+    ];
+    let image = include_bytes!("../../testdata/nzf/basic-full.nzf");
+    measure_auth(image, &hosted, false, Some(&["0.0.0.0/0", "::/0"]));
+    measure_auth(image, &hosted, false, Some(&["10.0.0.0/8", "192.0.2.0/24"]));
 }
 
 /// Blocked names never allocate: 256 names first decided by the index (group g1 with its
-/// allowlist, then a global client), then answered from the warmed decision cache.
+/// allowlist, then a global client), then answered from the warmed decision cache. The group's
+/// allowlisted name is answered from the response cache without allocating either.
 fn measure_blocked(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
     use hickory_proto::op::{Message, MessageType, OpCode, Query};
     use hickory_proto::rr::{Name, RecordType};
@@ -196,6 +211,57 @@ fn measure_blocked(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
             "repeats came from the decision cache"
         );
     }
+
+    // The group's allowlisted name: an allow decision, then a response-cache hit.
+    let client: std::net::SocketAddr = "10.1.2.3:5353".parse().unwrap();
+    let allowed = query("ok.ads.hot.test.");
+    {
+        use hickory_proto::rr::{RData, Record, rdata::A};
+        use hickory_proto::serialize::binary::BinDecodable;
+        let rt = shared.runtime.load();
+        let v = nexora_engine::wire::parse_query(&allowed).unwrap();
+        let (policy, _) = rt.policy.select(client.ip());
+        let mut r = Message::from_bytes(&allowed).unwrap();
+        r.metadata.message_type = MessageType::Response;
+        r.add_answer(Record::from_rdata(
+            Name::from_ascii("ok.ads.hot.test.").unwrap(),
+            300,
+            RData::A(A::new(192, 0, 2, 2)),
+        ));
+        rt.cache.insert(
+            nexora_engine::cache::CacheKey::in_partition(&v, policy.cache_partition()),
+            &r.to_bytes().unwrap(),
+            &v,
+            nexora_engine::clock::now_secs(),
+        );
+    }
+    for _ in 0..64 {
+        let rt = shared.runtime.load();
+        assert!(matches!(
+            handle_packet(&ctx, &rt, &allowed, client, Transport::Udp, &mut out),
+            FastOutcome::Reply(_)
+        ));
+    }
+    let before_hits = shared.metrics.sum_cache_hits();
+    ALLOCS.with(|c| c.set(0));
+    ARMED.with(|a| a.set(true));
+    for _ in 0..50_000 {
+        let rt = shared.runtime.load();
+        match handle_packet(&ctx, &rt, &allowed, client, Transport::Udp, &mut out) {
+            FastOutcome::Reply(n) => assert!(n > 12),
+            _ => panic!("expected a cached allowed reply"),
+        }
+    }
+    ARMED.with(|a| a.set(false));
+    assert_eq!(
+        ALLOCS.with(Cell::get),
+        0,
+        "allowlisted cache-hit path allocated"
+    );
+    assert!(
+        shared.metrics.sum_cache_hits() >= before_hits + 50_000,
+        "the allowlisted name came from the response cache"
+    );
 }
 
 fn measure(shared: &std::sync::Arc<nexora_engine::server::Shared>) {
@@ -282,6 +348,7 @@ fn authoritative_answer_path_does_not_allocate() {
             ("nope.example.test.", RecordType::AAAA),
         ],
         false,
+        None,
     );
     // DO=1 on pre-signed zones: RRSIGs, NSEC and NSEC3 (hashing) proofs, DS at referrals.
     let signed = [
@@ -297,15 +364,23 @@ fn authoritative_answer_path_does_not_allocate() {
         include_bytes!("../../testdata/nzf/signed-nsec-full.nzf"),
         &signed,
         true,
+        None,
     );
     measure_auth(
         include_bytes!("../../testdata/nzf/signed-nsec3-full.nzf"),
         &signed,
         true,
+        None,
     );
 }
 
-fn measure_auth(image: &[u8], names: &[(&str, hickory_proto::rr::RecordType)], dnssec_ok: bool) {
+/// `auth_acl`: the snapshot's authoritative ACL (`None`: a snapshot without one).
+fn measure_auth(
+    image: &[u8],
+    names: &[(&str, hickory_proto::rr::RecordType)],
+    dnssec_ok: bool,
+    auth_acl: Option<&[&str]>,
+) {
     use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query};
     use hickory_proto::rr::Name;
     use hickory_proto::serialize::binary::BinEncodable;
@@ -332,6 +407,12 @@ fn measure_auth(image: &[u8], names: &[(&str, hickory_proto::rr::RecordType)], d
         filter: Some(FilterConfig::default()),
         telemetry: Some(TelemetryConfig::default()),
         resolver: Some(ResolverConfig::default()),
+        authoritative_allow_cidrs: auth_acl
+            .unwrap_or_default()
+            .iter()
+            .map(|c| (*c).into())
+            .collect(),
+        authoritative_acl_set: auth_acl.is_some(),
         auth_zones: vec![AuthZone {
             name: "example.test.".into(),
             kind: AuthZoneKind::Primary as i32,

@@ -101,6 +101,54 @@ async fn signed_update_is_forwarded_and_response_is_signed() {
 }
 
 #[tokio::test]
+async fn update_source_cidrs_refuse_outside_senders() {
+    let ring = test_ring();
+    let key = ring.get(b"\x07xfr-key\x00").unwrap();
+    let ring = Arc::new(ring);
+    let with_update_allow = |cidr: &str| {
+        let set = set_allowing("xfr-key.");
+        let mut zone = (**set.get(b"\x07example\x04test\x00").unwrap()).clone();
+        zone.update_allow = Some(crate::acl::Acl::parse(&[cidr.to_string()]).unwrap());
+        Arc::new(AuthSet::from_zones(vec![Arc::new(zone)]).unwrap())
+    };
+    let send = |set: Arc<AuthSet>, fwd: Arc<Fwd>| {
+        let mut msg = update_msg();
+        sign_request(&mut msg, &key, NOW);
+        handle_update_with_set(
+            msg,
+            "127.0.0.1:5353".parse().unwrap(),
+            set,
+            ring.clone(),
+            fwd,
+            NOW,
+        )
+    };
+    let fwd = Arc::new(Fwd {
+        seen: Mutex::new(vec![]),
+        reply: Some(0),
+    });
+    let resp = send(with_update_allow("127.0.0.0/8"), fwd.clone()).await;
+    assert_eq!(
+        Message::from_vec(&resp).unwrap().metadata.response_code,
+        ResponseCode::NoError,
+        "a sender inside update_allow is forwarded"
+    );
+    assert_eq!(fwd.seen.lock().unwrap().len(), 1);
+
+    let fwd = Arc::new(Fwd {
+        seen: Mutex::new(vec![]),
+        reply: Some(0),
+    });
+    let resp = send(with_update_allow("192.0.2.0/24"), fwd.clone()).await;
+    assert_eq!(
+        Message::from_vec(&resp).unwrap().metadata.response_code,
+        ResponseCode::Refused,
+        "a sender outside update_allow is refused"
+    );
+    assert!(fwd.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn key_not_allowed_is_refused_and_timeout_is_servfail() {
     let ring = test_ring();
     let key = ring.get(b"\x0asha512-key\x00").unwrap();

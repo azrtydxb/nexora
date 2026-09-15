@@ -6,6 +6,7 @@ use super::msg::{EdnsInfo, OPCODE_NOTIFY, OPCODE_UPDATE, Question};
 use super::name::lowercase_into;
 use super::notify_in::{self, NotifySink};
 use super::state::AuthState;
+use super::zone::Zone;
 use super::{T_AXFR, T_IXFR};
 use super::{update, xfr};
 use crate::clock;
@@ -13,6 +14,7 @@ use crate::edns::{self, ReplyOpt, Transport};
 use crate::proto;
 use crate::runtime::Runtime;
 use crate::server::WorkerCtx;
+use crate::telemetry::querylog::{ACL_AUTHORITATIVE, FilterSource, QueryRecord};
 use crate::tsig::{self, Verified};
 use crate::wire::{self, QueryView};
 use std::net::SocketAddr;
@@ -153,8 +155,20 @@ impl<'a> Question<'a> {
     }
 }
 
+/// Whether `client` may query `zone`: the zone's allow-query ACL, else the runtime's authoritative
+/// ACL. A refusal is marked on `rec`. Allocation-free.
+fn query_allowed(rt: &Runtime, zone: &Zone, client: SocketAddr, rec: &mut QueryRecord) -> bool {
+    let acl = zone.allow_query.as_ref().unwrap_or(&rt.authoritative_acl);
+    if acl.allows_all() || acl.allows(client.ip()) {
+        return true;
+    }
+    rec.acl_refused = ACL_AUTHORITATIVE;
+    rec.filter_source = FilterSource::Acl;
+    false
+}
+
 /// Answers a parsed query for a hosted name into `out` (already cut to the reply limit) and
-/// appends `opt`. Allocation-free.
+/// appends `opt`; clients outside the zone's allow-query ACL are REFUSED. Allocation-free.
 #[allow(clippy::too_many_arguments)]
 pub fn fast(
     ctx: &WorkerCtx,
@@ -165,14 +179,15 @@ pub fn fast(
     transport: Transport,
     out: &mut [u8],
     opt: Option<&ReplyOpt>,
+    rec: &mut QueryRecord,
 ) -> AuthOutcome {
     let q = Question::from_query(view, packet);
-    if rt
-        .auth
-        .find_for_query(view.key.as_wire(), q.qtype)
-        .is_none()
-    {
+    let Some(zone) = rt.auth.find_for_query(view.key.as_wire(), q.qtype) else {
         return AuthOutcome::NotHosted;
+    };
+    // Transfers keep their own transfer ACL and are not subject to allow-query.
+    if q.qtype != T_AXFR && q.qtype != T_IXFR && !query_allowed(rt, zone, client, rec) {
+        return AuthOutcome::Reply(wire::write_rcode_reply(view, wire::RCODE_REFUSED, out, opt));
     }
     if q.qtype == T_AXFR || q.qtype == T_IXFR {
         let rcode = match transport {
@@ -224,6 +239,7 @@ pub fn unparsed(
     client: SocketAddr,
     transport: Transport,
     out: &mut [u8],
+    rec: &mut QueryRecord,
 ) -> Option<AuthOutcome> {
     let opcode = (*packet.get(2)? >> 3) & 0x0f;
     if opcode == OPCODE_NOTIFY {
@@ -258,13 +274,15 @@ pub fn unparsed(
     }
     let mut buf = [0u8; 255];
     let lower = lowercase_into(q.qname, &mut buf);
-    if rt.auth.find_for_query(lower, q.qtype).is_none() {
+    let Some(zone) = rt.auth.find_for_query(lower, q.qtype) else {
         return q
             .tsig_at
             .map(|_| error_reply(packet, wire::RCODE_REFUSED, out));
-    }
+    };
     if !transfer {
-        return Some(signed_query(ctx, rt, packet, &q, client, transport, out));
+        return Some(signed_query(
+            ctx, rt, packet, &q, zone, client, transport, out, rec,
+        ));
     }
     Some(match transport {
         Transport::Tcp | Transport::Dot => AuthOutcome::Slow(SlowJob {
@@ -307,17 +325,23 @@ fn copy_out(reply: &[u8], out: &mut [u8]) -> AuthOutcome {
     }
 }
 
-/// A TSIG-signed query for a hosted name: verified, answered and signed (RFC 8945 §5.3), or a
-/// TSIG error response.
+/// A TSIG-signed query for a hosted name in `zone`: REFUSED outside its allow-query ACL, else
+/// verified, answered and signed (RFC 8945 §5.3), or a TSIG error response.
+#[allow(clippy::too_many_arguments)]
 fn signed_query(
     ctx: &WorkerCtx,
     rt: &Runtime,
     packet: &[u8],
     q: &Question<'_>,
+    zone: &Zone,
     client: SocketAddr,
     transport: Transport,
     out: &mut [u8],
+    rec: &mut QueryRecord,
 ) -> AuthOutcome {
+    if !query_allowed(rt, zone, client, rec) {
+        return error_reply(packet, wire::RCODE_REFUSED, out);
+    }
     let now = unix_now();
     let (key, request_mac) = match tsig::verify_request(packet, &ctx.shared.auth.keyring, now) {
         Ok(Verified::Signed { key, request_mac }) => (key, request_mac),

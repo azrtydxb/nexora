@@ -80,6 +80,18 @@ pub fn validate(s: &ConfigSnapshot, applied_version: u64) -> Result<(), Snapshot
         return invalid("cache.max_bytes must be >= 1048576".into());
     }
     crate::acl::Acl::parse(&s.acl_allow_cidrs).map_err(SnapshotError::Invalid)?;
+    crate::acl::Acl::parse(&s.authoritative_allow_cidrs)
+        .map_err(|e| SnapshotError::Invalid(format!("authoritative_allow_cidrs: {e}")))?;
+    for z in &s.auth_zones {
+        for (field, cidrs) in [
+            ("allow_query_cidrs", &z.allow_query_cidrs),
+            ("update_allow_cidrs", &z.update_allow_cidrs),
+        ] {
+            crate::acl::Acl::parse(cidrs).map_err(|e| {
+                SnapshotError::Invalid(format!("auth zone {} {field}: {e}", z.name))
+            })?;
+        }
+    }
     for u in &s.upstreams {
         if !TIMEOUT_MS.contains(&u.timeout_ms) {
             return invalid(format!(

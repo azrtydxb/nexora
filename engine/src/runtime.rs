@@ -29,6 +29,9 @@ pub struct TelemetrySettings {
 pub struct Runtime {
     pub version: u64,
     pub acl: Acl,
+    /// Default allow-query ACL of hosted zones without their own; `Acl::any()` when the snapshot
+    /// sets none (pre-M6 management planes).
+    pub authoritative_acl: Acl,
     /// Every block and allow list of the snapshot; policies decide through views over it.
     pub filter_index: Arc<FilterIndex>,
     /// [`SnapshotLists::key`] of `filter_index`: a snapshot with the same key reuses the index.
@@ -64,6 +67,7 @@ impl Runtime {
         Runtime {
             version: 0,
             acl: Acl::parse(&[]).expect("empty acl"),
+            authoritative_acl: Acl::any(),
             policy: PolicyTable::global_only(
                 Arc::new(index.view(&[], &[])),
                 BlockReply {
@@ -113,6 +117,11 @@ impl Runtime {
         memory: &BuildMemory,
     ) -> Result<Runtime, SnapshotError> {
         let acl = Acl::parse(&s.acl_allow_cidrs).map_err(SnapshotError::Invalid)?;
+        let authoritative_acl = if s.authoritative_acl_set {
+            Acl::parse(&s.authoritative_allow_cidrs).map_err(SnapshotError::Invalid)?
+        } else {
+            Acl::any()
+        };
 
         let specs = s
             .upstreams
@@ -217,6 +226,7 @@ impl Runtime {
         Ok(Runtime {
             version: s.version,
             acl,
+            authoritative_acl,
             filter_key: lists.key,
             filter_index,
             filter_max_bytes,

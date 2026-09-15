@@ -143,6 +143,10 @@ pub struct Zone {
     pub primaries: Vec<(SocketAddr, Option<Box<[u8]>>)>,
     /// Lowercase wire names of the TSIG keys allowed to UPDATE (empty refuses), set by the loader.
     pub update_keys: Vec<Box<[u8]>>,
+    /// Clients allowed to query the zone (`None`: the runtime's authoritative ACL), set by the loader.
+    pub allow_query: Option<crate::acl::Acl>,
+    /// Sources allowed to send UPDATE (`None`: any; TSIG is still required), set by the loader.
+    pub update_allow: Option<crate::acl::Acl>,
 }
 
 fn covered(r: &RecordRef<'_>) -> Result<(u16, bool), ZoneError> {
@@ -289,6 +293,8 @@ impl Zone {
             secondary: false,
             primaries: Vec::new(),
             update_keys: Vec::new(),
+            allow_query: None,
+            update_allow: None,
         };
         let mut key = Vec::with_capacity(512);
         for r in &p.a {
@@ -338,6 +344,8 @@ impl Zone {
             secondary: false,
             primaries: Vec::new(),
             update_keys: Vec::new(),
+            allow_query: None,
+            update_allow: None,
         };
         zone.finalize()?;
         Ok(zone)
