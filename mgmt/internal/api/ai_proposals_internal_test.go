@@ -10,7 +10,7 @@ import (
 func TestLicenseAcknowledgementOnlyForCategoryOperations(t *testing.T) {
 	body := json.RawMessage(`{"revision":3}`)
 	for op, want := range map[string]bool{"updateFilterCategory": true, "updatePolicyGroup": true, "updateGlobalSafeSearch": false,
-		"updateResolverSettings": false, "updateAllowlist": false, "updateUpstream": false, "updateEngineGroup": false, "createPolicyGroup": false} {
+		"updateResolverSettings": false, "updateAllowlist": false, "updateUpstream": false, "updateEngineGroup": false, "createPolicyGroup": true} {
 		var m map[string]any
 		if err := json.Unmarshal(withLicenseAcknowledged(op, body, true), &m); err != nil {
 			t.Fatal(err)

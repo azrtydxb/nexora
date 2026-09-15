@@ -25,7 +25,7 @@ import (
 const codeProposalNotOpen = "proposal_not_open"
 
 // licenseOperations accept acknowledge_license; apply merges the caller's acknowledgement into their bodies.
-var licenseOperations = map[string]bool{"updateFilterCategory": true, "updatePolicyGroup": true}
+var licenseOperations = map[string]bool{"updateFilterCategory": true, "updatePolicyGroup": true, "createPolicyGroup": true}
 
 // currentOperation is the GET operation whose response is the live resource an action changes; listKey
 // names the path parameter that selects the entry of a list response.
