@@ -38,6 +38,8 @@ type Config struct {
 	// TrustedProxies are the reverse proxy networks whose X-Forwarded-For names the client
 	// (NEXORA_TRUSTED_PROXY_CIDRS, comma separated).
 	TrustedProxies []netip.Prefix
+	// AI is the optional AI layer (M11); off unless base URL and model are set.
+	AI AIConfig
 }
 
 // OIDCConfig configures the optional OIDC login.
@@ -161,6 +163,9 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("NEXORA_TRUSTED_PROXY_CIDRS: %w", err)
 		}
 		c.TrustedProxies = append(c.TrustedProxies, p.Masked())
+	}
+	if c.AI, err = loadAI(getenv); err != nil {
+		return Config{}, err
 	}
 	if c.OIDC.Enabled() {
 		if c.OIDC.ClientID == "" {

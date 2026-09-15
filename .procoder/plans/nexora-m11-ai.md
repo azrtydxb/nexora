@@ -422,8 +422,9 @@ Files:
   - `privacy.go`: the endpoint guard.
   - `generate.go`: structured generation, validation attempts, length retry, prompt header.
   - `limits.go`: semaphore, token bucket, budget.
-  - `metrics.go`: model-call metrics.
-  - `service.go`: `New`, `Status`, errors, `Code`.
+  - `metrics.go`: model-call metrics (`Enabled`, `Requests`, `RequestDuration`, `Tokens`, `ValidationRetries`,
+    `InflightRequests`, `QueueWait`; `nexora_mgmt_ai_budget_used_ratio` is Task 9's scrape-time collector).
+  - `service.go`: `New`, `Config`, `Options`, errors, `Code`.
   - `aifake/aifake.go`: fake-provider helpers over go-ai-sdk `aitest.MockModel`.
 - Tests: `mgmt/internal/ai/privacy_test.go`, `generate_test.go`, `limits_test.go`.
 
@@ -469,7 +470,7 @@ var (
 func Code(err error) string // invalid_output|timeout|provider_error|budget_exhausted|endpoint_not_private|busy|""
 type Resolver func(ctx context.Context, host string) ([]netip.Addr, error)
 func CheckEndpoint(ctx context.Context, baseURL string, allowPublic bool, resolve Resolver) error
-func NewModel(c config.AIConfig) provider.LanguageModel // openai.New(openai.WithBaseURL(normalised), openai.WithAPIKey(c.APIKey)).Model(c.Model), wrapped in ai.ExtractReasoningMiddleware{TagName:"think"}
+func NewModel(c config.AIConfig) provider.LanguageModel // openai.New(openai.WithBaseURL(trailing "/" trimmed), openai.WithAPIKey(c.APIKey)).Model(c.Model), wrapped in sdk.ExtractReasoningMiddleware(m, sdk.ExtractReasoningOpts{TagName:"think"})
 type Options struct {
 	Config     config.AIConfig
 	Store      *store.Store
@@ -477,6 +478,7 @@ type Options struct {
 	Model      provider.LanguageModel // nil: NewModel(Config)
 	Resolve    Resolver               // nil: net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	Now        func() time.Time
+	SlotWait   time.Duration          // 0: DefaultSlotWait (5 s), how long Interactive waits for a rate token and a slot
 }
 // New returns (nil, reason, nil) when AI is off; reason is DisabledReason or "endpoint_not_private".
 func New(ctx context.Context, o Options) (*Service, string, error)
@@ -499,7 +501,8 @@ func JSON(v any) *provider.Response                          // TextPart with js
 func Text(s string) *provider.Response
 func Truncated() *provider.Response                          // empty text, FinishLength
 func Model(rs ...*provider.Response) *aitest.MockModel        // Caps NativeJSON true
-func Service(t *testing.T, st *store.Store, m provider.LanguageModel, mutate func(*config.AIConfig)) *ai.Service // private base URL http://127.0.0.1:1/v1, budget 1_000_000
+func Config(t testing.TB) config.AIConfig                   // config.Load defaults with model fake-qwen, key test-key-not-secret, base URL http://127.0.0.1:1/v1, budget 1_000_000
+func Service(t testing.TB, st *store.Store, m provider.LanguageModel, mutate func(*config.AIConfig)) *ai.Service // ai.New over Config(t) after mutate
 ```
 
 Migration `01200_ai_usage.sql`:
@@ -532,7 +535,7 @@ DROP TABLE ai_usage;
   func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
   func TestLoadAIConfig(t *testing.T) {
-  	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x"}
+  	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k"}
   	c, err := Load(env(base))
   	if err != nil || c.AI.DisabledReason() != "not_configured" {
   		t.Fatalf("empty: %v %q", err, c.AI.DisabledReason())
@@ -570,6 +573,10 @@ DROP TABLE ai_usage;
   	}
   }
   ```
+  As built, the base map also carries `NEXORA_CA_CERT_FILE`/`NEXORA_CA_KEY_FILE` (required by `Load`), and
+  the test additionally covers model-only, `_ENABLED=false`, and a table of invalid values (numbers,
+  temperature, budget, percent, structured output, negative interval, booleans, a non-http base URL),
+  each failing with the variable name.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/config -run TestLoadAIConfig -count=1'` and expect
       FAIL: `c.AI undefined`.
 - [ ] Implement `mgmt/internal/config/ai.go` (`loadAI(getenv) (AIConfig, error)`), called from `Load`.
@@ -626,6 +633,7 @@ DROP TABLE ai_usage;
   - An IP literal is checked directly; otherwise the host is resolved.
   - Every address must satisfy `IsLoopback() || IsPrivate() || IsLinkLocalUnicast() || 100.64.0.0/10`.
   - A resolve error returns `ErrProvider` wrapped (AI stays on; the call fails).
+  - `allowPublic` skips the check (and the resolution) entirely.
 
   Run and expect PASS.
 
@@ -682,7 +690,9 @@ DROP TABLE ai_usage;
   }
   ````
   `firstText` returns the first `provider.TextPart` text of a message. `ai.ValidationRetries` is the
-  exported `*prometheus.CounterVec` from `metrics.go`.
+  exported `*prometheus.CounterVec` from `metrics.go`. As built, the test also asserts reasoning tokens
+  (90) in `ai_usage` and `ai.Tokens`, exactly 2 retries for three invalid answers, the `prompt` mode
+  schema move plus `</think>` stripping, and that `DataBlock` content cannot close the block.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/... -run TestGenerateValidatesAndRetries -count=1'`
       and expect FAIL: `undefined: ai.Generate`.
 - [ ] Implement `generate.go`, `service.go`, `metrics.go`, `provider.go` and `aifake`.
@@ -706,6 +716,11 @@ DROP TABLE ai_usage;
     `*ai.APICallError` and `*ai.RetryError` map to `ErrProvider`, keeping the provider message without
     headers.
   - Before each attempt `CheckEndpoint` runs again, and a failure returns `ErrEndpointNotPrivate`.
+  - GenerateObject drops usage and the finish reason when an answer does not decode, so each attempt
+    wraps the model in a `capture` model that records them; the raw text comes from the result or
+    `*sdk.NoObjectGeneratedError.RawText` and is decoded by Nexora's own `decode`.
+  - The raised max tokens of a length retry stay for the remaining attempts. The timeout applies per
+    attempt.
 
   Run and expect PASS.
 
@@ -714,8 +729,7 @@ DROP TABLE ai_usage;
   - a MockModel wrapper that sleeps 200 ms and records max concurrent `Generate` calls, over 6
     goroutines with `MaxConcurrency` 2 → max 2;
   - `RequestsPerMinute` 3: the 4th `Interactive` call within the minute returns `ErrBusy` after 5 s
-    (inject `Now`, and a `waitSlot` timeout of 5 s configurable in tests as 100 ms through
-    `aifake.Service` mutate);
+    (inject `Now`, and `Options.SlotWait` (default 5 s) set to 300 ms in the test through `ai.New`);
   - `DailyTokenBudget` 1000 with 850 tokens pre-inserted into `ai_usage` → a `Background` call
     returns `ErrBudgetExhausted` and an `Interactive` call succeeds;
   - after inserting 1000 used → `Interactive` returns `ErrBudgetExhausted`;
@@ -726,8 +740,9 @@ DROP TABLE ai_usage;
   - a semaphore channel plus a token bucket refilled at `RequestsPerMinute/60` per second, capacity
     `RequestsPerMinute`;
   - `Interactive` waits up to 5 s, and `Background` waits until ctx ends;
-  - the budget reads `select coalesce(sum(input_tokens+output_tokens),0) from ai_usage where day = current_date`
-    (UTC session) before each call.
+  - the budget reads `select coalesce(sum(input_tokens+output_tokens),0) from ai_usage where day = $1`,
+    with `$1` the UTC date of `Now`, before each `Generate` (the usage upsert uses the same day);
+  - one `Generate`, including its validation attempts, holds one rate token and one slot.
 
   Metrics: `nexora_mgmt_ai_inflight_requests`, `nexora_mgmt_ai_queue_wait_seconds`,
   `nexora_mgmt_ai_requests_total{outcome="rate_limited"|"budget_exhausted"}`. Run and expect PASS.
@@ -789,8 +804,9 @@ Wire behaviour of `POST /v1/chat/completions`:
 - The body is
   `{"id":"chatcmpl-fake","object":"chat.completion","model":<request model>,"choices":[{"index":0,"message":{"role":"assistant","content":<Content>,"reasoning_content":<Reasoning>},"finish_reason":<FinishReason>}],"usage":{"prompt_tokens":P,"completion_tokens":C,"total_tokens":P+C,"completion_tokens_details":{"reasoning_tokens":R}}}`.
 
-Control endpoints: `PUT /control/script/{feature}` (body `{"responses":[...]}`), `GET /control/requests`,
-`POST /control/reset`.
+Control endpoints: `PUT /control/script/{feature}` (body `{"responses":[...]}` with the snake_case JSON
+tags of `OpenAIResponse`; an empty list removes the queue), `GET /control/requests`, `POST /control/reset`.
+`MaxTokens` records `max_tokens`, or `max_completion_tokens` when `max_tokens` is absent.
 
 - [ ] Create `e2e/fixtures/cmd/nexora-fixture/openai_test.go`. It starts the handler with
       `httptest.NewServer(newOpenAIHandler())`, scripts feature `smoke` with two responses, posts a
