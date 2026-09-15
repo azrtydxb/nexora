@@ -84,9 +84,11 @@ func aiAgentStates(a *harness.API) map[string]aiAgentState {
 	return out
 }
 
-// insertEngineStats writes one raw engine sample per hour for the last hours hours: the upstream's RTT
-// rises, and the SERVFAIL share jumps in the last two samples.
-func insertEngineStats(t *testing.T, pgURL, engineID, upstream string, now time.Time, hours int, cacheBytes uint64) {
+// insertEngineStats writes hours raw engine samples ending at last, one per hour except the newest,
+// which follows the one before it by two minutes: the upstream's RTT rises, and the SERVFAIL share
+// jumps in the last two samples. The newest pair is what the dashboard insight agent compares against
+// the previous 24 h, so it lies inside the agent's 15-minute window when last is recent.
+func insertEngineStats(t *testing.T, pgURL, engineID, upstream string, last time.Time, hours int, cacheBytes uint64) {
 	t.Helper()
 	var queries, servfail uint64
 	for i := range hours {
@@ -116,7 +118,10 @@ func insertEngineStats(t *testing.T, pgURL, engineID, upstream string, now time.
 		if err != nil {
 			t.Fatal(err)
 		}
-		at := now.Add(-time.Duration(hours-i)*time.Hour + 30*time.Minute)
+		at := last
+		if i < hours-1 {
+			at = last.Add(-2*time.Minute - time.Duration(hours-2-i)*time.Hour)
+		}
 		harness.PGExec(t, pgURL, `insert into engine_stats(engine_id, at, stats) values ($1, $2, $3)
 			on conflict do nothing`, engineID, at, raw)
 	}
@@ -189,8 +194,17 @@ func TestNoAgentWritesConfiguration(t *testing.T) {
 	if !ok || cacheMax <= 0 {
 		t.Fatalf("resolver settings cache_max_bytes = %v", resolver["cache_max_bytes"])
 	}
-	// Eight days of per-hour samples: a rising upstream RTT and a SERVFAIL spike in the newest hours.
-	insertEngineStats(t, pg.URL, engineID, "fixture", now, 8*24, uint64(cacheMax*0.6))
+	// Eight days of per-hour samples: a rising upstream RTT and a SERVFAIL spike in the newest samples.
+	// They end before the engine's own first sample: a live sample between two inserted ones would split
+	// their pair (its lower query counter counts as a restart), and the spike would then only show when
+	// this test's traffic happened to fall between two live samples.
+	firstLive := time.UnixMilli(int64(pgInt(t, pg.URL,
+		"select (extract(epoch from coalesce(min(at), now())) * 1000)::bigint from engine_stats where engine_id = $1", engineID)))
+	last := firstLive.Add(-time.Second)
+	if age := time.Since(last); age > 10*time.Minute {
+		t.Fatalf("the engine's first sample is %v old; the inserted spike would fall outside the insight agent's 15-minute window", age)
+	}
+	insertEngineStats(t, pg.URL, engineID, "fixture", last, 8*24, uint64(cacheMax*0.6))
 
 	// Ten days of capacity samples for the two resources the forecast agent must cover.
 	for day := 10; day >= 1; day-- {
@@ -286,11 +300,21 @@ func TestNoAgentWritesConfiguration(t *testing.T) {
 	}
 	for _, kind := range []string{"anomaly", "insight"} {
 		var findings []struct {
-			Kind string `json:"kind"`
+			Kind        string `json:"kind"`
+			CandidateID string `json:"candidate_id"`
 		}
 		admin.Must(http.MethodGet, "/ai/findings?kind="+kind, nil, &findings, http.StatusOK)
 		if len(findings) == 0 {
 			t.Fatalf("no %s finding after the agent runs", kind)
+		}
+		// The inserted SERVFAIL spike, not whatever this test's own traffic happened to show.
+		if kind == "insight" && !slices.ContainsFunc(findings, func(f struct {
+			Kind        string `json:"kind"`
+			CandidateID string `json:"candidate_id"`
+		}) bool {
+			return f.CandidateID == "servfail_spike:"+node
+		}) {
+			t.Fatalf("no servfail_spike:%s insight: %+v", node, findings)
 		}
 	}
 

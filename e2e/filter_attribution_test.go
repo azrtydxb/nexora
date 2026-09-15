@@ -67,6 +67,9 @@ type attributedRecord struct {
 func TestQueryLogCategoryAttribution(t *testing.T) {
 	for _, backend := range []string{"builtin", "opensearch"} {
 		t.Run(backend, func(t *testing.T) {
+			// The decision reason names below are fixed, and the OpenSearch index is shared with earlier
+			// runs whose lists no longer exist: those lookups only consider this run's records.
+			since := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
 			s := startCategoryStack(t, "attr-"+backend, func(env *harness.Env) harness.MgmtOptions {
 				o := harness.MgmtOptions{QueryLogBackend: backend}
 				if backend == "opensearch" {
@@ -156,7 +159,7 @@ func TestQueryLogCategoryAttribution(t *testing.T) {
 				var r attributedRecord
 				harness.Eventually(t, 60*time.Second, func() error {
 					var err error
-					r, err = find(query+"name="+url.QueryEscape(strings.TrimSuffix(name, ".")), name)
+					r, err = find(query+"from="+url.QueryEscape(since)+"&name="+url.QueryEscape(strings.TrimSuffix(name, ".")), name)
 					return err
 				})
 				return r
