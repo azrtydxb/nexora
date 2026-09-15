@@ -2757,6 +2757,9 @@ Files:
   `clusters.postgresql.cnpg.io` (v1, namespaced, `x-kubernetes-preserve-unknown-fields: true` on spec
   and status).
 - `operator/cmd/nexora-operator/main.go`: registers the controller and the healthz and readyz checks.
+- `deploy/helm/nexora/values.schema.json`: `engine.groups` loses `minItems: 1`. The operator renders
+  `engine.groups: []` while every group waits for its join token (S-5: the management plane renders
+  first), which the schema refused. An empty list renders no engine workload or ConfigMap.
 
 Interfaces:
 
@@ -2817,10 +2820,26 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
      - `RollingUpdate` when any workload has `observedGeneration < generation` or updated < desired;
      - `Unavailable` when ready < desired or desired == 0;
      - otherwise `True`.
-   - `Rendered=True` and `Ready`.
+   - `Rendered=True` and `Ready` (reason: the first false condition's reason among `Rendered`,
+     `DatabaseReady`, `ManagementReady`, `EnginesReady`).
    - `RequeueAfter: ResyncInterval`.
 
-- [ ] Create `operator/internal/controller/installation/controller_test.go`:
+As built:
+
+- Failures before apply (`SecretIncomplete`, `ImageTagRequired`, `RenderFailed`, `ForeignNamespace`) set
+  `Rendered=False` and `Ready=False`, write the status and requeue after `ResyncInterval` without an
+  error; no object changes. A failed apply sets the same conditions and also returns the error for
+  backoff, unless the API server refused the object as invalid. Kubernetes read/list failures set
+  `Ready=False` and return the error.
+- A named `mgmt.ca.existingSecret`/`mgmt.kek.existingSecret` that does not exist is `SecretIncomplete`.
+- `SetupRequired` is `Unknown` while `ManagementReady` is false; `DatabaseReady=False` uses reason
+  `Unavailable`. Zero engine workloads (no groups) count as `EnginesReady=True`.
+- A CR being deleted is not reconciled: owned objects go by garbage collection; the key Secrets and
+  the CNPG `Cluster` have no owner reference and stay.
+- `SetupWithManager` filters the `NexoraInstallation` watch with `GenerationChangedPredicate`, so the
+  controller's own status writes do not requeue it.
+
+- [x] Create `operator/internal/controller/installation/controller_test.go`:
   ```go
   package installation_test
 
@@ -3163,7 +3182,7 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
   `scripts/dev-exec.sh 'make operator-test'` and expect a build failure (package missing). Implement
   per the reconcile order, and expect PASS. The `401` case maps to `ManagementReady=False`; the reason
   is `Unauthorized` when `errors.Is(err, mgmtapi.ErrUnauthorized)`, else `ManagementUnavailable`.
-- [ ] Create `operator/internal/controller/installation/rbac_test.go`:
+- [x] Create `operator/internal/controller/installation/rbac_test.go`:
   ```go
   package installation_test
 
@@ -3273,7 +3292,7 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
   (Task 1's `envtestutil.Start` already installs `deploy/operator/crds/`.) Run and expect FAIL if any
   rendered kind is missing from Task 8's rules; fix the chart RBAC in a follow-up reported to the lead
   (Task 8 is committed), otherwise PASS.
-- [ ] Register in `setupControllers`:
+- [x] Register in `setupControllers`:
   ```go
   chart, err := render.LoadChart(opts.chartDir)
   if err != nil {

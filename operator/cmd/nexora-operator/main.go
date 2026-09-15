@@ -5,20 +5,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/piwi3910/nexora/operator/api/v1alpha1"
 	"github.com/piwi3910/nexora/operator/internal/controller/enginegroup"
+	"github.com/piwi3910/nexora/operator/internal/controller/installation"
+	"github.com/piwi3910/nexora/operator/internal/render"
 	"github.com/piwi3910/nexora/operator/internal/version"
 )
 
@@ -126,11 +131,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// setupControllers registers the controllers with the manager.
+// setupControllers registers the controllers and the health checks with the manager.
 func setupControllers(mgr ctrl.Manager, opts options) error {
+	chart, err := render.LoadChart(opts.chartDir)
+	if err != nil {
+		return fmt.Errorf("load chart %s: %w", opts.chartDir, err)
+	}
+	disc, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		return err
+	}
+	if err := (&installation.Reconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Chart: chart, Discovery: disc,
+		Health: installation.HTTPHealth{HC: &http.Client{Timeout: 5 * time.Second}}, OperatorVersion: version.Version,
+		ResyncInterval: opts.resyncInterval}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("installation controller: %w", err)
+	}
 	if err := (&enginegroup.Reconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 		ClientFor: enginegroup.DefaultClientFor(mgr.GetClient()), Now: time.Now}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("engine group controller: %w", err)
 	}
-	return nil
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		return err
+	}
+	return mgr.AddReadyzCheck("readyz", healthz.Ping)
 }
