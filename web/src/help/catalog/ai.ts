@@ -15,6 +15,9 @@ export const aiHelp: HelpArea = {
     "components/ai/FindingCard.tsx",
     "components/ai/ProposalCard.tsx",
     "components/ai/ProposalApplyDialog.tsx",
+    "components/ai/ThreatCheckDialog.tsx",
+    "components/ai/ListClassification.tsx",
+    "components/ai/RpzSuggestionsTab.tsx",
   ],
   entries: {
     "ai-findings-kind": {

@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import {
   ArrowDown,
   ArrowUp,
@@ -9,6 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 
+import { useAiEnabled } from "@/api/ai";
 import { type Schemas } from "@/api/client";
 import {
   useCreateRpzZone,
@@ -21,6 +23,7 @@ import {
   useUploadRpzZoneFile,
 } from "@/api/resolution";
 import { useCan } from "@/auth/AuthProvider";
+import { RpzSuggestionsTab } from "@/components/ai/RpzSuggestionsTab";
 import {
   ConfirmDialog,
   ErrorAlert,
@@ -60,6 +63,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type RpzZone = Schemas["RpzZone"];
 type SourceType = Schemas["RpzZoneInput"]["source_type"];
@@ -80,6 +84,10 @@ const overrideLabel = (v: string) =>
   overrides.find((o) => o.value === v)?.label ?? v;
 
 export function RpzPage() {
+  const [params, setParams] = useSearchParams();
+  const aiEnabled = useAiEnabled();
+  // The AI tab only exists while AI is enabled; ?tab=ai is how the recommendations page links here.
+  const tab = aiEnabled && params.get("tab") === "ai" ? "ai" : "zones";
   const canCreate = useCan("createRpzZone");
   const canUpdate = useCan("updateRpzZone");
   const canDelete = useCan("deleteRpzZone");
@@ -110,7 +118,8 @@ export function RpzPage() {
         title="Response policy zones"
         description="Policy zones rewrite or block answers by name, answer address or name server. The first zone in the list whose trigger matches decides."
         actions={
-          canCreate && (
+          canCreate &&
+          tab === "zones" && (
             <Button onClick={() => setEditing("new")}>
               <Plus className="mr-1.5 h-4 w-4" />
               New zone
@@ -118,144 +127,181 @@ export function RpzPage() {
           )
         }
       />
-      <ErrorAlert
-        error={zones.error}
-        prefix="Could not load RPZ zones"
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          const next = new URLSearchParams(params);
+          if (v === "ai") next.set("tab", "ai");
+          else next.delete("tab");
+          setParams(next, { replace: true });
+        }}
         className="mb-4"
-      />
-      <ErrorAlert
-        error={reorder.error ?? refresh.error}
-        thing="This zone"
-        className="mb-4"
-      />
-      <div className="mb-2 h-5">
-        <SavedNote show={refresh.isSuccess}>Refresh requested</SavedNote>
-      </div>
-      <Card className="overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="w-12">#</TableHead>
-              <TableHead>Zone</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Policy</TableHead>
-              <TableHead className="text-right">Min. refresh</TableHead>
-              <TableHead>Engine group</TableHead>
-              <TableHead>Engines</TableHead>
-              {actions && (
-                <TableHead className="w-44 text-right">Actions</TableHead>
-              )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((z, i) => (
-              <TableRow key={z.id}>
-                <TableCell className="text-muted-foreground py-3">
-                  {i + 1}
-                </TableCell>
-                <TableCell className="py-3 font-mono text-[13px]">
-                  {z.name}
-                </TableCell>
-                <TableCell className="py-3">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge variant="secondary">
-                      {z.source_type === "file" ? "File" : "Zone transfer"}
-                    </Badge>
-                    {z.source_type === "file" ? (
-                      <span className="text-muted-foreground text-sm">
-                        {z.file_records === null
-                          ? "no file"
-                          : `${z.file_records} records`}
-                      </span>
-                    ) : (
-                      <span className="font-mono text-[13px]">{z.primary}</span>
+      >
+        <TabsList>
+          <TabsTrigger value="zones" data-testid="rpz-tab-zones">
+            Zones
+          </TabsTrigger>
+          {aiEnabled && (
+            <TabsTrigger value="ai" data-testid="rpz-tab-ai">
+              AI suggestions
+            </TabsTrigger>
+          )}
+        </TabsList>
+        <TabsContent value="ai" className="mt-4">
+          {aiEnabled && <RpzSuggestionsTab />}
+        </TabsContent>
+      </Tabs>
+      {tab === "ai" ? null : (
+        <>
+          <ErrorAlert
+            error={zones.error}
+            prefix="Could not load RPZ zones"
+            className="mb-4"
+          />
+          <ErrorAlert
+            error={reorder.error ?? refresh.error}
+            thing="This zone"
+            className="mb-4"
+          />
+          <div className="mb-2 h-5">
+            <SavedNote show={refresh.isSuccess}>Refresh requested</SavedNote>
+          </div>
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-12">#</TableHead>
+                  <TableHead>Zone</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Policy</TableHead>
+                  <TableHead className="text-right">Min. refresh</TableHead>
+                  <TableHead>Engine group</TableHead>
+                  <TableHead>Engines</TableHead>
+                  {actions && (
+                    <TableHead className="w-44 text-right">Actions</TableHead>
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((z, i) => (
+                  <TableRow key={z.id}>
+                    <TableCell className="text-muted-foreground py-3">
+                      {i + 1}
+                    </TableCell>
+                    <TableCell className="py-3 font-mono text-[13px]">
+                      {z.name}
+                    </TableCell>
+                    <TableCell className="py-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="secondary">
+                          {z.source_type === "file" ? "File" : "Zone transfer"}
+                        </Badge>
+                        {z.source_type === "file" ? (
+                          <span className="text-muted-foreground text-sm">
+                            {z.file_records === null
+                              ? "no file"
+                              : `${z.file_records} records`}
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[13px]">
+                            {z.primary}
+                          </span>
+                        )}
+                        {z.tsig_secret_set && (
+                          <Badge
+                            variant="outline"
+                            title={z.tsig_key_name ?? ""}
+                          >
+                            secret set
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-3">
+                      {overrideLabel(z.policy_override)}
+                    </TableCell>
+                    <TableCell className="py-3 text-right tabular-nums">
+                      {z.min_refresh_seconds} s
+                    </TableCell>
+                    <TableCell className="py-3 whitespace-nowrap">
+                      <EngineGroupName id={z.engine_group_id} />
+                    </TableCell>
+                    <TableCell className="py-3">
+                      <EngineStatus zone={z} />
+                    </TableCell>
+                    {actions && (
+                      <TableCell className="py-2 text-right whitespace-nowrap">
+                        {canReorder && (
+                          <>
+                            <IconButton
+                              label={`Move ${z.name} up`}
+                              disabled={i === 0 || reorder.isPending}
+                              onClick={() => move(i, -1)}
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </IconButton>
+                            <IconButton
+                              label={`Move ${z.name} down`}
+                              disabled={
+                                i === rows.length - 1 || reorder.isPending
+                              }
+                              onClick={() => move(i, 1)}
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </IconButton>
+                          </>
+                        )}
+                        {canUpload && z.source_type === "file" && (
+                          <IconButton
+                            label={`Upload file for ${z.name}`}
+                            onClick={() => setUploading(z)}
+                          >
+                            <Upload className="h-4 w-4" />
+                          </IconButton>
+                        )}
+                        {canRefresh && z.source_type === "transfer" && (
+                          <IconButton
+                            label={`Refresh ${z.name}`}
+                            disabled={refresh.isPending}
+                            onClick={() => refresh.mutate(z.id)}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </IconButton>
+                        )}
+                        {canUpdate && (
+                          <IconButton
+                            label={`Edit ${z.name}`}
+                            onClick={() => setEditing(z)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </IconButton>
+                        )}
+                        {canDelete && (
+                          <IconButton
+                            label={`Delete ${z.name}`}
+                            className="hover:text-destructive"
+                            onClick={() => setDeleting(z)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </IconButton>
+                        )}
+                      </TableCell>
                     )}
-                    {z.tsig_secret_set && (
-                      <Badge variant="outline" title={z.tsig_key_name ?? ""}>
-                        secret set
-                      </Badge>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="py-3">
-                  {overrideLabel(z.policy_override)}
-                </TableCell>
-                <TableCell className="py-3 text-right tabular-nums">
-                  {z.min_refresh_seconds} s
-                </TableCell>
-                <TableCell className="py-3 whitespace-nowrap">
-                  <EngineGroupName id={z.engine_group_id} />
-                </TableCell>
-                <TableCell className="py-3">
-                  <EngineStatus zone={z} />
-                </TableCell>
-                {actions && (
-                  <TableCell className="py-2 text-right whitespace-nowrap">
-                    {canReorder && (
-                      <>
-                        <IconButton
-                          label={`Move ${z.name} up`}
-                          disabled={i === 0 || reorder.isPending}
-                          onClick={() => move(i, -1)}
-                        >
-                          <ArrowUp className="h-4 w-4" />
-                        </IconButton>
-                        <IconButton
-                          label={`Move ${z.name} down`}
-                          disabled={i === rows.length - 1 || reorder.isPending}
-                          onClick={() => move(i, 1)}
-                        >
-                          <ArrowDown className="h-4 w-4" />
-                        </IconButton>
-                      </>
-                    )}
-                    {canUpload && z.source_type === "file" && (
-                      <IconButton
-                        label={`Upload file for ${z.name}`}
-                        onClick={() => setUploading(z)}
-                      >
-                        <Upload className="h-4 w-4" />
-                      </IconButton>
-                    )}
-                    {canRefresh && z.source_type === "transfer" && (
-                      <IconButton
-                        label={`Refresh ${z.name}`}
-                        disabled={refresh.isPending}
-                        onClick={() => refresh.mutate(z.id)}
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                      </IconButton>
-                    )}
-                    {canUpdate && (
-                      <IconButton
-                        label={`Edit ${z.name}`}
-                        onClick={() => setEditing(z)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </IconButton>
-                    )}
-                    {canDelete && (
-                      <IconButton
-                        label={`Delete ${z.name}`}
-                        className="hover:text-destructive"
-                        onClick={() => setDeleting(z)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </IconButton>
-                    )}
-                  </TableCell>
+                  </TableRow>
+                ))}
+                {zones.isPending && (
+                  <MessageRow colSpan={cols}>Loading…</MessageRow>
                 )}
-              </TableRow>
-            ))}
-            {zones.isPending && (
-              <MessageRow colSpan={cols}>Loading…</MessageRow>
-            )}
-            {zones.isSuccess && rows.length === 0 && (
-              <MessageRow colSpan={cols}>No response policy zones.</MessageRow>
-            )}
-          </TableBody>
-        </Table>
-      </Card>
+                {zones.isSuccess && rows.length === 0 && (
+                  <MessageRow colSpan={cols}>
+                    No response policy zones.
+                  </MessageRow>
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </>
+      )}
 
       {editing === "new" && <RpzZoneDialog onClose={() => setEditing(null)} />}
       {editing !== null && editing !== "new" && (
