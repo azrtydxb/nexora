@@ -24,6 +24,462 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AiAgentName.
+const (
+	AiAgentNameCapacityForecast      AiAgentName = "capacity_forecast"
+	AiAgentNameDashboardInsights     AiAgentName = "dashboard_insights"
+	AiAgentNameFilterRecommendations AiAgentName = "filter_recommendations"
+	AiAgentNameQuerylogAnomalies     AiAgentName = "querylog_anomalies"
+	AiAgentNameRolloutRisk           AiAgentName = "rollout_risk"
+	AiAgentNameRpzSuggestions        AiAgentName = "rpz_suggestions"
+	AiAgentNameThreatClassification  AiAgentName = "threat_classification"
+	AiAgentNameUpstreamPrediction    AiAgentName = "upstream_prediction"
+)
+
+// Valid indicates whether the value is a known member of the AiAgentName enum.
+func (e AiAgentName) Valid() bool {
+	switch e {
+	case AiAgentNameCapacityForecast:
+		return true
+	case AiAgentNameDashboardInsights:
+		return true
+	case AiAgentNameFilterRecommendations:
+		return true
+	case AiAgentNameQuerylogAnomalies:
+		return true
+	case AiAgentNameRolloutRisk:
+		return true
+	case AiAgentNameRpzSuggestions:
+		return true
+	case AiAgentNameThreatClassification:
+		return true
+	case AiAgentNameUpstreamPrediction:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiAssistantMessageRole.
+const (
+	AiAssistantMessageRoleAssistant AiAssistantMessageRole = "assistant"
+	AiAssistantMessageRoleUser      AiAssistantMessageRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the AiAssistantMessageRole enum.
+func (e AiAssistantMessageRole) Valid() bool {
+	switch e {
+	case AiAssistantMessageRoleAssistant:
+		return true
+	case AiAssistantMessageRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiCapacityForecastResource.
+const (
+	BlocklistEntries AiCapacityForecastResource = "blocklist_entries"
+	Cache            AiCapacityForecastResource = "cache"
+	EngineMemory     AiCapacityForecastResource = "engine_memory"
+	FilterIndex      AiCapacityForecastResource = "filter_index"
+	QueryVolume      AiCapacityForecastResource = "query_volume"
+	RecursorCache    AiCapacityForecastResource = "recursor_cache"
+)
+
+// Valid indicates whether the value is a known member of the AiCapacityForecastResource enum.
+func (e AiCapacityForecastResource) Valid() bool {
+	switch e {
+	case BlocklistEntries:
+		return true
+	case Cache:
+		return true
+	case EngineMemory:
+		return true
+	case FilterIndex:
+		return true
+	case QueryVolume:
+		return true
+	case RecursorCache:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiCapacityForecastTrend.
+const (
+	AiCapacityForecastTrendGrowing          AiCapacityForecastTrend = "growing"
+	AiCapacityForecastTrendInsufficientData AiCapacityForecastTrend = "insufficient_data"
+	AiCapacityForecastTrendShrinking        AiCapacityForecastTrend = "shrinking"
+	AiCapacityForecastTrendStable           AiCapacityForecastTrend = "stable"
+)
+
+// Valid indicates whether the value is a known member of the AiCapacityForecastTrend enum.
+func (e AiCapacityForecastTrend) Valid() bool {
+	switch e {
+	case AiCapacityForecastTrendGrowing:
+		return true
+	case AiCapacityForecastTrendInsufficientData:
+		return true
+	case AiCapacityForecastTrendShrinking:
+		return true
+	case AiCapacityForecastTrendStable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiFindingKind.
+const (
+	AiFindingKindAnomaly AiFindingKind = "anomaly"
+	AiFindingKindInsight AiFindingKind = "insight"
+)
+
+// Valid indicates whether the value is a known member of the AiFindingKind enum.
+func (e AiFindingKind) Valid() bool {
+	switch e {
+	case AiFindingKindAnomaly:
+		return true
+	case AiFindingKindInsight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiFindingSeverity.
+const (
+	AiFindingSeverityCritical AiFindingSeverity = "critical"
+	AiFindingSeverityInfo     AiFindingSeverity = "info"
+	AiFindingSeverityWarning  AiFindingSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the AiFindingSeverity enum.
+func (e AiFindingSeverity) Valid() bool {
+	switch e {
+	case AiFindingSeverityCritical:
+		return true
+	case AiFindingSeverityInfo:
+		return true
+	case AiFindingSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiFindingStatus.
+const (
+	AiFindingStatusAcknowledged AiFindingStatus = "acknowledged"
+	AiFindingStatusDismissed    AiFindingStatus = "dismissed"
+	AiFindingStatusOpen         AiFindingStatus = "open"
+	AiFindingStatusResolved     AiFindingStatus = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the AiFindingStatus enum.
+func (e AiFindingStatus) Valid() bool {
+	switch e {
+	case AiFindingStatusAcknowledged:
+		return true
+	case AiFindingStatusDismissed:
+		return true
+	case AiFindingStatusOpen:
+		return true
+	case AiFindingStatusResolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiFindingUpdateStatus.
+const (
+	AiFindingUpdateStatusAcknowledged AiFindingUpdateStatus = "acknowledged"
+	AiFindingUpdateStatusDismissed    AiFindingUpdateStatus = "dismissed"
+)
+
+// Valid indicates whether the value is a known member of the AiFindingUpdateStatus enum.
+func (e AiFindingUpdateStatus) Valid() bool {
+	switch e {
+	case AiFindingUpdateStatusAcknowledged:
+		return true
+	case AiFindingUpdateStatusDismissed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiForecastKind.
+const (
+	AiForecastKindCapacity AiForecastKind = "capacity"
+	AiForecastKindUpstream AiForecastKind = "upstream"
+)
+
+// Valid indicates whether the value is a known member of the AiForecastKind enum.
+func (e AiForecastKind) Valid() bool {
+	switch e {
+	case AiForecastKindCapacity:
+		return true
+	case AiForecastKindUpstream:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiProposalPriority.
+const (
+	AiProposalPriorityHigh   AiProposalPriority = "high"
+	AiProposalPriorityLow    AiProposalPriority = "low"
+	AiProposalPriorityMedium AiProposalPriority = "medium"
+)
+
+// Valid indicates whether the value is a known member of the AiProposalPriority enum.
+func (e AiProposalPriority) Valid() bool {
+	switch e {
+	case AiProposalPriorityHigh:
+		return true
+	case AiProposalPriorityLow:
+		return true
+	case AiProposalPriorityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiProposalSource.
+const (
+	AiProposalSourceCapacityForecast      AiProposalSource = "capacity_forecast"
+	AiProposalSourceConfigAssistant       AiProposalSource = "config_assistant"
+	AiProposalSourceFilterRecommendations AiProposalSource = "filter_recommendations"
+	AiProposalSourceRolloutRisk           AiProposalSource = "rollout_risk"
+	AiProposalSourceRpzSuggestions        AiProposalSource = "rpz_suggestions"
+	AiProposalSourceUpstreamPrediction    AiProposalSource = "upstream_prediction"
+)
+
+// Valid indicates whether the value is a known member of the AiProposalSource enum.
+func (e AiProposalSource) Valid() bool {
+	switch e {
+	case AiProposalSourceCapacityForecast:
+		return true
+	case AiProposalSourceConfigAssistant:
+		return true
+	case AiProposalSourceFilterRecommendations:
+		return true
+	case AiProposalSourceRolloutRisk:
+		return true
+	case AiProposalSourceRpzSuggestions:
+		return true
+	case AiProposalSourceUpstreamPrediction:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiProposalStatus.
+const (
+	AiProposalStatusApplied    AiProposalStatus = "applied"
+	AiProposalStatusDismissed  AiProposalStatus = "dismissed"
+	AiProposalStatusFailed     AiProposalStatus = "failed"
+	AiProposalStatusOpen       AiProposalStatus = "open"
+	AiProposalStatusStale      AiProposalStatus = "stale"
+	AiProposalStatusSuperseded AiProposalStatus = "superseded"
+)
+
+// Valid indicates whether the value is a known member of the AiProposalStatus enum.
+func (e AiProposalStatus) Valid() bool {
+	switch e {
+	case AiProposalStatusApplied:
+		return true
+	case AiProposalStatusDismissed:
+		return true
+	case AiProposalStatusFailed:
+		return true
+	case AiProposalStatusOpen:
+		return true
+	case AiProposalStatusStale:
+		return true
+	case AiProposalStatusSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiRolloutRiskRiskLevel.
+const (
+	AiRolloutRiskRiskLevelHigh   AiRolloutRiskRiskLevel = "high"
+	AiRolloutRiskRiskLevelLow    AiRolloutRiskRiskLevel = "low"
+	AiRolloutRiskRiskLevelMedium AiRolloutRiskRiskLevel = "medium"
+)
+
+// Valid indicates whether the value is a known member of the AiRolloutRiskRiskLevel enum.
+func (e AiRolloutRiskRiskLevel) Valid() bool {
+	switch e {
+	case AiRolloutRiskRiskLevelHigh:
+		return true
+	case AiRolloutRiskRiskLevelLow:
+		return true
+	case AiRolloutRiskRiskLevelMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiRolloutRiskStatus.
+const (
+	AiRolloutRiskStatusAssessed AiRolloutRiskStatus = "assessed"
+	AiRolloutRiskStatusFailed   AiRolloutRiskStatus = "failed"
+	AiRolloutRiskStatusPending  AiRolloutRiskStatus = "pending"
+	AiRolloutRiskStatusSkipped  AiRolloutRiskStatus = "skipped"
+)
+
+// Valid indicates whether the value is a known member of the AiRolloutRiskStatus enum.
+func (e AiRolloutRiskStatus) Valid() bool {
+	switch e {
+	case AiRolloutRiskStatusAssessed:
+		return true
+	case AiRolloutRiskStatusFailed:
+		return true
+	case AiRolloutRiskStatusPending:
+		return true
+	case AiRolloutRiskStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiStatusReason.
+const (
+	AiStatusReasonEmpty                   AiStatusReason = ""
+	AiStatusReasonEndpointNotPrivate      AiStatusReason = "endpoint_not_private"
+	AiStatusReasonIncompleteConfiguration AiStatusReason = "incomplete_configuration"
+	AiStatusReasonNotConfigured           AiStatusReason = "not_configured"
+)
+
+// Valid indicates whether the value is a known member of the AiStatusReason enum.
+func (e AiStatusReason) Valid() bool {
+	switch e {
+	case AiStatusReasonEmpty:
+		return true
+	case AiStatusReasonEndpointNotPrivate:
+		return true
+	case AiStatusReasonIncompleteConfiguration:
+		return true
+	case AiStatusReasonNotConfigured:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiTaskKind.
+const (
+	AssistantMessage AiTaskKind = "assistant_message"
+	QuerylogSearch   AiTaskKind = "querylog_search"
+	ThreatCheck      AiTaskKind = "threat_check"
+)
+
+// Valid indicates whether the value is a known member of the AiTaskKind enum.
+func (e AiTaskKind) Valid() bool {
+	switch e {
+	case AssistantMessage:
+		return true
+	case QuerylogSearch:
+		return true
+	case ThreatCheck:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiTaskStatus.
+const (
+	AiTaskStatusFailed    AiTaskStatus = "failed"
+	AiTaskStatusQueued    AiTaskStatus = "queued"
+	AiTaskStatusRunning   AiTaskStatus = "running"
+	AiTaskStatusSucceeded AiTaskStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the AiTaskStatus enum.
+func (e AiTaskStatus) Valid() bool {
+	switch e {
+	case AiTaskStatusFailed:
+		return true
+	case AiTaskStatusQueued:
+		return true
+	case AiTaskStatusRunning:
+		return true
+	case AiTaskStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiUpstreamPredictionRecommendationType.
+const (
+	AiUpstreamPredictionRecommendationTypeDisable        AiUpstreamPredictionRecommendationType = "disable"
+	AiUpstreamPredictionRecommendationTypeNone           AiUpstreamPredictionRecommendationType = "none"
+	AiUpstreamPredictionRecommendationTypeReorder        AiUpstreamPredictionRecommendationType = "reorder"
+	AiUpstreamPredictionRecommendationTypeSwitchStrategy AiUpstreamPredictionRecommendationType = "switch_strategy"
+)
+
+// Valid indicates whether the value is a known member of the AiUpstreamPredictionRecommendationType enum.
+func (e AiUpstreamPredictionRecommendationType) Valid() bool {
+	switch e {
+	case AiUpstreamPredictionRecommendationTypeDisable:
+		return true
+	case AiUpstreamPredictionRecommendationTypeNone:
+		return true
+	case AiUpstreamPredictionRecommendationTypeReorder:
+		return true
+	case AiUpstreamPredictionRecommendationTypeSwitchStrategy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AiUpstreamPredictionTrend.
+const (
+	AiUpstreamPredictionTrendDegrading        AiUpstreamPredictionTrend = "degrading"
+	AiUpstreamPredictionTrendFailing          AiUpstreamPredictionTrend = "failing"
+	AiUpstreamPredictionTrendImproving        AiUpstreamPredictionTrend = "improving"
+	AiUpstreamPredictionTrendInsufficientData AiUpstreamPredictionTrend = "insufficient_data"
+	AiUpstreamPredictionTrendPeriodic         AiUpstreamPredictionTrend = "periodic"
+	AiUpstreamPredictionTrendStable           AiUpstreamPredictionTrend = "stable"
+)
+
+// Valid indicates whether the value is a known member of the AiUpstreamPredictionTrend enum.
+func (e AiUpstreamPredictionTrend) Valid() bool {
+	switch e {
+	case AiUpstreamPredictionTrendDegrading:
+		return true
+	case AiUpstreamPredictionTrendFailing:
+		return true
+	case AiUpstreamPredictionTrendImproving:
+		return true
+	case AiUpstreamPredictionTrendInsufficientData:
+		return true
+	case AiUpstreamPredictionTrendPeriodic:
+		return true
+	case AiUpstreamPredictionTrendStable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuditEventActorType.
 const (
 	AuditEventActorTypeApiToken AuditEventActorType = "api_token"
@@ -77,16 +533,16 @@ func (e DashboardHealthAlertsKind) Valid() bool {
 
 // Defines values for DashboardHealthAlertsSeverity.
 const (
-	Critical DashboardHealthAlertsSeverity = "critical"
-	Warning  DashboardHealthAlertsSeverity = "warning"
+	DashboardHealthAlertsSeverityCritical DashboardHealthAlertsSeverity = "critical"
+	DashboardHealthAlertsSeverityWarning  DashboardHealthAlertsSeverity = "warning"
 )
 
 // Valid indicates whether the value is a known member of the DashboardHealthAlertsSeverity enum.
 func (e DashboardHealthAlertsSeverity) Valid() bool {
 	switch e {
-	case Critical:
+	case DashboardHealthAlertsSeverityCritical:
 		return true
-	case Warning:
+	case DashboardHealthAlertsSeverityWarning:
 		return true
 	default:
 		return false
@@ -1542,6 +1998,126 @@ func (e ZoneKeyRolloverRole) Valid() bool {
 	}
 }
 
+// Defines values for ListAiFindingsParamsKind.
+const (
+	ListAiFindingsParamsKindAnomaly ListAiFindingsParamsKind = "anomaly"
+	ListAiFindingsParamsKindInsight ListAiFindingsParamsKind = "insight"
+)
+
+// Valid indicates whether the value is a known member of the ListAiFindingsParamsKind enum.
+func (e ListAiFindingsParamsKind) Valid() bool {
+	switch e {
+	case ListAiFindingsParamsKindAnomaly:
+		return true
+	case ListAiFindingsParamsKindInsight:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAiFindingsParamsStatus.
+const (
+	ListAiFindingsParamsStatusAcknowledged ListAiFindingsParamsStatus = "acknowledged"
+	ListAiFindingsParamsStatusDismissed    ListAiFindingsParamsStatus = "dismissed"
+	ListAiFindingsParamsStatusOpen         ListAiFindingsParamsStatus = "open"
+	ListAiFindingsParamsStatusResolved     ListAiFindingsParamsStatus = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the ListAiFindingsParamsStatus enum.
+func (e ListAiFindingsParamsStatus) Valid() bool {
+	switch e {
+	case ListAiFindingsParamsStatusAcknowledged:
+		return true
+	case ListAiFindingsParamsStatusDismissed:
+		return true
+	case ListAiFindingsParamsStatusOpen:
+		return true
+	case ListAiFindingsParamsStatusResolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAiForecastsParamsKind.
+const (
+	ListAiForecastsParamsKindCapacity ListAiForecastsParamsKind = "capacity"
+	ListAiForecastsParamsKindUpstream ListAiForecastsParamsKind = "upstream"
+)
+
+// Valid indicates whether the value is a known member of the ListAiForecastsParamsKind enum.
+func (e ListAiForecastsParamsKind) Valid() bool {
+	switch e {
+	case ListAiForecastsParamsKindCapacity:
+		return true
+	case ListAiForecastsParamsKindUpstream:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAiProposalsParamsSource.
+const (
+	ListAiProposalsParamsSourceCapacityForecast      ListAiProposalsParamsSource = "capacity_forecast"
+	ListAiProposalsParamsSourceConfigAssistant       ListAiProposalsParamsSource = "config_assistant"
+	ListAiProposalsParamsSourceFilterRecommendations ListAiProposalsParamsSource = "filter_recommendations"
+	ListAiProposalsParamsSourceRolloutRisk           ListAiProposalsParamsSource = "rollout_risk"
+	ListAiProposalsParamsSourceRpzSuggestions        ListAiProposalsParamsSource = "rpz_suggestions"
+	ListAiProposalsParamsSourceUpstreamPrediction    ListAiProposalsParamsSource = "upstream_prediction"
+)
+
+// Valid indicates whether the value is a known member of the ListAiProposalsParamsSource enum.
+func (e ListAiProposalsParamsSource) Valid() bool {
+	switch e {
+	case ListAiProposalsParamsSourceCapacityForecast:
+		return true
+	case ListAiProposalsParamsSourceConfigAssistant:
+		return true
+	case ListAiProposalsParamsSourceFilterRecommendations:
+		return true
+	case ListAiProposalsParamsSourceRolloutRisk:
+		return true
+	case ListAiProposalsParamsSourceRpzSuggestions:
+		return true
+	case ListAiProposalsParamsSourceUpstreamPrediction:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListAiProposalsParamsStatus.
+const (
+	ListAiProposalsParamsStatusApplied    ListAiProposalsParamsStatus = "applied"
+	ListAiProposalsParamsStatusDismissed  ListAiProposalsParamsStatus = "dismissed"
+	ListAiProposalsParamsStatusFailed     ListAiProposalsParamsStatus = "failed"
+	ListAiProposalsParamsStatusOpen       ListAiProposalsParamsStatus = "open"
+	ListAiProposalsParamsStatusStale      ListAiProposalsParamsStatus = "stale"
+	ListAiProposalsParamsStatusSuperseded ListAiProposalsParamsStatus = "superseded"
+)
+
+// Valid indicates whether the value is a known member of the ListAiProposalsParamsStatus enum.
+func (e ListAiProposalsParamsStatus) Valid() bool {
+	switch e {
+	case ListAiProposalsParamsStatusApplied:
+		return true
+	case ListAiProposalsParamsStatusDismissed:
+		return true
+	case ListAiProposalsParamsStatusFailed:
+		return true
+	case ListAiProposalsParamsStatusOpen:
+		return true
+	case ListAiProposalsParamsStatusStale:
+		return true
+	case ListAiProposalsParamsStatusSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetDashboardSeriesParamsRange.
 const (
 	GetDashboardSeriesParamsRangeN15m GetDashboardSeriesParamsRange = "15m"
@@ -1751,6 +2327,391 @@ type AccessControl struct {
 	AuthoritativeAllowCidrs *[]string `json:"authoritative_allow_cidrs,omitempty"`
 	Revision                int64     `json:"revision"`
 }
+
+// AiAgentName defines model for AiAgentName.
+type AiAgentName string
+
+// AiAgentState defines model for AiAgentState.
+type AiAgentState struct {
+	Enabled         bool        `json:"enabled"`
+	IntervalSeconds int64       `json:"interval_seconds"`
+	LastError       string      `json:"last_error"`
+	LastFinishedAt  *time.Time  `json:"last_finished_at"`
+	LastOutcome     string      `json:"last_outcome"`
+	LastStartedAt   *time.Time  `json:"last_started_at"`
+	Name            AiAgentName `json:"name"`
+	NextRunAt       *time.Time  `json:"next_run_at"`
+	Running         bool        `json:"running"`
+}
+
+// AiApplyRequest defines model for AiApplyRequest.
+type AiApplyRequest struct {
+	AcknowledgeLicense *bool                `json:"acknowledge_license,omitempty"`
+	Ids                []openapi_types.UUID `json:"ids"`
+}
+
+// AiApplyResponse defines model for AiApplyResponse.
+type AiApplyResponse struct {
+	Results []struct {
+		Actions []struct {
+			Code        string `json:"code"`
+			HttpStatus  int    `json:"http_status"`
+			Message     string `json:"message"`
+			OperationId string `json:"operation_id"`
+		} `json:"actions"`
+		Id     openapi_types.UUID `json:"id"`
+		Status string             `json:"status"`
+	} `json:"results"`
+}
+
+// AiAssistantMessage defines model for AiAssistantMessage.
+type AiAssistantMessage struct {
+	Content    string                 `json:"content"`
+	CreatedAt  time.Time              `json:"created_at"`
+	Id         int64                  `json:"id"`
+	ProposalId *openapi_types.UUID    `json:"proposal_id"`
+	Role       AiAssistantMessageRole `json:"role"`
+}
+
+// AiAssistantMessageRole defines model for AiAssistantMessage.Role.
+type AiAssistantMessageRole string
+
+// AiAssistantMessageInput defines model for AiAssistantMessageInput.
+type AiAssistantMessageInput struct {
+	Content string `json:"content"`
+}
+
+// AiAssistantSession defines model for AiAssistantSession.
+type AiAssistantSession struct {
+	CreatedAt time.Time            `json:"created_at"`
+	Id        openapi_types.UUID   `json:"id"`
+	Messages  []AiAssistantMessage `json:"messages"`
+	Proposal  *AiProposal          `json:"proposal"`
+	Task      *AiTask              `json:"task"`
+	Title     string               `json:"title"`
+	UpdatedAt time.Time            `json:"updated_at"`
+}
+
+// AiAssistantTurnResult defines model for AiAssistantTurnResult.
+type AiAssistantTurnResult struct {
+	MessageId  int64               `json:"message_id"`
+	ProposalId *openapi_types.UUID `json:"proposal_id"`
+}
+
+// AiCapacityForecast defines model for AiCapacityForecast.
+type AiCapacityForecast struct {
+	Confidence              float32                    `json:"confidence"`
+	CurrentValue            float32                    `json:"current_value"`
+	DaysRemaining           *int                       `json:"days_remaining"`
+	GrowthPerDay            float32                    `json:"growth_per_day"`
+	GrowthPerWeek           float32                    `json:"growth_per_week"`
+	MaxValue                *float32                   `json:"max_value"`
+	PointsAnalyzed          int                        `json:"points_analyzed"`
+	ProjectedExhaustionDate *time.Time                 `json:"projected_exhaustion_date"`
+	Recommendation          string                     `json:"recommendation"`
+	Resource                AiCapacityForecastResource `json:"resource"`
+	Trend                   AiCapacityForecastTrend    `json:"trend"`
+}
+
+// AiCapacityForecastResource defines model for AiCapacityForecast.Resource.
+type AiCapacityForecastResource string
+
+// AiCapacityForecastTrend defines model for AiCapacityForecast.Trend.
+type AiCapacityForecastTrend string
+
+// AiDismissRequest defines model for AiDismissRequest.
+type AiDismissRequest struct {
+	Ids    []openapi_types.UUID `json:"ids"`
+	Reason *string              `json:"reason,omitempty"`
+}
+
+// AiDismissResponse defines model for AiDismissResponse.
+type AiDismissResponse struct {
+	Results []struct {
+		Code   string             `json:"code"`
+		Id     openapi_types.UUID `json:"id"`
+		Status string             `json:"status"`
+	} `json:"results"`
+}
+
+// AiFinding defines model for AiFinding.
+type AiFinding struct {
+	CandidateId string                 `json:"candidate_id"`
+	Confidence  float32                `json:"confidence"`
+	Description string                 `json:"description"`
+	Detail      map[string]interface{} `json:"detail"`
+	Explained   bool                   `json:"explained"`
+	FirstSeen   time.Time              `json:"first_seen"`
+	Id          openapi_types.UUID     `json:"id"`
+	Kind        AiFindingKind          `json:"kind"`
+	LastSeen    time.Time              `json:"last_seen"`
+	Severity    AiFindingSeverity      `json:"severity"`
+	Status      AiFindingStatus        `json:"status"`
+	Title       string                 `json:"title"`
+	Type        string                 `json:"type"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	UpdatedBy   string                 `json:"updated_by"`
+}
+
+// AiFindingKind defines model for AiFinding.Kind.
+type AiFindingKind string
+
+// AiFindingSeverity defines model for AiFinding.Severity.
+type AiFindingSeverity string
+
+// AiFindingStatus defines model for AiFinding.Status.
+type AiFindingStatus string
+
+// AiFindingUpdate defines model for AiFindingUpdate.
+type AiFindingUpdate struct {
+	Status AiFindingUpdateStatus `json:"status"`
+}
+
+// AiFindingUpdateStatus defines model for AiFindingUpdate.Status.
+type AiFindingUpdateStatus string
+
+// AiForecast defines model for AiForecast.
+type AiForecast struct {
+	Capacity    *AiCapacityForecast   `json:"capacity"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Id          openapi_types.UUID    `json:"id"`
+	Kind        AiForecastKind        `json:"kind"`
+	ProposalId  *openapi_types.UUID   `json:"proposal_id"`
+	Subject     string                `json:"subject"`
+	Upstream    *AiUpstreamPrediction `json:"upstream"`
+	ValidUntil  time.Time             `json:"valid_until"`
+}
+
+// AiForecastKind defines model for AiForecast.Kind.
+type AiForecastKind string
+
+// AiInsights defines model for AiInsights.
+type AiInsights struct {
+	GeneratedAt *time.Time  `json:"generated_at"`
+	Insights    []AiFinding `json:"insights"`
+	Score       int         `json:"score"`
+	Summary     string      `json:"summary"`
+}
+
+// AiListClassification defines model for AiListClassification.
+type AiListClassification struct {
+	BlobSha256 string `json:"blob_sha256"`
+	Breakdown  []struct {
+		Category  string `json:"category"`
+		Estimated int64  `json:"estimated"`
+		Sampled   int    `json:"sampled"`
+	} `json:"breakdown"`
+	ClassifiedAt *time.Time         `json:"classified_at"`
+	EntryCount   int64              `json:"entry_count"`
+	ListId       openapi_types.UUID `json:"list_id"`
+	SampleSize   int                `json:"sample_size"`
+}
+
+// AiProposal defines model for AiProposal.
+type AiProposal struct {
+	Actions       []AiProposalAction      `json:"actions"`
+	CreatedAt     time.Time               `json:"created_at"`
+	Description   string                  `json:"description"`
+	DismissReason string                  `json:"dismiss_reason"`
+	Evidence      map[string]interface{}  `json:"evidence"`
+	Id            openapi_types.UUID      `json:"id"`
+	Impact        map[string]interface{}  `json:"impact"`
+	Priority      AiProposalPriority      `json:"priority"`
+	Result        *map[string]interface{} `json:"result"`
+	ReviewedAt    *time.Time              `json:"reviewed_at"`
+	ReviewedBy    string                  `json:"reviewed_by"`
+	Risk          map[string]interface{}  `json:"risk"`
+	SessionId     *openapi_types.UUID     `json:"session_id"`
+	Source        AiProposalSource        `json:"source"`
+	Status        AiProposalStatus        `json:"status"`
+	Title         string                  `json:"title"`
+	UpdatedAt     time.Time               `json:"updated_at"`
+}
+
+// AiProposalPriority defines model for AiProposal.Priority.
+type AiProposalPriority string
+
+// AiProposalSource defines model for AiProposal.Source.
+type AiProposalSource string
+
+// AiProposalStatus defines model for AiProposal.Status.
+type AiProposalStatus string
+
+// AiProposalAction defines model for AiProposalAction.
+type AiProposalAction struct {
+	Body *map[string]interface{} `json:"body"`
+
+	// Current The live resource the action changes (getAiProposal only; null in lists and for creations).
+	Current     *map[string]interface{} `json:"current"`
+	Explanation string                  `json:"explanation"`
+	OperationId string                  `json:"operation_id"`
+	PathParams  map[string]string       `json:"path_params"`
+}
+
+// AiQueryLogFilters defines model for AiQueryLogFilters.
+type AiQueryLogFilters struct {
+	Cache       *[]string  `json:"cache,omitempty"`
+	Category    *[]string  `json:"category,omitempty"`
+	Client      *string    `json:"client,omitempty"`
+	EngineId    *[]string  `json:"engine_id,omitempty"`
+	Filter      *[]string  `json:"filter,omitempty"`
+	From        *time.Time `json:"from,omitempty"`
+	ListId      *[]string  `json:"list_id,omitempty"`
+	Name        *string    `json:"name,omitempty"`
+	PolicyGroup *[]string  `json:"policy_group,omitempty"`
+	Qtype       *[]string  `json:"qtype,omitempty"`
+	Rcode       *[]string  `json:"rcode,omitempty"`
+	Source      *[]string  `json:"source,omitempty"`
+	To          *time.Time `json:"to,omitempty"`
+}
+
+// AiQueryLogSearchRequest defines model for AiQueryLogSearchRequest.
+type AiQueryLogSearchRequest struct {
+	From  *time.Time `json:"from,omitempty"`
+	Query string     `json:"query"`
+	To    *time.Time `json:"to,omitempty"`
+}
+
+// AiQueryLogSearchResult defines model for AiQueryLogSearchResult.
+type AiQueryLogSearchResult struct {
+	Explanation string            `json:"explanation"`
+	Filters     AiQueryLogFilters `json:"filters"`
+	Suggestions []string          `json:"suggestions"`
+	Summary     string            `json:"summary"`
+	TotalShown  int               `json:"total_shown"`
+}
+
+// AiRolloutRisk defines model for AiRolloutRisk.
+type AiRolloutRisk struct {
+	Analysis           string     `json:"analysis"`
+	AssessedAt         *time.Time `json:"assessed_at"`
+	Error              string     `json:"error"`
+	HistoricalPatterns []struct {
+		CanaryRejected   bool    `json:"canary_rejected"`
+		ConfigVersion    int64   `json:"config_version"`
+		Description      string  `json:"description"`
+		MaxServfailRatio float32 `json:"max_servfail_ratio"`
+		Outcome          string  `json:"outcome"`
+	} `json:"historical_patterns"`
+	ProposalId     *openapi_types.UUID `json:"proposal_id"`
+	Recommendation *struct {
+		CanaryCount      int     `json:"canary_count"`
+		MaxServfailRatio float32 `json:"max_servfail_ratio"`
+		MinHealthQueries int     `json:"min_health_queries"`
+		Reasoning        string  `json:"reasoning"`
+		Strategy         string  `json:"strategy"`
+	} `json:"recommendation"`
+	RiskLevel *AiRolloutRiskRiskLevel `json:"risk_level"`
+	RiskScore *int                    `json:"risk_score"`
+	RolloutId openapi_types.UUID      `json:"rollout_id"`
+	Status    AiRolloutRiskStatus     `json:"status"`
+}
+
+// AiRolloutRiskRiskLevel defines model for AiRolloutRisk.RiskLevel.
+type AiRolloutRiskRiskLevel string
+
+// AiRolloutRiskStatus defines model for AiRolloutRisk.Status.
+type AiRolloutRiskStatus string
+
+// AiStatus The AI layer's state. It never contains the API key.
+type AiStatus struct {
+	Agents []AiAgentState `json:"agents"`
+	Budget struct {
+		BackgroundLimitTokens int64              `json:"background_limit_tokens"`
+		Day                   openapi_types.Date `json:"day"`
+		LimitTokens           int64              `json:"limit_tokens"`
+		UsedTokens            int64              `json:"used_tokens"`
+	} `json:"budget"`
+	Enabled      bool   `json:"enabled"`
+	EndpointHost string `json:"endpoint_host"`
+	Features     struct {
+		ConfigAssistant bool `json:"config_assistant"`
+		QuerylogSearch  bool `json:"querylog_search"`
+		ThreatCheck     bool `json:"threat_check"`
+	} `json:"features"`
+	Mcp struct {
+		Enabled  bool `json:"enabled"`
+		ReadOnly bool `json:"read_only"`
+	} `json:"mcp"`
+	Model            string         `json:"model"`
+	Reason           AiStatusReason `json:"reason"`
+	StructuredOutput string         `json:"structured_output"`
+}
+
+// AiStatusReason defines model for AiStatus.Reason.
+type AiStatusReason string
+
+// AiTask defines model for AiTask.
+type AiTask struct {
+	CreatedAt    time.Time          `json:"created_at"`
+	ErrorCode    string             `json:"error_code"`
+	ErrorMessage string             `json:"error_message"`
+	FinishedAt   *time.Time         `json:"finished_at"`
+	Id           openapi_types.UUID `json:"id"`
+	Kind         AiTaskKind         `json:"kind"`
+
+	// Result The kind's result (AiQueryLogSearchResult, AiThreatCheckResult or AiAssistantTurnResult) once succeeded.
+	Result    *map[string]interface{} `json:"result"`
+	StartedAt *time.Time              `json:"started_at"`
+	Status    AiTaskStatus            `json:"status"`
+}
+
+// AiTaskKind defines model for AiTask.Kind.
+type AiTaskKind string
+
+// AiTaskStatus defines model for AiTask.Status.
+type AiTaskStatus string
+
+// AiThreatCheckRequest defines model for AiThreatCheckRequest.
+type AiThreatCheckRequest struct {
+	Domains []string `json:"domains"`
+}
+
+// AiThreatCheckResult defines model for AiThreatCheckResult.
+type AiThreatCheckResult struct {
+	Results []AiThreatVerdict `json:"results"`
+}
+
+// AiThreatVerdict defines model for AiThreatVerdict.
+type AiThreatVerdict struct {
+	BlockedBy   string     `json:"blocked_by"`
+	Cached      bool       `json:"cached"`
+	Categories  []string   `json:"categories"`
+	ClientCount int64      `json:"client_count"`
+	Confidence  float32    `json:"confidence"`
+	FirstSeen   *time.Time `json:"first_seen"`
+	IsThreat    bool       `json:"is_threat"`
+	LastSeen    *time.Time `json:"last_seen"`
+	Name        string     `json:"name"`
+	QueryCount  int64      `json:"query_count"`
+	Reasoning   string     `json:"reasoning"`
+}
+
+// AiUpstreamPrediction defines model for AiUpstreamPrediction.
+type AiUpstreamPrediction struct {
+	Confidence               float32    `json:"confidence"`
+	CurrentRttP50Ms          float32    `json:"current_rtt_p50_ms"`
+	CurrentRttP99Ms          float32    `json:"current_rtt_p99_ms"`
+	DataPointsAnalyzed       int        `json:"data_points_analyzed"`
+	PeriodicHours            []int      `json:"periodic_hours"`
+	ProjectedTimeToThreshold *time.Time `json:"projected_time_to_threshold"`
+	Reasoning                string     `json:"reasoning"`
+	Recommendation           struct {
+		Description string                                 `json:"description"`
+		Type        AiUpstreamPredictionRecommendationType `json:"type"`
+	} `json:"recommendation"`
+	SlopeMsPerHour float32                   `json:"slope_ms_per_hour"`
+	StepChange     bool                      `json:"step_change"`
+	Trend          AiUpstreamPredictionTrend `json:"trend"`
+	UpstreamId     string                    `json:"upstream_id"`
+	UpstreamName   string                    `json:"upstream_name"`
+}
+
+// AiUpstreamPredictionRecommendationType defines model for AiUpstreamPrediction.Recommendation.Type.
+type AiUpstreamPredictionRecommendationType string
+
+// AiUpstreamPredictionTrend defines model for AiUpstreamPrediction.Trend.
+type AiUpstreamPredictionTrend string
 
 // Allowlist defines model for Allowlist.
 type Allowlist struct {
@@ -2540,10 +3501,18 @@ type QueryLogRecord struct {
 	RpzZoneName     string               `json:"rpz_zone_name"`
 	Rule            string               `json:"rule"`
 	Source          QueryLogRecordSource `json:"source"`
-	Time            time.Time            `json:"time"`
-	Transport       string               `json:"transport"`
-	Upstream        string               `json:"upstream"`
-	UpstreamsRaced  int                  `json:"upstreams_raced"`
+
+	// Threat The cached AI threat verdict for the name; null when none is cached or AI is off.
+	Threat *struct {
+		Categories []string  `json:"categories"`
+		CheckedAt  time.Time `json:"checked_at"`
+		Confidence float32   `json:"confidence"`
+		IsThreat   bool      `json:"is_threat"`
+	} `json:"threat"`
+	Time           time.Time `json:"time"`
+	Transport      string    `json:"transport"`
+	Upstream       string    `json:"upstream"`
+	UpstreamsRaced int       `json:"upstreams_raced"`
 }
 
 // QueryLogRecordCache defines model for QueryLogRecord.Cache.
@@ -3296,6 +4265,40 @@ type Id = openapi_types.UUID
 // Revision defines model for Revision.
 type Revision = int64
 
+// ListAiFindingsParams defines parameters for ListAiFindings.
+type ListAiFindingsParams struct {
+	Kind   *ListAiFindingsParamsKind   `form:"kind,omitempty" json:"kind,omitempty"`
+	Status *ListAiFindingsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int                        `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAiFindingsParamsKind defines parameters for ListAiFindings.
+type ListAiFindingsParamsKind string
+
+// ListAiFindingsParamsStatus defines parameters for ListAiFindings.
+type ListAiFindingsParamsStatus string
+
+// ListAiForecastsParams defines parameters for ListAiForecasts.
+type ListAiForecastsParams struct {
+	Kind *ListAiForecastsParamsKind `form:"kind,omitempty" json:"kind,omitempty"`
+}
+
+// ListAiForecastsParamsKind defines parameters for ListAiForecasts.
+type ListAiForecastsParamsKind string
+
+// ListAiProposalsParams defines parameters for ListAiProposals.
+type ListAiProposalsParams struct {
+	Source *ListAiProposalsParamsSource `form:"source,omitempty" json:"source,omitempty"`
+	Status *ListAiProposalsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Limit  *int                         `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAiProposalsParamsSource defines parameters for ListAiProposals.
+type ListAiProposalsParamsSource string
+
+// ListAiProposalsParamsStatus defines parameters for ListAiProposals.
+type ListAiProposalsParamsStatus string
+
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
 	Limit    *int   `form:"limit,omitempty" json:"limit,omitempty"`
@@ -3481,6 +4484,24 @@ type DeleteZoneRecordParams struct {
 // UpdateAccessControlJSONRequestBody defines body for UpdateAccessControl for application/json ContentType.
 type UpdateAccessControlJSONRequestBody = AccessControl
 
+// PostAiAssistantMessageJSONRequestBody defines body for PostAiAssistantMessage for application/json ContentType.
+type PostAiAssistantMessageJSONRequestBody = AiAssistantMessageInput
+
+// UpdateAiFindingJSONRequestBody defines body for UpdateAiFinding for application/json ContentType.
+type UpdateAiFindingJSONRequestBody = AiFindingUpdate
+
+// ApplyAiProposalsJSONRequestBody defines body for ApplyAiProposals for application/json ContentType.
+type ApplyAiProposalsJSONRequestBody = AiApplyRequest
+
+// DismissAiProposalsJSONRequestBody defines body for DismissAiProposals for application/json ContentType.
+type DismissAiProposalsJSONRequestBody = AiDismissRequest
+
+// StartAiQueryLogSearchJSONRequestBody defines body for StartAiQueryLogSearch for application/json ContentType.
+type StartAiQueryLogSearchJSONRequestBody = AiQueryLogSearchRequest
+
+// StartAiThreatCheckJSONRequestBody defines body for StartAiThreatCheck for application/json ContentType.
+type StartAiThreatCheckJSONRequestBody = AiThreatCheckRequest
+
 // UpdateAllowlistJSONRequestBody defines body for UpdateAllowlist for application/json ContentType.
 type UpdateAllowlistJSONRequestBody = Allowlist
 
@@ -3618,6 +4639,54 @@ type ServerInterface interface {
 
 	// (PUT /access-control)
 	UpdateAccessControl(w http.ResponseWriter, r *http.Request)
+
+	// (POST /ai/agents/{agent}/run)
+	RunAiAgent(w http.ResponseWriter, r *http.Request, agent AiAgentName)
+
+	// (POST /ai/assistant/sessions)
+	CreateAiAssistantSession(w http.ResponseWriter, r *http.Request)
+
+	// (GET /ai/assistant/sessions/{id})
+	GetAiAssistantSession(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /ai/assistant/sessions/{id}/messages)
+	PostAiAssistantMessage(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /ai/findings)
+	ListAiFindings(w http.ResponseWriter, r *http.Request, params ListAiFindingsParams)
+
+	// (PATCH /ai/findings/{id})
+	UpdateAiFinding(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /ai/forecasts)
+	ListAiForecasts(w http.ResponseWriter, r *http.Request, params ListAiForecastsParams)
+
+	// (GET /ai/insights)
+	GetAiInsights(w http.ResponseWriter, r *http.Request)
+
+	// (GET /ai/proposals)
+	ListAiProposals(w http.ResponseWriter, r *http.Request, params ListAiProposalsParams)
+
+	// (POST /ai/proposals/apply)
+	ApplyAiProposals(w http.ResponseWriter, r *http.Request)
+
+	// (POST /ai/proposals/dismiss)
+	DismissAiProposals(w http.ResponseWriter, r *http.Request)
+
+	// (GET /ai/proposals/{id})
+	GetAiProposal(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /ai/query-log/search)
+	StartAiQueryLogSearch(w http.ResponseWriter, r *http.Request)
+
+	// (GET /ai/status)
+	GetAiStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /ai/tasks/{id})
+	GetAiTask(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (POST /ai/threat-check)
+	StartAiThreatCheck(w http.ResponseWriter, r *http.Request)
 
 	// (GET /allowlist)
 	GetAllowlist(w http.ResponseWriter, r *http.Request)
@@ -3772,6 +4841,9 @@ type ServerInterface interface {
 	// (PUT /filter-lists/{id})
 	UpdateFilterList(w http.ResponseWriter, r *http.Request, id Id)
 
+	// (GET /filter-lists/{id}/ai-classification)
+	GetAiFilterListClassification(w http.ResponseWriter, r *http.Request, id Id)
+
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id)
 
@@ -3849,6 +4921,9 @@ type ServerInterface interface {
 
 	// (GET /rollouts/{id})
 	GetRollout(w http.ResponseWriter, r *http.Request, id Id)
+
+	// (GET /rollouts/{id}/ai-risk)
+	GetAiRolloutRisk(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /rpz-zones)
 	ListRpzZones(w http.ResponseWriter, r *http.Request)
@@ -3985,6 +5060,86 @@ func (_ Unimplemented) GetAccessControl(w http.ResponseWriter, r *http.Request) 
 
 // (PUT /access-control)
 func (_ Unimplemented) UpdateAccessControl(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/agents/{agent}/run)
+func (_ Unimplemented) RunAiAgent(w http.ResponseWriter, r *http.Request, agent AiAgentName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/assistant/sessions)
+func (_ Unimplemented) CreateAiAssistantSession(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/assistant/sessions/{id})
+func (_ Unimplemented) GetAiAssistantSession(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/assistant/sessions/{id}/messages)
+func (_ Unimplemented) PostAiAssistantMessage(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/findings)
+func (_ Unimplemented) ListAiFindings(w http.ResponseWriter, r *http.Request, params ListAiFindingsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /ai/findings/{id})
+func (_ Unimplemented) UpdateAiFinding(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/forecasts)
+func (_ Unimplemented) ListAiForecasts(w http.ResponseWriter, r *http.Request, params ListAiForecastsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/insights)
+func (_ Unimplemented) GetAiInsights(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/proposals)
+func (_ Unimplemented) ListAiProposals(w http.ResponseWriter, r *http.Request, params ListAiProposalsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/proposals/apply)
+func (_ Unimplemented) ApplyAiProposals(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/proposals/dismiss)
+func (_ Unimplemented) DismissAiProposals(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/proposals/{id})
+func (_ Unimplemented) GetAiProposal(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/query-log/search)
+func (_ Unimplemented) StartAiQueryLogSearch(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/status)
+func (_ Unimplemented) GetAiStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /ai/tasks/{id})
+func (_ Unimplemented) GetAiTask(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /ai/threat-check)
+func (_ Unimplemented) StartAiThreatCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4243,6 +5398,11 @@ func (_ Unimplemented) UpdateFilterList(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /filter-lists/{id}/ai-classification)
+func (_ Unimplemented) GetAiFilterListClassification(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /filter-lists/{id}/refresh)
 func (_ Unimplemented) RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -4370,6 +5530,11 @@ func (_ Unimplemented) ListRollouts(w http.ResponseWriter, r *http.Request, para
 
 // (GET /rollouts/{id})
 func (_ Unimplemented) GetRollout(w http.ResponseWriter, r *http.Request, id Id) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /rollouts/{id}/ai-risk)
+func (_ Unimplemented) GetAiRolloutRisk(w http.ResponseWriter, r *http.Request, id Id) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4606,6 +5771,411 @@ func (siw *ServerInterfaceWrapper) UpdateAccessControl(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateAccessControl(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunAiAgent operation middleware
+func (siw *ServerInterfaceWrapper) RunAiAgent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "agent" -------------
+	var agent AiAgentName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "agent", chi.URLParam(r, "agent"), &agent, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "agent", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunAiAgent(w, r, agent)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAiAssistantSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateAiAssistantSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAiAssistantSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiAssistantSession operation middleware
+func (siw *ServerInterfaceWrapper) GetAiAssistantSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiAssistantSession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAiAssistantMessage operation middleware
+func (siw *ServerInterfaceWrapper) PostAiAssistantMessage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAiAssistantMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAiFindings operation middleware
+func (siw *ServerInterfaceWrapper) ListAiFindings(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAiFindingsParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAiFindings(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAiFinding operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAiFinding(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAiFinding(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAiForecasts operation middleware
+func (siw *ServerInterfaceWrapper) ListAiForecasts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAiForecastsParams
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAiForecasts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiInsights operation middleware
+func (siw *ServerInterfaceWrapper) GetAiInsights(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiInsights(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAiProposals operation middleware
+func (siw *ServerInterfaceWrapper) ListAiProposals(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAiProposalsParams
+
+	// ------------- Optional query parameter "source" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "source", r.URL.Query(), &params.Source, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAiProposals(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyAiProposals operation middleware
+func (siw *ServerInterfaceWrapper) ApplyAiProposals(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyAiProposals(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DismissAiProposals operation middleware
+func (siw *ServerInterfaceWrapper) DismissAiProposals(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DismissAiProposals(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiProposal operation middleware
+func (siw *ServerInterfaceWrapper) GetAiProposal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiProposal(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartAiQueryLogSearch operation middleware
+func (siw *ServerInterfaceWrapper) StartAiQueryLogSearch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartAiQueryLogSearch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAiStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiTask operation middleware
+func (siw *ServerInterfaceWrapper) GetAiTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiTask(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartAiThreatCheck operation middleware
+func (siw *ServerInterfaceWrapper) StartAiThreatCheck(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartAiThreatCheck(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5841,6 +7411,32 @@ func (siw *ServerInterfaceWrapper) UpdateFilterList(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetAiFilterListClassification operation middleware
+func (siw *ServerInterfaceWrapper) GetAiFilterListClassification(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiFilterListClassification(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RefreshFilterList operation middleware
 func (siw *ServerInterfaceWrapper) RefreshFilterList(w http.ResponseWriter, r *http.Request) {
 
@@ -6629,6 +8225,32 @@ func (siw *ServerInterfaceWrapper) GetRollout(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRollout(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiRolloutRisk operation middleware
+func (siw *ServerInterfaceWrapper) GetAiRolloutRisk(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiRolloutRisk(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8142,6 +9764,60 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/engines/{id}/rotate-certificate", wrapper.RotateEngineCertificate)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/status", wrapper.GetAiStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/agents/{agent}/run", wrapper.RunAiAgent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/tasks/{id}", wrapper.GetAiTask)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/query-log/search", wrapper.StartAiQueryLogSearch)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/findings", wrapper.ListAiFindings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/ai/findings/{id}", wrapper.UpdateAiFinding)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/insights", wrapper.GetAiInsights)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/proposals", wrapper.ListAiProposals)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/proposals/{id}", wrapper.GetAiProposal)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/proposals/apply", wrapper.ApplyAiProposals)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/proposals/dismiss", wrapper.DismissAiProposals)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/assistant/sessions", wrapper.CreateAiAssistantSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/assistant/sessions/{id}", wrapper.GetAiAssistantSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/assistant/sessions/{id}/messages", wrapper.PostAiAssistantMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ai/forecasts", wrapper.ListAiForecasts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rollouts/{id}/ai-risk", wrapper.GetAiRolloutRisk)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/ai/threat-check", wrapper.StartAiThreatCheck)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/filter-lists/{id}/ai-classification", wrapper.GetAiFilterListClassification)
+	})
 
 	return r
 }
@@ -8215,6 +9891,827 @@ func (response UpdateAccessControl409JSONResponse) VisitUpdateAccessControlRespo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunAiAgentRequestObject struct {
+	Agent AiAgentName `json:"agent"`
+}
+
+type RunAiAgentResponseObject interface {
+	VisitRunAiAgentResponse(w http.ResponseWriter) error
+}
+
+type RunAiAgent202Response struct {
+}
+
+func (response RunAiAgent202Response) VisitRunAiAgentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RunAiAgent404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RunAiAgent404JSONResponse) VisitRunAiAgentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunAiAgent503JSONResponse Error
+
+func (response RunAiAgent503JSONResponse) VisitRunAiAgentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAiAssistantSessionRequestObject struct {
+}
+
+type CreateAiAssistantSessionResponseObject interface {
+	VisitCreateAiAssistantSessionResponse(w http.ResponseWriter) error
+}
+
+type CreateAiAssistantSession201JSONResponse AiAssistantSession
+
+func (response CreateAiAssistantSession201JSONResponse) VisitCreateAiAssistantSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAiAssistantSession503JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateAiAssistantSession503JSONResponse) VisitCreateAiAssistantSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiAssistantSessionRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetAiAssistantSessionResponseObject interface {
+	VisitGetAiAssistantSessionResponse(w http.ResponseWriter) error
+}
+
+type GetAiAssistantSession200JSONResponse AiAssistantSession
+
+func (response GetAiAssistantSession200JSONResponse) VisitGetAiAssistantSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiAssistantSession404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiAssistantSession404JSONResponse) VisitGetAiAssistantSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiAssistantSession503JSONResponse Error
+
+func (response GetAiAssistantSession503JSONResponse) VisitGetAiAssistantSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAiAssistantMessageRequestObject struct {
+	Id   Id `json:"id"`
+	Body *PostAiAssistantMessageJSONRequestBody
+}
+
+type PostAiAssistantMessageResponseObject interface {
+	VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error
+}
+
+type PostAiAssistantMessage202JSONResponse AiTask
+
+func (response PostAiAssistantMessage202JSONResponse) VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAiAssistantMessage400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PostAiAssistantMessage400JSONResponse) VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAiAssistantMessage404JSONResponse Error
+
+func (response PostAiAssistantMessage404JSONResponse) VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAiAssistantMessage429JSONResponse Error
+
+func (response PostAiAssistantMessage429JSONResponse) VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAiAssistantMessage503JSONResponse Error
+
+func (response PostAiAssistantMessage503JSONResponse) VisitPostAiAssistantMessageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiFindingsRequestObject struct {
+	Params ListAiFindingsParams
+}
+
+type ListAiFindingsResponseObject interface {
+	VisitListAiFindingsResponse(w http.ResponseWriter) error
+}
+
+type ListAiFindings200JSONResponse []AiFinding
+
+func (response ListAiFindings200JSONResponse) VisitListAiFindingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiFindings400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListAiFindings400JSONResponse) VisitListAiFindingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiFindings503JSONResponse Error
+
+func (response ListAiFindings503JSONResponse) VisitListAiFindingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAiFindingRequestObject struct {
+	Id   Id `json:"id"`
+	Body *UpdateAiFindingJSONRequestBody
+}
+
+type UpdateAiFindingResponseObject interface {
+	VisitUpdateAiFindingResponse(w http.ResponseWriter) error
+}
+
+type UpdateAiFinding200JSONResponse AiFinding
+
+func (response UpdateAiFinding200JSONResponse) VisitUpdateAiFindingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAiFinding400JSONResponse struct{ ErrorJSONResponse }
+
+func (response UpdateAiFinding400JSONResponse) VisitUpdateAiFindingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAiFinding404JSONResponse Error
+
+func (response UpdateAiFinding404JSONResponse) VisitUpdateAiFindingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAiFinding503JSONResponse Error
+
+func (response UpdateAiFinding503JSONResponse) VisitUpdateAiFindingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiForecastsRequestObject struct {
+	Params ListAiForecastsParams
+}
+
+type ListAiForecastsResponseObject interface {
+	VisitListAiForecastsResponse(w http.ResponseWriter) error
+}
+
+type ListAiForecasts200JSONResponse []AiForecast
+
+func (response ListAiForecasts200JSONResponse) VisitListAiForecastsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiForecasts400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListAiForecasts400JSONResponse) VisitListAiForecastsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiForecasts503JSONResponse Error
+
+func (response ListAiForecasts503JSONResponse) VisitListAiForecastsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiInsightsRequestObject struct {
+}
+
+type GetAiInsightsResponseObject interface {
+	VisitGetAiInsightsResponse(w http.ResponseWriter) error
+}
+
+type GetAiInsights200JSONResponse AiInsights
+
+func (response GetAiInsights200JSONResponse) VisitGetAiInsightsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiInsights503JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiInsights503JSONResponse) VisitGetAiInsightsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiProposalsRequestObject struct {
+	Params ListAiProposalsParams
+}
+
+type ListAiProposalsResponseObject interface {
+	VisitListAiProposalsResponse(w http.ResponseWriter) error
+}
+
+type ListAiProposals200JSONResponse []AiProposal
+
+func (response ListAiProposals200JSONResponse) VisitListAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiProposals400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListAiProposals400JSONResponse) VisitListAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAiProposals503JSONResponse Error
+
+func (response ListAiProposals503JSONResponse) VisitListAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApplyAiProposalsRequestObject struct {
+	Body *ApplyAiProposalsJSONRequestBody
+}
+
+type ApplyAiProposalsResponseObject interface {
+	VisitApplyAiProposalsResponse(w http.ResponseWriter) error
+}
+
+type ApplyAiProposals200JSONResponse AiApplyResponse
+
+func (response ApplyAiProposals200JSONResponse) VisitApplyAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApplyAiProposals400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ApplyAiProposals400JSONResponse) VisitApplyAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ApplyAiProposals503JSONResponse Error
+
+func (response ApplyAiProposals503JSONResponse) VisitApplyAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DismissAiProposalsRequestObject struct {
+	Body *DismissAiProposalsJSONRequestBody
+}
+
+type DismissAiProposalsResponseObject interface {
+	VisitDismissAiProposalsResponse(w http.ResponseWriter) error
+}
+
+type DismissAiProposals200JSONResponse AiDismissResponse
+
+func (response DismissAiProposals200JSONResponse) VisitDismissAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DismissAiProposals400JSONResponse struct{ ErrorJSONResponse }
+
+func (response DismissAiProposals400JSONResponse) VisitDismissAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DismissAiProposals503JSONResponse Error
+
+func (response DismissAiProposals503JSONResponse) VisitDismissAiProposalsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiProposalRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetAiProposalResponseObject interface {
+	VisitGetAiProposalResponse(w http.ResponseWriter) error
+}
+
+type GetAiProposal200JSONResponse AiProposal
+
+func (response GetAiProposal200JSONResponse) VisitGetAiProposalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiProposal404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiProposal404JSONResponse) VisitGetAiProposalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiProposal503JSONResponse Error
+
+func (response GetAiProposal503JSONResponse) VisitGetAiProposalResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiQueryLogSearchRequestObject struct {
+	Body *StartAiQueryLogSearchJSONRequestBody
+}
+
+type StartAiQueryLogSearchResponseObject interface {
+	VisitStartAiQueryLogSearchResponse(w http.ResponseWriter) error
+}
+
+type StartAiQueryLogSearch202JSONResponse AiTask
+
+func (response StartAiQueryLogSearch202JSONResponse) VisitStartAiQueryLogSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiQueryLogSearch400JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartAiQueryLogSearch400JSONResponse) VisitStartAiQueryLogSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiQueryLogSearch429JSONResponse Error
+
+func (response StartAiQueryLogSearch429JSONResponse) VisitStartAiQueryLogSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiQueryLogSearch503JSONResponse Error
+
+func (response StartAiQueryLogSearch503JSONResponse) VisitStartAiQueryLogSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiStatusRequestObject struct {
+}
+
+type GetAiStatusResponseObject interface {
+	VisitGetAiStatusResponse(w http.ResponseWriter) error
+}
+
+type GetAiStatus200JSONResponse AiStatus
+
+func (response GetAiStatus200JSONResponse) VisitGetAiStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiStatus503JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiStatus503JSONResponse) VisitGetAiStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiTaskRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetAiTaskResponseObject interface {
+	VisitGetAiTaskResponse(w http.ResponseWriter) error
+}
+
+type GetAiTask200JSONResponse AiTask
+
+func (response GetAiTask200JSONResponse) VisitGetAiTaskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiTask404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiTask404JSONResponse) VisitGetAiTaskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiTask503JSONResponse Error
+
+func (response GetAiTask503JSONResponse) VisitGetAiTaskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiThreatCheckRequestObject struct {
+	Body *StartAiThreatCheckJSONRequestBody
+}
+
+type StartAiThreatCheckResponseObject interface {
+	VisitStartAiThreatCheckResponse(w http.ResponseWriter) error
+}
+
+type StartAiThreatCheck202JSONResponse AiTask
+
+func (response StartAiThreatCheck202JSONResponse) VisitStartAiThreatCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiThreatCheck400JSONResponse struct{ ErrorJSONResponse }
+
+func (response StartAiThreatCheck400JSONResponse) VisitStartAiThreatCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiThreatCheck429JSONResponse Error
+
+func (response StartAiThreatCheck429JSONResponse) VisitStartAiThreatCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartAiThreatCheck503JSONResponse Error
+
+func (response StartAiThreatCheck503JSONResponse) VisitStartAiThreatCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -10298,6 +12795,56 @@ func (response UpdateFilterList422JSONResponse) VisitUpdateFilterListResponse(w 
 	return err
 }
 
+type GetAiFilterListClassificationRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetAiFilterListClassificationResponseObject interface {
+	VisitGetAiFilterListClassificationResponse(w http.ResponseWriter) error
+}
+
+type GetAiFilterListClassification200JSONResponse AiListClassification
+
+func (response GetAiFilterListClassification200JSONResponse) VisitGetAiFilterListClassificationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiFilterListClassification404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiFilterListClassification404JSONResponse) VisitGetAiFilterListClassificationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiFilterListClassification503JSONResponse Error
+
+func (response GetAiFilterListClassification503JSONResponse) VisitGetAiFilterListClassificationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RefreshFilterListRequestObject struct {
 	Id Id `json:"id"`
 }
@@ -11373,6 +13920,56 @@ func (response GetRollout404JSONResponse) VisitGetRolloutResponse(w http.Respons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiRolloutRiskRequestObject struct {
+	Id Id `json:"id"`
+}
+
+type GetAiRolloutRiskResponseObject interface {
+	VisitGetAiRolloutRiskResponse(w http.ResponseWriter) error
+}
+
+type GetAiRolloutRisk200JSONResponse AiRolloutRisk
+
+func (response GetAiRolloutRisk200JSONResponse) VisitGetAiRolloutRiskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiRolloutRisk404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetAiRolloutRisk404JSONResponse) VisitGetAiRolloutRiskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAiRolloutRisk503JSONResponse Error
+
+func (response GetAiRolloutRisk503JSONResponse) VisitGetAiRolloutRiskResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -13461,6 +16058,54 @@ type StrictServerInterface interface {
 	// (PUT /access-control)
 	UpdateAccessControl(ctx context.Context, request UpdateAccessControlRequestObject) (UpdateAccessControlResponseObject, error)
 
+	// (POST /ai/agents/{agent}/run)
+	RunAiAgent(ctx context.Context, request RunAiAgentRequestObject) (RunAiAgentResponseObject, error)
+
+	// (POST /ai/assistant/sessions)
+	CreateAiAssistantSession(ctx context.Context, request CreateAiAssistantSessionRequestObject) (CreateAiAssistantSessionResponseObject, error)
+
+	// (GET /ai/assistant/sessions/{id})
+	GetAiAssistantSession(ctx context.Context, request GetAiAssistantSessionRequestObject) (GetAiAssistantSessionResponseObject, error)
+
+	// (POST /ai/assistant/sessions/{id}/messages)
+	PostAiAssistantMessage(ctx context.Context, request PostAiAssistantMessageRequestObject) (PostAiAssistantMessageResponseObject, error)
+
+	// (GET /ai/findings)
+	ListAiFindings(ctx context.Context, request ListAiFindingsRequestObject) (ListAiFindingsResponseObject, error)
+
+	// (PATCH /ai/findings/{id})
+	UpdateAiFinding(ctx context.Context, request UpdateAiFindingRequestObject) (UpdateAiFindingResponseObject, error)
+
+	// (GET /ai/forecasts)
+	ListAiForecasts(ctx context.Context, request ListAiForecastsRequestObject) (ListAiForecastsResponseObject, error)
+
+	// (GET /ai/insights)
+	GetAiInsights(ctx context.Context, request GetAiInsightsRequestObject) (GetAiInsightsResponseObject, error)
+
+	// (GET /ai/proposals)
+	ListAiProposals(ctx context.Context, request ListAiProposalsRequestObject) (ListAiProposalsResponseObject, error)
+
+	// (POST /ai/proposals/apply)
+	ApplyAiProposals(ctx context.Context, request ApplyAiProposalsRequestObject) (ApplyAiProposalsResponseObject, error)
+
+	// (POST /ai/proposals/dismiss)
+	DismissAiProposals(ctx context.Context, request DismissAiProposalsRequestObject) (DismissAiProposalsResponseObject, error)
+
+	// (GET /ai/proposals/{id})
+	GetAiProposal(ctx context.Context, request GetAiProposalRequestObject) (GetAiProposalResponseObject, error)
+
+	// (POST /ai/query-log/search)
+	StartAiQueryLogSearch(ctx context.Context, request StartAiQueryLogSearchRequestObject) (StartAiQueryLogSearchResponseObject, error)
+
+	// (GET /ai/status)
+	GetAiStatus(ctx context.Context, request GetAiStatusRequestObject) (GetAiStatusResponseObject, error)
+
+	// (GET /ai/tasks/{id})
+	GetAiTask(ctx context.Context, request GetAiTaskRequestObject) (GetAiTaskResponseObject, error)
+
+	// (POST /ai/threat-check)
+	StartAiThreatCheck(ctx context.Context, request StartAiThreatCheckRequestObject) (StartAiThreatCheckResponseObject, error)
+
 	// (GET /allowlist)
 	GetAllowlist(ctx context.Context, request GetAllowlistRequestObject) (GetAllowlistResponseObject, error)
 
@@ -13614,6 +16259,9 @@ type StrictServerInterface interface {
 	// (PUT /filter-lists/{id})
 	UpdateFilterList(ctx context.Context, request UpdateFilterListRequestObject) (UpdateFilterListResponseObject, error)
 
+	// (GET /filter-lists/{id}/ai-classification)
+	GetAiFilterListClassification(ctx context.Context, request GetAiFilterListClassificationRequestObject) (GetAiFilterListClassificationResponseObject, error)
+
 	// (POST /filter-lists/{id}/refresh)
 	RefreshFilterList(ctx context.Context, request RefreshFilterListRequestObject) (RefreshFilterListResponseObject, error)
 
@@ -13691,6 +16339,9 @@ type StrictServerInterface interface {
 
 	// (GET /rollouts/{id})
 	GetRollout(ctx context.Context, request GetRolloutRequestObject) (GetRolloutResponseObject, error)
+
+	// (GET /rollouts/{id}/ai-risk)
+	GetAiRolloutRisk(ctx context.Context, request GetAiRolloutRiskRequestObject) (GetAiRolloutRiskResponseObject, error)
 
 	// (GET /rpz-zones)
 	ListRpzZones(ctx context.Context, request ListRpzZonesRequestObject) (ListRpzZonesResponseObject, error)
@@ -13903,6 +16554,450 @@ func (sh *strictHandler) UpdateAccessControl(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateAccessControlResponseObject); ok {
 		if err := validResponse.VisitUpdateAccessControlResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunAiAgent operation middleware
+func (sh *strictHandler) RunAiAgent(w http.ResponseWriter, r *http.Request, agent AiAgentName) {
+	var request RunAiAgentRequestObject
+
+	request.Agent = agent
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RunAiAgent(ctx, request.(RunAiAgentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunAiAgent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RunAiAgentResponseObject); ok {
+		if err := validResponse.VisitRunAiAgentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAiAssistantSession operation middleware
+func (sh *strictHandler) CreateAiAssistantSession(w http.ResponseWriter, r *http.Request) {
+	var request CreateAiAssistantSessionRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAiAssistantSession(ctx, request.(CreateAiAssistantSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAiAssistantSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAiAssistantSessionResponseObject); ok {
+		if err := validResponse.VisitCreateAiAssistantSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiAssistantSession operation middleware
+func (sh *strictHandler) GetAiAssistantSession(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetAiAssistantSessionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiAssistantSession(ctx, request.(GetAiAssistantSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiAssistantSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiAssistantSessionResponseObject); ok {
+		if err := validResponse.VisitGetAiAssistantSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostAiAssistantMessage operation middleware
+func (sh *strictHandler) PostAiAssistantMessage(w http.ResponseWriter, r *http.Request, id Id) {
+	var request PostAiAssistantMessageRequestObject
+
+	request.Id = id
+
+	var body PostAiAssistantMessageJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostAiAssistantMessage(ctx, request.(PostAiAssistantMessageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostAiAssistantMessage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostAiAssistantMessageResponseObject); ok {
+		if err := validResponse.VisitPostAiAssistantMessageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAiFindings operation middleware
+func (sh *strictHandler) ListAiFindings(w http.ResponseWriter, r *http.Request, params ListAiFindingsParams) {
+	var request ListAiFindingsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAiFindings(ctx, request.(ListAiFindingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAiFindings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAiFindingsResponseObject); ok {
+		if err := validResponse.VisitListAiFindingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAiFinding operation middleware
+func (sh *strictHandler) UpdateAiFinding(w http.ResponseWriter, r *http.Request, id Id) {
+	var request UpdateAiFindingRequestObject
+
+	request.Id = id
+
+	var body UpdateAiFindingJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAiFinding(ctx, request.(UpdateAiFindingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAiFinding")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAiFindingResponseObject); ok {
+		if err := validResponse.VisitUpdateAiFindingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAiForecasts operation middleware
+func (sh *strictHandler) ListAiForecasts(w http.ResponseWriter, r *http.Request, params ListAiForecastsParams) {
+	var request ListAiForecastsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAiForecasts(ctx, request.(ListAiForecastsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAiForecasts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAiForecastsResponseObject); ok {
+		if err := validResponse.VisitListAiForecastsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiInsights operation middleware
+func (sh *strictHandler) GetAiInsights(w http.ResponseWriter, r *http.Request) {
+	var request GetAiInsightsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiInsights(ctx, request.(GetAiInsightsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiInsights")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiInsightsResponseObject); ok {
+		if err := validResponse.VisitGetAiInsightsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAiProposals operation middleware
+func (sh *strictHandler) ListAiProposals(w http.ResponseWriter, r *http.Request, params ListAiProposalsParams) {
+	var request ListAiProposalsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAiProposals(ctx, request.(ListAiProposalsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAiProposals")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAiProposalsResponseObject); ok {
+		if err := validResponse.VisitListAiProposalsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ApplyAiProposals operation middleware
+func (sh *strictHandler) ApplyAiProposals(w http.ResponseWriter, r *http.Request) {
+	var request ApplyAiProposalsRequestObject
+
+	var body ApplyAiProposalsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ApplyAiProposals(ctx, request.(ApplyAiProposalsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ApplyAiProposals")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ApplyAiProposalsResponseObject); ok {
+		if err := validResponse.VisitApplyAiProposalsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DismissAiProposals operation middleware
+func (sh *strictHandler) DismissAiProposals(w http.ResponseWriter, r *http.Request) {
+	var request DismissAiProposalsRequestObject
+
+	var body DismissAiProposalsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DismissAiProposals(ctx, request.(DismissAiProposalsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DismissAiProposals")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DismissAiProposalsResponseObject); ok {
+		if err := validResponse.VisitDismissAiProposalsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiProposal operation middleware
+func (sh *strictHandler) GetAiProposal(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetAiProposalRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiProposal(ctx, request.(GetAiProposalRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiProposal")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiProposalResponseObject); ok {
+		if err := validResponse.VisitGetAiProposalResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartAiQueryLogSearch operation middleware
+func (sh *strictHandler) StartAiQueryLogSearch(w http.ResponseWriter, r *http.Request) {
+	var request StartAiQueryLogSearchRequestObject
+
+	var body StartAiQueryLogSearchJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartAiQueryLogSearch(ctx, request.(StartAiQueryLogSearchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartAiQueryLogSearch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartAiQueryLogSearchResponseObject); ok {
+		if err := validResponse.VisitStartAiQueryLogSearchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiStatus operation middleware
+func (sh *strictHandler) GetAiStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetAiStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiStatus(ctx, request.(GetAiStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiStatusResponseObject); ok {
+		if err := validResponse.VisitGetAiStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiTask operation middleware
+func (sh *strictHandler) GetAiTask(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetAiTaskRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiTask(ctx, request.(GetAiTaskRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiTask")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiTaskResponseObject); ok {
+		if err := validResponse.VisitGetAiTaskResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartAiThreatCheck operation middleware
+func (sh *strictHandler) StartAiThreatCheck(w http.ResponseWriter, r *http.Request) {
+	var request StartAiThreatCheckRequestObject
+
+	var body StartAiThreatCheckJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartAiThreatCheck(ctx, request.(StartAiThreatCheckRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartAiThreatCheck")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartAiThreatCheckResponseObject); ok {
+		if err := validResponse.VisitStartAiThreatCheckResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -15296,6 +18391,32 @@ func (sh *strictHandler) UpdateFilterList(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// GetAiFilterListClassification operation middleware
+func (sh *strictHandler) GetAiFilterListClassification(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetAiFilterListClassificationRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiFilterListClassification(ctx, request.(GetAiFilterListClassificationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiFilterListClassification")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiFilterListClassificationResponseObject); ok {
+		if err := validResponse.VisitGetAiFilterListClassificationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // RefreshFilterList operation middleware
 func (sh *strictHandler) RefreshFilterList(w http.ResponseWriter, r *http.Request, id Id) {
 	var request RefreshFilterListRequestObject
@@ -16005,6 +19126,32 @@ func (sh *strictHandler) GetRollout(w http.ResponseWriter, r *http.Request, id I
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetRolloutResponseObject); ok {
 		if err := validResponse.VisitGetRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAiRolloutRisk operation middleware
+func (sh *strictHandler) GetAiRolloutRisk(w http.ResponseWriter, r *http.Request, id Id) {
+	var request GetAiRolloutRiskRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAiRolloutRisk(ctx, request.(GetAiRolloutRiskRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAiRolloutRisk")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAiRolloutRiskResponseObject); ok {
+		if err := validResponse.VisitGetAiRolloutRiskResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -17191,227 +20338,283 @@ func (sh *strictHandler) RefreshZone(w http.ResponseWriter, r *http.Request, zon
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"/z8A",
+	"7L17c9w2ljj6VVC8c2ucW9TLtpzErl9taWQn8dpxfCUltZuslwOR6G6M2AQDgJLbKX/3X+FFgiRAgq1+",
+	"yMn8kVgS8Tw45+DgPP+IUrIsSYEKzqLnf0QlpHCJOKLyt9eZ+D8uoudRCfkiiqMCLlH0PMJZFEcU/V5h",
+	"irLoOacViiOWLtASih4zQpeQR8+jqpIt+aoUvRinuJhHnz/H0QW6xQyToh7/9wrRVTMBNd+DpsEFf/a0",
+	"mQcXHM0RjT6LmShiJSkYkht6RSmh4oeUFBwVXPwIyzLHKeSYFEf/YmpJzRx/o2gWPY/+n6MGTkfqKztS",
+	"o8lZMsRSiksutxQh/cEsVs59lqaIsXNScEpyCWtKSkQ5VkuDeU7ukhRnCvSYo6X8oQO7epOQUrgSv8OK",
+	"LwjFHHJ8i5LOMO11nedYbADIRigDnAAJd7AgjKMMfCIFYoAvIAcMcVAQ1TKRjdSgLwBZYi4akwJUZQY5",
+	"AjcIlaIbAmlFKSo4uIV5hQ6jeMI2qIUR4wdro8VvLdhZI32oO5Lrf6GUi2nO8NkcFfydRLM/IlRUSzGC",
+	"3GFO5gksyBLm4kziKINscU0gzRJcMDxfcPHHGc45oglFKVkuUZFJxBEfqpJxiuAyKSnKcMo19pI8JxVP",
+	"KGY3URzxBUWQJ2kOGcMzjXZRHKWwhCnmq2RGKEoh46Jr+Slh1XyOmJriQ9yHot7OJYcc9XEKFfA6R5kF",
+	"/2tCcgQL0VUAk97CPGEoJUXGggAfRzlkPEGGjnoLkp9nuMBsgbIE8taoAlsOOF6ieuTfTNc4Kqo8jz6Y",
+	"IUjFU6LOyD0H45Dydaco9PEPUbeNKaIL+sgTWhXrTUirohB/cpxEB5fl0uL66Bzn1AeAA+wdMLbOrb2Z",
+	"ZnEeeinLfHWBfq8QU/wyy7BASJi/t5BtBnOG4i5PS28KcpejbI6SHKeoYEgxpRmscl53cuBm1maCIxdK",
+	"HC3hx9eq8cnxcRwtcWF+7XKaDrjFTIP7VrdHn7YoYlXO28vs7l7Rrb9FSjI3hi84L8UB88pmnhYVLhFj",
+	"cO7uLGaQfCXBmaNBBwCt1u2ZY7XAZjYXoLp8HGdBB9bbnGd5sne9HgPS8YV0hjGn5TlqxjDjsOA/NmDt",
+	"nlQtL/S2kgqWHsKJrD44C2S3YhmEwTwZgquT45C8dcNVDNEojqDZquM6cYFeDhPX+28vqLX3MNC+Lspq",
+	"KhuxgL+EH9+iYs4X0fPHx5rSzR9OxjZkxhlZ6SViRhDprOP+B+3lXwo6bWYxcjt1kdZBjOawxGikQD/N",
+	"oue/jY373vT5HNfILrHqs0ArDtnNlNGuRHv3SJjnbgamxMopcHZhrhq/haKtoS2gW4DSOxxBkauKFheS",
+	"pfSxRI+abJvEO3u2pm0P6d7KuRY4vzPypovlzXCGitQ+pKJaXqtVa1E/kaK+s0UGVyyhaAlxW/T5rd68",
+	"xa7mlNzxRVIimmRw5RzPanKH0I2zzRJ+7K7oN/PZmq0kuOAsgQXMV59aAnL7XAS8UJagjwtYSSk8ybSg",
+	"PVX+az0XnFhPESMVTVtMWz82cJGhj/KVkC7EPBSlFWWEJuYPqJjjAiVLtCTyFX2dk/Qmx0LiKzhVrxn1",
+	"iLslebVEzrcEp6jI7NkZFzJopCCvNsQWFBc36mdcsGo2wykWaJBBDsevlHqPXfyxT66HDP2jHzqcHuKZ",
+	"ncU2SveOpI8UbsJ5idkSM7aeQLxFuVZsCGr1hXVLnh4f1y293JKN7XV9Idgr4m5VTpSzblhI/A4XmeZj",
+	"nS3CIsMC9dzydjzGSVs6Gkf3DHGIcz+mKbVYb8XoY5lDXPie/zNMxSMSoWLjwswNbvMRpVNZKZYh9ChO",
+	"9pPDyeth6BZRzFf2ZLiYkSiO7iDVxJ9SzHEKc+ekDXqZ/qRERRTbT1exx0xRgvxZMLH8FmXOAf1SjfrD",
+	"RsSdps/1KpA05JnEbVzV41p0UwO0wyuNLGWjqo1hNZK28Mo+09aSW3sepLafS3PhTuCy/UP1nubojaXH",
+	"8izSLzxp8WqKqNwTyZxi8xwViG7rGdKlXKPTtDSUTqxf+5XKKgVON13oySfA8Gfd532jg3VC8RbmOEuq",
+	"guO8teCJbwxNVWYXndNpT9N9Og/D1kaz10b73EOzCcjggj62Bg58dZpb0PHYZCmhSIsfeCkQ6ESJLOqX",
+	"Y9fbh1XLJaQhTKzRwJs+ZsYO1N0wfIsZP29r3XvQvM7JdcIW8PHpMydCXlMEbzJyVwzJO5CjOXHuKI4Q",
+	"43gp1hn4MmRwWebu50lXtWGmbTrZ04Uo7oxNYl1kQgUXRiJSFTzUlCAeKKFyoNxVwvAnFAAOM3LcOtP2",
+	"KO0Vd/dvn7Ybo95bupVxxW+YzuXMsKz+6ayhexoVLNU1mDQPh14TdNsIrpOkz8BjxcsSpnzy6CXFpCv4",
+	"5eRO6nQyXC2jOFrg+cJ5V9Fab2NwmRjubT3XbzG6W5cS6t7XbjYgbYFTt8yUVnL6DetTKvQtmFLkmyeN",
+	"ijjQqLmu8dIvfAuTvGRhM4gVL2McKgnUEsRZVSLKUDZZFN+MgrFWZdTis1tMrpG1RneLrhqbhsaL1kkP",
+	"aS9tLGtjbI3jPRIf5mSa+/TvRZKthulFK3P6HgdXCwRyfIuA0fxINwG1ZZAuYDFHDDyaI96sApAiX70A",
+	"YmyACyBYOQOwyMCMUCDBIcD11WEUDyxIPk0Kv7JtxEYWS3+XRHrDMD+pel95NXiHjW32JLECc3vpDWTd",
+	"J/f/C53eWzL/TpK0UxwRCsJJ/iS2BDOhl3QtcTbVykmcTRtRsamJfShZht+PlvwRPoVxHehjDMlxukrm",
+	"lFTltCF/V3+Y0oUavVp4l+YiCO/DyQQGOYCflwjSdGHpTNtYOu3YlKuYQ805aAucuBmbatWEH4J26LYJ",
+	"jbGjWUO/w4Jil+DlE6q5ZachhPftJWDFhcfJQj92RsRts/wu87JeatYi26O7wXqhJIwLLSl15GuhoWfY",
+	"vUvIxP259iPG69i0wIwTKhSJSQk5R3TYswMWkK4SipSRwq2C1fLWLaLBjm/jQr2wozBEb4XklMjLxql0",
+	"9vtX9Y3m9iK7wo0ZJ+5t2bmUkIfo+i4PPSOb81DqJ2ofuIHAW+IiWSCY84V0jWzLAtZwSupq+33Z4i8V",
+	"V22A8qNuGbf34FyJcxf2Wj4MCU5CBk1ydIvy4LeV8yjEMCMKoZN4yCBs3hiT7URmzSVSmqqGJbTeEze4",
+	"LEMUwNY6LEnf2l8LZnHDnNwsw2V3bKkFbf5l+JGbR17WW+7L3GevQQ5XiP6dAbFmdAhec1AI7T4QXjAQ",
+	"F8ph9+z9a3CDVodRz3VvblzCQ91RGj9UB01fV9kcOS7Ga5jeCImpyJIcLzFPOLlBRagvqvYUaPF4t6A3",
+	"eehKHMGEHh2sUWbr1rztMWPv1l2HPejIi4pMmq4T4cXtFi8Q5BVFzOPkYT/5nTPU3tFMSjnuRsa1eYHS",
+	"mwA/1+6YTvVDa0wXYJZpOdHtmSKYJeKJGbBGM5Ddy7kKkil+6VA2GdWaYUtRHBWEJ2qzFdUuvoKkcsRR",
+	"/XfDHOrDFZ1Kim8hRx5lCq1SccqZcPrVTnbDrK21PSanUzvp4pRr9JqmY8MrLDxTB+NmW1fQJdOto9+U",
+	"zDHxehioz0OesvfzU1/TptZH/BaWWy6aSd/v1qXG7HN/MeXfGVBNwCP3KyUGZ/hKznwuJlZ/BIQCp5/b",
+	"V4AUKQKsSlMkNG7D6pd7Oef3r/LfK1ShzPJUj6N6Ic2l/mGSya52FbEVbC2f+rY7vYVsXdSqD8OD8DaQ",
+	"PS/gjAhvpfZ9a/u6nj4Zfd6u7QJv5g5Yvft16/ICGvEKlYP+gmiG1Tz38Mtpj+Uy6qU3fl28VJD53mdK",
+	"E4YRW0cXNskUNuIiFOys4+RTLFEcxr3LHK4/tFcZpiPGJkBg6K3kDpFp9tU6qp6bnxm3varOMQ04rlgY",
+	"VOOLGxUd3gfrutVSzpPy9DhZsvFm337raya8MpMwZ1dEMclwmixI5Y5AtBo7XuzaGVNgTMKJPBi2IHm2",
+	"lvls6NU89sgf04+oP1hOrneYp4vEemJTRGiGqLKeaA/YghRo/IKRX9saEheisJyUKFky6c8q4O08O8ZR",
+	"mSgTiUfg9vrrZmhOoX784mVJya362RyyvjPD3XgtQ6DHXlJ/97CEDqTs4bqdPf66Dspw0oELvm1o9rB9",
+	"GIM9ZNRmLR20dPIHEaUqbA5h1/9WI2bNhGPRsiW+Eq/SDcnrH0tMEduqtC0Zd8XuGxjq8HBDM/zRw5Fu",
+	"yc26E5owrSF56UK0UToJGqYPcwm+pnds7k+9pSbGaySWS+PCuWzmtHGsf7peuIfDxy0kyP7j28n6+4El",
+	"ViqZUXFWj6TsJrrD8IE0Y5suziVWGeavbrVd1eVj5LaApJxQH59WH73gVp+7d6SJHbRWzVaMo6XzqpjC",
+	"EoJNIE4dcYZns/t6JvklUg7pHHEfIPVXj1e3iwCloGoB2Dqp1rkYl5CoPYm9IL11N9LwxXtx42dOh4Cc",
+	"pDB3yxMEZ2mAUkyNoJu7VnAuz/SX5kjvf3OYPp5H3JAlc4p1rbNT07WjJLAW00ztBIQSTn5miDZ+7J2L",
+	"H7Myh6uaIK03/7Onrit0qUNBnBcUokJWGn1/iwW9t5rfU5YYlCBemhwa/pe5tAaHvpPF8ytZYD5gnVP+",
+	"JkyoUouu9dUayjSrp+83+b10P6u0qW3SyhnqKRI6HH0CPbgX1r1keKRahhhdjQg+tEL/Jc257wWqTP0a",
+	"1m4oV+XQd/e1bvXpzlEvZ3L8V/tY4w6CKlj2UbCLSS4EtOFbo8IgufwgjbquNEGIDgbcddXNajFJhpm9",
+	"HOPklRi/yvoJJj2e4ygVI0pXeZRIyc5EUlaMJ7BIF4QmFM3EGympjaroY0koTzJKPLbV4cQVrnCu0Dgu",
+	"bxxJ54yN+tdM1XSdlubCwlgfPSsn1onuHeEMTnma+UU5O3Y4uV5xFGr6DHxpFSRD/tkHlFI+ruoN9awl",
+	"n3vc5erhUy/ZBUTLKKAovVYo9EneAdy4d+K9dYcgllzQcERtyLXm/hh6tEE6HPst2TDfZnmT+W8ziAZC",
+	"bNjdIKu8rG/Wrhl4jETVuU6hDdXDBNWH9Wn5v47Cfm2yHaJHJ6CTHk20dxe34ONcWZA7l9SbDTHKgt0h",
+	"ypLrVUJJNRTt6ZIvutNPEaMazX5iez2vP7kZ0MfiQri7aqO89kcayct7oFVWMIbS5JrMK+Zdk26EC4bS",
+	"iqKxdiOtcrhEyRLSG5Q5v8t9DRg21PdvT0e+ey+XgaEHRl3jtvq9VBhr3A/WRxo9EqewYEJ+ut9oKjeI",
+	"CDEQWE8q7j/5pmkt/fmbMpJXYkVS2quEos/f9o5izlGRTHumOCDRAXN9vPVhWpe0jVltPGpjjes679Gc",
+	"i8La5N3dp5ubxH3u5oW79+zaVOU/DBeNuunbwRpCWDk1xigjnZ+cLqM4OllEcfRM/O/xU/H/rzOPhxIq",
+	"7WSTY2oFbatpdauvk0bkGJQNrojDPwzeQpxLU1nPe0bmEwB3C1RI90iVHTUncyC89VCRgRQWBeEAzucU",
+	"zSFHL2Q7HaREZXhTAdCylE+Lvo7N4IjL4NMV88Jt5zcowIlYNIr1sEHxwG7vh4e2SpXS9iEv8Qs46/sQ",
+	"todsGyKLLWtjF/+bA2whnJOmC3aVs8bpuQPCRl/R/5gVTIq4bGoEWjFHtKS44ENpAXCZwCyjiLGpEwif",
+	"TjjTUW5hIqvoco1m2rE+rE+wcsQ0jC2IdfbXWoG9Aye4BkMNLBdYj19zoIplqHvos8sf+BOIBcPqkHtH",
+	"HPuebI7V2fHTaluj+XYGn+UtV2WbzkbuYClhXCLOcTFnLq/BCSaHOKKz9PT45MR91jLPilBVzgi9gzRD",
+	"Wf9q/0W3AVoiAyLqUN7e85xcwxzUKlrwSA8DhDv0V6AqRaZ00ZISwoHUgQKlA30B0GyGUi5CnIV7OLjD",
+	"fAH0crQOyLfatv3WZ25rjeXYZwOZEV8OfR4e/hlAbHKXSSHEHvGDrQr2qJukdLkVLYlu7aU3oaTgiC5x",
+	"0c3X6F+BkZADm1MknigTDZmTZuhB2Hcyubg2+WLpPgXhxCTV+kH5jlzeGTdolXA4dw8fkhDeWAqk1zZj",
+	"azqFtySUFleCWZaUymdMkoh+8hnXLOmf43yTiIoH4/eibNWAIbYgblbm2Wgf+i2ArakiVdeATQNtdKzx",
+	"zEJqQ41d2ohHCLuLhmtrdV0dX8lvG7OdIMoTSsR5JFR52q/rlmWbv0KltLFxGKIY5r4MkcVAoHDLVjGN",
+	"Q44YiXQrC86OJiIEcjv55nJ4jfJ7JdiwXLXXO+kRM5YAzCB/M/HOQ1mU6jZr+jlNFZXu45DYj74xKUji",
+	"6BotlPnUCvKGCwR1TkXbwDzEdNew5tV+PImab1xu8hn8GuOcjdg2CboMed1T7mJGd32WLbFLvG7To6YE",
+	"66x7cHJyEz9X/d4kIunV5DDaxSFlXH0t6Pjn8CSMOnWDO+/ieAi+blEimiJvmy0kQ9OHMrAy9JFTmMA0",
+	"X6dKU8t4toTGgBaG+zrC/w4XGbkbPrXQegObTXTg5Z+E52Vigkl93tOTeJsOx7eTJ9RZXvM8gTwhOl5A",
+	"IpI7dlINwpISCldx96WroinWZdnrJfXV1oCltik1OY0XiGIexRG5RZTiDAUGO2rm0k7Z0Z6mj9fdU3MA",
+	"vZeHokO1sZPN+BDZk7HCmduie3QdwvUSWoux+pKqjTDTdWqXeNhtnRHjybNjOyfGaexniTVrGk6p2meg",
+	"VvqN0YSsHTZp+aOeHD92eqRO4YpNjOrj02dTmGTHSiPbAdkOqKIHIIUlIDPAF5gBebP+nQH99HgBjsH/",
+	"0b8AXXwKPDo9/n9VBwRS2cGMJLMxxAAJS9DpyWPwI/7HVzEgfIHoHWYIQA5yBBkHJ8++/vrrxyfPorgh",
+	"cMMahqHsZeg+vHjsHMbNxZvjdi5jjLsPr9xwep3QJHoe/e9v8ODT8cG3Hx7pHw4+/HEcPzv5bP7+1X/8",
+	"zcXteleDnc7r5LGfbd+P92+UyUpojHANK4V5ngfITz2GIwSpe6hOw721P9QLf0vmXh1hMiUSi6Hfg5MB",
+	"D6sfezmJjOAtPESj2OT9z9B1NV/D8zR0mfLuXk+FLybRA8R6O9N8TkmeoQkwHVAd5drPrj6j1uB+hP4R",
+	"cYpTx+nYnPt+ru3XFc4zh4zbsK1J/npl5ampkUoqSAqWaJukpzZH0y6VkqHbIXeKP+A06d/lLWPmM7Cw",
+	"x+xC0L1X184UtIazgyGZIcPzClDZtTcV47ARXzr1qDe5Edf3qkrLKkkJ9TRXgoNO4zTJZ/OjMoQPbGHQ",
+	"oW2y1xpFMxkc65+PIoYzVEzbx+hT0u/zZXl0ed2zek+DDty6++p6ajWn19uf8/DaiBPCmu+V8OZesTeb",
+	"Jbran6xEVLMQN5bAFAnxdbyhLzTIhRG6sXsZnkkn2yOMr7+GW8jpKjndFj4a9xjhGTMqJ+oBmlk7AUF2",
+	"2qGax7bfQwO3srDp/vtO/qveyZtlACG36jqxPetfEAHXgV7QfkjZT5drFa9ax9Y3bkaz44qfuPXBdocn",
+	"j52e5VuKEX5ljGuBpQNVrTGHXug9ogfiaQNKSq5ztGRCwcOq6yXmHGVAmPFBBjl8IWsJ6IrkiVUcbClz",
+	"yeh1A9FckPUKlIgCXb/gkZzgOAb65Qb+J/qf6vj4Saq/36CV/B09B+rvBeE4Repv/xPJugW+Jy4u0NRy",
+	"373CN8XUgt3BYwcUA1dpyc+tWJppyZkGM3e6PV+HcodMMy2oAwxPY9fe7KXs7ZENXa7msAB6uwa1VBwt",
+	"wJwB8TAH2plE5GTEDIgHOgV8AQvA7wgQC6e3UNoMR0yhyhvYaQtoUoCaQGBLTW4AMn7Sl3Vtgc7NQ9OF",
+	"MCIukeTyPRiovwsqheCQQ3o4/wR0nxfKi15SqiwzqJzsI2fCEU7xdeXFKpmZiaYY5iIzkMfp/7k6DVzM",
+	"QYFQxoDFFhLNKpzefCO5efmwudPgZXMfNa7RIveq+PcO51kKqduY7qOKELcs7aW03qvFwMQ5uvqWVDT3",
+	"fA+v/OUlb8VYnZ9qkuufiHtJQxQjetQHFXdxugFEe9tttOwhYb18mwabsmXt0mTdw2qdrtntOJWuJY+4",
+	"yEBSkDSj1J0m0sUGWPMkmWryteJECDOOC9SNaevZ0+4dMJB3eUAsUof3Frvri6ojTfTqnfYx00jx1xRy",
+	"mJP5wRIWcI4yyU51mSVZWalinCw7TNbp0qZT7jmrJbo6jDDInrjb3os228kGernKPYcJp2x0KwK05Mco",
+	"9vCSgGKFa/tR4EKV+MxHfEe6WTnkm086korSCt5yyJBzcQuuyaC3fQNoTNIBjwK5HDc8FgtgAIIuUuou",
+	"Wvh5ASiC2YH0oX/EyXyeI4A54AtKqvkCHKneB02M0FfOy3hAFlSOuUZsahldjcXzyfGxx59uErNyy3tS",
+	"pNMHakQ98QoRf9bHYMt4j8HHWgA0i3ZuOehCs71BdAoUdUl54WLfS+3byIHzzgupJUv2veBaLMyJTMNM",
+	"sfbGmMDr98RtplO/Jx/YSArwHSK5xjrLDWDBecn+4/nRURSH5W+eiodOdMgR4pdN+je/LiUgtGXDro57",
+	"y9PypXjJTcwn4/RD6y5yQu4mwWoab+cR22A/+3UzfkAmuQXMpfewXm1A+LsvqViz6P6ocQfjnRSjIsd+",
+	"Jc64i/XiWNWTdcitdtccN5CAJjI9E34X6n6u4RJHdvxsPcjg/ThydJ7Lz31+bYDj8rnOrTFUQuLZYAUJ",
+	"+8hbZSpO4weDAhMOa/icRo5iqn9X7xR36t/1vYx1vYQzdFnXcgpbt9Vnpyv2ZUIUivxryFo+fOQmiqOq",
+	"aHIPBJadvqmT5ntCVvwBUr1SfZo318trOrsQ6T8JLjaYYn0kUe4WA8lCs3/vJ0hM2GIrZrd2eu0PmRLu",
+	"F1LVQlMlb0YGaip15gJWbDx2qr2JkXSHOqubna+45fpuHZoeeXK4ktrbIGZ7E8Y/WEunjS228/zxsbN+",
+	"ZVAkDOe529H75PTJs/bAz47jwDS49qABZ+BIwvwvgouwNPf1WBPy3FujDyW6f0vmuPDWxiohY3eEeuqO",
+	"MEQDS46YlnEzomsx73Qc9BWtGD+TUc874c1DQvT2mKs3anVQntW9OhzEx2gCoeyRaadImi04dcReldFr",
+	"VvGKihwgmYjjWBLGwZNjkMEVAyZyMwy+DeBqU0gUxfYaT4+Pe/18gqe1che03muEPa/LAXXQUevkB0ml",
+	"QHetBrYy6XHsu/MSGfiSMMSYcaOtN9yqsOATrntr66zEuV9ZS98XwWrX0ZlQlc3SN04t6DY93nOLIaq7",
+	"fkhpP0JtnGzDYZS/dOFyb83WRF08nCGram3w++b+CZv88ZcmyrIL19jC7C66tncSFMwYplOwKM2nUwgz",
+	"ALcxsfahkqkUISjQXb4CDOVSldcYgRaQdbxgRF1qyGUuRZFocUYRUvbJ2n4OKo8nRosx1Ov77UMcFJF4",
+	"osS7UbbRGnjI7irI7m5BGKp32DZ5MStYEUiTAIvCltq3MAfxKHuvj5+OKXjazGjKJfeQOJUbDULi44cC",
+	"VV1RkGcHv+qAx+ZHkByqaMjHn50xkGuyJ/djQGHACJFP1Vb1+MNOdT+mbvF76JJ6dE5Wj7DzkScim643",
+	"bUtKaBbu7GdWciH7jQYZmKU1E7WX5DqlzhTubPW2GmGBuU50ZdlcC5WrClZ84VQg2InO+x9lMk7np0zX",
+	"JE/Wy+jmyXNvb0evvHGHl/wcZXaqZeeWLG8y9ze/C5nvQynRvsXAhtt4R/rdUyEsjqjXwVltFyUqU6G7",
+	"SfkpGagBJz4Ld2ff2uvv3nXTKnd/YLWvp1XSXh5aR3LpCDS0/FSfpEo75i7l0tQq7hc2V9V3wdlroFqB",
+	"W1X2WUoI4nkntqPvEyl5CJwSzrO6o6hu/lr8Tmazwyh2O1VNr/csimNPVQYMlwEerNnclTSD6iBbixwM",
+	"J5kS4BxHraT13lj7wY8soTB1W8k7G9WL0Eyqlq4VhRl60gEjtXxthVpF9nrjVkC0zd1sP0wLlzXe2yxF",
+	"U0mfXbiYQ5souyTYougeB+hDq6YT103iu0GETcJ5Fjt+lXEeWjVtQnlFDUaNDGIKZYQZc7NUwPIpnzTE",
+	"2qzo4uXZ1RnABSgpYqjgEnWA2s5hWz5+dnr65HQAlO2Bz65lZn8EyF2BqORmABcMZzKxvAxg6YzvVoT5",
+	"AFxrnR+fPP366TdPnj39eixVSbcW6FkUR2dnZ+Kfc/X/d2c/vori6KX59zKKox+urt6Lf9/+dB7F0Y//",
+	"FcXRu7P3VxfiX/F39ePlxS/i/5c/fPde/PvL+T+iOLp6eymGvfqvq8D8G64z9x+0W5SsmX2QMOgTAj1i",
+	"Z/+p0sVfOem4hKjm9daS1Lg6AftGEWlDhP2XwbtRXmMqd/jzYsvSEozJlKwMpW63KyHeE4r5KjGXbw1i",
+	"febDZiph4cpQLpXwpEgyVPJFe5SnIUM09Uus/EG2wWx0kE4SHp3XuqmFcuu24f9eyIooYmzMvKm018gu",
+	"R3iy6NWrGvYBJPwHXIzHnS+VdOJYedw7cw90PefWQ4fWRkJQ8hZRP0JK2b6XLklwsgSXVjKGJg2D88jU",
+	"MJpDjKUwk+V4BmOyG7w6fvrN6dfPhseZMi0upjSv0yZPnEZVFmrCkYf7jOdRLCGFeY5ysY6+YGG+AuM6",
+	"+dxKd6/QSxrEhFeoTpcmdXApLDLpBRWbZGoy0Rrk4BubrX8zxs0nu9D3/VYJzZDylZhBxpF8U5ptuR+S",
+	"Ml+ECtNOpNhdjANad8rJnXxUMZm+uxpNjNbzArISJbZxuYtmXSz14pUTcWKbOm0a6ydxdIHDv99RrqGe",
+	"8RsxjO9JWzzueHIPz9INP5WmyUdSInInv5uelfQW5lXoG8x6ALdFJDWIEZU2Zr3SaOgNBdk7XrXnkzMs",
+	"ESyYrjkyaVz3k/GlvHuFZuv/O6zv4dAHYm0dkUEhDTt/9nQ8U+haCFgj08gKB+VtNcgAPkw1crTQaKcG",
+	"jguSt4B4i5HS94j5ISdUOiUvsVvxfdEErHQ1mTIHbK3huqfR/ovyRJ3hArPFur6aoijQujmfRTjGUBmA",
+	"wG12o8XShS6pJuI8hGFJ/IjK6jrHzG3jKReQocTKKjUdDiUl8kkSUnSrJef9ayDmyRsg01X0ynZ2Hat6",
+	"XBfV1/61AbFal7KtR8QMDo26byHyMCdbM0sdKmeJlWrPsYPS23g45P5bn7GTlSp4vZS5diawUiskbnKF",
+	"qTUr5heQrtzP/7C6KpspeG8RjMGnO4i5oisHJndKZnyI16ktElzYW8JorMpFvYf+1Bss+/Ohwa7Lrmd8",
+	"iYpMQaxe8i2ieLZSfxQcUH8m4h2jNqLC4PRngemKR7KqRJQhX0hHrbhZNwpu0H0mzCdZH08zoZMSy0/u",
+	"aL39edmgxPKfGLgRQ6tR4KKpnDVU3WLMXl9n7na3YbijKbSGLiletviIa+trpS1JupKyAKCxRc4QHQlS",
+	"8jDLzdbLW2Ae6tYxIa3EGnKHhVdheWd1Sa2Qxje4LFE2NYvDiPXdX5FNL67ZU7MEDfAOtILT+nSZDWd4",
+	"njiqALoALNuKSnZtXPA2ZSiliCcM8eCiS2r7Nbm16aChtO5aevvor8DNKvrk32FS7axmvsJMA7z3O5y7",
+	"dF2k4KhXu+DJydPTrx9/c19jWr8Iq5xrTC+n1vuwFCIe9u5VNwwGVo2qNhxXgWG8c3yLCiV4mdQmlvGi",
+	"INqEJ0IT+IJWoiUlYq88LRORmsb92mpuDmekdQwMp5clYgdBdY8bo88ETO/FEqYHdXFg89vpyeMoFhN/",
+	"iDfOLvqwEKGwz57G4OTZwbOnQKrCXwDGifARZwgK7+iqEMlv3r36r58uzpI3r94k371+++oFIEss7BJA",
+	"KQcFHt4gVEp/iLq/nNO7jTiS6p2fBPBlzIovJXSLTYVxmgEi/IlmyBE6dk9tTI/jDgqNPl+BjZDkPilt",
+	"YzLaQyObdXE49GIcvD7aeQE6ZmCxHOczOqvSG/HfnLi/zwmZ+9IxrkjFq+t2EP9sFinPAKp0HAIUKR/3",
+	"ytDzxGqprXU1Ezm3jXhVeuNP0VJrQBw21/BoOl/E7JQQVjWG1SPWixsJaZX781X+biYYFe/qn12TbDxe",
+	"NmP30aL23ZQxLKCtWV+/HrScUTaVq6wnG416DYh27QaxP3YG2Jh1TjOjNEt2Lo7h+RtXOskzcHX5+nuR",
+	"2foQCC9sxayEG7XkSSppn4iopYhXtJCZs1MUi0tbwaPvat1iuEP6RL2os7r9muaIiWZbj1vmDVpJp8wY",
+	"iMgEmkKGwCN0OD8EH2f0QADoq0PXsPeR/O03lf02chtRBw72LPySe/LN086V5yIWPa4vv8O9zthf78Qj",
+	"YP5DCpgi1enJs8PDRsYkKvl7DCCgsMjI0qCvrv33w49n54BUvKw4YPiTjBaYo0LePdlhaC67Zq8DB2Al",
+	"YQhTput+DmX6CBTU5xeALchdIV8dQMa/YwYoYiUpGDoMqFcm53ArcH+2XPud2lN3fBFM7BrGJVp6UiEs",
+	"vKmjH2J+x/v6hIxpJgknKWkVv6syLSxHAlpc/n/hsSFME4d1rdJl+z1w2vblPHV7BORMlqNENAmTZ1rq",
+	"IrPLWh0e9UdsUKO1UiditTRQjpTLYQogg+fDCdf+Ssi+XmpSG8WH/Uo2h+6ekPRal+Cq27pniugTQwvN",
+	"GzSu4elEWoY2JYOb97v74YdZmcPVQFYw79NpShHRnMxxsa4bA5ohigqdPH7oshVAe281X6s2eYgbAnI/",
+	"T3KSSmsBwVnqS/1FJ/BVxyNRLtB6rVjaGZ9LXuuIu+fRhq8PE735vzbyrp4C9LWSRfVe2HpO33bft1Gu",
+	"Q4PSQVcUmnISlPDEXuVknuT41qMw4Qu0bOENWzEur7sczxfyyCC9cWuI8RIl5uXYZo6vz96d6eBZVXal",
+	"YjI/BQLXlNwxRDtRbU/HhEe1THvO2Np8d6c+WHpDnQbZ0oYQa1vE7/MQ7NFpvUsXeH5RXhuvixlx6Opk",
+	"ublO9tN2QRzMB/zyhgzPA1UOgrNkmoaxHi3EyEmRvPMIXXnFpbXml6CIbZD15ooHvFniyJNKWYS+y8id",
+	"VVMZv0105zKQmQGd50AIZbJ9HevZI0aoygQIYyAlOTBhPypQQM0o5zocTCSzmVxV0nM4CQ/lzQrGUJp8",
+	"we+3rmNmY8hWCneft+BgBaPZKjjU7FdSoFcmoMNxjmo9GLGNjTjV38WAwcqrPjb9pemj9dOTvToIDJrm",
+	"p7Pos2VBDehyZdrWgRMhvdSVpdLmbDyRmPYDtb0ZjJOJTZAKKtZua1Srd2JjS482p4RlxA5O5+OSfk3h",
+	"F8MrO3yvE4uhPgKR0FXlH9Hax0PXU3ONoOgHUr9kKuPzaNNlPU7RJiingWio3tKuyp9qRXJI9lzEJ+ZI",
+	"FNYRM8ASfQTvLgGHdI74tOPeJodu76Dmg849aIi3Fn+fhWiuGaaG1vxTh8f0st5dGMWKLNVoH8QLwNq7",
+	"AhzeqFQWlz+daQ08ps3u9sChB2rT+NjYS8ktRwwemla+iU+efPCIQ01GwW6eI4nnGXj57vLNq/8GFxcM",
+	"cWe6kYm8yzHby0ugveTAo8sfzg4enz77yphGCnSHRM0qma0cvLl8EwsmogNPBH6KRiWkqJhIVWP1+BIr",
+	"s1t7uTfoRoS6lTcpOzkxLF9nepLWOcYJhXOV80mkP5pX1GnGkfNME5TUsSt7TJ9RiPuzFyOvYvnFP0/c",
+	"Di0SeEnGkk56cKdatIR12L9QyQw2/8RukhzPkHx/i/TGfVge61DEJSwqmINfL98AWUlGcFhpMzocN042",
+	"EoNtmmyA0T7OoV34gOHaij48bXw3lDRMrtqy7Sj8BNcOknK43NpnYGGxwYgbdCN2KtHXiREZS+pwpvZx",
+	"vbl8w54LXOcLRC3S+zsDLy91AjTMJBFgBnQghSCWO6hpgS4VKXQS7jUxFwx5MuzNcji/X6kqgQYczj24",
+	"LVhK6q5lqXmgaiJ3N8Moz8Aj5VHotrdrHjXxTUvRktyuiwsUcUzX7twJA71hNwrxvbEBreb1dqNYoTSK",
+	"6gVF9b7GHahw1iifbHo2h2cQoQk/q9E1tlJeWsfZOYq4TXEtqLXgP0zLPrVgix7dovnJE/Do1fnLyzPw",
+	"Xt51L0SKi4JwoKIswd0C5wgwPC8E9eA6O7FFN94rff1rzaxOMQaTNFm6e7VvshignAk/lBubkEe5Sut2",
+	"ck8tLyl70PUvryaJ0PHTbwLcSIdutolj+c1/AnuA+XwYZvpzXqJN5Y5npyNB8gOa3oGahi3ZfcjiHFzX",
+	"q/ZGnZbsorN8M7Nvza+XJheVN0yi46zy+t1LsISMIyqqw6IX4G+v352//fnlK+lN9rfvX717dXF29Uom",
+	"A9ephQ6B9tME1yQTz9olXIFrBKpSyKbPnoIf8T827oJlG8f0ZoaBcIFYlTtAoUXtBMtWvjBpY6IZE0h9",
+	"/n29WXyLfYNWF1ric6y1cyd9knfSjfNO6sLLZx+Tk7Kbl+x9fWP15h3D04ES3T4nDqMA7M2lym4Eahpr",
+	"Sg9rPVaKOHAcijhdhbYdqj60DuIvTW5S869eulmWKVxi5eNScw2cQu1J02YGPylNmRBYPyFKgOC51FIY",
+	"aMUbA4/0IsDJsbgQgFyJVLnFQK0GnDw+/lb+rhelv3Key5++ajxTJaOp40l0qRIgE4ywxlGk7786gDhr",
+	"qPWGMGud4dZCvTUm8uPmOoNNRt7JkwxitxdlOwYKDxPxWbRCSzetW8HdxHysP8G9asDLETjF87knUbnM",
+	"aXqPRXbOrLvn/h76U3bKVDVF91rhtq2d+JDhytJOumwY4daLOiawa8BQgg6rG0w0UGxI1rN244OF/xX2",
+	"pVpzNsHG/nQ23WD7qkmftW8V/mCEW6/3NEK+1JV7LMRlqMi0nMAM2srPDMBipWv9HKoQGix63olic2bB",
+	"axO3y3Kgo3T6y8tWBVzitLtMw2r0n1truV9Yamuh/XNQvgIVxXx1KY5Vey0hSBXWyLOWN6n6Uz3AgvNS",
+	"YqUqRyeJQmw9JeQGI2Mofy6uAEKhqVrX9Icllgp8sQKsXac45uKlE72TfYQ6HM7RUsiBZ+9fW2mYnkcn",
+	"h8eHx2J6UqICljh6Hj05PDk8lsprvpCbOFKc6kBzKvGnuYrUUIFnwmcri56LP57Jlue6YRyZ0Aw5zuPj",
+	"487jWRpyUznC0b90OiBFFGMk055Ibr6NOeRG/bWsHCtV2NFfrHyG/4Nkq22us0EqGfS6TyBpNwhx/k+P",
+	"j33D1es7eiUFC9n62+DWct4jiI/gXDb4Q/77+YhWcislYY63k1aJCIYD8HKJMiyeNrQqhCUPAqF2FEZ/",
+	"UfNSjAYeXVTCYHYnleftw6ZVcYbP5qgw6XWXiEuL+2+a0gSiN3QGdcv2McWhIFczvRNjfRaG5c7hPu5v",
+	"VWxKo545iqcTjuL0+En4UcQRl2aP3yKIow/1wTCGGYcFP7JrYpqDaUNTPTLP8Jnpc1kzpM5WTzaHx/3Z",
+	"HMic6li0bcHk6A+cfbaYX+exXyBjZE5FAmf6dwbqMYAZo4+dgmm6gNlBVNdWmiZHr7PIgWzHOz4BcvNA",
+	"0Fce1dESMQbniPm5zFmWMQCFSE6Bbi3VJzLPpJbS6zPkFS0Ah+ymf4hidAtEP6qh1j/FLdxDvdVp2Tbk",
+	"Rnq8wWVcQXbjwh0BWKDze65zH03BuaePv90ths6wtEczr+iUY4FA35lm7ntKviebi8pk0KwBX+f8LMgS",
+	"yqw8uGAygsKl3nYPWqeS6g9LSlREsV08VWd8XGLG5M9UFV7IJsyXY+Wr3kxXJ3A+aSVwPh2zlN2b/wU9",
+	"RetDcrwXejitvY1mmDI+Hac3iHf11VVCni766Kfl4XpvD4px6UVp3cyuRejmvDcqPu/4ipwRilLIOPPK",
+	"L1eNd5xpDEpEAavkA7d/52mWVQ98P55lFbRLYQlTzF3+tzujcb2rECI3Qs+OSVuzdjb4GsevTautkkg9",
+	"ixc8G9hwSUlJGMzHLtH3dbsgjKwjR/s4qWsvUyQLdReZnKmuQjlPatHQKmaYlBRluK55qHICJxSzGwuz",
+	"E0NhukYiq+ZzxNToG72q6xTNM4iVT6OpqWtf24NZhf88F7dBjC/i5q6x/UjsfTXwhNGxEOLIQd0LXAtV",
+	"qAhzFj5fyiVdVeIUrxpKqvlC/FWoA8Ed5ov2uzWlKEMFxzB3PFjletpktqUHi5jIpDDb+bWvZ1fju1Ck",
+	"RPTAwBtQ6R3D9owqmqj9yhvdYBen91JNtbfzq+f/ok5wVMVkmsaKbBFMF5qw/86ACDyvPT4o0nYat8qp",
+	"5oYPT9XUMOoHo2KSl99BTuZHrMkl6eTHl0p1BEEBeUVhfpDDYl4JxVI9BlBjeHRJUgdyhk3pfJ27cltk",
+	"2p5mErV+AVqhXet5mhhh7xvr7DXI4Upes6I1egFUQWwGHh8fa6JWnrRgBnOm9JEQqJoVyo26Ve/dQdqX",
+	"RjDcIo3qObYp8IuzH+GIZwXABUdUx3OJIvqQ3bwAT4+fCkMxLFakQOC64gBzVhtZqPDIgwWQVag8MJQI",
+	"+fBYo49O9sQWVcH2A1mIP4AlquZANpcnJWN8lJ/zyfExUNmUZfws8zLGKznIuZxyW1zRmuPfLPE+KCKc",
+	"NsSzfFBLUTfaJunUk6zpK9Ba5BZwrr2+HUrKQ4DZpX9AiQ9kdNCIfqfEV6rVTpQGerZQPeBnlRbQbzY3",
+	"420JifTwOilFECadbGn2bMBE/0LHgZlcrilaB8OerI1htVAh6o5z1D8tim7JjX1am5ADnroSOIp5Jjt9",
+	"6P1UGebDxCJavLpFRah6foNKPY/a8BoJ3afKstLMMh7EsRsdYQ2vcIJXJ8EXRzKFoF/1oj5vh+7firH3",
+	"pGmRiTkd0MnJfI4ygAuRMUP7Umj3DKBdGyXWn0wRMIyHZfT8tw8tyJuSsT7Qi+8hBKlXTZRnRD3DEnnp",
+	"bI74udK4/KxyCu4c0uRmMiSHZZ3ufjaPsNYM+zHrjsFy2k10sl3JSGHgkZ3p0SNkyIDvn+6K91Zizy0c",
+	"nxn+XM4XdnYOYjMb0oHq2fZB/2RLBzXtXWUdK8FZeiTsLrLAp4/HiFbnplGYVZObrI8+J9ZAM19Ksmnj",
+	"dC/qJ06XV5RhilIutDdEXg3f/2wZotr3hLg/NnZXSIDL17MX2vLrTzhL3+orOwDeqkxIwkm0OdhoyGBp",
+	"iuMrofq/xRla52HuhoUZcOTFVfHF+7rlNl+irYl8ApdjM8ocf6CDGoZ3cy7b/mKa3lcqPn2Alu7WFqcJ",
+	"shlki2sCaeaF4Rzxl3WjLSJDM0nYgo8WCOZ8EbTuH1TTXaxeTxW4B4ZMWNzoHi5V0zDmZIrte5m48Rs5",
+	"OV1GcXQiYPNM/E8ltv4624YrVhD89DY3Iql1oc1JGQTqK1LuE87r+N+0mNKWeVLQOQoYbvIQZc6kowLN",
+	"ZbTsAacV4wdQViEb5v/vdBerbNluVImOiUN4s+kG5BaB3iIgNEMiP+X1ShtNDlsKeAUfVS5iQB3pWtN2",
+	"XgyOmSbEH5xscx0uqGsV5uGWFd+OAxvF7lHdpfq772jH3mQvZW+z86f32staalMLAAxxPhg1Ibi0bHpp",
+	"Wm6Tl7VncmDN9zm5hrlIcXr56lxkXMHKZRSYjfiJ1K+McWxw8+Tp2tvulDHjkFVKoj3TY8+5w4eMW3e/",
+	"aM3jANdbyBHjBhEpKgmVxQFVsmyVUPtwdL/hl+rOL9OJl+iV7+6U6bqFg83Ly7Uu0O1fnPu+ML+Ei3Kd",
+	"+3FX9+L9N7r2Laro/EDmxh+m31ey5feq4S7o15pwU6Z1e8jtkKI1w15IsQW0wfD3bftqtDArkODa5zMd",
+	"pePRVhcmSU6Y7V0tK9syQX+OvdLCfSGyzYf7CK5NdzccMTluBBZbJfn92CkDz2GLofIbYA6iZbVEBzoa",
+	"biA+RTW0Nn1humyGQDbnn6kX5joUlcpTWyNAk8h8T7AnjXHRA3TdYo80CLNMln6F+XsrcZn0f++mKeUk",
+	"sWri9dPbDfoktRN6NSM50nnt1Nt3AJvM6QBNPeAe9/zTtdApRHbcpdg4zaSl9zBJStmew9+aQse4GPFA",
+	"JYgNCg9DmSvuC4NtSQ77FBoevrwgvGYer8eS1N2Wk2HlsALEWzJn6z45ugGY+QrkYn7lqwJBDukcUcAE",
+	"BhUpAkW1vEZUZp102OzgjCM67Pg6nOu5u6AfVWuQo1uU+2aVH51pAkye4DtIi0hnjxQoc13NPZbIjvYH",
+	"MnSAC4YKhqWRilXXqrVJhaaTavmW9ntrWVa9vJPH32woE4FtCz05Pt6nNdRCxw2FcE2jttNJ3nKnx0/v",
+	"Q5tLxClOA8jzR91wTQp1YcQdLjJy50T5xvAubO47dmtob3gP/NlxTioEYehJJr5/cUKGWnb2QgZ+qtQs",
+	"TBZdSXPCdvkYq59hXGSGTxHleCY2OwRy2Vbt7dzq8NDewAPQJ7qi4z3ymt4T4IxDHsB9LmWzvwzvUdvd",
+	"G+dRGZUOBDbPCcUjT8vvZOvzpvEu3pitSVchb02VOodDkdkBF/WP0swYtyP6BVIqg+MM8XQBlElZ5VlT",
+	"eahsE5CClkCND27oHf1xg1Yqr59ftdrZUEgKZFXmzu/GVkLOERX9/vc3ePDpg/jf8cG3Bx/+OI6fnHz+",
+	"W+RB7c0/s9qb289zq4sxe8sTuMW31yhSCnoNoea3st3uCPktZnxTJkZrxG1is5hgLwZGG2J7si+uoxKw",
+	"MTBQzdc6yb+KLXIqbP0qx3uC78PWmfHbgUQPG7VbbgISD4SP7OoMvvzL0M11jiA+SHPImHquaQOVPzVr",
+	"A6Xzdq+Hl3XIscgHkoOofwpWPUCfQkM2+GJ5mF4/gJyjZSmzaVyTTFZIFy8RAQogFc3yV91qzedajhA/",
+	"YtVyCelqCJu/Ew0vdbttQsaeZ9DsNyP0DtLsQHh4jsilquWvZFdWTGvCEMlUN5e+qqOBHzIDfyV7jvmu",
+	"2svY0jXUzLAfedYG9L58V9d+aLWOsofSoYJu65CnsbmJMuzOPWS7uL4ODx8S7XZJH3vSXAwTyH2iLp4+",
+	"eHIaDxjefpzwcHhwLR5tea4MzSnMUOaOrv8XwUVIZrb/JLjYYWq2erpNaXeaAbdD7fX4+8nO1pl+6+nZ",
+	"Jj+oLDwLzM9mn9hDTNBWynKsIQEYqnDrDgMwrAlD6Ocsz0EqCxwDtSmgNmWLowVcdoLKZFOM2Kgoaq9m",
+	"SxmLmhn2Ioq24D0miu7gNrSOpoepgaJl+9CCcuRoeXLItLROJkC/MPpCvoHltv7OAEV3FHOk/AC0ylXZ",
+	"5zDfndjaogqf6NGliC3JHyNoeWWAd59w8DYXGLU94iwMP9w1nEdk+p0ymv3I9CNH2pbpH5yU3uFLdckE",
+	"7+2pSimYKgZhjGhGydLthSlgc8DxEkXB3oecbGwodcNGI1naprpgyknk7fxCpGCnEOfia0a4UBnieUFM",
+	"zXbHkuQ/IwtCH8ucZMjQqtPPU3aLXVJKZ0DprflafXzyuF8unvGVrGwu4BwFzk51Erv9zJ7CdOGZ3TgG",
+	"LaT/qizd01ToKpTiQWRqc/gKbWOlSpk+vFS9quucpDeyeJiuyy/ZqbheOSp2tNy0cWnZz8k6Ssf14CUB",
+	"pfPGWwuGdjr58lMNPXniab4jCIoFdFMx7xKASuxM5vo+diyi8wxpvT7Azz+/filKecxl3pVoJyBTPoZb",
+	"A9q9knIHuLf7bp6KMkIn5a7cpMxiru/3cI72UmJTTHlkaQgHlIIXdatdJB1yzOZPPNRsACxJpvwMqVDn",
+	"MX8Soq4S3S87eza+eRHat+fdydBhUN95UqKeClvX26YHIZmyLnTjnaGtPdd6RVecS94SwvVWu2N0G4HW",
+	"DiuxGDXJoMbywjTqvbja6/4nzPN/gkf6xvoqBv9Ut/U/Y1mEq32hY+87hKWkRFu9n4LUpnrXISpTAyBb",
+	"RSp3Ecu3WAzEALHIElehw3vZtfRBjClZL2oBczs0JEffi3K1PpUHoFi1jsOmpUCdanNGD1Ofukvjvo3W",
+	"+9Ua7oRy9qMtHCCdB64p7BKalVvGf2l5s8kMPPXk1eQtWORBqHi4LMOkrCCXXCFG8POwfhA+fhgJ6evs",
+	"JsF1103ynLXqr39uIUS3gGhfLtare2heoHpdLxGHON+UM3sPMsJrmWJ2M+yrrNdygR9kUVR7dQ/EL5mW",
+	"nwJcTy/KT7tzO9WTBcmu73/V7qa4MBK6FGOVtVTUTVfMUQcwdlQK5adxYVQvZktXqhp9P8KoAfOX4XC6",
+	"NqqrU27h+pHEEW84KkXyewvpt3b2P8mlrFuZ6gLpV9vksxqBUOAzoKaOP5nHruYM3qvY4grbulX95Cm8",
+	"HcQp3cfZoeZ9G3ZG3gm/3NMTxH8iD9MBeYMMU0pgM5yrZCAbxJmcwEwD9jucbxlv5AwPCWvE7lEm7R+6",
+	"CsMDQ6IQtLAD2dbCjKHoNy+ndRSk0xkege4qnUrEOkFB7g73ACcGZ+hA+f0MvVqUUewSztClartFbOzN",
+	"5UBL8RWoZYMZodqfVorYBand7LyOc/67wbnRzRO7e4+7o/gQGLcvjG834IFmLGtHWcEOeD5W/uMqZzsp",
+	"/9HM44DCy3eXgCF6K9y8rIRTQLPF6xXgC+H6VTAOi1TZia03HUxTVMovbXw0oGggUw0WULsUDbYPDXua",
+	"wKKR3rcpWZZCJJZDbomM5NiTanWfbL3qcR33MVipe4sW7l7QEWd4fnCDViN1ZxievxGNdlJzRk0WVG/m",
+	"8vX3QKy+Gx+h0kGJLM4MpRTxjuZEaYxGi87ohWyp4IwafT9BSq3JswEdinLsJyIfq1kM4AvIQQopxcgg",
+	"sYDx1tUta74HzGG30F1m9HodVMCmxoI/l47AooGQPGWv72n4E9CvSp0gcpDZ/Fy32gW3MbNtKrqxHm87",
+	"XMMMvxeVawOrLyhrVY10gTpB6wD/SsVzBt4994LIhwdDB8c7oYM/Sdalio2Vq/+ZoR0VIVTS9IbYsxhr",
+	"SyjJEN2PNDfy3NiFL6PEl1AOq87g39xVcdd1ofFhe2i8HwOFD40fIEtVSG/VR/LpZn7RTbYINj3F62JG",
+	"hlN1jftJ7M5JItRD4gfCRPB4LydXPwlC2Jt+i8Y9MfR++P8XmnjLfphre4z4J+hV/qc02zco7GMn27ba",
+	"b9NkP0XhoPDg3q7GQ6WstswJ9nOF/iUyjPn5hi5UPXQhCwipsu7bpiM9i9tuJOrFGztPLFXYMXh5KaII",
+	"Cc2YKpX+7vLNq/9mJr3AF0h+SujtGrlFhQYGHs1RIY+mmAMI3ly+kXuG4NfLN1/FEg7FDM8rKq99kGGm",
+	"upEil+6QeF7gYn4IflpiLgQEA0twg1Ap4IUpSCtKUcFV6A8TEU8+PmAhxHa4gZpgfzzBj4uaM7xovA0w",
+	"AxQdCAh/0QxjI/YCJ3tRjt23WkGyM2rSUm3H2YFDypmiG1BSdKDL4AKzRhX9J+grI9V1rg4W8oqiuok6",
+	"+yXEBYe4QBQY8ywDmINHqnc9nkp5LMmTLgVuvWE3L9lXffJiYmmyAVpd6N5bJDF7lh1XlR2mMLMqIAHy",
+	"b5oaoamjjB00tZz3TmDnCtGZsnoKQimhvFXMGpUJ9OWluKdhAWAqswMJkrlbECa/YAZKVGS4mL8A5y8v",
+	"j87V1S7Towk7dUbhXaHuvwKQXPj/i/6SES/JLco00Vmzv7wEV1dv+0TXpcttEpwY/319Ug/qVtOntgti",
+	"27gMiz6WhHKvDKs+txxOB0HM0Ud+VOYQFy9AuoCUIf5/Kj47+KYN6y5BeJ+AAIrr5h+v370ES8gEWgq/",
+	"WoGJCwQzfSmeq/kPXmJWEoa51pL56bM3/Zcj6DqOEC/NEe6aebVxBS97uLIdXvBabXgPPEDNfIFYlev5",
+	"O++NW5GVTb2rJIsVTPTypzMwwyjPBIctc5gabz2kkflP/kzWz8xRXfCFbhcUxhuSws7Vr5eyLrBfQC6l",
+	"6YmeHj+kOsYK/L5kTT8VQhqYIyF4GL2BpSEnd0KUlxi/KtFDvwfjPXPKxjqggL61HARi8D0l75D72rCZ",
+	"4Avkekd/qB+C7Qw1RvwJrA1fCqHGzoHNwW0xB8mOWMC+spD4eMBfxUDgD/bateIOpaTIIF0Z23aRrw7B",
+	"lVTEFXCOllLHkMMCgXSB0hulZigpXkLpdy0vdgoLNkNUPMhEQg9a5/OQEWOxOyQtOB7tQrUHYrdZla/H",
+	"m+55gu2YhT8iHS+hokv+iK4RpIjK3z6IlvTWHGdF8+h5dARLfHR7En3+8Pn/DgA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

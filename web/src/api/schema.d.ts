@@ -1309,6 +1309,304 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The AI layer's state; answers 200 with enabled false and a reason when AI is off. */
+        get: operations["getAiStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/agents/{agent}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requests an immediate run of a background agent (Run now). */
+        post: operations["runAiAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description An interactive AI task; 404 to anyone but its requester or an admin. */
+        get: operations["getAiTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/query-log/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Starts a natural-language query-log search task. */
+        post: operations["startAiQueryLogSearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAiFindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/findings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateAiFinding"];
+        trace?: never;
+    };
+    "/ai/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAiInsights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAiProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/proposals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One proposal, with each action's live current resource. */
+        get: operations["getAiProposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/proposals/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Applies open proposals by replaying their actions through the API with the caller's credentials. */
+        post: operations["applyAiProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/proposals/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["dismissAiProposals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/assistant/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createAiAssistantSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/assistant/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description One of the caller's assistant sessions. */
+        get: operations["getAiAssistantSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/assistant/sessions/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Adds a user message and starts the assistant turn task. */
+        post: operations["postAiAssistantMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/forecasts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The newest forecast per subject. */
+        get: operations["listAiForecasts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rollouts/{id}/ai-risk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAiRolloutRisk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/threat-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Starts a threat check task for up to 100 domain names. */
+        post: operations["startAiThreatCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/filter-lists/{id}/ai-classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAiFilterListClassification"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1732,6 +2030,14 @@ export interface components {
             rpz_action: string;
             rewrite_answer: string;
             upstreams_raced: number;
+            /** @description The cached AI threat verdict for the name; null when none is cached or AI is off. */
+            threat: {
+                is_threat: boolean;
+                categories: string[];
+                confidence: number;
+                /** Format: date-time */
+                checked_at: string;
+            } | null;
         };
         QueryLogPage: {
             backend: string;
@@ -2700,6 +3006,364 @@ export interface components {
                 /** Format: int64 */
                 stable_version?: number | null;
                 active_rollout?: components["schemas"]["Rollout"] | null;
+            }[];
+        };
+        /** @enum {string} */
+        AiAgentName: "querylog_anomalies" | "dashboard_insights" | "filter_recommendations" | "upstream_prediction" | "rollout_risk" | "threat_classification" | "capacity_forecast" | "rpz_suggestions";
+        AiAgentState: {
+            name: components["schemas"]["AiAgentName"];
+            enabled: boolean;
+            /** Format: int64 */
+            interval_seconds: number;
+            /** Format: date-time */
+            last_started_at: string | null;
+            /** Format: date-time */
+            last_finished_at: string | null;
+            last_outcome: string;
+            last_error: string;
+            /** Format: date-time */
+            next_run_at: string | null;
+            running: boolean;
+        };
+        /** @description The AI layer's state. It never contains the API key. */
+        AiStatus: {
+            enabled: boolean;
+            /** @enum {string} */
+            reason: "" | "not_configured" | "incomplete_configuration" | "endpoint_not_private";
+            model: string;
+            endpoint_host: string;
+            structured_output: string;
+            budget: {
+                /** Format: date */
+                day: string;
+                /** Format: int64 */
+                limit_tokens: number;
+                /** Format: int64 */
+                used_tokens: number;
+                /** Format: int64 */
+                background_limit_tokens: number;
+            };
+            agents: components["schemas"]["AiAgentState"][];
+            features: {
+                querylog_search: boolean;
+                config_assistant: boolean;
+                threat_check: boolean;
+            };
+            mcp: {
+                enabled: boolean;
+                read_only: boolean;
+            };
+        };
+        AiTask: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "querylog_search" | "threat_check" | "assistant_message";
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            error_code: string;
+            error_message: string;
+            /** @description The kind's result (AiQueryLogSearchResult, AiThreatCheckResult or AiAssistantTurnResult) once succeeded. */
+            result: Record<string, never> | null;
+        };
+        AiQueryLogFilters: {
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+            client?: string;
+            name?: string;
+            qtype?: string[];
+            rcode?: string[];
+            cache?: string[];
+            filter?: string[];
+            category?: string[];
+            source?: string[];
+            list_id?: string[];
+            policy_group?: string[];
+            engine_id?: string[];
+        };
+        AiQueryLogSearchResult: {
+            filters: components["schemas"]["AiQueryLogFilters"];
+            explanation: string;
+            summary: string;
+            suggestions: string[];
+            total_shown: number;
+        };
+        AiThreatVerdict: {
+            name: string;
+            is_threat: boolean;
+            categories: string[];
+            confidence: number;
+            reasoning: string;
+            /** Format: int64 */
+            query_count: number;
+            /** Format: int64 */
+            client_count: number;
+            /** Format: date-time */
+            first_seen: string | null;
+            /** Format: date-time */
+            last_seen: string | null;
+            blocked_by: string;
+            cached: boolean;
+        };
+        AiThreatCheckResult: {
+            results: components["schemas"]["AiThreatVerdict"][];
+        };
+        AiAssistantTurnResult: {
+            /** Format: int64 */
+            message_id: number;
+            /** Format: uuid */
+            proposal_id: string | null;
+        };
+        AiQueryLogSearchRequest: {
+            query: string;
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+        };
+        AiThreatCheckRequest: {
+            domains: string[];
+        };
+        AiFinding: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "anomaly" | "insight";
+            candidate_id: string;
+            type: string;
+            /** @enum {string} */
+            status: "open" | "acknowledged" | "dismissed" | "resolved";
+            /** @enum {string} */
+            severity: "info" | "warning" | "critical";
+            confidence: number;
+            title: string;
+            description: string;
+            explained: boolean;
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            updated_by: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AiFindingUpdate: {
+            /** @enum {string} */
+            status: "acknowledged" | "dismissed";
+        };
+        AiInsights: {
+            insights: components["schemas"]["AiFinding"][];
+            summary: string;
+            score: number;
+            /** Format: date-time */
+            generated_at: string | null;
+        };
+        AiProposalAction: {
+            operation_id: string;
+            path_params: {
+                [key: string]: string;
+            };
+            body: Record<string, never> | null;
+            explanation: string;
+            /** @description The live resource the action changes (getAiProposal only; null in lists and for creations). */
+            current: Record<string, never> | null;
+        };
+        AiProposal: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            source: "filter_recommendations" | "config_assistant" | "upstream_prediction" | "rollout_risk" | "capacity_forecast" | "rpz_suggestions";
+            /** @enum {string} */
+            status: "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
+            title: string;
+            description: string;
+            /** @enum {string} */
+            priority: "low" | "medium" | "high";
+            impact: {
+                [key: string]: unknown;
+            };
+            evidence: {
+                [key: string]: unknown;
+            };
+            actions: components["schemas"]["AiProposalAction"][];
+            risk: {
+                [key: string]: unknown;
+            };
+            /** Format: uuid */
+            session_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            reviewed_by: string;
+            /** Format: date-time */
+            reviewed_at: string | null;
+            result: Record<string, never> | null;
+            dismiss_reason: string;
+        };
+        AiApplyRequest: {
+            ids: string[];
+            /** @default false */
+            acknowledge_license: boolean;
+        };
+        AiApplyResponse: {
+            results: {
+                /** Format: uuid */
+                id: string;
+                status: string;
+                actions: {
+                    operation_id: string;
+                    http_status: number;
+                    code: string;
+                    message: string;
+                }[];
+            }[];
+        };
+        AiDismissRequest: {
+            ids: string[];
+            reason?: string;
+        };
+        AiDismissResponse: {
+            results: {
+                /** Format: uuid */
+                id: string;
+                status: string;
+                code: string;
+            }[];
+        };
+        AiAssistantMessage: {
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            role: "user" | "assistant";
+            content: string;
+            /** Format: uuid */
+            proposal_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AiAssistantMessageInput: {
+            content: string;
+        };
+        AiAssistantSession: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            messages: components["schemas"]["AiAssistantMessage"][];
+            proposal: components["schemas"]["AiProposal"] | null;
+            task: components["schemas"]["AiTask"] | null;
+        };
+        AiUpstreamPrediction: {
+            upstream_id: string;
+            upstream_name: string;
+            /** @enum {string} */
+            trend: "stable" | "degrading" | "improving" | "periodic" | "failing" | "insufficient_data";
+            confidence: number;
+            current_rtt_p50_ms: number;
+            current_rtt_p99_ms: number;
+            slope_ms_per_hour: number;
+            step_change: boolean;
+            periodic_hours: number[];
+            /** Format: date-time */
+            projected_time_to_threshold: string | null;
+            data_points_analyzed: number;
+            reasoning: string;
+            recommendation: {
+                /** @enum {string} */
+                type: "switch_strategy" | "reorder" | "disable" | "none";
+                description: string;
+            };
+        };
+        AiCapacityForecast: {
+            /** @enum {string} */
+            resource: "filter_index" | "cache" | "recursor_cache" | "engine_memory" | "blocklist_entries" | "query_volume";
+            current_value: number;
+            max_value: number | null;
+            growth_per_day: number;
+            growth_per_week: number;
+            /** Format: date-time */
+            projected_exhaustion_date: string | null;
+            days_remaining: number | null;
+            /** @enum {string} */
+            trend: "stable" | "growing" | "shrinking" | "insufficient_data";
+            confidence: number;
+            recommendation: string;
+            points_analyzed: number;
+        };
+        AiForecast: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "upstream" | "capacity";
+            subject: string;
+            /** Format: date-time */
+            generated_at: string;
+            /** Format: date-time */
+            valid_until: string;
+            /** Format: uuid */
+            proposal_id: string | null;
+            upstream: components["schemas"]["AiUpstreamPrediction"] | null;
+            capacity: components["schemas"]["AiCapacityForecast"] | null;
+        };
+        AiRolloutRisk: {
+            /** Format: uuid */
+            rollout_id: string;
+            /** @enum {string} */
+            status: "pending" | "assessed" | "failed" | "skipped";
+            risk_score: number | null;
+            /** @enum {string|null} */
+            risk_level: "low" | "medium" | "high" | null;
+            analysis: string;
+            historical_patterns: {
+                /** Format: int64 */
+                config_version: number;
+                description: string;
+                outcome: string;
+                canary_rejected: boolean;
+                max_servfail_ratio: number;
+            }[];
+            recommendation: {
+                strategy: string;
+                canary_count: number;
+                min_health_queries: number;
+                max_servfail_ratio: number;
+                reasoning: string;
+            } | null;
+            /** Format: uuid */
+            proposal_id: string | null;
+            /** Format: date-time */
+            assessed_at: string | null;
+            error: string;
+        };
+        AiListClassification: {
+            /** Format: uuid */
+            list_id: string;
+            blob_sha256: string;
+            sample_size: number;
+            /** Format: int64 */
+            entry_count: number;
+            /** Format: date-time */
+            classified_at: string | null;
+            breakdown: {
+                category: string;
+                sampled: number;
+                /** Format: int64 */
+                estimated: number;
             }[];
         };
     };
@@ -5651,6 +6315,452 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+        };
+    };
+    getAiStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatus"];
+                };
+            };
+            503: components["responses"]["Error"];
+        };
+    };
+    runAiAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent: components["schemas"]["AiAgentName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description run requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTask"];
+                };
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    startAiQueryLogSearch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiQueryLogSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description task started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTask"];
+                };
+            };
+            400: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listAiFindings: {
+        parameters: {
+            query?: {
+                kind?: "anomaly" | "insight";
+                status?: "open" | "acknowledged" | "dismissed" | "resolved";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiFinding"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    updateAiFinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiFindingUpdate"];
+            };
+        };
+        responses: {
+            /** @description updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiFinding"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiInsights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiInsights"];
+                };
+            };
+            503: components["responses"]["Error"];
+        };
+    };
+    listAiProposals: {
+        parameters: {
+            query?: {
+                source?: "filter_recommendations" | "config_assistant" | "upstream_prediction" | "rollout_risk" | "capacity_forecast" | "rpz_suggestions";
+                status?: "open" | "applied" | "failed" | "stale" | "dismissed" | "superseded";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProposal"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProposal"];
+                };
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    applyAiProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description per-proposal results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiApplyResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    dismissAiProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiDismissRequest"];
+            };
+        };
+        responses: {
+            /** @description per-proposal results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDismissResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    createAiAssistantSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAssistantSession"];
+                };
+            };
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiAssistantSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAssistantSession"];
+                };
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    postAiAssistantMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiAssistantMessageInput"];
+            };
+        };
+        responses: {
+            /** @description task started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTask"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    listAiForecasts: {
+        parameters: {
+            query?: {
+                kind?: "upstream" | "capacity";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiForecast"][];
+                };
+            };
+            400: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiRolloutRisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiRolloutRisk"];
+                };
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    startAiThreatCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiThreatCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description task started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTask"];
+                };
+            };
+            400: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    getAiFilterListClassification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiListClassification"];
+                };
+            };
+            404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
 }

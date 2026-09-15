@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/piwi3910/nexora/mgmt/internal/ai"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
@@ -57,9 +58,21 @@ type Deps struct {
 	ZoneDNSSEC        *dnssec.Service       // DNSSEC signing settings, keys and rollovers of hosted zones
 	Catalog           *catalog.Catalog      // the embedded filter category catalog; nil serves an empty catalog
 	EngineLogs        EngineLogReader       // nil: getEngineLogs answers 501 engine_unsupported
+	AIDisabledReason  string                // "" when AI is on; getAiStatus reports it
 }
 
-type handlers struct{ d Deps }
+// AIRuntime holds the AI collaborators of the handlers; later M11 tasks add its fields.
+type AIRuntime struct{}
+
+type handlers struct {
+	d    Deps
+	root http.Handler // the full router, for in-process replay of API operations
+}
+
+// aiRuntime gates every AI operation except getAiStatus: 503 ai_disabled while AI is off.
+func (h *handlers) aiRuntime() (*AIRuntime, error) {
+	return nil, apiError{status: http.StatusServiceUnavailable, code: "ai_disabled", msg: "AI is not configured: " + h.d.AIDisabledReason}
+}
 
 var _ StrictServerInterface = (*handlers)(nil)
 
@@ -105,6 +118,7 @@ func NewHandler(d Deps) http.Handler {
 		r.Handle("/metrics", d.Metrics)
 	}
 	r.Handle("/*", webui.Handler())
+	h.root = r
 	return r
 }
 
@@ -277,6 +291,10 @@ func mapError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, secrets.ErrBackendUnavailable):
 		slog.Warn("key storage", "err", err) // never carries key material
 		writeError(w, http.StatusServiceUnavailable, "key_backend_unavailable", "The requested key storage backend is not configured on this management plane")
+	case errors.Is(err, ai.ErrBusy):
+		writeError(w, http.StatusTooManyRequests, "ai_busy", "the AI model is busy; retry shortly")
+	case errors.Is(err, ai.ErrBudgetExhausted):
+		writeError(w, http.StatusTooManyRequests, "ai_budget_exhausted", "the daily AI token budget is exhausted")
 	case errors.Is(err, store.ErrLastRootAnchor):
 		writeError(w, http.StatusConflict, "last_root_anchor", store.ErrLastRootAnchor.Error())
 	case errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "22") || pgErr.Code == "23514" || pgErr.Code == "23502"):

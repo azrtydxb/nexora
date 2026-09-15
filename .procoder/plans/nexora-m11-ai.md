@@ -187,17 +187,18 @@ Files:
 
 Interfaces: none (documentation of the names fixed by Tasks 2–10).
 
-- [ ] Run `grep -n "## AI (M11)" docs/architecture.md` and expect no match.
-- [ ] Add to the repository layout block, after `internal/fleet`:
+- [x] Run `grep -n "## AI (M11)" docs/architecture.md` and expect no match.
+- [x] Add to the repository layout block, after `internal/fleet` (the `embed.go` line sits under
+      `mgmt/` next to `api/openapi.yaml`, as `api/embed.go`, matching the block's nesting):
   ```
     internal/ai                           (M11) AI service: provider, structured generation, limits,
                                           budget, scheduler, tasks; feature packages below it
     internal/ai/{proposal,finding,forecast} (M11) proposals and replay validation, findings, forecasts
     internal/ai/{qlsearch,anomaly,insight,filterrec,assistant,upstreampred,rolloutrisk,threat,capacity,rpzsuggest}
     internal/mcpserver                    (M11) MCP Streamable HTTP server
-  mgmt/api/embed.go                       (M11) package apispec: the embedded OpenAPI document
+    api/embed.go                          (M11) package apispec: the embedded OpenAPI document
   ```
-- [ ] Append the section `## AI (M11)`, one paragraph each, restating the spec decisions:
+- [x] Append the section `## AI (M11)`, one paragraph each, restating the spec decisions:
   1. Enablement: base URL and model, and the privacy guard.
   2. The go-ai-sdk OpenAI provider built only in `internal/ai/provider.go`.
   3. `ai.Generate`: the prompt header, the `<data>` block, validation attempts, the length retry and
@@ -213,11 +214,12 @@ Interfaces: none (documentation of the names fixed by Tasks 2–10).
   8. Findings and forecasts.
   9. MCP at `/mcp`: read-only default, replayed tools, Origin check, and `nexora-mgmt mcp-stdio`.
   10. Metrics (the full spec list) and retention.
-  11. The environment variable list in the Management plane bullet.
+  11. The environment variable list in the Management plane bullet (the full list is added to that
+      bullet; the AI section links to it).
 
   State that M11 adds no proto field and no engine code.
 
-- [ ] Run `scripts/pc-format.sh docs/architecture.md` and expect no diff output.
+- [x] Run `scripts/pc-format.sh docs/architecture.md` and expect no diff output.
 - [ ] Report the paths. Commit message: `M11 T1: AI architecture`.
 
 ## Task 2: OpenAPI contract, permissions, generated clients, stubs, embedded spec
@@ -330,7 +332,7 @@ capacity_forecast, rpz_suggestions]`;
   `getAiInsights`, `listAiProposals`, `getAiProposal`, `listAiForecasts`, `getAiRolloutRisk`,
   `startAiThreatCheck` and `getAiFilterListClassification`; operator for the rest.
 
-- [ ] Create `mgmt/api/embed_test.go`:
+- [x] Create `mgmt/api/embed_test.go`:
   ```go
   package apispec_test
 
@@ -358,24 +360,31 @@ capacity_forecast, rpz_suggestions]`;
   }
   ```
   Check the `updatePolicyGroup` method in `openapi.yaml` first and use the real one.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/api/ -run TestOperationsIncludeM11 -count=1'` and expect
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/api/ -run TestOperationsIncludeM11 -count=1'` and expect
       FAIL: `no Go files` or `undefined: apispec.Operations`.
-- [ ] Create `mgmt/api/embed.go`. It embeds `openapi.yaml` with `//go:embed openapi.yaml`, loads it with
+- [x] Create `mgmt/api/embed.go`. It embeds `openapi.yaml` with `//go:embed openapi.yaml`, loads it with
       `openapi3.NewLoader().LoadFromData` and `doc.Validate(ctx)`, and walks `doc.Paths.Map()` into
-      `Operation` values in upper-case methods, merging path-level and operation-level parameters.
-- [ ] Add the schemas and operations to `mgmt/api/openapi.yaml`, then run
-      `cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml` and
-      `cd web && pnpm run gen:api` on the laptop.
-- [ ] Add the roles to both permission maps, and the 501 stub handlers (each returns
-      `nil, apiError{status: 501, code: "not_implemented", msg: "<operationId> is not implemented yet"}`)
-      in the owned stub files.
-- [ ] In `server.go`:
+      `Operation` values in upper-case methods, merging path-level and operation-level parameters
+      (sorted by location, then name).
+- [x] Add the schemas and operations to `mgmt/api/openapi.yaml` (tag `ai`; list operations return
+      arrays; `runAiAgent` 202 has no body; `createAiAssistantSession` answers 201 without a request
+      body), then run
+      `cd mgmt/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml`
+      and `cd web && pnpm run gen:api` on the laptop.
+- [x] Add the roles to both permission maps (an `// M11 AI` block after `getVersion`), and the stub
+      handlers in the owned stub files. Each stub except `GetAiStatus` first returns the
+      `h.aiRuntime()` error (so AI-off answers 503 `ai_disabled` already and `aiRuntime` is used), then
+      `nil, apiError{status: 501, code: "not_implemented", msg: "<operationId> is not implemented yet"}`.
+- [x] In `server.go`:
   - add `AIDisabledReason string` to `Deps`, `root http.Handler` to `handlers` (set to `r` at the end
     of `NewHandler`), and the empty `AIRuntime` type;
   - add `aiRuntime()` returning `nil, apiError{status: 503, code: "ai_disabled", msg: "AI is not configured: " + reason}`;
   - add to `mapError`: `ai.ErrBusy` → 429 `ai_busy` and `ai.ErrBudgetExhausted` → 429
-    `ai_budget_exhausted`, as string codes through `apiError` so `api` does not import `ai` yet.
-- [ ] Create `mgmt/internal/api/m11_contract_test.go`:
+    `ai_budget_exhausted`. Task 3 was committed first, so `api` imports `mgmt/internal/ai` directly
+    (no import cycle).
+- [x] Create `mgmt/internal/api/m11_contract_test.go` (plus `TestM11AIGateAndErrorCodes`: a stub
+      answers 503 `ai_disabled` with the reason, and wrapped `ai.ErrBusy`/`ai.ErrBudgetExhausted` map to
+      429 `ai_busy`/`ai_budget_exhausted`):
   ```go
   package api
 
@@ -403,11 +412,11 @@ capacity_forecast, rpz_suggestions]`;
   	}
   }
   ```
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'go vet ./mgmt/... && go test ./mgmt/api/ ./mgmt/internal/api/ ./mgmt/internal/auth/ -count=1'`
       and `cd web && pnpm run typecheck && pnpm run lint`. Expect PASS, including
       `TestPermissionsCoverEveryOperation`.
-- [ ] Report the paths. Commit message: `M11 T2: OpenAPI contract, permissions, generated clients and AI stubs`.
+- [x] Report the paths. Commit message: `M11 T2: OpenAPI contract, permissions, generated clients and AI stubs`.
 
 ## Task 3: AI service foundation
 

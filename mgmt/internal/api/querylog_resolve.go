@@ -76,7 +76,7 @@ func resolveRecordNames(ctx context.Context, q store.PolicyQuerier, cat *catalog
 			Transport: r.Transport, EngineId: r.EngineID, DurationUs: r.DurationUS, ListId: r.ListID, Category: r.Category,
 			ListName: listName, Source: QueryLogRecordSource(r.Source), Rule: r.Rule,
 			PolicyGroupId: r.PolicyGroupID, PolicyGroupName: groupName, RpzZoneId: r.RPZZoneID, RpzZoneName: rpz[r.RPZZoneID],
-			RpzAction: r.RPZAction, UpstreamsRaced: int(r.UpstreamsRaced)}
+			RpzAction: r.RPZAction, UpstreamsRaced: int(r.UpstreamsRaced), Threat: nil}
 		if r.Source == string(QueryLogRecordSourceRewrite) {
 			out[i].RewriteAnswer = answers[rewriteKey{r.Rule, r.PolicyGroupID}]
 		}

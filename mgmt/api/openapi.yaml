@@ -633,6 +633,7 @@ components:
           rpz_action,
           rewrite_answer,
           upstreams_raced,
+          threat,
         ]
       properties:
         time: { type: string, format: date-time }
@@ -662,6 +663,15 @@ components:
         rpz_action: { type: string }
         rewrite_answer: { type: string }
         upstreams_raced: { type: integer }
+        threat:
+          type: [object, "null"]
+          description: The cached AI threat verdict for the name; null when none is cached or AI is off.
+          required: [is_threat, categories, confidence, checked_at]
+          properties:
+            is_threat: { type: boolean }
+            categories: { type: array, items: { type: string } }
+            confidence: { type: number }
+            checked_at: { type: string, format: date-time }
     QueryLogPage:
       type: object
       required: [backend, records, next_cursor]
@@ -2211,6 +2221,647 @@ components:
                       { type: "null" },
                     ],
                 }
+    AiAgentName:
+      type: string
+      enum:
+        [
+          querylog_anomalies,
+          dashboard_insights,
+          filter_recommendations,
+          upstream_prediction,
+          rollout_risk,
+          threat_classification,
+          capacity_forecast,
+          rpz_suggestions,
+        ]
+    AiAgentState:
+      type: object
+      required:
+        [
+          name,
+          enabled,
+          interval_seconds,
+          last_started_at,
+          last_finished_at,
+          last_outcome,
+          last_error,
+          next_run_at,
+          running,
+        ]
+      properties:
+        name: { $ref: "#/components/schemas/AiAgentName" }
+        enabled: { type: boolean }
+        interval_seconds: { type: integer, format: int64 }
+        last_started_at: { type: [string, "null"], format: date-time }
+        last_finished_at: { type: [string, "null"], format: date-time }
+        last_outcome: { type: string }
+        last_error: { type: string }
+        next_run_at: { type: [string, "null"], format: date-time }
+        running: { type: boolean }
+    AiStatus:
+      type: object
+      description: The AI layer's state. It never contains the API key.
+      required:
+        [
+          enabled,
+          reason,
+          model,
+          endpoint_host,
+          structured_output,
+          budget,
+          agents,
+          features,
+          mcp,
+        ]
+      properties:
+        enabled: { type: boolean }
+        reason:
+          {
+            type: string,
+            enum:
+              [
+                "",
+                not_configured,
+                incomplete_configuration,
+                endpoint_not_private,
+              ],
+          }
+        model: { type: string }
+        endpoint_host: { type: string }
+        structured_output: { type: string }
+        budget:
+          type: object
+          required: [day, limit_tokens, used_tokens, background_limit_tokens]
+          properties:
+            day: { type: string, format: date }
+            limit_tokens: { type: integer, format: int64 }
+            used_tokens: { type: integer, format: int64 }
+            background_limit_tokens: { type: integer, format: int64 }
+        agents:
+          { type: array, items: { $ref: "#/components/schemas/AiAgentState" } }
+        features:
+          type: object
+          required: [querylog_search, config_assistant, threat_check]
+          properties:
+            querylog_search: { type: boolean }
+            config_assistant: { type: boolean }
+            threat_check: { type: boolean }
+        mcp:
+          type: object
+          required: [enabled, read_only]
+          properties:
+            enabled: { type: boolean }
+            read_only: { type: boolean }
+    AiTask:
+      type: object
+      required:
+        [
+          id,
+          kind,
+          status,
+          created_at,
+          started_at,
+          finished_at,
+          error_code,
+          error_message,
+          result,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          {
+            type: string,
+            enum: [querylog_search, threat_check, assistant_message],
+          }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        error_code: { type: string }
+        error_message: { type: string }
+        result:
+          type: [object, "null"]
+          description: The kind's result (AiQueryLogSearchResult, AiThreatCheckResult or AiAssistantTurnResult) once succeeded.
+    AiQueryLogFilters:
+      type: object
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        client: { type: string }
+        name: { type: string }
+        qtype: { type: array, items: { type: string } }
+        rcode: { type: array, items: { type: string } }
+        cache: { type: array, items: { type: string } }
+        filter: { type: array, items: { type: string } }
+        category: { type: array, items: { type: string } }
+        source: { type: array, items: { type: string } }
+        list_id: { type: array, items: { type: string } }
+        policy_group: { type: array, items: { type: string } }
+        engine_id: { type: array, items: { type: string } }
+    AiQueryLogSearchResult:
+      type: object
+      required: [filters, explanation, summary, suggestions, total_shown]
+      properties:
+        filters: { $ref: "#/components/schemas/AiQueryLogFilters" }
+        explanation: { type: string }
+        summary: { type: string }
+        suggestions: { type: array, items: { type: string } }
+        total_shown: { type: integer }
+    AiThreatVerdict:
+      type: object
+      required:
+        [
+          name,
+          is_threat,
+          categories,
+          confidence,
+          reasoning,
+          query_count,
+          client_count,
+          first_seen,
+          last_seen,
+          blocked_by,
+          cached,
+        ]
+      properties:
+        name: { type: string }
+        is_threat: { type: boolean }
+        categories: { type: array, items: { type: string } }
+        confidence: { type: number }
+        reasoning: { type: string }
+        query_count: { type: integer, format: int64 }
+        client_count: { type: integer, format: int64 }
+        first_seen: { type: [string, "null"], format: date-time }
+        last_seen: { type: [string, "null"], format: date-time }
+        blocked_by: { type: string }
+        cached: { type: boolean }
+    AiThreatCheckResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/AiThreatVerdict" },
+          }
+    AiAssistantTurnResult:
+      type: object
+      required: [message_id, proposal_id]
+      properties:
+        message_id: { type: integer, format: int64 }
+        proposal_id: { type: [string, "null"], format: uuid }
+    AiQueryLogSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string, minLength: 1, maxLength: 500 }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+    AiThreatCheckRequest:
+      type: object
+      required: [domains]
+      properties:
+        domains:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 100,
+            items: { type: string, minLength: 1, maxLength: 253 },
+          }
+    AiFinding:
+      type: object
+      required:
+        [
+          id,
+          kind,
+          candidate_id,
+          type,
+          status,
+          severity,
+          confidence,
+          title,
+          description,
+          explained,
+          detail,
+          first_seen,
+          last_seen,
+          updated_by,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [anomaly, insight] }
+        candidate_id: { type: string }
+        type: { type: string }
+        status:
+          { type: string, enum: [open, acknowledged, dismissed, resolved] }
+        severity: { type: string, enum: [info, warning, critical] }
+        confidence: { type: number }
+        title: { type: string }
+        description: { type: string }
+        explained: { type: boolean }
+        detail: { type: object, additionalProperties: true }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        updated_by: { type: string }
+        updated_at: { type: string, format: date-time }
+    AiFindingUpdate:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [acknowledged, dismissed] }
+    AiInsights:
+      type: object
+      required: [insights, summary, score, generated_at]
+      properties:
+        insights:
+          { type: array, items: { $ref: "#/components/schemas/AiFinding" } }
+        summary: { type: string }
+        score: { type: integer, minimum: 0, maximum: 10 }
+        generated_at: { type: [string, "null"], format: date-time }
+    AiProposalAction:
+      type: object
+      required: [operation_id, path_params, body, explanation, current]
+      properties:
+        operation_id: { type: string }
+        path_params: { type: object, additionalProperties: { type: string } }
+        body: { type: [object, "null"] }
+        explanation: { type: string }
+        current:
+          type: [object, "null"]
+          description: The live resource the action changes (getAiProposal only; null in lists and for creations).
+    AiProposal:
+      type: object
+      required:
+        [
+          id,
+          source,
+          status,
+          title,
+          description,
+          priority,
+          impact,
+          evidence,
+          actions,
+          risk,
+          session_id,
+          created_at,
+          updated_at,
+          reviewed_by,
+          reviewed_at,
+          result,
+          dismiss_reason,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        source:
+          {
+            type: string,
+            enum:
+              [
+                filter_recommendations,
+                config_assistant,
+                upstream_prediction,
+                rollout_risk,
+                capacity_forecast,
+                rpz_suggestions,
+              ],
+          }
+        status:
+          {
+            type: string,
+            enum: [open, applied, failed, stale, dismissed, superseded],
+          }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: string, enum: [low, medium, high] }
+        impact: { type: object, additionalProperties: true }
+        evidence: { type: object, additionalProperties: true }
+        actions:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/AiProposalAction" },
+          }
+        risk: { type: object, additionalProperties: true }
+        session_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        reviewed_by: { type: string }
+        reviewed_at: { type: [string, "null"], format: date-time }
+        result: { type: [object, "null"] }
+        dismiss_reason: { type: string }
+    AiApplyRequest:
+      type: object
+      required: [ids]
+      additionalProperties: false
+      properties:
+        ids:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 100,
+            items: { type: string, format: uuid },
+          }
+        acknowledge_license: { type: boolean, default: false }
+    AiApplyResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [id, status, actions]
+            properties:
+              id: { type: string, format: uuid }
+              status: { type: string }
+              actions:
+                type: array
+                items:
+                  type: object
+                  required: [operation_id, http_status, code, message]
+                  properties:
+                    operation_id: { type: string }
+                    http_status: { type: integer }
+                    code: { type: string }
+                    message: { type: string }
+    AiDismissRequest:
+      type: object
+      required: [ids]
+      additionalProperties: false
+      properties:
+        ids:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 100,
+            items: { type: string, format: uuid },
+          }
+        reason: { type: string, maxLength: 500 }
+    AiDismissResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [id, status, code]
+            properties:
+              id: { type: string, format: uuid }
+              status: { type: string }
+              code: { type: string }
+    AiAssistantMessage:
+      type: object
+      required: [id, role, content, proposal_id, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        proposal_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+    AiAssistantMessageInput:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content: { type: string, minLength: 1, maxLength: 2000 }
+    AiAssistantSession:
+      type: object
+      required: [id, title, created_at, updated_at, messages, proposal, task]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        messages:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/AiAssistantMessage" },
+          }
+        proposal:
+          {
+            oneOf:
+              [{ $ref: "#/components/schemas/AiProposal" }, { type: "null" }],
+          }
+        task:
+          { oneOf: [{ $ref: "#/components/schemas/AiTask" }, { type: "null" }] }
+    AiUpstreamPrediction:
+      type: object
+      required:
+        [
+          upstream_id,
+          upstream_name,
+          trend,
+          confidence,
+          current_rtt_p50_ms,
+          current_rtt_p99_ms,
+          slope_ms_per_hour,
+          step_change,
+          periodic_hours,
+          projected_time_to_threshold,
+          data_points_analyzed,
+          reasoning,
+          recommendation,
+        ]
+      properties:
+        upstream_id: { type: string }
+        upstream_name: { type: string }
+        trend:
+          {
+            type: string,
+            enum:
+              [
+                stable,
+                degrading,
+                improving,
+                periodic,
+                failing,
+                insufficient_data,
+              ],
+          }
+        confidence: { type: number }
+        current_rtt_p50_ms: { type: number }
+        current_rtt_p99_ms: { type: number }
+        slope_ms_per_hour: { type: number }
+        step_change: { type: boolean }
+        periodic_hours: { type: array, items: { type: integer } }
+        projected_time_to_threshold:
+          { type: [string, "null"], format: date-time }
+        data_points_analyzed: { type: integer }
+        reasoning: { type: string }
+        recommendation:
+          type: object
+          required: [type, description]
+          properties:
+            type:
+              { type: string, enum: [switch_strategy, reorder, disable, none] }
+            description: { type: string }
+    AiCapacityForecast:
+      type: object
+      required:
+        [
+          resource,
+          current_value,
+          max_value,
+          growth_per_day,
+          growth_per_week,
+          projected_exhaustion_date,
+          days_remaining,
+          trend,
+          confidence,
+          recommendation,
+          points_analyzed,
+        ]
+      properties:
+        resource:
+          {
+            type: string,
+            enum:
+              [
+                filter_index,
+                cache,
+                recursor_cache,
+                engine_memory,
+                blocklist_entries,
+                query_volume,
+              ],
+          }
+        current_value: { type: number }
+        max_value: { type: [number, "null"] }
+        growth_per_day: { type: number }
+        growth_per_week: { type: number }
+        projected_exhaustion_date: { type: [string, "null"], format: date-time }
+        days_remaining: { type: [integer, "null"] }
+        trend:
+          {
+            type: string,
+            enum: [stable, growing, shrinking, insufficient_data],
+          }
+        confidence: { type: number }
+        recommendation: { type: string }
+        points_analyzed: { type: integer }
+    AiForecast:
+      type: object
+      required:
+        [
+          id,
+          kind,
+          subject,
+          generated_at,
+          valid_until,
+          proposal_id,
+          upstream,
+          capacity,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [upstream, capacity] }
+        subject: { type: string }
+        generated_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        proposal_id: { type: [string, "null"], format: uuid }
+        upstream:
+          {
+            oneOf:
+              [
+                { $ref: "#/components/schemas/AiUpstreamPrediction" },
+                { type: "null" },
+              ],
+          }
+        capacity:
+          {
+            oneOf:
+              [
+                { $ref: "#/components/schemas/AiCapacityForecast" },
+                { type: "null" },
+              ],
+          }
+    AiRolloutRisk:
+      type: object
+      required:
+        [
+          rollout_id,
+          status,
+          risk_score,
+          risk_level,
+          analysis,
+          historical_patterns,
+          recommendation,
+          proposal_id,
+          assessed_at,
+          error,
+        ]
+      properties:
+        rollout_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, assessed, failed, skipped] }
+        risk_score: { type: [integer, "null"], minimum: 1, maximum: 10 }
+        risk_level: { type: [string, "null"], enum: [low, medium, high] }
+        analysis: { type: string }
+        historical_patterns:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                config_version,
+                description,
+                outcome,
+                canary_rejected,
+                max_servfail_ratio,
+              ]
+            properties:
+              config_version: { type: integer, format: int64 }
+              description: { type: string }
+              outcome: { type: string }
+              canary_rejected: { type: boolean }
+              max_servfail_ratio: { type: number }
+        recommendation:
+          type: [object, "null"]
+          required:
+            [
+              strategy,
+              canary_count,
+              min_health_queries,
+              max_servfail_ratio,
+              reasoning,
+            ]
+          properties:
+            strategy: { type: string }
+            canary_count: { type: integer }
+            min_health_queries: { type: integer }
+            max_servfail_ratio: { type: number }
+            reasoning: { type: string }
+        proposal_id: { type: [string, "null"], format: uuid }
+        assessed_at: { type: [string, "null"], format: date-time }
+        error: { type: string }
+    AiListClassification:
+      type: object
+      required:
+        [
+          list_id,
+          blob_sha256,
+          sample_size,
+          entry_count,
+          classified_at,
+          breakdown,
+        ]
+      properties:
+        list_id: { type: string, format: uuid }
+        blob_sha256: { type: string }
+        sample_size: { type: integer }
+        entry_count: { type: integer, format: int64 }
+        classified_at: { type: [string, "null"], format: date-time }
+        breakdown:
+          type: array
+          items:
+            type: object
+            required: [category, sampled, estimated]
+            properties:
+              category: { type: string }
+              sampled: { type: integer }
+              estimated: { type: integer, format: int64 }
 paths:
   /health:
     get:
@@ -4552,3 +5203,403 @@ paths:
           }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /ai/status:
+    get:
+      operationId: getAiStatus
+      tags: [ai]
+      description: The AI layer's state; answers 200 with enabled false and a reason when AI is off.
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiStatus" } },
+              },
+          }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/agents/{agent}/run:
+    post:
+      operationId: runAiAgent
+      tags: [ai]
+      description: Requests an immediate run of a background agent (Run now).
+      parameters:
+        - {
+            name: agent,
+            in: path,
+            required: true,
+            schema: { $ref: "#/components/schemas/AiAgentName" },
+          }
+      responses:
+        "202": { description: run requested }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/tasks/{id}:
+    get:
+      operationId: getAiTask
+      tags: [ai]
+      description: An interactive AI task; 404 to anyone but its requester or an admin.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiTask" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/query-log/search:
+    post:
+      operationId: startAiQueryLogSearch
+      tags: [ai]
+      description: Starts a natural-language query-log search task.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiQueryLogSearchRequest" }
+      responses:
+        "202":
+          {
+            description: task started,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiTask" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/findings:
+    get:
+      operationId: listAiFindings
+      tags: [ai]
+      parameters:
+        - {
+            name: kind,
+            in: query,
+            schema: { type: string, enum: [anomaly, insight] },
+          }
+        - {
+            name: status,
+            in: query,
+            schema:
+              { type: string, enum: [open, acknowledged, dismissed, resolved] },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 100 },
+          }
+      responses:
+        "200":
+          description: newest first
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/AiFinding" },
+                }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/findings/{id}:
+    patch:
+      operationId: updateAiFinding
+      tags: [ai]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiFindingUpdate" }
+      responses:
+        "200":
+          {
+            description: updated,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiFinding" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/insights:
+    get:
+      operationId: getAiInsights
+      tags: [ai]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiInsights" } },
+              },
+          }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/proposals:
+    get:
+      operationId: listAiProposals
+      tags: [ai]
+      parameters:
+        - {
+            name: source,
+            in: query,
+            schema:
+              {
+                type: string,
+                enum:
+                  [
+                    filter_recommendations,
+                    config_assistant,
+                    upstream_prediction,
+                    rollout_risk,
+                    capacity_forecast,
+                    rpz_suggestions,
+                  ],
+              },
+          }
+        - {
+            name: status,
+            in: query,
+            schema:
+              {
+                type: string,
+                enum: [open, applied, failed, stale, dismissed, superseded],
+              },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 500, default: 100 },
+          }
+      responses:
+        "200":
+          description: newest first
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/AiProposal" },
+                }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/proposals/{id}:
+    get:
+      operationId: getAiProposal
+      tags: [ai]
+      description: One proposal, with each action's live current resource.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiProposal" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/proposals/apply:
+    post:
+      operationId: applyAiProposals
+      tags: [ai]
+      description: Applies open proposals by replaying their actions through the API with the caller's credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiApplyRequest" }
+      responses:
+        "200":
+          {
+            description: per-proposal results,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiApplyResponse" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/proposals/dismiss:
+    post:
+      operationId: dismissAiProposals
+      tags: [ai]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiDismissRequest" }
+      responses:
+        "200":
+          {
+            description: per-proposal results,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/AiDismissResponse" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/assistant/sessions:
+    post:
+      operationId: createAiAssistantSession
+      tags: [ai]
+      responses:
+        "201":
+          {
+            description: created,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/AiAssistantSession" },
+                  },
+              },
+          }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/assistant/sessions/{id}:
+    get:
+      operationId: getAiAssistantSession
+      tags: [ai]
+      description: One of the caller's assistant sessions.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/AiAssistantSession" },
+                  },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/assistant/sessions/{id}/messages:
+    post:
+      operationId: postAiAssistantMessage
+      tags: [ai]
+      description: Adds a user message and starts the assistant turn task.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiAssistantMessageInput" }
+      responses:
+        "202":
+          {
+            description: task started,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiTask" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/forecasts:
+    get:
+      operationId: listAiForecasts
+      tags: [ai]
+      description: The newest forecast per subject.
+      parameters:
+        - {
+            name: kind,
+            in: query,
+            schema: { type: string, enum: [upstream, capacity] },
+          }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/AiForecast" },
+                }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /rollouts/{id}/ai-risk:
+    get:
+      operationId: getAiRolloutRisk
+      tags: [ai]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiRolloutRisk" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /ai/threat-check:
+    post:
+      operationId: startAiThreatCheck
+      tags: [ai]
+      description: Starts a threat check task for up to 100 domain names.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiThreatCheckRequest" }
+      responses:
+        "202":
+          {
+            description: task started,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AiTask" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /filter-lists/{id}/ai-classification:
+    get:
+      operationId: getAiFilterListClassification
+      tags: [ai]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          {
+            description: ok,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/AiListClassification" },
+                  },
+              },
+          }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
