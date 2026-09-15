@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -38,6 +41,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
 	"github.com/piwi3910/nexora/mgmt/internal/fleet"
+	"github.com/piwi3910/nexora/mgmt/internal/mcpserver"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/rollout"
@@ -59,7 +63,7 @@ var (
 	buildDate = ""
 )
 
-const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> [--if-missing] | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F | engine-group create --name N [--description D] [--if-missing] | join-token create --engine-group G [--ttl 24h] [--max-uses N] [--label k=v]"
+const usage = "usage: nexora-mgmt serve | version | migrate | ca init --out <dir> [--if-missing] | ca issue-dns --ca-cert F --ca-key F --names N[,N...] [--days 90] --out <dir> | user create --admin --username U --email E --password-file F | engine-group create --name N [--description D] [--if-missing] | join-token create --engine-group G [--ttl 24h] [--max-uses N] [--label k=v] | mcp-stdio --url <base URL> --token-file F [--ca-file F]"
 
 func main() {
 	api.Version, api.Commit, api.BuildDate = version, commit, buildDate
@@ -88,6 +92,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		err = engineGroupCreate(ctx, args[2:], stdout)
 	case len(args) >= 2 && args[0] == "join-token" && args[1] == "create":
 		err = joinTokenCreate(ctx, args[2:], stdout)
+	case len(args) >= 1 && args[0] == "mcp-stdio":
+		err = mcpStdio(ctx, args[1:], os.Stdin, stdout)
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
@@ -125,6 +131,45 @@ func migrate(ctx context.Context, stdout io.Writer) error {
 	st.Close()
 	fmt.Fprintln(stdout, "migrations applied")
 	return nil
+}
+
+// mcpStdio bridges stdio JSON-RPC to the /mcp endpoint of a management plane with an API token.
+func mcpStdio(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mcp-stdio", flag.ContinueOnError)
+	baseURL := fs.String("url", "", "management plane base URL, e.g. https://nexora.example.com")
+	tokenFile := fs.String("token-file", "", "file holding an nxt_ API token")
+	caFile := fs.String("ca-file", "", "PEM CA bundle that verifies the management plane (default: system roots)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baseURL == "" || *tokenFile == "" || fs.NArg() != 0 {
+		return errors.New("usage: nexora-mgmt mcp-stdio --url <base URL> --token-file F [--ca-file F]")
+	}
+	if u, err := url.Parse(*baseURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("--url %q is not an http(s) URL", *baseURL)
+	}
+	raw, err := os.ReadFile(*tokenFile)
+	if err != nil {
+		return err
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return errors.New("--token-file is empty")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if *caFile != "" {
+		pem, err := os.ReadFile(*caFile)
+		if err != nil {
+			return err
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pem) {
+			return fmt.Errorf("--ca-file %s holds no PEM certificate", *caFile)
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	}
+	// No overall timeout: a query-log tool call may legitimately take long; the server bounds its work.
+	return mcpserver.RunStdio(ctx, stdin, stdout, *baseURL, token, &http.Client{Transport: transport})
 }
 
 func userCreate(ctx context.Context, args []string, stdout io.Writer) error {
@@ -364,17 +409,26 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("AI: %w", err)
 	}
-	httpSrv := &http.Server{
-		Handler: api.NewHandler(api.Deps{
-			Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
-			QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
-			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
-			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
-			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
-			EngineLogs: logs, AIDisabledReason: aiDisabledReason, AI: aiRuntime,
-		}),
-		ReadHeaderTimeout: 10 * time.Second,
+	apiDeps := api.Deps{
+		Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
+		QueryLog: queryLog, InstanceID: instanceID, PublicURL: cfg.PublicURL,
+		Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
+		RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
+		Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
+		EngineLogs: logs, AIDisabledReason: aiDisabledReason, AI: aiRuntime,
 	}
+	// MCP replays through the very handler it is mounted in, so it is set once that handler exists
+	// (before the listener serves anything).
+	var mcpHandler http.Handler
+	if cfg.AI.MCPEnabled {
+		apiDeps.MCP = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })
+	}
+	apiHandler, replayer := api.NewHandlerWithReplayer(apiDeps)
+	if cfg.AI.MCPEnabled {
+		mcpHandler = mcpserver.New(mcpserver.Options{Replayer: replayer, Store: st, PublicURL: cfg.PublicURL, ReadOnly: cfg.AI.MCPReadOnly, Registerer: reg})
+		log.Printf("MCP: on at /mcp (read-only %t)", cfg.AI.MCPReadOnly)
+	}
+	httpSrv := &http.Server{Handler: apiHandler, ReadHeaderTimeout: 10 * time.Second}
 	httpLis, err := net.Listen("tcp", cfg.HTTPListen)
 	if err != nil {
 		return err

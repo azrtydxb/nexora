@@ -1671,6 +1671,8 @@ Files:
 - `mgmt/internal/mcpserver/resources.go`, `mgmt/internal/mcpserver/prompts.go`.
 - `mgmt/internal/mcpserver/stdio.go`: the stdio bridge.
 - `mgmt/internal/mcpserver/server_test.go`, `mgmt/internal/mcpserver/tools_test.go`: created.
+  (`server_test.go` holds `TestServerProtocol` and `TestResourcesAndPrompts`, which needs a database
+  for the filter-list blob.)
 - `mgmt/internal/api/mcp_replay.go`: created; exported replay for MCP.
 - `mgmt/internal/api/server.go`: `NewHandler` delegates to `NewHandlerWithReplayer`.
 - `mgmt/cmd/nexora-mgmt/main.go`: the `mcp-stdio` subcommand and `Deps.MCP` construction.
@@ -1730,7 +1732,7 @@ resolver settings tool become `_rotate_certificate` and `_get`/`_update`. The to
 `inputSchema` is `{type:object, properties:{<path and query params>, body:<request schema>},
 required:[required params, "body" when required]}` with refs inlined to depth 8.
 
-- [ ] Create `mgmt/internal/mcpserver/tools_test.go` with `TestToolsMapToOperations`:
+- [x] Create `mgmt/internal/mcpserver/tools_test.go` with `TestToolsMapToOperations`:
   - every `Tools` entry's operation exists in `apispec.Operations()`;
   - every name matches `^nexora_[a-z0-9_]+$` and is unique;
   - the input schema of `nexora_policy_groups_update` has required `id` and `body`, and
@@ -1739,7 +1741,7 @@ required:[required params, "body" when required]}` with refs inlined to depth 8.
   Run `scripts/dev-exec.sh 'go test ./mgmt/internal/mcpserver -count=1'`, expect FAIL (`undefined: Tools`),
   implement `tools.go`, and expect PASS.
 
-- [ ] Create `mgmt/internal/mcpserver/server_test.go` with `TestServerProtocol`, using a fake `Replayer`:
+- [x] Create `mgmt/internal/mcpserver/server_test.go` with `TestServerProtocol`, using a fake `Replayer`:
   - `initialize` with `2025-06-18` returns that version, and with `2024-01-01` returns `2025-06-18`;
   - a batch array → error -32600; unknown method → -32601;
   - `GET` → 405;
@@ -1751,7 +1753,9 @@ required:[required params, "body" when required]}` with refs inlined to depth 8.
   - a replay result of 403 becomes `isError` with `forbidden`;
   - a 2 MiB body is truncated with `truncated: true`.
 
-  Run, expect FAIL, implement `server.go`, `resources.go` and `prompts.go`, and expect PASS.
+  Run, expect FAIL, implement `server.go`, `resources.go` and `prompts.go`, and expect PASS. The
+  resources and prompts are asserted by `TestResourcesAndPrompts` in the same file (a `storetest`
+  database, because the filter-list content resource reads and zstd-decodes a blob).
   - Prompts return one user message:
     - `nexora_status`: "Summarise the Nexora fleet status. Use nexora_fleet_summary and nexora_dashboard_get."
     - `nexora_query_log`: "Show Nexora query log entries from the last {minutes} minutes using nexora_query_log_query."
@@ -1760,18 +1764,18 @@ required:[required params, "body" when required]}` with refs inlined to depth 8.
     `current_blob_sha256`, zstd-decodes it (as `mgmt/internal/blocklist` does) and returns the first
     10,000 lines.
 
-- [ ] Implement `mcp_replay.go`, the `mcp-stdio` subcommand (flags `--url`, `--token-file`, `--ca-file`),
+- [x] Implement `mcp_replay.go`, the `mcp-stdio` subcommand (flags `--url`, `--token-file`, `--ca-file`),
       and in `serve`: when `cfg.AI.MCPEnabled`, call `NewHandlerWithReplayer`, then set `Deps.MCP` to
       `mcpserver.New(...)`. Build the API handler once with `Deps.MCP` set by assigning through a small
       indirection handler (`mcpHandler.Store(h)`), because MCP needs the replayer of the same handler.
-- [ ] Create `e2e/mcp_test.go` with `TestMCPServerWithGoAISDKClient` and `TestMCPStdioBridge` exactly as
+- [x] Create `e2e/mcp_test.go` with `TestMCPServerWithGoAISDKClient` and `TestMCPStdioBridge` exactly as
       in the spec criterion. They use `mcp.NewClient(mcp.NewStreamableHTTPTransport(mgmt.BaseURL+"/mcp", map[string]string{"Authorization": "Bearer " + token}))`,
       `client.Initialize`, `mcp.Tools(ctx, client)` for the names, and the client's call, resource and
       prompt methods (check exact names in `github.com/azrtydxb/go-ai-sdk/mcp` `client.go`, `resources.go`
       and `prompts.go`). They create viewer and operator API tokens through `POST /api-tokens`, and run
       mgmt twice (`NEXORA_MCP_READ_ONLY=true`, then `false`), both without AI configured.
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run "TestMCP" -count=1 -v'` and expect PASS.
-- [ ] Report the paths. Commit message: `M11 T10: MCP server with API RBAC and stdio bridge`.
+- [x] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run "TestMCP" -count=1 -v'` and expect PASS.
+- [x] Report the paths. Commit message: `M11 T10: MCP server with API RBAC and stdio bridge`.
 
 ## Task 11: GUI foundation for AI
 

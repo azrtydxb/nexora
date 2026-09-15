@@ -95,7 +95,7 @@ var _ StrictServerInterface = (*handlers)(nil)
 // NewHandler routes /api/v1 to the API, /metrics to d.Metrics (when set) and everything else to
 // the embedded GUI.
 func NewHandler(d Deps) http.Handler {
-	_, r := newHandlers(d)
+	r, _ := NewHandlerWithReplayer(d)
 	return r
 }
 
