@@ -293,16 +293,17 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 	}
 	var strategy, blockMode, otlp string
 	var maxBytes int64
-	var minTTL, maxTTL, negTTL, stale, blockTTL, sample, slow int32
+	var minTTL, maxTTL, negTTL, stale, blockTTL, sample, slow, parallelMax int32
 	if err := tx.QueryRow(ctx, `select strategy, cache_max_bytes, cache_min_ttl, cache_max_ttl, cache_negative_max_ttl,
-		cache_stale_window, block_mode, block_ttl, otlp_endpoint, trace_sample_one_in, trace_slow_threshold_us
-		from resolver_settings`).Scan(&strategy, &maxBytes, &minTTL, &maxTTL, &negTTL, &stale, &blockMode, &blockTTL, &otlp, &sample, &slow); err != nil {
+		cache_stale_window, block_mode, block_ttl, otlp_endpoint, trace_sample_one_in, trace_slow_threshold_us, parallel_max
+		from resolver_settings`).Scan(&strategy, &maxBytes, &minTTL, &maxTTL, &negTTL, &stale, &blockMode, &blockTTL, &otlp, &sample, &slow, &parallelMax); err != nil {
 		return nil, fmt.Errorf("resolver settings: %w", err)
 	}
 	var ok bool
 	if snap.Resolver.Strategy, ok = strategies[strategy]; !ok {
 		return nil, fmt.Errorf("unknown strategy %q", strategy)
 	}
+	snap.Resolver.ParallelMax = uint32(parallelMax)
 	if snap.Filter.BlockMode, ok = blockModes[blockMode]; !ok {
 		return nil, fmt.Errorf("unknown block mode %q", blockMode)
 	}
@@ -425,8 +426,9 @@ func buildPolicy(ctx context.Context, tx pgx.Tx, snap *controlv1.ConfigSnapshot,
 
 var (
 	strategies = map[string]controlv1.UpstreamStrategy{
-		"ordered": controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_ORDERED,
-		"fastest": controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_FASTEST,
+		"ordered":  controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_ORDERED,
+		"fastest":  controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_FASTEST,
+		"parallel": controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_PARALLEL,
 	}
 	protocols = map[string]controlv1.UpstreamProtocol{
 		"udp": controlv1.UpstreamProtocol_UPSTREAM_PROTOCOL_UDP,

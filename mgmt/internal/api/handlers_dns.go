@@ -221,21 +221,24 @@ func (h *handlers) DeleteUpstream(ctx context.Context, req DeleteUpstreamRequest
 // ---- resolver settings ----
 
 const resolverColumns = `strategy, cache_max_bytes, cache_min_ttl, cache_max_ttl, cache_negative_max_ttl, cache_stale_window,
-	block_mode, block_ttl, otlp_endpoint, trace_sample_one_in, trace_slow_threshold_us, revision`
+	block_mode, block_ttl, otlp_endpoint, trace_sample_one_in, trace_slow_threshold_us, parallel_max, revision`
 
 func scanResolver(row pgx.Row) (ResolverSettings, error) {
 	var s ResolverSettings
 	var strategy, blockMode string
+	var parallelMax int
 	err := row.Scan(&strategy, &s.CacheMaxBytes, &s.CacheMinTtl, &s.CacheMaxTtl, &s.CacheNegativeMaxTtl, &s.CacheStaleWindow,
-		&blockMode, &s.BlockTtl, &s.OtlpEndpoint, &s.TraceSampleOneIn, &s.TraceSlowThresholdUs, &s.Revision)
-	s.Strategy, s.BlockMode = ResolverSettingsStrategy(strategy), ResolverSettingsBlockMode(blockMode)
+		&blockMode, &s.BlockTtl, &s.OtlpEndpoint, &s.TraceSampleOneIn, &s.TraceSlowThresholdUs, &parallelMax, &s.Revision)
+	s.Strategy, s.BlockMode, s.ParallelMax = ResolverSettingsStrategy(strategy), ResolverSettingsBlockMode(blockMode), &parallelMax
 	return s, store.MapError(err)
 }
 
 func validateResolver(s ResolverSettings) error {
 	switch {
 	case !s.Strategy.Valid():
-		return invalid("strategy must be ordered or fastest")
+		return invalid("strategy must be ordered, fastest or parallel")
+	case s.ParallelMax != nil && (*s.ParallelMax < 0 || *s.ParallelMax > 8):
+		return invalid("parallel_max must be between 0 and 8")
 	case !s.BlockMode.Valid():
 		return invalid("block_mode must be null_ip, nxdomain or refused")
 	case s.CacheMaxBytes < 1<<20:
@@ -274,9 +277,9 @@ func (h *handlers) UpdateResolverSettings(ctx context.Context, req UpdateResolve
 		after, err = scanResolver(tx.QueryRow(ctx, `update resolver_settings set strategy = $1, cache_max_bytes = $2,
 			cache_min_ttl = $3, cache_max_ttl = $4, cache_negative_max_ttl = $5, cache_stale_window = $6, block_mode = $7,
 			block_ttl = $8, otlp_endpoint = $9, trace_sample_one_in = $10, trace_slow_threshold_us = $11,
-			revision = revision + 1, updated_at = now() returning `+resolverColumns,
+			parallel_max = coalesce($12, parallel_max), revision = revision + 1, updated_at = now() returning `+resolverColumns,
 			string(in.Strategy), in.CacheMaxBytes, in.CacheMinTtl, in.CacheMaxTtl, in.CacheNegativeMaxTtl, in.CacheStaleWindow,
-			string(in.BlockMode), in.BlockTtl, strings.TrimSpace(in.OtlpEndpoint), in.TraceSampleOneIn, in.TraceSlowThresholdUs))
+			string(in.BlockMode), in.BlockTtl, strings.TrimSpace(in.OtlpEndpoint), in.TraceSampleOneIn, in.TraceSlowThresholdUs, in.ParallelMax))
 		return auth.Change{Action: "updateResolverSettings", TargetType: "resolver_settings", TargetID: "singleton", Before: before, After: after}, err
 	})
 	if err != nil {
