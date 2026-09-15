@@ -36,6 +36,7 @@ import {
   MessageRow,
 } from "@/components/common";
 import { EngineStatusBadge } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -636,6 +637,7 @@ function LogsTab({ id }: { id: string }) {
           <SelectTrigger
             aria-label="Minimum level"
             data-testid="engine-logs-level"
+            data-help="engine-logs-level"
             className="h-8 w-28"
           >
             <SelectValue />
@@ -648,6 +650,7 @@ function LogsTab({ id }: { id: string }) {
             ))}
           </SelectContent>
         </Select>
+        <HelpTip id="engine-logs-level" label="Minimum level" />
         <Input
           type="search"
           aria-label="Search log lines"

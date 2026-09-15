@@ -43,6 +43,7 @@ import {
   labelsFromRows,
   type LabelRow,
 } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -479,7 +480,10 @@ function EngineAssignment({ engine }: { engine: Engine }) {
       </p>
       <form onSubmit={submit} className="grid gap-4">
         <div className="grid gap-1.5">
-          <Label htmlFor="engine-group-select">Engine group</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="engine-group-select">Engine group</Label>
+            <HelpTip id="engine-group-select" label="Engine group" />
+          </div>
           <EngineGroupSelect
             id="engine-group-select"
             testId="engine-group-select"
@@ -493,7 +497,13 @@ function EngineAssignment({ engine }: { engine: Engine }) {
           />
         </div>
         <div className="grid gap-1.5">
-          <div className="text-sm font-medium">Labels</div>
+          <div
+            className="flex items-center gap-1.5 text-sm font-medium"
+            data-help="engine-labels"
+          >
+            Labels
+            <HelpTip id="engine-labels" label="Labels" />
+          </div>
           <LabelsEditor
             rows={form.labels}
             disabled={disabled}

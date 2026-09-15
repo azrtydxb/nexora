@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { History, Pause, Play, Trash2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 
@@ -31,6 +31,7 @@ import {
   RolloutStateBadge,
 } from "@/components/fleet";
 import { EngineModal, EngineModalOpenButton } from "@/components/EngineModal";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -392,7 +393,10 @@ function GroupSettings({ group }: { group: EngineGroup }) {
         <form onSubmit={submit} className="grid gap-4">
           <fieldset disabled={disabled} className="grid gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-settings-name">Name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-settings-name">Name</Label>
+                <HelpTip id="enginegroup-settings-name" label="Name" />
+              </div>
               <Input
                 id="enginegroup-settings-name"
                 className="font-mono"
@@ -403,7 +407,10 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-description">Description</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-description">Description</Label>
+                <HelpTip id="enginegroup-description" label="Description" />
+              </div>
               <Input
                 id="enginegroup-description"
                 data-testid="enginegroup-description"
@@ -413,7 +420,15 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-settings-upstreams">Upstreams</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-settings-upstreams">
+                  Upstreams
+                </Label>
+                <HelpTip
+                  id="enginegroup-settings-upstreams"
+                  label="Upstreams"
+                />
+              </div>
               <Select
                 value={form.upstream_mode}
                 disabled={disabled}
@@ -436,9 +451,15 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-acl">
-                Extra allowed client CIDRs
-              </Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-acl">
+                  Extra allowed client CIDRs
+                </Label>
+                <HelpTip
+                  id="enginegroup-acl"
+                  label="Extra allowed client CIDRs"
+                />
+              </div>
               <Textarea
                 id="enginegroup-acl"
                 className="min-h-16 font-mono text-[13px]"
@@ -451,7 +472,10 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               </p>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-otlp">OTLP endpoint</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-otlp">OTLP endpoint</Label>
+                <HelpTip id="enginegroup-otlp" label="OTLP endpoint" />
+              </div>
               <Input
                 id="enginegroup-otlp"
                 className="font-mono"
@@ -463,9 +487,15 @@ function GroupSettings({ group }: { group: EngineGroup }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-1.5">
-                <Label htmlFor="enginegroup-settings-strategy">
-                  Rollout strategy
-                </Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="enginegroup-settings-strategy">
+                    Rollout strategy
+                  </Label>
+                  <HelpTip
+                    id="enginegroup-settings-strategy"
+                    label="Rollout strategy"
+                  />
+                </div>
                 <Select
                   value={form.rollout_strategy}
                   disabled={disabled}
@@ -485,6 +515,10 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               </div>
               <NumberField
                 id="enginegroup-ack-timeout"
+                data-help="enginegroup-ack-timeout"
+                help={
+                  <HelpTip id="enginegroup-ack-timeout" label="Apply timeout" />
+                }
                 label="Apply timeout (s)"
                 min={5}
                 max={3600}
@@ -496,6 +530,13 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               <div className="grid grid-cols-2 gap-4">
                 <NumberField
                   id="enginegroup-settings-canary-count"
+                  data-help="enginegroup-settings-canary-count"
+                  help={
+                    <HelpTip
+                      id="enginegroup-settings-canary-count"
+                      label="Canary engines"
+                    />
+                  }
                   label="Canary engines"
                   min={0}
                   value={form.canary_count}
@@ -503,6 +544,13 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 />
                 <NumberField
                   id="enginegroup-settings-canary-percent"
+                  data-help="enginegroup-settings-canary-percent"
+                  help={
+                    <HelpTip
+                      id="enginegroup-settings-canary-percent"
+                      label="Canary percent"
+                    />
+                  }
                   label="or percent"
                   min={0}
                   max={100}
@@ -511,6 +559,13 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 />
                 <NumberField
                   id="enginegroup-health-window"
+                  data-help="enginegroup-health-window"
+                  help={
+                    <HelpTip
+                      id="enginegroup-health-window"
+                      label="Health window"
+                    />
+                  }
                   label="Health window (s)"
                   min={20}
                   max={3600}
@@ -519,6 +574,13 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 />
                 <NumberField
                   id="enginegroup-max-servfail"
+                  data-help="enginegroup-max-servfail"
+                  help={
+                    <HelpTip
+                      id="enginegroup-max-servfail"
+                      label="Max SERVFAIL"
+                    />
+                  }
                   label="Max SERVFAIL (%)"
                   min={0}
                   max={100}
@@ -528,6 +590,13 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 />
                 <NumberField
                   id="enginegroup-min-queries"
+                  data-help="enginegroup-min-queries"
+                  help={
+                    <HelpTip
+                      id="enginegroup-min-queries"
+                      label="Minimum queries"
+                    />
+                  }
                   label="Min. queries for the gate"
                   min={0}
                   value={form.min_health_queries}
@@ -557,6 +626,8 @@ function GroupSettings({ group }: { group: EngineGroup }) {
 
 function NumberField({
   id,
+  "data-help": dataHelp,
+  help,
   label,
   value,
   onChange,
@@ -565,6 +636,8 @@ function NumberField({
   step,
 }: {
   id: string;
+  "data-help": string;
+  help: ReactNode;
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -574,9 +647,13 @@ function NumberField({
 }) {
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={id}>{label}</Label>
+        {help}
+      </div>
       <Input
         id={id}
+        data-help={dataHelp}
         type="number"
         className="h-9"
         min={min}
@@ -704,7 +781,10 @@ function RollbackDialog({
         <form onSubmit={submit} className="grid gap-4">
           <ErrorAlert error={rollouts.error} prefix="Could not load versions" />
           <div className="grid gap-1.5">
-            <Label htmlFor="rollback-version">Version</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="rollback-version">Version</Label>
+              <HelpTip id="rollback-version" label="Version" />
+            </div>
             <Select value={version} onValueChange={setVersion}>
               <SelectTrigger
                 id="rollback-version"

@@ -44,6 +44,7 @@ import {
   type LabelRow,
 } from "@/components/fleet";
 import { EngineModal, EngineModalOpenButton } from "@/components/EngineModal";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -448,7 +449,12 @@ function EnginesTable({ canTokens }: { canTokens: boolean }) {
   const current = Math.min(page, pages - 1);
   const rows = filtered.slice(current * pageSize, (current + 1) * pageSize);
 
-  function header(key: SortKey, label: string, className?: string) {
+  function header(
+    key: SortKey,
+    label: string,
+    className?: string,
+    tip?: ReactNode,
+  ) {
     const active = sort === key;
     return (
       <TableHead
@@ -470,6 +476,7 @@ function EnginesTable({ canTokens }: { canTokens: boolean }) {
               <ArrowUp className="h-3.5 w-3.5" />
             ))}
         </button>
+        {tip && <span className="ml-1 align-middle">{tip}</span>}
       </TableHead>
     );
   }
@@ -533,7 +540,12 @@ function EnginesTable({ canTokens }: { canTokens: boolean }) {
             <TableRow className="hover:bg-transparent">
               {header("node", "Node")}
               {header("group", "Engine group")}
-              {header("status", "Status")}
+              {header(
+                "status",
+                "Status",
+                undefined,
+                <HelpTip id="engines-col-status" label="Status" />,
+              )}
               {header("config", "Config version", "text-right")}
               {header("software", "Engine version")}
               {header("seen", "Last seen")}
@@ -712,7 +724,10 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
         <form onSubmit={submit} className="grid gap-4">
           <ErrorAlert error={create.error} thing="This engine group" />
           <div className="grid gap-1.5">
-            <Label htmlFor="enginegroup-name">Name</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="enginegroup-name">Name</Label>
+              <HelpTip id="enginegroup-name" label="Name" />
+            </div>
             <Input
               id="enginegroup-name"
               data-testid="enginegroup-name"
@@ -732,7 +747,10 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="enginegroup-new-description">Description</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="enginegroup-new-description">Description</Label>
+              <HelpTip id="enginegroup-new-description" label="Description" />
+            </div>
             <Input
               id="enginegroup-new-description"
               maxLength={1024}
@@ -742,7 +760,10 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-upstream-mode">Upstreams</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-upstream-mode">Upstreams</Label>
+                <HelpTip id="enginegroup-upstream-mode" label="Upstreams" />
+              </div>
               <Select
                 value={form.upstream_mode}
                 onValueChange={(v) => set("upstream_mode", v as UpstreamMode)}
@@ -761,7 +782,10 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="enginegroup-strategy">Rollout strategy</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="enginegroup-strategy">Rollout strategy</Label>
+                <HelpTip id="enginegroup-strategy" label="Rollout strategy" />
+              </div>
               <Select
                 value={form.rollout_strategy}
                 onValueChange={(v) => set("rollout_strategy", v as Strategy)}
@@ -783,7 +807,15 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
           {canary && (
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-1.5">
-                <Label htmlFor="enginegroup-canary-count">Canary engines</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="enginegroup-canary-count">
+                    Canary engines
+                  </Label>
+                  <HelpTip
+                    id="enginegroup-canary-count"
+                    label="Canary engines"
+                  />
+                </div>
                 <Input
                   id="enginegroup-canary-count"
                   type="number"
@@ -793,9 +825,15 @@ function EngineGroupDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="enginegroup-canary-percent">
-                  or percent of the group
-                </Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="enginegroup-canary-percent">
+                    or percent of the group
+                  </Label>
+                  <HelpTip
+                    id="enginegroup-canary-percent"
+                    label="Canary percent"
+                  />
+                </div>
                 <Input
                   id="enginegroup-canary-percent"
                   type="number"
@@ -1044,7 +1082,10 @@ function JoinTokenDialog({ onClose }: { onClose: () => void }) {
               <ErrorAlert error={create.error} />
               <div className="grid grid-cols-[1fr_10rem] gap-4">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="jointoken-name">Name</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="jointoken-name">Name</Label>
+                    <HelpTip id="jointoken-name" label="Name" />
+                  </div>
                   <Input
                     id="jointoken-name"
                     data-testid="jointoken-name"
@@ -1056,7 +1097,10 @@ function JoinTokenDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="jointoken-ttl">Valid for</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="jointoken-ttl">Valid for</Label>
+                    <HelpTip id="jointoken-ttl" label="Valid for" />
+                  </div>
                   <Select value={ttl} onValueChange={setTtl}>
                     <SelectTrigger
                       id="jointoken-ttl"
@@ -1077,7 +1121,10 @@ function JoinTokenDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div className="grid grid-cols-[1fr_10rem] gap-4">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="jointoken-engine-group">Engine group</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="jointoken-engine-group">Engine group</Label>
+                    <HelpTip id="jointoken-engine-group" label="Engine group" />
+                  </div>
                   <EngineGroupSelect
                     id="jointoken-engine-group"
                     testId="jointoken-engine-group"
@@ -1087,7 +1134,10 @@ function JoinTokenDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="jointoken-max-uses">Max uses</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="jointoken-max-uses">Max uses</Label>
+                    <HelpTip id="jointoken-max-uses" label="Max uses" />
+                  </div>
                   <Input
                     id="jointoken-max-uses"
                     data-testid="jointoken-max-uses"
@@ -1101,7 +1151,13 @@ function JoinTokenDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <div className="text-sm font-medium">Labels</div>
+                <div
+                  className="flex items-center gap-1.5 text-sm font-medium"
+                  data-help="jointoken-labels"
+                >
+                  Labels
+                  <HelpTip id="jointoken-labels" label="Labels" />
+                </div>
                 <LabelsEditor
                   rows={labels}
                   onChange={setLabels}

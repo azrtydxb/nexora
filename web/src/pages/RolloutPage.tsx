@@ -15,6 +15,7 @@ import {
   RolloutStages,
   RolloutStateBadge,
 } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -82,7 +83,10 @@ export function RolloutPage() {
           <Card className="grid gap-4 px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-wrap items-center gap-3">
-                <RolloutStateBadge state={r.state} />
+                <span className="inline-flex items-center gap-1.5">
+                  <RolloutStateBadge state={r.state} />
+                  <HelpTip id="rollout-state" label="Rollout state" />
+                </span>
                 <RolloutStages rollout={r} />
               </div>
               <RolloutProgress rollout={r} className="w-64" />
@@ -130,7 +134,12 @@ export function RolloutPage() {
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="h-10">Node</TableHead>
-                    <TableHead className="h-10">Progress</TableHead>
+                    <TableHead className="h-10">
+                      <span className="inline-flex items-center gap-1.5">
+                        Progress
+                        <HelpTip id="rollout-col-progress" label="Progress" />
+                      </span>
+                    </TableHead>
                     <TableHead className="h-10">Connection</TableHead>
                     <TableHead className="h-10 text-right">
                       Applied version
