@@ -104,7 +104,7 @@ components:
         username: { type: string }
         email: { type: string }
         role: { $ref: "#/components/schemas/Role" }
-        source: { type: string, enum: [local, oidc] }
+        source: { type: string, enum: [local, oidc, system] }
         disabled: { type: boolean }
         revision: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
@@ -3131,6 +3131,7 @@ paths:
             },
           "400": { $ref: "#/components/responses/Error" },
           "404": { $ref: "#/components/responses/Error" },
+          # 409: stale revision, last admin, or system_user (system users are managed by automation)
           "409": { $ref: "#/components/responses/Error" },
         }
     delete:
@@ -3144,6 +3145,7 @@ paths:
         {
           "204": { description: deleted },
           "404": { $ref: "#/components/responses/Error" },
+          # 409: stale revision, last admin, or system_user (system users are managed by automation)
           "409": { $ref: "#/components/responses/Error" },
         }
   /api-tokens:

@@ -130,7 +130,11 @@ export function UsersPage() {
                   </Badge>
                 </TableCell>
                 <TableCell className="py-2.5">
-                  {u.source === "oidc" ? "Identity provider" : "Password"}
+                  {u.source === "oidc"
+                    ? "Identity provider"
+                    : u.source === "system"
+                      ? "System"
+                      : "Password"}
                 </TableCell>
                 <TableCell className="py-2.5">
                   {u.disabled ? (

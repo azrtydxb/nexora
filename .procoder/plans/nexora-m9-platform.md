@@ -729,8 +729,10 @@ Interfaces:
       `{ $ref: "#/components/responses/Error" }` with the description line
       `# 409: stale revision, last admin, or system_user (system users are managed by automation)` as a
       YAML comment above it. Regenerate:
-      `cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml` and
-      `cd web && pnpm run gen:api`.
+      `cd mgmt/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml`
+      (v2.6.0 fails on this spec) and `cd web && pnpm run gen:api` (openapi-typescript 7.13.0). With a
+      third enum value the generator prefixes the constants: `api.UserSourceLocal`, `api.UserSourceOidc`,
+      `api.UserSourceSystem` (the old `api.Local`/`api.Oidc` had no users outside `gen.go`).
 - [ ] In `web/src/pages/UsersPage.tsx` replace
       `{u.source === "oidc" ? "Identity provider" : "Password"}` with
       `{u.source === "oidc" ? "Identity provider" : u.source === "system" ? "System" : "Password"}`.
