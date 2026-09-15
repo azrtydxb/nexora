@@ -4170,7 +4170,8 @@ Interfaces: the headings `## Access control`, `## Engine logs and metrics` and `
       and expect FAIL: `0`.
 - [ ] Edit `docs/operations.md`:
   - **`### Management plane environment`:** add `NEXORA_REPOSITORY_URL` (optional; when set, the GUI
-    links the build commit to `<url>/commit/<sha>`).
+    links the build commit to `<url>/commit/<sha>`) and `NEXORA_TRUSTED_PROXY_CIDRS`, which the new
+    Account and version section refers to for the lockout's client address.
   - **`## First-run setup and access`:** replace "add upstreams under `/upstreams`" with "add upstreams
     under Forwarding & recursion (`/resolution`)".
   - **New `## Access control`:**
@@ -4202,7 +4203,9 @@ Interfaces: the headings `## Access control`, `## Engine logs and metrics` and `
     - the OpenSearch wildcard `debt:` note.
   - **New `## Account and version`:**
     - `PUT /api/v1/auth/me`, `POST /api/v1/auth/me/password`;
-    - the lockout (more than 10 failures per username in 15 minutes gives 429);
+    - the lockout (more than 10 failed logins or password changes for one username from one client
+      address within 15 minutes give 429 `too_many_attempts`; the client address follows
+      `NEXORA_TRUSTED_PROXY_CIDRS`);
     - `GET /api/v1/version`;
     - the build arguments `VERSION`, `COMMIT` and `BUILD_DATE`.
   - **`## Known limitations`:** add "Engine logs hold only the last 2,000 lines per engine and are lost
@@ -4211,7 +4214,9 @@ Interfaces: the headings `## Access control`, `## Engine logs and metrics` and `
 - [ ] Run the grep again and expect a count of 5 or more. Run
       `scripts/pc-format.sh docs/operations.md` and
       `scripts/dev-exec.sh 'go test ./deploy/deploytest -run "TestOperationsDoc|TestHelpTopicsReferenceOperationsDoc" -count=1'`,
-      and expect PASS.
+      and expect `TestOperationsDoc` PASS. `TestHelpTopicsReferenceOperationsDoc` also needs M11's
+      `## AI` section (M11 Task 31); until that lands it fails on `ai.md names missing
+      docs/operations.md heading "AI"` and on nothing else.
 - [ ] Report the paths. Commit message: `docs: operations guide for M6`.
 
 ## Task 24: Navigation shell: Forwarding & recursion, Filtering group, help routes, document titles

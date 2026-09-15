@@ -111,6 +111,8 @@ flowchart LR
 | `NEXORA_ENGINE_CERT_TTL`                                                                     | `2160h` (90 days)         | lifetime of issued engine certificates, minimum `30s`                                         |
 | `NEXORA_ROLLOUT_TICK`                                                                        | `1s`                      | rollout controller tick, `100ms` to `1m`                                                      |
 | `NEXORA_CATALOG_MIRROR`                                                                      | empty                     | base URL serving every catalog source at `<base>/<source key>` (air-gapped, tests); adds none |
+| `NEXORA_REPOSITORY_URL`                                                                      | empty                     | https URL of the source repository; the GUI links the build commit to `<url>/commit/<sha>`    |
+| `NEXORA_TRUSTED_PROXY_CIDRS`                                                                 | empty                     | reverse proxies whose `X-Forwarded-For` is believed when throttling failed logins             |
 
 Subcommands (`nexora-mgmt` with no arguments prints the usage):
 
@@ -368,8 +370,8 @@ one-time token once:
 
 Open `<public URL>/setup`, enter the token and create the first admin. A new
 install is in forward mode with no upstreams, so add upstreams under
-`/upstreams` (or switch the resolution mode to recursive there) before
-expecting answers. With
+Forwarding & recursion (`/resolution`) (or switch the resolution mode to
+recursive there) before expecting answers. With
 several replicas only one pod logs it:
 
 ```sh
@@ -400,6 +402,66 @@ Access control:
   names, and register `<NEXORA_PUBLIC_URL>/api/v1/auth/oidc/callback` with the
   identity provider.
 - Every change is recorded in the audit log (`/audit`).
+
+## Access control
+
+Two client ACLs decide who may ask an engine what. Both are edited under
+Access control (`/access-control`).
+
+- **Recursion access** covers every name that is not hosted here: cache hits,
+  forwarding, recursion, rewrites, filtering and RPZ. The allowed clients are
+  `allow_cidrs` of `GET`/`PUT /api/v1/access-control` plus the engine group's
+  `extra_acl_cidrs` (`PUT /api/v1/engine-groups/{id}`), which add to the global
+  list for that group's engines only. A new install is seeded with
+  127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+  100.64.0.0/10, fc00::/7 and fe80::/10.
+- **Authoritative query access** covers names inside a hosted zone:
+  `authoritative_allow_cidrs` on the same endpoint, seeded with `0.0.0.0/0` and
+  `::/0` so hosted zones answer everyone.
+- **Per-zone `allow_query_cidrs`** (`PUT /api/v1/zones/{id}`) overrides
+  authoritative access for one zone; leaving it empty inherits
+  `authoritative_allow_cidrs`.
+- **Update source CIDRs**: a zone's `update_allow_cidrs` restricts who may send
+  DNS UPDATE to it. Empty means any sender, subject to the zone's TSIG
+  requirement; transfers keep their own transfer policy.
+
+The engine checks, in order: a query matching a hosted zone is checked against
+that zone's `allow_query_cidrs`, or when empty against
+`authoritative_allow_cidrs`; every other query is checked against recursion
+access. Outside the matching list the answer is REFUSED. RA is set only for
+clients recursion access allows, so a client that may query hosted zones but
+not recurse is told so by the flag. `PUT` on the two lists is revisioned: send
+the `revision` you read, and omitting a list keeps its current value.
+
+Refusals count in `nexora_acl_refused_total{acl}` with `acl` `recursion` or
+`authoritative`, and carry `nexora.acl.refused` in the query log, where the
+`acl` filter source selects them.
+
+Upgrading keeps your current list as recursion access and answers hosted zones
+to everyone, as before.
+
+## Account and version
+
+- **Profile**: `PUT /api/v1/auth/me` (`/account` in the GUI) changes the signed-in
+  user's own email, display name and GUI preferences (theme, time zone, 24-hour
+  clock, live query log). Role, username and the disabled flag are not
+  self-service; they stay with an admin under `/users`. The request is
+  revisioned like the other settings.
+- **Password**: `POST /api/v1/auth/me/password` takes the current and the new
+  password. A user provisioned through OIDC has no local password and gets 409
+  `managed_by_identity_provider`; a wrong current password gives 403.
+- **Lockout**: more than 10 failed logins or password changes for one username
+  from one client address within 15 minutes answer 429 `too_many_attempts`
+  until the oldest failures age out of the window. Behind a reverse proxy set
+  `NEXORA_TRUSTED_PROXY_CIDRS` so the client address is the real one and not
+  the proxy's.
+- **Version**: `GET /api/v1/version` (viewer) returns the management plane's
+  `version`, `commit`, `build_date` and `repository_url` together with the
+  engine versions in the fleet and how many engines run each. The GUI footer
+  shows it, and links the commit when `NEXORA_REPOSITORY_URL` is set.
+- The three values are stamped at build time from the build arguments
+  `VERSION`, `COMMIT` and `BUILD_DATE`, which `scripts/build-image.sh` fills
+  from the tag, the full commit hash and the UTC build time.
 
 ## Enrolling engines
 
@@ -718,6 +780,40 @@ Engine status, shown on `/engines` and exported as
 - **Delete** (`DELETE /api/v1/engines/{id}`) revokes the engine and removes it
   from the fleet view.
 
+## Engine logs and metrics
+
+Each engine keeps its own log lines in memory and hands them to the management
+plane on request over the control stream; nothing is written to a file and
+nothing reaches the query path.
+
+- **The ring**: the newest 2,000 lines, each truncated to 512 octets. Older
+  lines are overwritten, and a restart starts an empty ring.
+- **Rate cap**: 100 lines per second sustained with a burst of 200. Lines above
+  it are refused by the ring and counted in `nexora_log_lines_dropped_total`, so
+  a log storm cannot push the useful history out.
+- **Redaction** happens before a line enters the ring: join tokens (`nxj1.`),
+  API tokens (`nxt_`), PEM blocks and `secret=`, `password=` and `key=` values
+  are replaced with `[redacted]`.
+- **`GET /api/v1/engines/{id}/logs`** (operator) reads the ring through
+  whichever management instance holds that engine's stream. Parameters: `after`
+  (only lines with a larger sequence number — poll with the `last_seq` of the
+  previous answer), `level` (`error`, `warn`, `info` or `debug`; the minimum),
+  `q` (case-insensitive substring of the message, at most 128 characters) and
+  `limit` (1 to 1000, default 1000). The answer carries `oldest_seq` and
+  `last_seq` as well as the lines, so a gap between your `after` and
+  `oldest_seq` tells you the ring wrapped. 409 `engine_disconnected`: no
+  instance holds the stream. 504 `engine_timeout`: the engine did not answer in
+  time. 501 `engine_unsupported`: the engine build predates engine logs.
+- **`GET /api/v1/engines/{id}/metrics`** (viewer) returns one engine's series
+  over `window` `5m`, `1h` (default) or `24h`: QPS, p50 and p99, cache hit,
+  SERVFAIL, NXDOMAIN and REFUSED ratios, blocked QPS, CPU cores, resident and
+  limit bytes, connection counts, per-upstream RTT, failures and race wins, the
+  restart count with the current start time, and the newest filter index
+  figures. The samples behind it are the engine stats, kept for 24 hours.
+- **The engine modal** shows both: open it from the engines table or go to
+  `/engines?engine=<id>` directly. Reading its Logs tab needs the operator
+  role — a viewer's request is refused — while the charts need only viewer.
+
 ## Monitoring and alerts
 
 ### Prometheus
@@ -758,6 +854,26 @@ Engine status, shown on `/engines` and exported as
 | `NexoraRolloutHalted`       | a rollout in state `halted`                                                                   | warning  |
 | `NexoraManagementPlaneDown` | no mgmt instance scraped as up for 2 minutes                                                  | critical |
 
+The dashboard (`/`) shows the fleet over the ranges `15m`, `1h`, `6h`, `24h`
+and `7d` (`GET /api/v1/dashboard/series?range=`). Up to 24 h it reads the raw
+engine stats samples, which are kept for 24 hours; `7d` reads the 5-minute
+`engine_stats_rollup`, which is kept for 8 days. A range therefore goes blank
+where there are no samples yet, not where the fleet was idle.
+
+Its health section (`GET /api/v1/dashboard/health`) raises these alerts:
+
+| Kind                          | Condition                                                                        | Severity                        |
+| ----------------------------- | -------------------------------------------------------------------------------- | ------------------------------- |
+| `engine_disconnected`         | an engine has no control stream                                                  | critical                        |
+| `category_stale`              | an enabled source failed its last refresh or has not refreshed for two intervals | warning                         |
+| `upstream_down`               | an upstream is down on at least one engine reporting it                          | critical when down on every one |
+| `certificate_expiring`        | the DNS serving certificate expires in under 14 days                             | critical under 7 days           |
+| `trust_anchor_refresh_failed` | a trust anchor's last RFC 5011 refresh failed                                    | warning                         |
+| `export_dropped`              | telemetry records were dropped in the last 5 minutes                             | warning                         |
+
+The last four read the samples of the last 5 minutes, so they clear on their
+own once the engines report clean again.
+
 Other useful signals: `nexora_mgmt_filter_list_stale == 1`,
 `nexora_tls_certificate_not_after_seconds - time() < 14*86400`,
 `increase(nexora_export_dropped_total[5m]) > 0`, `nexora_upstream_up == 0`.
@@ -779,6 +895,25 @@ Other useful signals: `nexora_mgmt_filter_list_stale == 1`,
   else `NEXORA_OTLP_ENDPOINT`. Engines push OTLP metrics every 15 seconds and
   traces there. An unreachable endpoint drops data and counts it in
   `nexora_export_dropped_total`; it never slows queries.
+- **Searching** (`/query-log`, `GET /api/v1/query-log`): `name` matches any part
+  of the query name, case-insensitively, and ignores a trailing dot, so
+  `ads.` and `ADS` both find `ads.example.net.`. `qtype`, `rcode`, `cache`,
+  `filter`, `category`, `source`, `list_id`, `policy_group` and `engine_id` are
+  repeated to widen the search: `?rcode=NXDOMAIN&rcode=SERVFAIL` returns
+  either, up to 32 values each, and different parameters are combined with AND.
+- **Why a query ended as it did**: each record carries `source` (`blocklist`,
+  `category`, `allowlist`, `rpz`, `rewrite` or `acl`), the `list_id` and
+  `list_name` behind it, the matching `rule`, the deciding `policy_group_id`
+  and `policy_group_name`, `rpz_zone_id`, `rpz_zone_name` and `rpz_action`, the
+  `rewrite_answer`, and `upstreams_raced`. The same facts reach traces and OTLP
+  logs as the attributes `nexora.filter.source`, `nexora.filter.rule`,
+  `nexora.rpz_zone`, `nexora.acl.refused` (`recursion` or `authoritative`) and
+  `nexora.upstream_raced`, each set only when it applies.
+- **OpenSearch name search cost**: the substring match is a leading-wildcard
+  query on `attributes.dns.question.name.keyword`, which scans every term of
+  that day's index (a `debt:` note in `mgmt/internal/querylog/opensearch.go`
+  marks an n-gram sub-field as the fix when a daily index passes 50M documents
+  or searches exceed the 5 s timeout).
 - **Traces**: a query becomes a trace when `trace_sample_one_in` selects it
   (0, the default, samples none), when it takes longer than
   `trace_slow_threshold_us` (default 100000, 100 ms), or when it ends in
@@ -799,7 +934,15 @@ Other useful signals: `nexora_mgmt_filter_list_stale == 1`,
   filter lists, policy groups, upstreams or resolution settings clears the
   cache; zone edits do not.
 - **Upstreams**: `fastest` chooses by measured RTT; per-upstream `timeout_ms`
-  (default 250) bounds each attempt.
+  (default 250) bounds each attempt. `parallel` asks several upstreams at once,
+  fastest first, and answers from the first acceptable reply; `parallel_max`
+  (`/resolution`, `PUT /api/v1/resolver-settings`, 0 to 8, 0 meaning every
+  candidate) caps how many, and engines cap it at 8 regardless. It trades load
+  and privacy for latency: every race multiplies the queries you send and shows
+  the name to every upstream in it, so use it only where the tail latency is
+  worth that. Watch `nexora_upstream_race_wins_total{upstream}` to see which
+  upstreams actually win and `nexora_upstream_race_duration_seconds` for what
+  the races cost.
 - **Networking**: `engine.hostNetwork` removes the pod network hop. Keep
   `externalTrafficPolicy: Local` so client addresses survive and traffic is
   not forwarded between nodes.
@@ -1021,6 +1164,10 @@ validation of forwarded answers.
   transfers, updates and RPZ transfers cannot run until it reconnects.
 - **Built-in query log** is in memory and per instance; use OpenSearch for more
   than one mgmt replica or for retention.
+- **Engine logs hold only the last 2,000 lines per engine** and are lost on
+  restart; ship them off the engine if you need history.
+- **The query log name filter scans every term of a day's OpenSearch index**;
+  very large daily indices may reach the 5 s timeout.
 - **Restores** leave engines `ahead` until enough versions are published
   (see [Backup and restore PostgreSQL](#backup-and-restore-postgresql)).
 - **Node names are not unique**: re-enrolling a host creates a new engine
