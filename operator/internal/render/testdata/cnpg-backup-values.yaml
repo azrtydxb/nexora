@@ -1,0 +1,18 @@
+# Task 6 TestRenderMatchesHelmTemplate: CNPG with backups, pinned instances behind ClusterIP Services.
+mgmt:
+  ca: { existingSecret: nexora-ca }
+  bootstrapToken: { existingSecret: nexora-operator-token }
+database:
+  mode: cnpg
+  cnpg:
+    backup:
+      enabled: true
+      destinationPath: s3://b/p
+      s3Credentials: { existingSecret: s3 }
+engine:
+  groups:
+    - name: default
+      joinTokenSecret: jt
+      instances:
+        - { name: a, node: node-1, service: { name: dns-a, type: ClusterIP } }
+        - { name: b, node: node-2, service: { name: dns-b, type: ClusterIP } }

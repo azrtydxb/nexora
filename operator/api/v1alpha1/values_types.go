@@ -211,7 +211,7 @@ type EngineGroupSpec struct {
 	// (default: name).
 	EngineGroupRef string               `json:"engineGroupRef,omitempty"`
 	WorkloadName   string               `json:"workloadName,omitempty"`
-	NodeNamePrefix string               `json:"nodeNamePrefix,omitempty"`
+	NodeNamePrefix *string              `json:"nodeNamePrefix,omitempty"`
 	Replicas       *int32               `json:"replicas,omitempty"`
 	NodeAffinity   *corev1.NodeAffinity `json:"nodeAffinity,omitempty"`
 	Service        *ServiceSpec         `json:"service,omitempty"`
