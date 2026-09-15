@@ -41,6 +41,7 @@ import { useCurrentUser, useLogout } from "@/auth/AuthProvider";
 import { roleCan, type OperationId, type Role } from "@/auth/permissions";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SavedNote } from "@/components/common";
+import { VersionFooter, VersionInfoButton } from "@/components/VersionFooter";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -249,15 +250,17 @@ function Sidebar() {
     <aside className="bg-sidebar text-sidebar-foreground flex shrink-0 flex-col md:sticky md:top-0 md:h-screen md:w-60">
       <div className="flex h-14 items-center gap-2.5 px-5">
         <Wordmark />
+        <VersionInfoButton />
       </div>
       <nav
-        className="flex gap-4 overflow-x-auto px-3 pb-3 md:flex-col md:gap-5 md:pt-4"
+        className="flex gap-4 overflow-x-auto px-3 pb-3 md:min-h-0 md:flex-col md:gap-5 md:pt-4"
         aria-label="Main"
       >
         {navGroups.map((g) => (
           <NavGroup key={g.label} label={g.label} items={g.items} />
         ))}
       </nav>
+      <VersionFooter />
     </aside>
   );
 }

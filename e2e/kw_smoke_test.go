@@ -202,6 +202,17 @@ func TestKwSmoke(t *testing.T) {
 		}
 	})
 
+	t.Run("version-footer-matches-health", func(t *testing.T) {
+		var v struct {
+			Version string `json:"version"`
+			Commit  string `json:"commit"`
+		}
+		api.Must(http.MethodGet, "/version", nil, &v, http.StatusOK)
+		if v.Version != version || len(v.Commit) != 40 || !strings.HasPrefix(v.Commit, strings.TrimPrefix(version, "sha-")) {
+			t.Fatalf("/version %+v does not match /health version %q", v, version)
+		}
+	})
+
 	for _, network := range []string{"udp", "tcp"} {
 		c := &dns.Client{Net: network, Timeout: 3 * time.Second}
 		m := new(dns.Msg)

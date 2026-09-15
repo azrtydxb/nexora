@@ -4628,7 +4628,7 @@ Files:
 Interfaces: test ids `settings-strategy-parallel` (select item), `settings-parallel-max`,
 `settings-parallel-warning`.
 
-- [ ] Create `web/e2e/screens/31-upstream-parallel.spec.ts`:
+- [x] Create `web/e2e/screens/31-upstream-parallel.spec.ts`:
   ```ts
   import { test, expect, env, login } from "../fixtures";
 
@@ -4666,10 +4666,10 @@ Interfaces: test ids `settings-strategy-parallel` (select item), `settings-paral
     await expect(page.getByText("Settings saved")).toBeVisible();
   });
   ```
-- [ ] Run
+- [x] Run
       `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=/work/nexora/bin go test ./e2e -run TestGUICoverage -count=1 -timeout 45m'`
       and expect FAIL in `31-upstream-parallel.spec.ts`: `settings-strategy-parallel` not found.
-- [ ] In `web/src/pages/SettingsPage.tsx`:
+- [x] In `web/src/pages/SettingsPage.tsx`:
   - Add `SelectItem value="parallel" data-testid="settings-strategy-parallel"` labelled "Parallel
     (race upstreams)".
   - `Form` gains `parallel_max: string`. A `Field` "Parallel upstreams" (`settings-parallel-max`,
@@ -4678,8 +4678,9 @@ Interfaces: test ids `settings-strategy-parallel` (select item), `settings-paral
     once, multiplying upstream load; some public resolvers rate-limit. Every raced provider sees the
     query, which matters for privacy."
   - Submit sends `parallel_max: Number(form.parallel_max)`. The server's 400 message is shown through
-    the existing error alert.
-- [ ] Run the same command and expect `09-settings.spec.ts` and `31-upstream-parallel.spec.ts` to
+    the existing error alert (the input has `min=0` but no `max`, so the browser does not block 9
+    before the server answers).
+- [x] Run the same command and expect `09-settings.spec.ts` and `31-upstream-parallel.spec.ts` to
       pass. Run `cd web && pnpm run typecheck && pnpm run lint`.
 - [ ] Report the paths. Commit message: `gui: parallel upstream strategy setting`.
 
