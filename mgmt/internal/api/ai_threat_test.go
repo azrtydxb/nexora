@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/piwi3910/nexora/mgmt/internal/ai"
 	"github.com/piwi3910/nexora/mgmt/internal/ai/aifake"
@@ -111,5 +115,34 @@ func TestStartAiThreatCheckLimits(t *testing.T) {
 	empty := StartAiThreatCheckJSONRequestBody{Domains: []string{" "}}
 	if _, err := h.StartAiThreatCheck(pctx, StartAiThreatCheckRequestObject{Body: &empty}); !isInvalid(err) {
 		t.Fatalf("a blank domain = %v, want 400", err)
+	}
+}
+
+// TestAiFilterListClassificationNeverNullBreakdown catches a never-classified list whose breakdown
+// is encoded as null (the GUI's Details card crashed on it) instead of an empty array.
+func TestAiFilterListClassificationNeverNullBreakdown(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	st := storetest.New(t)
+	svc := auth.NewService(st, false)
+	svcAI := aifake.Service(t, st, aifake.Model(), nil)
+	rt := &AIRuntime{Service: svcAI, Tasks: ai.NewTasks(ctx, st, "test"), Config: svcAI.Config(), InstanceStart: time.Now(),
+		TaskKinds: map[ai.TaskKind]bool{}, Agents: map[string]bool{}}
+	h, _ := newHandlers(Deps{Store: st, Auth: svc, AI: rt})
+	var id uuid.UUID
+	if err := st.Pool.QueryRow(ctx, `insert into filter_lists(name, kind, url, refresh_interval_seconds, enabled)
+		values ('never-classified', 'block', 'http://127.0.0.1:1/x', 3600, true) returning id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.GetAiFilterListClassification(ctx, GetAiFilterListClassificationRequestObject{Id: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"breakdown":[]`) {
+		t.Fatalf("breakdown not an empty array: %s", b)
 	}
 }

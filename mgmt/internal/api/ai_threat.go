@@ -43,6 +43,12 @@ func (h *handlers) GetAiFilterListClassification(ctx context.Context, req GetAiF
 	}
 	out := AiListClassification{ListId: c.ListID, BlobSha256: c.BlobSHA256, SampleSize: c.SampleSize,
 		EntryCount: c.EntryCount, ClassifiedAt: c.ClassifiedAt}
+	// Always an array: a list that was never classified has an empty breakdown, not null.
+	out.Breakdown = make([]struct {
+		Category  string `json:"category"`
+		Estimated int64  `json:"estimated"`
+		Sampled   int    `json:"sampled"`
+	}, 0, len(c.Breakdown))
 	for _, b := range c.Breakdown {
 		out.Breakdown = append(out.Breakdown, struct {
 			Category  string `json:"category"`
