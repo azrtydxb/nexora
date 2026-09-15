@@ -6,6 +6,7 @@ import { type Schemas } from "@/api/client";
 import { downloadZoneFile, useImportZoneFile } from "@/api/zones";
 import { useCan } from "@/auth/AuthProvider";
 import { ErrorAlert, SavedNote } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -45,13 +46,19 @@ export function ZoneImportExportTab({ zone }: { zone: Zone }) {
             </div>
             <div className="grid gap-1.5">
               <div className="flex items-end justify-between gap-3">
-                <Label htmlFor="zone-import-content">Zone file</Label>
-                <Label
-                  htmlFor="zone-import-picker"
-                  className="text-primary cursor-pointer text-xs font-normal hover:underline"
-                >
-                  Open a file…
-                </Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-import-content">Zone file</Label>
+                  <HelpTip id="zone-import-content" label="Zone file" />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Label
+                    htmlFor="zone-import-picker"
+                    className="text-primary cursor-pointer text-xs font-normal hover:underline"
+                  >
+                    Open a file…
+                  </Label>
+                  <HelpTip id="zone-import-picker" label="Open a file" />
+                </div>
                 <Input
                   id="zone-import-picker"
                   type="file"

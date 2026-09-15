@@ -13,6 +13,7 @@ import {
   StatusDot,
 } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ export function ZonesPage() {
     <>
       <PageHeader
         title="Zones"
-        description="Authoritative zones the engines serve: primary zones edited here or through dynamic updates, and secondary zones transferred from their primaries."
+        description="Authoritative zones Nexora serves: primary zones edited here or through dynamic updates, and secondary zones transferred from their primaries."
         actions={
           <>
             {canListKeys && (
@@ -107,9 +108,19 @@ export function ZonesPage() {
             <TableRow className="hover:bg-transparent">
               <TableHead>Zone</TableHead>
               <TableHead>Kind</TableHead>
-              <TableHead className="text-right">Serial</TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5">
+                  Serial
+                  <HelpTip id="zones-col-serial" label="Serial" />
+                </span>
+              </TableHead>
               <TableHead>DNSSEC</TableHead>
-              <TableHead>Transfers</TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  Transfers
+                  <HelpTip id="zones-col-transfers" label="Transfers" />
+                </span>
+              </TableHead>
               <TableHead>Engine group</TableHead>
             </TableRow>
           </TableHeader>
@@ -235,7 +246,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <div className="grid grid-cols-[1fr_9rem] gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="zone-name">Zone name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="zone-name">Zone name</Label>
+                <HelpTip id="zone-name" label="Zone name" />
+              </div>
               <Input
                 id="zone-name"
                 className="font-mono"
@@ -246,7 +260,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="zone-kind">Kind</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="zone-kind">Kind</Label>
+                <HelpTip id="zone-kind" label="Kind" />
+              </div>
               <Select value={kind} onValueChange={(v) => setKind(v as Kind)}>
                 <SelectTrigger id="zone-kind" className="h-9">
                   <SelectValue />
@@ -259,7 +276,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="zone-engine-group">Engine group</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="zone-engine-group">Engine group</Label>
+              <HelpTip id="zone-engine-group" label="Engine group" />
+            </div>
             <EngineGroupSelect
               id="zone-engine-group"
               testId="zone-engine-group"
@@ -271,7 +291,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
             <>
               <div className="grid grid-cols-[1fr_9rem] gap-4">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="zone-mname">Primary name server</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="zone-mname">Primary name server</Label>
+                    <HelpTip id="zone-mname" label="Primary name server" />
+                  </div>
                   <Input
                     id="zone-mname"
                     className="font-mono"
@@ -281,7 +304,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="zone-ttl">Default TTL</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="zone-ttl">Default TTL</Label>
+                    <HelpTip id="zone-ttl" label="Default TTL" />
+                  </div>
                   <Input
                     id="zone-ttl"
                     type="number"
@@ -292,7 +318,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="zone-rname">Responsible mailbox</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-rname">Responsible mailbox</Label>
+                  <HelpTip id="zone-rname" label="Responsible mailbox" />
+                </div>
                 <Input
                   id="zone-rname"
                   className="font-mono"
@@ -305,7 +334,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="zone-ns">Name servers</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-ns">Name servers</Label>
+                  <HelpTip id="zone-ns" label="Name servers" />
+                </div>
                 <Input
                   id="zone-ns"
                   className="font-mono"
@@ -321,7 +353,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
           ) : (
             <div className="grid grid-cols-[1fr_11rem] gap-4">
               <div className="grid gap-1.5">
-                <Label htmlFor="zone-primaries">Primaries</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-primaries">Primaries</Label>
+                  <HelpTip id="zone-primaries" label="Primaries" />
+                </div>
                 <Input
                   id="zone-primaries"
                   className="font-mono"
@@ -334,7 +369,10 @@ function NewZoneDialog({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
               <div className="grid content-start gap-1.5">
-                <Label htmlFor="zone-primary-key">Transfer TSIG key</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-primary-key">Transfer TSIG key</Label>
+                  <HelpTip id="zone-primary-key" label="Transfer TSIG key" />
+                </div>
                 <Select
                   value={form.primary_key}
                   onValueChange={(v) => set("primary_key", v)}

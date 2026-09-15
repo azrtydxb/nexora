@@ -16,6 +16,7 @@ import {
   formatDateTime,
   SavedNote,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -126,6 +127,7 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
             {secondary && (
               <Section
                 title="Primaries"
+                tip={<HelpTip id="zone-transfer-primaries" label="Primaries" />}
                 help="Servers this zone is transferred from, as ip:port, with the TSIG key the transfer is signed with."
               >
                 <EndpointsEditor
@@ -142,7 +144,15 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
               help="Who may query this zone. A list here replaces the global authoritative query access for this zone."
             >
               <div className="grid content-start gap-1.5">
-                <Label htmlFor="zone-allow-query">Allowed query networks</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="zone-allow-query">
+                    Allowed query networks
+                  </Label>
+                  <HelpTip
+                    id="zone-allow-query"
+                    label="Allowed query networks"
+                  />
+                </div>
                 <Input
                   id="zone-allow-query"
                   data-testid="zone-allow-query"
@@ -162,9 +172,15 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
             >
               <div className="grid gap-4 md:grid-cols-[1fr_14rem]">
                 <div className="grid content-start gap-1.5">
-                  <Label htmlFor="zone-transfer-allow">
-                    Allowed transfer networks
-                  </Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="zone-transfer-allow">
+                      Allowed transfer networks
+                    </Label>
+                    <HelpTip
+                      id="zone-transfer-allow"
+                      label="Allowed transfer networks"
+                    />
+                  </div>
                   <Input
                     id="zone-transfer-allow"
                     className="font-mono"
@@ -177,7 +193,10 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
                   </p>
                 </div>
                 <div className="grid content-start gap-1.5">
-                  <Label htmlFor="zone-transfer-key">Transfer TSIG key</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="zone-transfer-key">Transfer TSIG key</Label>
+                    <HelpTip id="zone-transfer-key" label="Transfer TSIG key" />
+                  </div>
                   <KeySelect
                     id="zone-transfer-key"
                     value={form.transferKey}
@@ -189,6 +208,7 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
             </Section>
             <Section
               title="Notify targets"
+              tip={<HelpTip id="zone-notify" label="Notify targets" />}
               help="Secondaries sent a NOTIFY whenever the zone changes, as ip:port."
             >
               <EndpointsEditor
@@ -204,7 +224,37 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
                 title="Dynamic updates"
                 help="TSIG keys allowed to change records with RFC 2136 updates. None refuses updates."
               >
-                <fieldset aria-label="Update TSIG keys" className="grid gap-2">
+                <div className="grid content-start gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="zone-update-allow">
+                      Allowed update sources
+                    </Label>
+                    <HelpTip
+                      id="zone-update-allow"
+                      label="Allowed update sources"
+                    />
+                  </div>
+                  <Input
+                    id="zone-update-allow"
+                    data-testid="zone-update-allow"
+                    className="font-mono"
+                    placeholder="192.0.2.0/24, 2001:db8::/32"
+                    value={form.updateAllow}
+                    onChange={(e) => set("updateAllow", e.target.value)}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Empty allows any source; a TSIG key is always required.
+                  </p>
+                </div>
+                <fieldset
+                  aria-label="Update TSIG keys"
+                  data-help="zone-update-keys"
+                  className="mt-4 grid gap-2"
+                >
+                  <legend className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                    Update TSIG keys
+                    <HelpTip id="zone-update-keys" label="Update TSIG keys" />
+                  </legend>
                   {keyList.length === 0 && (
                     <p className="text-muted-foreground text-sm">
                       No TSIG keys exist yet.
@@ -235,22 +285,6 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
                     </label>
                   ))}
                 </fieldset>
-                <div className="mt-4 grid content-start gap-1.5">
-                  <Label htmlFor="zone-update-allow">
-                    Allowed update sources
-                  </Label>
-                  <Input
-                    id="zone-update-allow"
-                    data-testid="zone-update-allow"
-                    className="font-mono"
-                    placeholder="192.0.2.0/24, 2001:db8::/32"
-                    value={form.updateAllow}
-                    onChange={(e) => set("updateAllow", e.target.value)}
-                  />
-                  <p className="text-muted-foreground text-xs">
-                    Empty allows any source; a TSIG key is always required.
-                  </p>
-                </div>
               </Section>
             )}
           </fieldset>
@@ -300,15 +334,20 @@ export function ZoneTransfersTab({ zone }: { zone: Zone }) {
 function Section({
   title,
   help,
+  tip,
   children,
 }: {
   title: string;
   help: string;
+  tip?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section aria-label={title}>
-      <h3 className="text-sm font-semibold">{title}</h3>
+      <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+        {title}
+        {tip}
+      </h3>
       <p className="text-muted-foreground mt-0.5 mb-3 max-w-prose text-sm">
         {help}
       </p>

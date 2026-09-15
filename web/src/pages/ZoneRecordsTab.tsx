@@ -5,6 +5,7 @@ import { type Schemas } from "@/api/client";
 import { useDeleteRecord, useRecords } from "@/api/zones";
 import { useCan } from "@/auth/AuthProvider";
 import { ConfirmDialog, ErrorAlert, MessageRow } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -58,7 +59,10 @@ export function ZoneRecordsTab({ zone }: { zone: Zone }) {
     <>
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <form onSubmit={applyName} className="grid gap-1.5">
-          <Label htmlFor="record-filter-name">Owner</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="record-filter-name">Owner</Label>
+            <HelpTip id="record-filter-name" label="Owner" />
+          </div>
           <div className="relative">
             <Search className="text-muted-foreground pointer-events-none absolute top-2.5 left-2.5 h-4 w-4" />
             <Input
@@ -72,7 +76,10 @@ export function ZoneRecordsTab({ zone }: { zone: Zone }) {
           </div>
         </form>
         <div className="grid gap-1.5">
-          <Label htmlFor="record-filter-type">Record type</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="record-filter-type">Record type</Label>
+            <HelpTip id="record-filter-type" label="Record type" />
+          </div>
           <Select
             value={filter.type ?? "all"}
             onValueChange={(v) =>

@@ -5,6 +5,7 @@ import { TriangleAlert } from "lucide-react";
 import { ApiError, type Schemas } from "@/api/client";
 import { fetchRecordSet, useSaveRecord, useZone } from "@/api/zones";
 import { ErrorAlert, errorMessage } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -227,10 +228,14 @@ export function ZoneRecordEditor({
           <form onSubmit={submit} className="grid gap-4" noValidate>
             <div className="grid grid-cols-[1fr_8rem_7rem] gap-3">
               <div className="grid content-start gap-1.5">
-                <Label htmlFor={`${id}-name`}>Name</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`${id}-name`}>Name</Label>
+                  <HelpTip id="record-name" label="Name" />
+                </div>
                 <div className="flex items-center">
                   <Input
                     id={`${id}-name`}
+                    data-help="record-name"
                     className="rounded-r-none font-mono"
                     placeholder="@"
                     maxLength={255}
@@ -255,12 +260,19 @@ export function ZoneRecordEditor({
                 )}
               </div>
               <div className="grid content-start gap-1.5">
-                <Label htmlFor={`${id}-type`}>Type</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`${id}-type`}>Type</Label>
+                  <HelpTip id="record-type" label="Type" />
+                </div>
                 <Select
                   value={form.type}
                   onValueChange={(v) => set("type", v as RecordType)}
                 >
-                  <SelectTrigger id={`${id}-type`} className="h-9">
+                  <SelectTrigger
+                    id={`${id}-type`}
+                    data-help="record-type"
+                    className="h-9"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -273,9 +285,13 @@ export function ZoneRecordEditor({
                 </Select>
               </div>
               <div className="grid content-start gap-1.5">
-                <Label htmlFor={`${id}-ttl`}>TTL</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor={`${id}-ttl`}>TTL</Label>
+                  <HelpTip id="record-ttl" label="TTL" />
+                </div>
                 <Input
                   id={`${id}-ttl`}
+                  data-help="record-ttl"
                   inputMode="numeric"
                   value={form.ttl}
                   onChange={(e) => set("ttl", e.target.value)}
@@ -285,9 +301,13 @@ export function ZoneRecordEditor({
               </div>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor={`${id}-data`}>Data</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor={`${id}-data`}>Data</Label>
+                <HelpTip id="record-data" label="Data" />
+              </div>
               <Input
                 id={`${id}-data`}
+                data-help="record-data"
                 className="font-mono"
                 placeholder={hint.placeholder}
                 value={form.data}

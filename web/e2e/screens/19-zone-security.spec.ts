@@ -16,7 +16,7 @@ test("admin manages TSIG keys, zone signing, rollovers, a secondary refresh and 
   await page.getByRole("link", { name: "TSIG keys" }).click();
   await page.getByRole("button", { name: "New TSIG key" }).click();
   const newKey = page.getByRole("dialog", { name: "New TSIG key" });
-  await newKey.getByLabel("Key name").fill(keyName);
+  await newKey.getByLabel("Key name", { exact: true }).fill(keyName);
   await newKey.getByRole("button", { name: "Create" }).click();
   await expect(newKey).toContainText("This secret is shown once");
   await newKey.getByRole("button", { name: "Done" }).click();
@@ -31,10 +31,16 @@ test("admin manages TSIG keys, zone signing, rollovers, a secondary refresh and 
   await page.getByTestId("nav-zones").click();
   await page.getByRole("button", { name: "New zone" }).click();
   let create = page.getByRole("dialog", { name: "New zone" });
-  await create.getByLabel("Zone name").fill(signed);
-  await create.getByLabel("Primary name server").fill(`ns1.${signed}`);
-  await create.getByLabel("Responsible mailbox").fill(`hostmaster.${signed}`);
-  await create.getByLabel("Name servers").fill(`ns1.${signed}`);
+  await create.getByLabel("Zone name", { exact: true }).fill(signed);
+  await create
+    .getByLabel("Primary name server", { exact: true })
+    .fill(`ns1.${signed}`);
+  await create
+    .getByLabel("Responsible mailbox", { exact: true })
+    .fill(`hostmaster.${signed}`);
+  await create
+    .getByLabel("Name servers", { exact: true })
+    .fill(`ns1.${signed}`);
   await create.getByRole("button", { name: "Create" }).click();
   await expect(page.getByRole("heading", { name: signed })).toBeVisible();
 
@@ -61,10 +67,10 @@ test("admin manages TSIG keys, zone signing, rollovers, a secondary refresh and 
   await page.getByTestId("nav-zones").click();
   await page.getByRole("button", { name: "New zone" }).click();
   create = page.getByRole("dialog", { name: "New zone" });
-  await create.getByLabel("Kind").click();
+  await create.getByLabel("Kind", { exact: true }).click();
   await page.getByRole("option", { name: "Secondary", exact: true }).click();
-  await create.getByLabel("Zone name").fill(pulled);
-  await create.getByLabel("Primaries").fill("127.0.0.1:1");
+  await create.getByLabel("Zone name", { exact: true }).fill(pulled);
+  await create.getByLabel("Primaries", { exact: true }).fill("127.0.0.1:1");
   await create.getByRole("button", { name: "Create" }).click();
   await page.getByRole("tab", { name: "Transfers" }).click();
   await page.getByRole("button", { name: "Refresh now" }).click();

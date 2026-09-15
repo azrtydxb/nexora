@@ -18,6 +18,7 @@ import {
   SecretValue,
   StatusDot,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -156,9 +157,13 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
     help: string,
     min: number,
     max: number,
+    tip: ReactNode,
   ) => (
     <div className="grid content-start gap-1.5">
-      <Label htmlFor={`zone-dnssec-${id}`}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={`zone-dnssec-${id}`}>{label}</Label>
+        {tip}
+      </div>
       <Input
         id={`zone-dnssec-${id}`}
         type="number"
@@ -177,7 +182,7 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
         title="Online signing"
         description={
           enabled
-            ? "The management plane signs every change and rolls keys on schedule; engines serve the signed zone."
+            ? "Nexora signs every change and rolls keys on schedule, and serves the signed zone."
             : "Signing generates a KSK and a ZSK and signs the zone. Publish the DS record at the parent afterwards to make the chain of trust."
         }
         action={
@@ -195,7 +200,10 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
             className="grid gap-5 px-5 py-5 md:grid-cols-3"
           >
             <div className="grid content-start gap-1.5">
-              <Label htmlFor="zone-dnssec-algorithm">Algorithm</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="zone-dnssec-algorithm">Algorithm</Label>
+                <HelpTip id="zone-dnssec-algorithm" label="Algorithm" />
+              </div>
               <Select
                 value={form.algorithm}
                 disabled={enabled || !canUpdate}
@@ -216,7 +224,10 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
               )}
             </div>
             <div className="grid content-start gap-1.5">
-              <Label htmlFor="zone-dnssec-nsec">Denial of existence</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="zone-dnssec-nsec">Denial of existence</Label>
+                <HelpTip id="zone-dnssec-nsec" label="Denial of existence" />
+              </div>
               <Select
                 value={form.nsec_mode}
                 disabled={!canUpdate}
@@ -232,7 +243,10 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
               </Select>
             </div>
             <div className="grid content-start gap-1.5">
-              <Label htmlFor="zone-dnssec-backend">Key storage</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="zone-dnssec-backend">Key storage</Label>
+                <HelpTip id="zone-dnssec-backend" label="Key storage" />
+              </div>
               <Select
                 value={form.key_backend}
                 disabled={enabled || !canUpdate}
@@ -255,9 +269,13 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
             {number(
               "propagation_delay_seconds",
               "Propagation delay (seconds)",
-              "How long a change takes to reach every engine and cache.",
+              "How long a change takes to reach every server and cache.",
               1,
               604800,
+              <HelpTip
+                id="zone-dnssec-propagation"
+                label="Propagation delay"
+              />,
             )}
             {number(
               "parent_ds_ttl_seconds",
@@ -265,6 +283,7 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
               "The TTL of the DS record at the parent.",
               1,
               604800,
+              <HelpTip id="zone-dnssec-parent-ds-ttl" label="Parent DS TTL" />,
             )}
             {number(
               "zsk_lifetime_days",
@@ -272,6 +291,7 @@ function SettingsForm({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
               "ZSKs roll automatically after this; 0 rolls them manually only.",
               0,
               3650,
+              <HelpTip id="zone-dnssec-zsk-lifetime" label="ZSK lifetime" />,
             )}
           </fieldset>
           <div className="bg-muted/40 flex flex-wrap items-center justify-end gap-3 border-t px-5 py-3">
@@ -376,8 +396,18 @@ function KeysSection({ zone, dnssec }: { zone: Zone; dnssec: Dnssec }) {
               <TableHead>Role</TableHead>
               <TableHead>Algorithm</TableHead>
               <TableHead className="text-right">Tag</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>DS at parent</TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  State
+                  <HelpTip id="zone-dnssec-col-state" label="State" />
+                </span>
+              </TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1.5">
+                  DS at parent
+                  <HelpTip id="zone-dnssec-col-ds" label="DS at parent" />
+                </span>
+              </TableHead>
               <TableHead>Storage</TableHead>
               <TableHead>Activated</TableHead>
               <TableHead>Retired</TableHead>

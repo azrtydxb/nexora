@@ -12,6 +12,7 @@ import {
   MessageRow,
   SecretValue,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -193,7 +194,10 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
           <form onSubmit={submit} className="grid gap-4" noValidate>
             <div className="grid grid-cols-[1fr_11rem] gap-4">
               <div className="grid gap-1.5">
-                <Label htmlFor="tsig-name">Key name</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="tsig-name">Key name</Label>
+                  <HelpTip id="tsig-name" label="Key name" />
+                </div>
                 <Input
                   id="tsig-name"
                   className="font-mono"
@@ -204,7 +208,10 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
                 />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="tsig-algorithm">Algorithm</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="tsig-algorithm">Algorithm</Label>
+                  <HelpTip id="tsig-algorithm" label="Algorithm" />
+                </div>
                 <Select
                   value={algorithm}
                   onValueChange={(v) => setAlgorithm(v as Algorithm)}
@@ -223,7 +230,10 @@ function NewKeyDialog({ onClose }: { onClose: () => void }) {
               </div>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="tsig-secret">Secret (base64, optional)</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="tsig-secret">Secret (base64, optional)</Label>
+                <HelpTip id="tsig-secret" label="Secret (base64, optional)" />
+              </div>
               <Input
                 id="tsig-secret"
                 type="password"
