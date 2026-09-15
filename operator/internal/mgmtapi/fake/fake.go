@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -151,6 +152,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Requests = append(s.Requests, r.Method+" "+r.URL.Path)
+	// Like the management plane's jsonOnly middleware: every request other than GET and HEAD, bodiless
+	// DELETEs included, must say Content-Type: application/json.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "requests must send Content-Type: application/json")
+			return
+		}
+	}
 	if s.Status != 0 {
 		writeError(w, s.Status, "fake_status", "status forced by the fake")
 		return

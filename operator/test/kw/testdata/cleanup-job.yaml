@@ -1,0 +1,27 @@
+# Removes the operator e2e's engine state directory from node NODE (scripts/kw-operator-e2e.sh substitutes it).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cleanup-NODE
+  labels:
+    nexora.io/e2e-cleanup: "true"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        nexora.io/e2e-cleanup: "true"
+    spec:
+      nodeName: NODE
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: 192.168.10.131/library/busybox:1.37
+          # The parent is mounted: a mount point itself cannot be removed.
+          command: ["rm", "-rf", "/host/var/lib/nexora-optest"]
+          volumeMounts:
+            - { name: varlib, mountPath: /host/var/lib }
+      volumes:
+        - name: varlib
+          hostPath: { path: /var/lib, type: Directory }

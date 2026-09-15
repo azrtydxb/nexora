@@ -1,5 +1,39 @@
 # Plan review log
 
+## M9 operator e2e (2026-09-15)
+
+`scripts/kw-operator-e2e.sh --skip-build --tag dev-m9-749166b-dirty` in `nexora-optest` on kw (images
+`dev-m9-749166b` plus the `internal/mgmtapi` Content-Type fix; run 1 used `dev-m9-749166b` unfixed).
+Run 2 (756 s total, exit 1):
+
+| Subtest              | Result | Duration | Notes                                                                                         |
+| -------------------- | ------ | -------- | --------------------------------------------------------------------------------------------- |
+| guards               | PASS   | 1.8 s    | no LoadBalancer/NodePort Service, no object outside the namespace                             |
+| install              | PASS   | 117 s    | Ready after 1m53s; zone answered by both instance Services                                    |
+| engine-groups        | PASS   | 1.3 s    | an engine of `edge` enrolled on worker-23                                                     |
+| rolling-update       | FAIL   | 241 s    | every pod replaced in 27 s; dig loop 0 lost of 1174 per instance; dnsperf aborted (see below) |
+| join-token-rotation  | PASS   | 94 s     | rotation on the missing Secret 33 s, renewal rotation 59 s, predecessors revoked              |
+| prune                | PASS   | 2.7 s    | `edge` DaemonSet and Service removed                                                          |
+| cnpg-failover        | FAIL   | 192 s    | new primary after 3m6s (> 120 s); API 200 1 s later; group change on every engine 5 s later   |
+| cnpg-backup-restore  | PASS   | 86 s     | backup completed in 20 s, restore Ready and `edge` row found 1m6s later                       |
+| delete-retains-state | PASS   | 19 s     | workloads gone in 18 s; `Cluster` and the three Secrets kept                                  |
+
+Findings (details in the plan, Task 10 "Findings from the kw runs"):
+
+- The operator's bodiless `DELETE`s reached the API without `Content-Type: application/json` and got
+  `415`; every join token revoke and group delete failed. Fixed in `operator/internal/mgmtapi/client.go`
+  with the rule enforced by `internal/mgmtapi/fake`.
+- With that failure the controller created ~2500 join tokens in nine minutes (rotate writes the Secret,
+  then fails revoking the predecessor, and rotates again on the Secret event). Not fixed; Task 7's files.
+- `dnsperf` dies with `ECONNABORTED` when an engine leaves a ClusterIP's backends (Cilium 1.19.4 socket
+  LB destroys connected UDP sockets). A fresh-socket probe at the same rate lost nothing.
+- A graceful primary deletion fails over in about 3 minutes because CNPG's `smartShutdownTimeout`
+  (180 s) waits for the management plane's sessions.
+
+Production was untouched: `kubectl --context kw -n nexora get nexorainstallations` printed
+`No resources found` before and after, and `nexora-dns`/`nexora-dns-2` still hold 192.168.10.136 and
+192.168.10.139. `nexora-optest` was deleted; the two cluster-scoped CRDs stay installed, as the spec says.
+
 ## M3 (2026-09-13)
 
 - RESOLVED (M3: `rpz_zones.tsig_secret_envelope` holds an NXE1 envelope from `mgmt/internal/secrets`, CHECK-constrained to the `NXE1` magic; no plaintext column exists): FIX BEFORE M3 BUILD: plan stores RPZ TSIG secret plaintext in `rpz_zones.tsig_secret`. Violates architecture rule "secrets never plaintext in DB" and S-23. Resolution: pull the M4 KEK envelope-encryption helper (`mgmt/internal/secrets`, AES-256-GCM, refuses without KEK) forward into M3 and store the RPZ TSIG secret through it.

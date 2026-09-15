@@ -69,6 +69,11 @@ func New(baseURL, token string, hc *http.Client) (*Client, error) {
 	}
 	auth := func(_ context.Context, req *http.Request) error {
 		req.Header.Set("Authorization", "Bearer "+token)
+		// The management plane refuses any request other than GET and HEAD without this type, including
+		// the bodiless DELETEs (revoke join token, delete engine group) the generated client sends bare.
+		if req.Method != http.MethodGet && req.Method != http.MethodHead && req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		return nil
 	}
 	api, err := NewClientWithResponses(strings.TrimRight(baseURL, "/")+"/api/v1",
