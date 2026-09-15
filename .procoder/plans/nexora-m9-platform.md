@@ -311,7 +311,7 @@ type EngineSpec struct {
 }
 type EngineGroupSpec struct {
 	Name string // required, pattern ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
-	EngineGroupRef, WorkloadName, NodeNamePrefix string; Replicas *int32
+	EngineGroupRef, WorkloadName string; NodeNamePrefix *string /* pointer: "" differs from unset */; Replicas *int32
 	NodeAffinity *corev1.NodeAffinity; Service *ServiceSpec; ExtraServices []ServiceSpec
 	Instances []EngineInstanceSpec // +listType=map +listMapKey=name +MaxItems=64
 }
@@ -2029,9 +2029,19 @@ func Own(objs []*unstructured.Unstructured, owner metav1.Object, ownerGVK schema
   - group `default` with `joinTokenSecret: jt` and instances `a`/`b` on `node-1`/`node-2`, each with
     a ClusterIP service.
 
-  Write `testdata/hostnetwork-values.yaml`: external mode, `engine.hostNetwork: true`,
-  `engine.kind: Deployment`, group `default` with `replicas: 2` and `joinTokenSecret: jt`,
-  `otelCollector.enabled: true`.
+  Write `testdata/hostnetwork-values.yaml`: external mode (`external.existingSecret: nexora-db`),
+  `mgmt.ca.existingSecret: nexora-ca`, `engine.hostNetwork: true`, `engine.kind: Deployment`, group
+  `default` with `replicas: 2` and `joinTokenSecret: jt`, `otelCollector.enabled: true`.
+
+  As built: `BuildValues` removes empty maps from the marshalled spec (unset struct fields marshal to
+  `{}` despite `omitempty`; an empty map merges into the chart default unchanged). `Render` parses each
+  `SplitManifests` document with a trailing newline appended, as Helm writes manifests, so a trailing
+  block scalar (ConfigMap data) keeps its final newline.
+
+  Task 1 type change made here (lead decision): `TestValuesFromKwEquivalentInstallation` failed on
+  `engine.groups[0].nodeNamePrefix: ""`, which `values-kw.yaml` sets and `NodeNamePrefix string` with
+  `omitempty` dropped. `EngineGroupSpec.NodeNamePrefix` is now `*string`; `make operator-generate`
+  changed only `zz_generated.deepcopy.go` (the CRD schema is identical).
 
   Run the tests in the dev pod (which has `helm`) and expect a build failure. Implement
   `render.go` and `objects.go`, and expect PASS. `TestRenderMatchesHelmTemplate` fails when a
@@ -2112,7 +2122,24 @@ Deletion:
     30 s.
 - Then remove the finalizer.
 
-- [ ] Create `operator/internal/controller/enginegroup/controller_test.go`:
+As built (details the order above leaves open):
+
+- Status is written with a merge patch (`client.MergeFrom`), so a concurrent spec edit does not fail the
+  write. A failed `Synced` sets `Ready=False` with the same reason and leaves `JoinTokenReady` unchanged:
+  the Secret stays valid while the management plane is briefly unreachable.
+- `DuplicateGroupName` requeues after 30 s. A 400/422 refusal by the API, or a `rollout.maxServfailRatio`
+  that is not a decimal, sets `Synced=False` with reason `Conflict` and requeues after 30 s (the
+  reason list has no "invalid" reason). Kubernetes API errors are returned for controller-runtime's
+  backoff.
+- A token counts as current only when it is listed `active` for this group's id. `joinTokenExpiresAt`
+  is `now + ttl` on the controller clock at creation, so renewal uses one clock.
+- A rotation while a previous token is still in its grace period revokes that previous token at once
+  (one previous token is tracked); a token whose Secret write fails is revoked immediately.
+- Deletion deletes only the group whose id is `status.groupID`, looked up for its current revision, so
+  a `DuplicateGroupName` CR (no `groupID`) never deletes the group another CR manages.
+- The watch on `NexoraInstallation` enqueues every `NexoraEngineGroup` in its namespace referencing it.
+
+- [x] Create `operator/internal/controller/enginegroup/controller_test.go`:
 
   ```go
   package enginegroup_test
@@ -2466,7 +2493,7 @@ Deletion:
   Run `scripts/dev-exec.sh 'make operator-test'` and expect a build failure (package `enginegroup` does
   not exist). Implement `controller.go` and `token.go` per the reconcile order above, and expect PASS.
 
-- [ ] Register the controller in `setupControllers` in `main.go`:
+- [x] Register the controller in `setupControllers` in `main.go`:
   ```go
   if err := (&enginegroup.Reconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
   	ClientFor: enginegroup.DefaultClientFor(mgr.GetClient()), Now: time.Now}).SetupWithManager(mgr); err != nil {
@@ -2480,7 +2507,7 @@ Deletion:
 Files:
 
 - `deploy/docker/operator.Dockerfile`: created.
-- `.github/workflows/images.yml`: matrix entry `nexora-operator`.
+- `.github/workflows/images.yml`: matrix entries `nexora-operator` (build and merge).
 - `deploy/helm/nexora-operator/Chart.yaml`, `values.yaml`, `values.schema.json`, `.helmignore`: created.
 - `deploy/helm/nexora-operator/templates/_helpers.tpl`, `deployment.yaml`, `serviceaccount.yaml`,
   `rbac.yaml`, `namespace.yaml`, `NOTES.txt`: created. (`crds/` belongs to Task 1.)
@@ -2539,6 +2566,7 @@ Interfaces:
   - Namespace scope: Role plus RoleBinding `nexora-operator` in each watched namespace.
   - Leader election: Role `nexora-operator-leader-election` (`coordination.k8s.io` leases:
     `get, list, watch, create, update, patch, delete`) in the release namespace, always.
+    bound by RoleBinding `nexora-operator-leader-election` to the ServiceAccount.
 
 - [ ] Create `deploy/deploytest/operator_chart_test.go`:
   ```go
@@ -2666,8 +2694,10 @@ Interfaces:
 - [ ] Write the operator chart per Interfaces. `watchNamespaces` must be non-empty with namespace scope:
       `{{- if and (eq .Values.rbac.scope "namespace") (not .Values.watchNamespaces) }}{{ fail "watchNamespaces is required when rbac.scope=namespace" }}{{ end }}`.
       `Chart.yaml` has `name: nexora-operator`, `version: 0.1.0`, `appVersion: "main"`, `kubeVersion: ">=1.28.0-0"`.
-      Run `make operator-generate` on the laptop, which writes `deploy/operator/operator.yaml`. Run the
-      tests and expect PASS.
+      Generate `deploy/operator/operator.yaml` with the helm of the dev pod (the `helm template` line of
+      `make operator-generate`, run through `scripts/dev-exec.sh` with stdout redirected into the laptop file):
+      the laptop's helm 4.1 separates documents differently from the pod's and CI's helm 4.3, and CI
+      regenerates the file in the toolbox image. Run the tests and expect PASS.
 - [ ] Create `deploy/docker/operator.Dockerfile`:
   ```dockerfile
   # syntax=docker/dockerfile:1.10
@@ -2693,7 +2723,7 @@ Interfaces:
   ENTRYPOINT ["/nexora-operator"]
   ```
   Add `- { name: nexora-operator, file: deploy/docker/operator.Dockerfile }` to the `images.yml` build
-  matrix.
+  matrix, and `nexora-operator` to the `merge` job's image matrix (else no multi-arch tag is created).
 - [ ] In `workflow_test.go` add `"nexora-operator"` to the wanted images. In `buildinfo_test.go` add
       `"deploy/docker/operator.Dockerfile": {"ARG VERSION=dev", "ARG COMMIT=", "ARG BUILD_DATE=", "internal/version.Commit=${COMMIT}", "internal/version.BuildDate=${BUILD_DATE}", "COPY deploy/helm/nexora /charts/nexora"}`.
       Run those tests before editing the Dockerfile and workflow to see them FAIL

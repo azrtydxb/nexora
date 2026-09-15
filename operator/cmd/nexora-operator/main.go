@@ -18,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/piwi3910/nexora/operator/api/v1alpha1"
+	"github.com/piwi3910/nexora/operator/internal/controller/enginegroup"
 	"github.com/piwi3910/nexora/operator/internal/version"
 )
 
@@ -127,5 +128,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // setupControllers registers the controllers with the manager.
 func setupControllers(mgr ctrl.Manager, opts options) error {
+	if err := (&enginegroup.Reconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		ClientFor: enginegroup.DefaultClientFor(mgr.GetClient()), Now: time.Now}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("engine group controller: %w", err)
+	}
 	return nil
 }
