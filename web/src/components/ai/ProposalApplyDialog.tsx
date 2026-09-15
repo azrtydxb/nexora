@@ -19,6 +19,7 @@ import {
 // Actions that can enable a category whose source list carries a non-commercial license.
 const licensedOperations = new Set([
   "updateFilterCategory",
+  "createPolicyGroup",
   "updatePolicyGroup",
 ]);
 
