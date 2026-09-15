@@ -438,7 +438,9 @@ fe80::/10 and authoritative access with 0.0.0.0/0, ::/0.
   for DoT/DoH/DoQ, pushed to engines, never stored in PostgreSQL),
   `NEXORA_KEK_FILE` (M3: RPZ TSIG secrets sealed by internal/secrets; M4 adds
   DNSSEC and TSIG keys), `NEXORA_PKCS11_MODULE` / `_TOKEN_LABEL` /
-  `_PIN_FILE` (M4).
+  `_PIN_FILE` (M4), `NEXORA_BOOTSTRAP_TOKEN_FILE`,
+  `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (`30s`) (M9: the operator's `nxt_`
+  admin token for the system user `nexora-operator`).
 - Secrets come from files, never from the database in plaintext.
 - `nexora-mgmt serve | migrate | ca init --out <dir> | user create --admin`;
   M2 adds

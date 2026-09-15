@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -76,10 +77,13 @@ func lockUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, revision int64) (aut
 	return u, checkRevision(u.Revision, revision)
 }
 
-// ensureOtherAdmin refuses to remove the last enabled admin. Admin rows are locked so two
-// concurrent demotions cannot both pass.
+// errSystemUser refuses changes to system users, which automation (the bootstrap token) owns.
+var errSystemUser = coded(http.StatusConflict, "system_user", "system users are managed by automation")
+
+// ensureOtherAdmin refuses to remove the last enabled human admin (system users do not count). Admin
+// rows are locked so two concurrent demotions cannot both pass.
 func ensureOtherAdmin(ctx context.Context, tx pgx.Tx, id string) error {
-	rows, err := tx.Query(ctx, "select id from users where role = 'admin' and not disabled and id <> $1 for update", id)
+	rows, err := tx.Query(ctx, "select id from users where role = 'admin' and not disabled and source <> 'system' and id <> $1 for update", id)
 	if err != nil {
 		return err
 	}
@@ -115,6 +119,9 @@ func (h *handlers) UpdateUser(ctx context.Context, req UpdateUserRequestObject) 
 		if err != nil {
 			return auth.Change{}, err
 		}
+		if before.Source == "system" {
+			return auth.Change{}, errSystemUser
+		}
 		if hash != nil && before.Source != "local" {
 			return auth.Change{}, invalid("passwords can only be set for local users")
 		}
@@ -148,6 +155,9 @@ func (h *handlers) DeleteUser(ctx context.Context, req DeleteUserRequestObject) 
 		before, err := lockUser(ctx, tx, req.Id, req.Params.Revision)
 		if err != nil {
 			return auth.Change{}, err
+		}
+		if before.Source == "system" {
+			return auth.Change{}, errSystemUser
 		}
 		if before.Role == auth.RoleAdmin && !before.Disabled {
 			if err := ensureOtherAdmin(ctx, tx, before.ID); err != nil {

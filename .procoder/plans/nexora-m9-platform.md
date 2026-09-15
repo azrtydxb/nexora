@@ -918,20 +918,24 @@ BootstrapTokenReloadInterval time.Duration // NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTE
   ```
   Run `scripts/dev-exec.sh 'go test ./mgmt/internal/auth -run "Bootstrap|SystemUsers" -count=1'` and expect
   a build failure `undefined: auth.EnsureBootstrapToken` (method) and `auth.BootstrapUsername`.
-- [ ] Implement `mgmt/internal/auth/bootstrap.go`. In one `s.st.InTx`:
+- [ ] Implement `mgmt/internal/auth/bootstrap.go`. Validate `strings.HasPrefix(token, apiTokenPrefix)` and
+      `len(token) > len(apiTokenPrefix)+8` before any database work, else `ErrBootstrapTokenInvalid`. Then,
+      in one `s.st.InTx`:
   1. `select pg_advisory_xact_lock(hashtext('nexora:bootstrap_token'))`.
-  2. Validate `strings.HasPrefix(token, apiTokenPrefix)` and `len(token) > len(apiTokenPrefix)+8`, else
-     `ErrBootstrapTokenInvalid`.
+  2. (validation, done above).
   3. `select id, source from users where username = $1 for update`; a non-`system` row →
      `ErrBootstrapUserConflict`; no row → insert
      `(username, role, source, disabled) values ('nexora-operator', 'admin', 'system', false)`; an existing
      system row with `role <> 'admin' or disabled` → update to admin, not disabled.
-  4. When an unrevoked, unexpired token with `token_hash = hashToken(token)` exists for that user,
-     return `changed=false` unless step 3 wrote.
-  5. Otherwise insert `api_tokens(user_id, name, prefix, token_hash, role)` with name `bootstrap`,
-     prefix `token[:12]`, role `admin`. Then `update api_tokens set revoked_at = now() where user_id = $1
-and name = 'bootstrap' and revoked_at is null and token_hash <> $2`.
-  6. Write `WriteAudit(ctx, tx, Actor{Type: "system", ID: "bootstrap", Name: "bootstrap"},
+  4. Select the user's unrevoked, unexpired `bootstrap` token hashes and compare each with
+     `hashToken(token)` using `subtle.ConstantTimeCompare`.
+  5. When none matches, delete any stale (revoked or expired) row of that user with the same hash
+     (`token_hash` is unique, so a file rolled back to an old token would otherwise conflict), then insert
+     `api_tokens(user_id, name, prefix, token_hash, role)` with name `bootstrap`, prefix `token[:12]`,
+     role `admin`. In every case run `update api_tokens set revoked_at = now() where user_id = $1
+and name = 'bootstrap' and revoked_at is null and token_hash <> $2`. `changed` is true when step 3,
+     the insert or a revocation wrote; otherwise return without an audit row.
+  6. When `changed`, write `WriteAudit(ctx, tx, Actor{Type: "system", ID: "bootstrap", Name: "bootstrap"},
 Change{Action: "ensureBootstrapToken", TargetType: "user", TargetID: userID,
 After: map[string]any{"token_prefix": token[:12]}}, nil)`.
 
@@ -1002,18 +1006,18 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run TestSystemUserIsReadOnlyInAPI -count=1'` and expect
   FAIL `update system user -> 200`.
 - [ ] In `handlers_admin.go`, after `lockUser` in `UpdateUser` and `DeleteUser`, return
-      `coded(http.StatusConflict, "system_user", "system users are managed by automation")` when
-      `before.Source == "system"`. Add `and source <> 'system'` to the query in `ensureOtherAdmin`. Run
+      `errSystemUser = coded(http.StatusConflict, "system_user", "system users are managed by automation")`
+      when `before.Source == "system"`. Add `and source <> 'system'` to the query in `ensureOtherAdmin`. Run
       and expect PASS. If the delete of the self-admin answers 409 with a different code because it is
       the caller's own account, keep the assertion on 409 only, as written.
 - [ ] Add `TestConfigBootstrapToken` to `mgmt/internal/config/config_test.go`: with only the required
       env set, `BootstrapTokenFile == ""` and `BootstrapTokenReloadInterval == 30*time.Second`;
-      `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL=500ms` gives an error mentioning
+      both set give those values; `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL=500ms` gives an error mentioning
       `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL`. Implement, and expect PASS.
 - [ ] In `main.go` `serve`, register `auth.BootstrapTokenErrors` next to `pki.DNSTLSReloadErrors`, and
       after `EnsureSetupToken` add
       `if cfg.BootstrapTokenFile != "" { go authSvc.RunBootstrapToken(ctx, cfg.BootstrapTokenFile, cfg.BootstrapTokenReloadInterval, logger.Printf) }`,
-      using the logger `serve` already uses.
+      using the logger `serve` already uses (`log.Printf`).
 - [ ] Create `e2e/bootstrap_token_test.go`:
   ```go
   package e2e
@@ -1045,7 +1049,7 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   	harness.EventuallyTrue(t, 10*time.Second, func() bool {
   		code, _ := api.Do(http.MethodGet, "/engine-groups", nil, nil)
   		return code == http.StatusOK
-  	})
+  	}, "the bootstrap token authenticates")
   	g := api.CreateEngineGroup(map[string]any{"name": "boot"})
   	join := api.CreateJoinTokenFor(g.ID, nil)
   	en := env.StartManagedEngine("boot-1", []string{mg.GRPCURL}, join)
@@ -1066,24 +1070,30 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   	next.Bearer = second
   	harness.EventuallyTrue(t, 5*time.Second, func() bool {
   		oldCode, _ := api.Do(http.MethodGet, "/engine-groups", nil, nil)
-  		newCode, _ := next.Do(http.MethodPost, "/engine-groups", map[string]any{"name": "boot2"}, nil)
-  		return oldCode == http.StatusUnauthorized && newCode == http.StatusCreated
-  	})
+  		newCode, _ := next.Do(http.MethodGet, "/engine-groups", nil, nil)
+  		return oldCode == http.StatusUnauthorized && newCode == http.StatusOK
+  	}, "the rotated token replaces the old one")
+  	next.CreateEngineGroup(map[string]any{"name": "boot2"})
   }
   ```
   Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test ./e2e -run TestBootstrapTokenFleetBootstrap -count=1'`.
   Expect PASS once the steps above are in; with the `main.go` step removed it fails in the first
-  `EventuallyTrue`. If `harness.EventuallyTrue`, `EngineView.Connected` or `EngineView.EngineGroupID` have
-  different names in `e2e/harness`, use the existing names.
+  `EventuallyTrue`. `harness.EventuallyTrue` takes a message argument. The rotation check polls with GET and
+  creates `boot2` once afterwards: a POST inside the poll would answer 409 on every retry after its first
+  success.
 - [ ] In `web/src/pages/UsersPage.tsx`, render the row actions only when `u.source !== "system"`. Create
       `web/e2e/screens/71-system-user.spec.ts`:
   ```ts
-  import { test, expect, login } from "../fixtures";
+  import { test, expect, env, login } from "../fixtures";
 
   test("system users show as System without edit or delete", async ({
     page,
   }) => {
-    await login(page);
+    await login(
+      page,
+      env("NEXORA_E2E_ADMIN_USER"),
+      env("NEXORA_E2E_ADMIN_PASSWORD"),
+    );
     await page.route("**/api/v1/users", async (route) => {
       const res = await route.fetch();
       const users = await res.json();
@@ -1096,7 +1106,6 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
         disabled: false,
         revision: 1,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
         display_name: "",
         last_login_at: null,
         preferences: {
@@ -1116,10 +1125,11 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
     await expect(admin.getByRole("button").first()).toBeVisible();
   });
   ```
-  Run `scripts/dev-exec.sh 'go test ./e2e -run TestGUICoverage/71-system-user -count=1'` (or the
-  project's Playwright invocation through `TestGUICoverage`). Expect FAIL on `toHaveCount(0)` before the
-  UsersPage change and PASS after. Adapt the mocked user fields to the `User` schema in
-  `web/src/api/schema.d.ts` if typecheck of the spec requires it.
+  `TestGUICoverage` has no per-spec subtests; run
+  `scripts/dev-exec.sh 'go test ./e2e -run "^TestGUICoverage$" -count=1 -timeout 40m'` (for a quick
+  red/green, a throwaway e2e test running `00-setup` then `71-system-user` through
+  `harness.RunPlaywright`, deleted afterwards). Expect FAIL on `toHaveCount(0)` (`unexpected value "2"`)
+  before the UsersPage change and PASS after.
 - [ ] Add `NEXORA_BOOTSTRAP_TOKEN_FILE` and `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (`30s`) to the
       management environment list in `docs/architecture.md`. Run
       `scripts/dev-exec.sh 'go vet ./... && go test -race -count=1 ./mgmt/...'` and

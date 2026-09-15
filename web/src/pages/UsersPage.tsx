@@ -148,7 +148,8 @@ export function UsersPage() {
                 </TableCell>
                 {(canUpdate || canDelete) && (
                   <TableCell className="py-2 text-right whitespace-nowrap">
-                    {canUpdate && (
+                    {/* System users are managed by automation (the API refuses edits). */}
+                    {canUpdate && u.source !== "system" && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -160,7 +161,7 @@ export function UsersPage() {
                         <Pencil className="h-4 w-4" />
                       </Button>
                     )}
-                    {canDelete && u.id !== me?.id && (
+                    {canDelete && u.id !== me?.id && u.source !== "system" && (
                       <Button
                         variant="ghost"
                         size="icon"

@@ -23,6 +23,10 @@ type Config struct {
 	// DNS serving certificate (DoT, DoH, DoQ) pushed to engines; both files or neither.
 	DNSTLSCertFile, DNSTLSKeyFile string
 	DNSTLSReloadInterval          time.Duration
+	// BootstrapTokenFile, when set, holds an nxt_ API token applied to the system user nexora-operator
+	// at start and every BootstrapTokenReloadInterval (the Kubernetes operator's admin credential).
+	BootstrapTokenFile           string
+	BootstrapTokenReloadInterval time.Duration
 	// KEKFile holds the base64 32-byte key-encryption key sealing secrets at rest ("" = none).
 	KEKFile string
 	// PKCS#11 token holding DNSSEC keys and the envelope wrap key; all three or none.
@@ -136,6 +140,11 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_RELOAD_INTERVAL must be a duration of at least 1s")
 	}
 	c.DNSTLSReloadInterval = interval
+	bootstrapInterval, err := time.ParseDuration(get("NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL", "30s"))
+	if err != nil || bootstrapInterval < time.Second {
+		return Config{}, fmt.Errorf("NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL must be a duration of at least 1s")
+	}
+	c.BootstrapTokenFile, c.BootstrapTokenReloadInterval = getenv("NEXORA_BOOTSTRAP_TOKEN_FILE"), bootstrapInterval
 	tick, err := time.ParseDuration(get("NEXORA_ROLLOUT_TICK", "1s"))
 	if err != nil || tick < 100*time.Millisecond || tick > time.Minute {
 		return Config{}, fmt.Errorf("NEXORA_ROLLOUT_TICK must be between 100ms and 1m")
