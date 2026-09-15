@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
@@ -15,6 +15,9 @@ import type { paths } from "@/api/schema";
 import { useFilterCategories } from "@/api/filterCategories";
 import { useEngines } from "@/api/fleet";
 import { usePolicyGroups } from "@/api/policies";
+import { AnomalyBanner } from "@/components/ai/AnomalyBanner";
+import { QueryLogAsk } from "@/components/ai/QueryLogAsk";
+import { ThreatBadge } from "@/components/ai/ThreatBadge";
 import { ErrorAlert, MessageRow } from "@/components/common";
 import { HelpTip } from "@/components/HelpTip";
 import { MultiSelect } from "@/components/MultiSelect";
@@ -132,9 +135,13 @@ export function QueryLogPage() {
   const q = useQuery({
     queryKey: ["query-log", urlKey, cursor],
     queryFn: async () => {
-      const f = readFilters(new URLSearchParams(urlKey));
+      const p = new URLSearchParams(urlKey);
+      const f = readFilters(p);
       const list = (k: ListKey) => (f[k].length > 0 ? f[k] : undefined);
       const query: SearchQuery = {
+        // from/to have no form control: only an AI search writes them into the URL.
+        from: p.get("from") ?? undefined,
+        to: p.get("to") ?? undefined,
         name: f.name || undefined,
         client: f.client || undefined,
         qtype: list("qtype"),
@@ -176,6 +183,24 @@ export function QueryLogPage() {
     setCursors([]);
     setParams(new URLSearchParams());
   }
+
+  // An AI search answers with the same filters the API takes: they become the URL, so the table
+  // reloads through the normal search and the link can be shared.
+  const applyAiFilters = useCallback(
+    (f: Schemas["AiQueryLogFilters"]) => {
+      const p = new URLSearchParams();
+      for (const [key, value] of Object.entries(f)) {
+        if (typeof value === "string") {
+          if (value !== "") p.set(key, value);
+        } else if (Array.isArray(value)) {
+          for (const v of value) p.append(key, v);
+        }
+      }
+      setCursors([]);
+      setParams(p);
+    },
+    [setParams],
+  );
 
   // Refresh reloads the page on screen now (a no-op filter change would not trigger a request).
   function refresh() {
@@ -272,6 +297,9 @@ export function QueryLogPage() {
           </div>
         }
       />
+
+      <AnomalyBanner />
+      <QueryLogAsk onFilters={applyAiFilters} />
 
       <Card className="mb-4 p-4">
         <form
@@ -588,7 +616,14 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
           data-testid="querylog-reason"
           title={reason === "—" ? undefined : reason}
         >
-          {reason}
+          {r.threat?.is_threat ? (
+            <span className="flex items-center gap-2">
+              <ThreatBadge threat={r.threat} />
+              {reason !== "—" && <span className="truncate">{reason}</span>}
+            </span>
+          ) : (
+            reason
+          )}
         </TableCell>
         <TableCell className="py-2 whitespace-nowrap">
           {r.upstream || <span className="text-muted-foreground">—</span>}

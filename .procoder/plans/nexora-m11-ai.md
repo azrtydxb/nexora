@@ -3363,17 +3363,25 @@ Interfaces:
 - `ThreatBadge` (props `{ threat: Schemas["QueryLogRecord"]["threat"] }`) test id `querylog-threat`:
   renders "Threat: malware 95%" when `is_threat`, nothing otherwise. It sits in the Reason column cell.
 
-- [ ] Create `e2e/gui_seed_ai_querylog_test.go`. Its seed:
+- As built: a suggestion button puts its text back into the Ask box (the search is re-run by the
+  operator, never automatically). `QueryLogPage` gained no form control: `from`/`to` have no field,
+  they are read from the URL and passed to `searchQueryLog`, so an AI range reaches the table and
+  the link stays shareable; the M6 Search button rebuilds the URL from the form and so clears them.
+  The threat field on a query-log record is Task 19's work: until it lands the badge stays hidden.
+
+- [x] Create `e2e/gui_seed_ai_querylog_test.go`. Its seed:
   - queries `threat.aiq-gui.test` through `s.Engine.DNS`;
-  - inserts the verdict `threat.aiq-gui.test` (malware, 0.95, expires in 7 days) with `harness.PGExec`;
-  - scripts `querylog_search` on `s.AI` with two responses: translation
-    `{"name":"threat.aiq-gui","explanation":"Lookups of threat.aiq-gui.test"}` and summary
-    `{"summary":"1 lookup of threat.aiq-gui.test.","suggestions":["Check the client"]}`;
+  - inserts the verdict `threat.aiq-gui.test` (malware, 0.95, expires in 7 days) with `harness.PGExec`
+    into Task 19's `ai_domain_verdicts`;
+  - scripts `querylog_search` on `s.AI` with the translation
+    `{"name":"threat.aiq-gui","explanation":"Lookups of threat.aiq-gui.test"}` and the summary
+    `{"summary":"1 lookup of threat.aiq-gui.test.","suggestions":["Check the client"]}`, the pair
+    twice: the spec asks once per viewport width, and the fixture repeats only its last response;
   - sets `s.Vars["NEXORA_E2E_AI_THREAT_NAME"] = "threat.aiq-gui.test"`.
 
   The Task 23 seed provides the open anomaly.
 
-- [ ] Create `web/e2e/screens/52-ai-querylog.spec.ts`. At 1280 and 400 px, as viewer:
+- [x] Create `web/e2e/screens/52-ai-querylog.spec.ts`. At 1280 and 400 px, as viewer:
   1. Open `nav-query-log` and see `querylog-ai-anomalies`.
   2. Type "lookups of threat.aiq-gui.test" into `querylog-ai-ask` and submit.
   3. Wait for a `/api/v1/ai/tasks/` response with status `succeeded`.
@@ -3386,7 +3394,11 @@ Interfaces:
   `scripts/dev-exec.sh 'make web-build e2e-build && go test ./e2e -run TestGUICoverage -count=1'`,
   and expect FAIL on the missing test ids.
 
-- [ ] Implement the components and the page mount, keeping every M6 query-log test id. Run the same
+  As built: the spec's step 6 needs Task 19's `ai_domain_verdicts` table and its `threat` fill in
+  `querylog_resolve.go`, which are not committed yet, so both runs used a private copy of the tree in
+  the dev pod carrying a throwaway stand-in of those two pieces (deleted afterwards).
+
+- [x] Implement the components and the page mount, keeping every M6 query-log test id. Run the same
       commands and expect specs 10, 23, 24, 25, 26 and 52 to PASS.
 - [ ] Report the paths. Commit message: `M11 T24: query log AI search, anomaly banner and threat badge`.
 

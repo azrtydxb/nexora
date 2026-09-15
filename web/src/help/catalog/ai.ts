@@ -9,6 +9,7 @@ export const aiHelp: HelpArea = {
     "pages/ai/AiAssistantPage.tsx",
     "pages/ai/AiForecastsPage.tsx",
     "components/ai/AiOff.tsx",
+    "components/ai/QueryLogAsk.tsx",
     "components/ai/AiTaskStatus.tsx",
     "components/ai/JsonDiff.tsx",
     "components/ai/FindingCard.tsx",
