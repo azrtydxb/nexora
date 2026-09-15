@@ -1106,6 +1106,253 @@ scripts/dev-exec.sh 'cargo build --locked --release -p nexora-engine --example f
 `scripts/filter-corpus.sh <dir>` downloads the default catalog selection
 (`bench/filter/corpus-5m.tsv`) as one normalised list per source for the same command.
 
+## AI
+
+The AI layer is optional and **suggest-only**: no agent, task, model output or MCP read-only tool
+changes configuration. The only writer of an AI suggestion is `applyAiProposals`, called by a human
+with the operator role, replaying the normal API with that human's credentials and audited like any
+other change. Without `NEXORA_AI_BASE_URL` and `NEXORA_AI_MODEL` the management plane starts no AI
+goroutine and opens no AI connection; the GUI shows the AI pages as off and every AI operation
+answers 503 `ai_disabled`.
+
+### Enabling AI
+
+The endpoint, model and API key reach the management plane only through a Kubernetes Secret. Create
+it with the key read from a prompt, so it never lands in a file, a values file or the shell history:
+
+```sh
+read -rs -p 'AI API key: ' AI_KEY && echo
+kubectl --context kw -n nexora create secret generic nexora-ai \
+  --from-literal=base-url=http://fastllm.fastllm.svc.cluster.local:8000/v1 \
+  --from-literal=model=qwen3-coder-30b \
+  --from-literal=api-key="$AI_KEY"
+unset AI_KEY
+```
+
+Point the chart at it and upgrade:
+
+```sh
+helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml \
+  --set mgmt.ai.existingSecret=nexora-ai
+```
+
+All three keys are optional in the Secret (`optional: true` on every `secretKeyRef`), so a key-less
+endpoint works and removing the Secret turns AI off again. The chart never accepts the key through
+`values.yaml`. To rotate the key, replace the Secret and restart the management plane deployment.
+
+Outside Kubernetes the same three variables come from the environment:
+
+| Variable                          | Default   | Meaning                                                         |
+| --------------------------------- | --------- | --------------------------------------------------------------- |
+| `NEXORA_AI_BASE_URL`              | _(unset)_ | OpenAI-compatible base URL, for example `http://host:8000/v1`   |
+| `NEXORA_AI_MODEL`                 | _(unset)_ | model name sent with every call                                 |
+| `NEXORA_AI_API_KEY`               | _(unset)_ | bearer token for the endpoint; never logged, stored or reported |
+| `NEXORA_AI_ALLOW_PUBLIC_ENDPOINT` | `false`   | allow a base URL that resolves to a public address              |
+
+Setting only one of base URL and model is a misconfiguration: `getAiStatus` reports the reason
+`incomplete_configuration` and AI stays off.
+
+### Privacy guard
+
+Query data is sent only to the configured endpoint, and that endpoint must be private. At startup the
+base URL host is resolved and every address must be loopback, RFC 1918, RFC 6598 shared address space,
+IPv6 ULA or link-local. A public address turns AI off with the status reason `endpoint_not_private`
+and the metric `nexora_mgmt_ai_enabled` stays 0; in-flight calls fail with the task error code
+`endpoint_not_private`. Set `NEXORA_AI_ALLOW_PUBLIC_ENDPOINT=true` only when you accept sending query
+names, client addresses and configuration to a third party.
+
+The API key never enters the repository, the database, logs, metrics, `getAiStatus`, the GUI or audit
+rows. Prompt text is never logged; failed calls log the feature, outcome, duration and token counts
+only. Reasoning text from a reasoning model is never stored or shown, though its tokens are counted.
+
+### Structured output
+
+| Variable                        | Default       | Meaning                                                           |
+| ------------------------------- | ------------- | ----------------------------------------------------------------- |
+| `NEXORA_AI_STRUCTURED_OUTPUT`   | `json_schema` | `json_schema` (provider-enforced schema) or `prompt`              |
+| `NEXORA_AI_MAX_TOKENS`          | `16384`       | output token ceiling, 1..32768                                    |
+| `NEXORA_AI_TEMPERATURE`         | `0.2`         | sampling temperature, 0..2                                        |
+| `NEXORA_AI_TIMEOUT`             | `180s`        | per-call timeout                                                  |
+| `NEXORA_AI_VALIDATION_ATTEMPTS` | `3`           | how often an invalid answer is fed back with the validation error |
+
+Use `NEXORA_AI_STRUCTURED_OUTPUT=prompt` when the endpoint does not implement OpenAI's
+`response_format: json_schema` (many llama.cpp and vLLM builds, and some proxies). In that mode the
+schema is appended to the prompt and the answer is parsed and validated by Nexora instead; expect more
+validation retries, counted by `nexora_mgmt_ai_validation_retries_total`. An answer that never
+validates fails the task with `invalid_output` and stores nothing.
+
+### Limits and budget
+
+The limits are shared by every feature on one instance, background or interactive:
+
+| Variable                              | Default   | Meaning                                                          |
+| ------------------------------------- | --------- | ---------------------------------------------------------------- |
+| `NEXORA_AI_MAX_CONCURRENCY`           | `2`       | model calls in flight                                            |
+| `NEXORA_AI_REQUESTS_PER_MINUTE`       | `20`      | token bucket of started calls per minute                         |
+| `NEXORA_AI_DAILY_TOKEN_BUDGET`        | `2000000` | fleet-wide input+output tokens per UTC day, summed in PostgreSQL |
+| `NEXORA_AI_BACKGROUND_BUDGET_PERCENT` | `80`      | share of the budget background agents may spend                  |
+| `NEXORA_AI_LLM_MIN_INTERVAL`          | `5m`      | minimum spacing between model calls of one agent                 |
+| `NEXORA_AI_AGENT_START_DELAY`         | `2m`      | delay before an agent that never ran starts after a restart      |
+
+Background agents stop at `NEXORA_AI_BACKGROUND_BUDGET_PERCENT` of the budget, so interactive requests
+keep the remaining 20%. An interactive request waits at most 5 s for a concurrency slot and then
+answers 429 `ai_busy`; with the budget spent it answers 429 `ai_budget_exhausted` until the UTC day
+ends. Raise the budget rather than the concurrency when agents are starved: the endpoint, not Nexora,
+is usually the bottleneck.
+
+### Agents
+
+Each agent has `NEXORA_AI_<NAME>_ENABLED` (default `true`) and, where it has a schedule,
+`NEXORA_AI_<NAME>_INTERVAL`. An interval of `0` disables the agent as well. A run takes a PostgreSQL
+advisory lock, so only one instance runs an agent at a time, and the next run starts an interval after
+the last run started — a restart does not re-run a 24 h agent immediately. `runAiAgent`
+(`POST /ai/agents/{agent}/run`, operator) requests an immediate run.
+
+| Agent                    | Interval variable                           | Default | Inputs                                   | Outputs                            |
+| ------------------------ | ------------------------------------------- | ------- | ---------------------------------------- | ---------------------------------- |
+| `querylog_anomalies`     | `NEXORA_AI_QUERYLOG_INTERVAL`               | `30s`   | newest query-log records                 | findings of kind `anomaly`         |
+| `dashboard_insights`     | `NEXORA_AI_DASHBOARD_INTERVAL`              | `30s`   | dashboard, fleet summary, alerts         | findings of kind `insight`         |
+| `filter_recommendations` | `NEXORA_AI_FILTER_RECOMMENDATIONS_INTERVAL` | `6h`    | query-log aggregates, lists, categories  | proposals `filter_recommendations` |
+| `upstream_prediction`    | `NEXORA_AI_UPSTREAM_PREDICTION_INTERVAL`    | `6h`    | upstream health history                  | forecasts `upstream`, proposals    |
+| `rollout_risk`           | `NEXORA_AI_ROLLOUT_RISK_ENABLED` only       | 15 s    | pending rollouts and their config diff   | rollout risk, proposals            |
+| `threat_classification`  | `NEXORA_AI_THREAT_CLASSIFICATION_INTERVAL`  | `6h`    | filter-list name samples                 | list classifications, verdicts     |
+| `capacity_forecast`      | `NEXORA_AI_CAPACITY_FORECAST_INTERVAL`      | `24h`   | daily capacity samples                   | forecasts `capacity`, proposals    |
+| `rpz_suggestions`        | `NEXORA_AI_RPZ_SUGGESTIONS_INTERVAL`        | `24h`   | query-log aggregates and threat verdicts | proposals `rpz_suggestions`        |
+
+`getAiStatus` (`GET /ai/status`, viewer) reports per agent the last run, next run, last outcome and
+error, plus today's budget use. The AI status page in the GUI shows the same table.
+
+### Proposals and apply
+
+A proposal carries the source agent, a rationale, an expected impact and the API actions it would
+perform. Statuses: `open`, `applied`, `failed`, `stale` (the target changed before apply),
+`dismissed`, and `superseded` by a newer proposal for the same target. `applyAiProposals`
+(operator, up to 100 ids) replays each action through the normal API with the caller's credentials
+and returns per id the action results (`operation_id`, `http_status`, `code`, `message`); every apply
+writes an `applyAiProposals` audit row naming the proposal, its source, its status and the replayed
+operations. Applying a non-open proposal answers `proposal_not_open` for that id. `dismissAiProposals`
+records an optional reason, and a dismissed change is not suggested again for 7 days.
+
+Applying an RPZ suggestion writes into the file zone `ai-suggested.rpz`, created with policy override
+`given` when it does not exist. Keep manual RPZ rules in another zone: an apply rewrites
+`ai-suggested.rpz` from the recorded rules, and deleting the zone makes the next apply recreate it.
+An action that enables a category whose source list is licensed for non-commercial use only needs
+`acknowledge_license` in the apply request.
+
+### Interactive features
+
+These run as asynchronous tasks (`ai_tasks`): the request answers 202 with a task id and the GUI polls
+`getAiTask` every 2 s. Each has a feature switch; with the switch off the operation answers 503
+`feature_disabled`.
+
+- **Query-log search** — plain-language questions turned into query-log filters plus a summary
+  (`POST /ai/query-log/search`, viewer). Gated by the `querylog_anomalies` agent switch.
+- **Configuration assistant** — `NEXORA_AI_CONFIG_ASSISTANT_ENABLED` (`true`), operator only. Answers
+  questions about the configuration and may produce proposals of source `config_assistant`; it never
+  writes.
+- **Threat check** — `POST /ai/threat-check` (viewer) classifies a domain, cached in
+  `ai_domain_verdicts` until its expiry.
+- **Filter-list classification** — `GET /filter-lists/{id}/ai-classification` (viewer).
+- **Rollout risk** — `GET /rollouts/{id}/ai-risk` (viewer).
+
+A `running` task whose instance heartbeat is older than 15 s is marked `failed` with
+`instance_stopped`. Task error codes are `invalid_output`, `timeout`, `provider_error`,
+`endpoint_not_private`, `budget_exhausted` and `instance_stopped`.
+
+### Metrics and alerts
+
+| Metric                                                | Labels            | Meaning                                                                                                                 |
+| ----------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `nexora_mgmt_ai_enabled`                              |                   | 1 when AI is configured and the endpoint passed the guard                                                               |
+| `nexora_mgmt_ai_requests_total`                       | `feature,outcome` | outcome `ok`, `invalid_output`, `timeout`, `provider_error`, `rate_limited`, `budget_exhausted`, `endpoint_not_private` |
+| `nexora_mgmt_ai_request_duration_seconds`             | `feature`         | call duration, buckets 1..320 s                                                                                         |
+| `nexora_mgmt_ai_tokens_total`                         | `feature,kind`    | kind `input`, `output`, `reasoning`                                                                                     |
+| `nexora_mgmt_ai_validation_retries_total`             | `feature`         | answers rejected by schema validation                                                                                   |
+| `nexora_mgmt_ai_inflight_requests`                    |                   | calls holding a concurrency slot                                                                                        |
+| `nexora_mgmt_ai_queue_wait_seconds`                   |                   | wait for a slot                                                                                                         |
+| `nexora_mgmt_ai_budget_used_ratio`                    |                   | today's tokens over the daily budget                                                                                    |
+| `nexora_mgmt_ai_agent_runs_total`                     | `agent,outcome`   | outcome `ok`, `no_change`, `skipped_locked`, `skipped_budget`, `failed`                                                 |
+| `nexora_mgmt_ai_agent_last_success_timestamp_seconds` | `agent`           | last successful run                                                                                                     |
+| `nexora_mgmt_ai_open_findings`                        | `kind,severity`   | findings awaiting attention                                                                                             |
+| `nexora_mgmt_ai_open_proposals`                       | `source`          | suggestions awaiting a human                                                                                            |
+| `nexora_mgmt_mcp_requests_total`                      | `method,outcome`  | JSON-RPC methods served at `/mcp`                                                                                       |
+| `nexora_mgmt_mcp_tool_calls_total`                    | `tool,outcome`    | MCP tool calls                                                                                                          |
+
+The chart's PrometheusRule adds two alerts:
+
+- `NexoraAIAgentFailing` — an agent failed in the last hour and has not succeeded for three default
+  intervals (`for: 15m`, severity warning).
+- `NexoraAIBudgetExhausted` — `nexora_mgmt_ai_budget_used_ratio >= 1` for 10 minutes.
+
+### MCP
+
+`NEXORA_MCP_ENABLED` (`false`, chart `mgmt.mcp.enabled`) serves the Model Context Protocol at `POST
+/mcp` on the HTTP listener, and `NEXORA_MCP_READ_ONLY` (`true`, chart `mgmt.mcp.readOnly`) hides every
+mutating tool. Tools act with the role of the presented credential and are audited like the API, so
+the read-only switch is a second guard, not the only one: hand out a viewer API token.
+
+Streamable HTTP clients point at the endpoint directly with a bearer token:
+
+```
+POST https://nexora.example.com/mcp
+Authorization: Bearer nxt_...
+Content-Type: application/json
+```
+
+The endpoint refuses a cross-origin browser request (the `Origin` must match `NEXORA_PUBLIC_URL`) and
+accepts no JSON-RPC batches. Clients that speak stdio only (Claude Desktop) use the bridge shipped in
+the management image, `nexora-mgmt mcp-stdio`:
+
+```json
+{
+  "mcpServers": {
+    "nexora": {
+      "command": "nexora-mgmt",
+      "args": [
+        "mcp-stdio",
+        "--url",
+        "https://nexora.example.com",
+        "--token-file",
+        "/home/me/.config/nexora/mcp-token",
+        "--ca-file",
+        "/home/me/.config/nexora/ca.pem"
+      ]
+    }
+  }
+}
+```
+
+The token file holds one `nxt_` API token; `--ca-file` is needed only when the management plane uses a
+private CA, as on kw.
+
+### Troubleshooting
+
+| Symptom                                      | Cause and fix                                                                                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Every AI operation answers 503 `ai_disabled` | base URL or model missing; check `getAiStatus` for `not_configured` or `incomplete_configuration` and the Secret `nexora-ai`        |
+| Status reason `endpoint_not_private`         | the base URL resolves to a public address; move the endpoint into the private network or set `NEXORA_AI_ALLOW_PUBLIC_ENDPOINT=true` |
+| One feature answers 503 `feature_disabled`   | its `_ENABLED` is false or its `_INTERVAL` is `0`                                                                                   |
+| Requests answer 429 `ai_busy`                | no concurrency slot within 5 s; raise `NEXORA_AI_MAX_CONCURRENCY` or `NEXORA_AI_REQUESTS_PER_MINUTE` if the endpoint can take it    |
+| Requests answer 429 `ai_budget_exhausted`    | the daily token budget is spent; raise `NEXORA_AI_DAILY_TOKEN_BUDGET` or wait for the UTC day to end                                |
+| Apply reports `proposal_not_open` for an id  | the proposal was already applied, dismissed, superseded or went stale; reload the list                                              |
+| `runAiAgent` answers 404 `unknown_agent`     | the path segment is not one of the eight agent names                                                                                |
+| Tasks fail with `invalid_output`             | the model cannot hold the schema; try `NEXORA_AI_STRUCTURED_OUTPUT=prompt`, a larger `NEXORA_AI_MAX_TOKENS`, or a stronger model    |
+| Tasks fail with `timeout`                    | raise `NEXORA_AI_TIMEOUT`, or use a faster model; reasoning models need 10–120 s                                                    |
+| Tasks fail with `provider_error`             | the endpoint answered an error; check its logs and `nexora_mgmt_ai_requests_total{outcome="provider_error"}`                        |
+| Tasks fail with `instance_stopped`           | the instance that ran the task stopped; the request can be repeated                                                                 |
+| `/mcp` answers 401                           | no or invalid `Authorization: Bearer nxt_...` token                                                                                 |
+| An MCP tool answers `read_only`              | `NEXORA_MCP_READ_ONLY` is true; leave it true unless a mutating client is intended                                                  |
+
+### Ceilings and retention
+
+- The anomaly agent reads the newest 5,000 query-log records per run, the filter-recommendation and
+  RPZ-suggestion agents the newest 50,000, and list classification samples 200 names per list. These
+  are deliberate ceilings for backends without server-side aggregation, not tunables.
+- The natural-language query-log search reads at most 200 records and covers at most 7 days.
+- Retention, pruned by the management plane: tasks 24 h, agent runs 30 days, token usage 400 days,
+  closed proposals 90 days, closed findings 30 days, expired forecasts 7 days, idle assistant sessions
+  30 days, capacity samples 400 days. Domain verdicts go at their own expiry.
+
 ## kw deployment
 
 kw is the project's lab cluster (arm64 k3s). The procedure, secrets and manual

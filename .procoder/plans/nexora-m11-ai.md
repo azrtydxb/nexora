@@ -3526,7 +3526,7 @@ Interfaces:
   the recommendation). `UpstreamsPage` mounts it only when `useAiEnabled()`, so the forecast request
   is never made with AI off. It exports `UpstreamTrendBadge` and `rtt`, which the page reuses.
 
-- [ ] Create `e2e/gui_seed_ai_forecasts_test.go`. With `harness.PGExec` it inserts:
+- [x] Create `e2e/gui_seed_ai_forecasts_test.go`. With `harness.PGExec` it inserts:
   - an `upstream` forecast for subject the `fixture` upstream id with detail trend `degrading`, p99 350,
     and recommendation `switch_strategy`;
   - a `capacity` forecast for `recursor_cache` with current 18.5e6, max 22.7e6 and days remaining 12
@@ -3540,7 +3540,7 @@ Interfaces:
   would land in Task 25's recommendations list, so `ai-forecast-proposal` is implemented but not
   exercised by spec 55.
 
-- [ ] Create `web/e2e/screens/55-ai-forecasts.spec.ts`. At 1280 and 400 px as viewer (read-only, so
+- [x] Create `web/e2e/screens/55-ai-forecasts.spec.ts`. At 1280 and 400 px as viewer (read-only, so
       it is safe to repeat per width):
   1. `/ai/forecasts` shows the fixture card with "degrading", its recommendation and a
      `ai-forecast-freshness` that says "valid until" and not "stale".
@@ -3698,6 +3698,13 @@ Interfaces: consumes the variable, metric, error-code and agent lists of the spe
   10. Troubleshooting (every error code).
   11. Ceilings (5,000 records per anomaly run, 50,000 records for recommendations, 200-name
       classification samples).
+
+  As built: the subsections are `### Enabling AI`, `### Privacy guard`, `### Structured output`,
+  `### Limits and budget`, `### Agents`, `### Proposals and apply`, `### Interactive features`,
+  `### Metrics and alerts`, `### MCP`, `### Troubleshooting` and `### Ceilings and retention` (the
+  last also lists the prune retentions, which an operator needs next to the ceilings). The test also
+  asserts `endpoint_not_private` and every one of the fourteen `nexora_mgmt_ai_*` / `nexora_mgmt_mcp_*`
+  metric names of the spec's Interfaces section.
 
   Mirror the short version in `web/src/help/topics/ai.md` under the headings of Task 11. Run the test
   and expect PASS, then `scripts/pc-format.sh docs/operations.md web/src/help/topics/ai.md` with no
