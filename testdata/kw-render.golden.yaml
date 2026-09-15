@@ -241,11 +241,11 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - master-12
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - master-12
       tolerations:
         - effect: NoSchedule
           key: node-role.kubernetes.io/control-plane
@@ -258,12 +258,7 @@ spec:
         - name: state-owner
           image: 192.168.10.131/library/busybox:1.37
           imagePullPolicy: Always
-          command:
-            [
-              "sh",
-              "-c",
-              "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora",
-            ]
+          command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
@@ -315,12 +310,7 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - {
-                name: config,
-                mountPath: /etc/nexora/engine.toml,
-                subPath: engine.toml,
-                readOnly: true,
-              }
+            - { name: config, mountPath: /etc/nexora/engine.toml, subPath: engine.toml, readOnly: true }
             - { name: join, mountPath: /etc/nexora/join, readOnly: true }
             - { name: state, mountPath: /var/lib/nexora }
       volumes:
@@ -331,8 +321,7 @@ spec:
             secretName: nexora-join-token
             defaultMode: 0440
         - name: state
-          hostPath:
-            { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
+          hostPath: { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
 ---
 # Source: nexora/templates/engine-workloads.yaml
 apiVersion: apps/v1
@@ -391,11 +380,11 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - master-13
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - master-13
       tolerations:
         - effect: NoSchedule
           key: node-role.kubernetes.io/control-plane
@@ -408,12 +397,7 @@ spec:
         - name: state-owner
           image: 192.168.10.131/library/busybox:1.37
           imagePullPolicy: Always
-          command:
-            [
-              "sh",
-              "-c",
-              "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora",
-            ]
+          command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
@@ -465,12 +449,7 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - {
-                name: config,
-                mountPath: /etc/nexora/engine.toml,
-                subPath: engine.toml,
-                readOnly: true,
-              }
+            - { name: config, mountPath: /etc/nexora/engine.toml, subPath: engine.toml, readOnly: true }
             - { name: join, mountPath: /etc/nexora/join, readOnly: true }
             - { name: state, mountPath: /var/lib/nexora }
       volumes:
@@ -481,8 +460,7 @@ spec:
             secretName: nexora-join-token
             defaultMode: 0440
         - name: state
-          hostPath:
-            { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
+          hostPath: { path: /var/lib/nexora/nexora-engine, type: DirectoryOrCreate }
 ---
 # Source: nexora/templates/mgmt-deployment.yaml
 apiVersion: apps/v1
@@ -585,34 +563,17 @@ spec:
             - { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }
             # The kubelet updates Secret volumes in place, so rotating the Secret rotates the DNS
             # serving certificate without restarts.
-            - {
-                name: NEXORA_DNS_TLS_CERT_FILE,
-                value: /etc/nexora/dns-tls/tls.crt,
-              }
-            - {
-                name: NEXORA_DNS_TLS_KEY_FILE,
-                value: /etc/nexora/dns-tls/tls.key,
-              }
+            - { name: NEXORA_DNS_TLS_CERT_FILE, value: /etc/nexora/dns-tls/tls.crt }
+            - { name: NEXORA_DNS_TLS_KEY_FILE, value: /etc/nexora/dns-tls/tls.key }
             - name: NEXORA_DNS_TLS_RELOAD_INTERVAL
               value: "30s"
             # The Secret is the only source of the AI endpoint, model and API key.
             - name: NEXORA_AI_BASE_URL
-              valueFrom:
-                {
-                  secretKeyRef:
-                    { name: nexora-ai, key: base-url, optional: true },
-                }
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: base-url, optional: true } }
             - name: NEXORA_AI_MODEL
-              valueFrom:
-                {
-                  secretKeyRef: { name: nexora-ai, key: model, optional: true },
-                }
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: model, optional: true } }
             - name: NEXORA_AI_API_KEY
-              valueFrom:
-                {
-                  secretKeyRef:
-                    { name: nexora-ai, key: api-key, optional: true },
-                }
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: api-key, optional: true } }
             - name: NEXORA_MCP_ENABLED
               value: "true"
             - name: NEXORA_MCP_READ_ONLY
