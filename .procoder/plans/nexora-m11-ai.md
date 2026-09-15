@@ -3003,24 +3003,33 @@ func (a *Agent) Run(ctx context.Context, run *ai.Run) error
   `now + (*Max - Current)/slope days`.
 - Fewer than 3 points gives `insufficient_data`.
 
-`SampleToday` values (maximum over engines of each engine's newest sample today, from `engine_stats`):
+`SampleToday` lives in `agent.go`. Its values (maximum over engines of each engine's newest sample
+today, from `engine_stats`, with the limit of the engine holding that maximum):
 
 - `filter_index`: `Stats.FilterIndex.Bytes`, max `MaxBytes`;
-- `cache`: cache bytes, max resolver `cache_max_bytes`;
-- `recursor_cache`: the recursion cache bytes field, max `resolution_settings.recursor_cache_max_bytes`,
-  or 64 MiB when 0 (M7);
+- `cache`: `Stats.CacheBytes`, max resolver `cache_max_bytes`;
+- `recursor_cache`: not sampled. `controlv1.Stats` has no recursion cache bytes field and
+  `resolution_settings` has no `recursor_cache_max_bytes` on this branch (M7 Task 12 is unimplemented);
+  the code carries a `debt:` comment naming that revisit condition, and the resource simply has no
+  samples and therefore no forecast;
 - `engine_memory`: `ProcessResidentBytes`, max `MemoryLimitBytes` when non-zero;
-- `blocklist_entries`: `select sum(entry_count) from filter_lists where enabled`, no max;
-- `query_volume`: queries in the last 24 h from the rollup counter delta, no max.
-
-Check the exact `controlv1.Stats` field names for cache and recursor bytes in
-`gen/go/nexora/control/v1/control.pb.go` before writing the queries.
+- `blocklist_entries`: `select coalesce(sum(entry_count), 0) from filter_lists where enabled and kind = 'block'`
+  (allow lists are not blocklist entries), no max;
+- `query_volume`: queries in the last 24 h from `engine_stats_rollup` counter deltas per engine, skipping
+  a pair whose counter fell or whose `started_unix_ms` changed, no max; not sampled when no engine has
+  two samples in the window.
 
 The model output is `{"forecasts":[{"resource","confidence","recommendation","cache_max_bytes"?}]}`:
 
-- resources must be the projected ones;
-- confidence ≤ `MaxConfidence`;
-- `cache_max_bytes` only for `cache`, and > the current max.
+- resources must be the projected ones (those with at least 3 points), each exactly once and all of
+  them covered;
+- confidence between 0 and `MaxConfidence`, and the recommendation must not be empty;
+- `cache_max_bytes` only for `cache`, and > the current max; the action it builds is validated with the
+  `proposal.Validator` inside the same validation, so a rejected action re-asks the model.
+
+A resource with fewer than 3 points is stored as an `insufficient_data` forecast with confidence 0 and a
+fixed code recommendation, and no model call is made when no resource has 3 points. A failed model call
+still stores the projections (confidence 0); `budget_exhausted` sets the run outcome `skipped_budget`.
 
 The detail is the `AiCapacityForecast` shape. `cache_max_bytes` becomes a proposal
 `updateResolverSettings` with the current body and the new value.
