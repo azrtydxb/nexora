@@ -1,10 +1,20 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldQuestion,
+  Trash2,
+  X,
+} from "lucide-react";
 
+import { useAiEnabled, useAiStatus } from "@/api/ai";
 import { api, unwrap, type Schemas } from "@/api/client";
 import { useCan } from "@/auth/AuthProvider";
+import { ListClassification } from "@/components/ai/ListClassification";
+import { ThreatCheckDialog } from "@/components/ai/ThreatCheckDialog";
 import {
   ConfirmDialog,
   ErrorAlert,
@@ -75,6 +85,8 @@ export function FilteringPage() {
   });
   const [openId, setOpenId] = useState<string | null>(null);
   const [editing, setEditing] = useState<FilterList | "new" | null>(null);
+  const [checking, setChecking] = useState(false);
+  const canCheckThreats = useAiStatus().data?.features.threat_check === true;
   const rows = lists.data ?? [];
 
   return (
@@ -83,11 +95,28 @@ export function FilteringPage() {
         title="Blocklist / allowlist"
         description="Block unwanted domains by subscribing to blocklists, which Nexora downloads and keeps up to date. Domains on the allowlist are never blocked, even when a blocklist or filter category contains them."
         actions={
-          canCreate && (
-            <Button data-testid="list-add" onClick={() => setEditing("new")}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              Add list
-            </Button>
+          (canCheckThreats || canCreate) && (
+            <>
+              {canCheckThreats && (
+                <Button
+                  variant="outline"
+                  data-testid="ai-threat-open"
+                  onClick={() => setChecking(true)}
+                >
+                  <ShieldQuestion className="mr-1.5 h-4 w-4" />
+                  Check domains
+                </Button>
+              )}
+              {canCreate && (
+                <Button
+                  data-testid="list-add"
+                  onClick={() => setEditing("new")}
+                >
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Add list
+                </Button>
+              )}
+            </>
           )
         }
       />
@@ -272,6 +301,9 @@ export function FilteringPage() {
           onCreated={(l) => setOpenId(l.id)}
         />
       )}
+      {canCheckThreats && (
+        <ThreatCheckDialog open={checking} onClose={() => setChecking(false)} />
+      )}
     </>
   );
 }
@@ -298,6 +330,7 @@ function ListDetail({
   const canRefresh = useCan("refreshFilterList");
   const canDelete = useCan("deleteFilterList");
   const [deleting, setDeleting] = useState(false);
+  const aiEnabled = useAiEnabled();
   const reveal = useRevealRef<HTMLDivElement>(id);
   const q = useQuery({
     queryKey: ["filter-lists", id],
@@ -435,6 +468,7 @@ function ListDetail({
           </dl>
         )}
       </div>
+      {aiEnabled && l?.kind === "block" && <ListClassification listId={l.id} />}
       {deleting && l && (
         <ConfirmDialog
           title={`Delete ${l.name}?`}

@@ -3636,7 +3636,11 @@ Interfaces:
 
   The spec requests `startAiThreatCheck`, `getAiTask` and `getAiFilterListClassification`.
 
-- [ ] Run the Task 24 commands. Expect FAIL, implement, and expect specs 57 and 04 to PASS.
+- [x] Run the Task 24 commands. Expect FAIL, implement, and expect specs 57 and 04 to PASS.
+  As built: both runs used a private copy of HEAD plus this task's files in the dev pod (deleted
+  afterwards). Spec 04 caught that `getAiFilterListClassification` answers `"breakdown": null` for a
+  never-classified list (Task 19's handler appends to a nil slice), which crashed the Details card;
+  `ListClassification` falls back to `[]` under a `debt:` note until the handler sends an array.
 - [ ] Report the paths. Commit message: `M11 T29: threat check and list classification GUI`.
 
 ## Task 30: RPZ suggestions GUI
