@@ -11,6 +11,7 @@ import (
 const usage = `usage (a port of 0 lets the kernel choose; the READY line names the bound addresses):
   nexora-fixture dns --udp ADDR --tcp ADDR --dot ADDR --doh ADDR --control ADDR --cert-dir DIR
   nexora-fixture http --listen ADDR
+  nexora-fixture openai --listen ADDR
   nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F
   nexora-fixture authhier --ready-file F`
 
@@ -27,6 +28,8 @@ func main() {
 		stop, addrs, err = runDNS(os.Args[2:])
 	case "http":
 		stop, addrs, err = runHTTP(os.Args[2:])
+	case "openai":
+		stop, addrs, err = runOpenAI(os.Args[2:])
 	case "oidc":
 		stop, addrs, err = runOIDC(os.Args[2:])
 	case "authhier":
