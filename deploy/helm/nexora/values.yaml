@@ -19,6 +19,13 @@ mgmt:
   dnsTLS:
     existingSecret: "" # optional: kubernetes.io/tls secret for DoT/DoH/DoQ, pushed to engines
     reloadInterval: 30s
+  ai:
+    # optional: secret with keys base-url, model and api-key (all optional). Without base URL and model
+    # the management plane runs no AI. The API key lives only in this Secret, never in values.
+    existingSecret: ""
+  mcp:
+    enabled: false # serve the Model Context Protocol at /mcp on the HTTP listener
+    readOnly: true # expose only read-only MCP tools
   querylog:
     backend: builtin # builtin | opensearch
     builtinCapacity: 200000

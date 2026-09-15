@@ -43,6 +43,16 @@
             "reloadInterval": { "$ref": "#/definitions/duration" }
           }
         },
+        "ai": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "existingSecret": { "type": "string" } }
+        },
+        "mcp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" }, "readOnly": { "type": "boolean" } }
+        },
         "querylog": {
           "type": "object",
           "properties": {

@@ -92,6 +92,21 @@ spec:
             - name: NEXORA_DNS_TLS_RELOAD_INTERVAL
               value: {{ $m.dnsTLS.reloadInterval | quote }}
             {{- end }}
+            {{- with $m.ai }}
+            {{- if .existingSecret }}
+            # The Secret is the only source of the AI endpoint, model and API key.
+            - name: NEXORA_AI_BASE_URL
+              valueFrom: { secretKeyRef: { name: {{ .existingSecret }}, key: base-url, optional: true } }
+            - name: NEXORA_AI_MODEL
+              valueFrom: { secretKeyRef: { name: {{ .existingSecret }}, key: model, optional: true } }
+            - name: NEXORA_AI_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .existingSecret }}, key: api-key, optional: true } }
+            {{- end }}
+            {{- end }}
+            - name: NEXORA_MCP_ENABLED
+              value: {{ $m.mcp.enabled | quote }}
+            - name: NEXORA_MCP_READ_ONLY
+              value: {{ $m.mcp.readOnly | quote }}
             {{- with $m.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

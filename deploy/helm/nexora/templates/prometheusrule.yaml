@@ -33,4 +33,20 @@ spec:
           labels: { severity: critical }
           annotations:
             summary: No Nexora management plane instance is being scraped
+    - name: nexora-ai
+      rules:
+        # 21600 s is the 6 h default agent interval: the alert fires once an agent has failed in the last
+        # hour and has not succeeded for three default intervals.
+        - alert: NexoraAIAgentFailing
+          expr: increase(nexora_mgmt_ai_agent_runs_total{outcome="failed"}[1h]) > 0 and (time() - nexora_mgmt_ai_agent_last_success_timestamp_seconds) > 3 * 21600
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Nexora AI agent {{ `{{ $labels.agent }}` }} keeps failing and has not succeeded for three intervals"
+        - alert: NexoraAIBudgetExhausted
+          expr: nexora_mgmt_ai_budget_used_ratio >= 1
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: The Nexora AI daily token budget is spent; AI requests answer ai_budget_exhausted until the UTC day ends
 {{- end }}
