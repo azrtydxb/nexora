@@ -143,7 +143,7 @@ func TestQueryLogBackends(t *testing.T) {
 				"NEXORA_E2E_QUERYLOG_BACKEND": backend,
 			})
 			t.Run("partial-name", func(t *testing.T) {
-				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10)
+				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000_000_000, 10) // seconds and nanoseconds: unique across runs sharing an index
 				for _, q := range []string{"www.you-" + n + ".tube.test.", "you-" + n + ".test.", "x*y-" + n + ".test."} {
 					harness.MustQuery(t, eng.DNS, q, dns.TypeA, harness.QueryOpts{})
 				}
@@ -162,7 +162,8 @@ func TestQueryLogBackends(t *testing.T) {
 					return out
 				}
 				harness.EventuallyTrue(t, 30*time.Second, func() bool { return len(search("you-"+n)) == 2 }, "you-<n> finds both names")
-				if got := search("TUBE.TEST"); len(got) == 0 || got[len(got)-1] != "www.you-"+n+".tube.test." {
+				// Upper case, scoped to this run's names: the OpenSearch index is shared with earlier runs.
+				if got := search("YOU-" + n + ".TUBE.TEST"); len(got) != 1 || got[0] != "www.you-"+n+".tube.test." {
 					t.Fatalf("case-insensitive: %v", got)
 				}
 				if got := search("x*y-" + n); len(got) != 1 {
@@ -176,7 +177,7 @@ func TestQueryLogBackends(t *testing.T) {
 				}
 			})
 			t.Run("multi-value", func(t *testing.T) {
-				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10)
+				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000_000_000, 10) // seconds and nanoseconds: unique across runs sharing an index
 				harness.MustQuery(t, eng.DNS, "mv-a-"+n+".test.", dns.TypeA, harness.QueryOpts{})
 				harness.MustQuery(t, eng.DNS, "mv-aaaa-"+n+".test.", dns.TypeAAAA, harness.QueryOpts{})
 				harness.MustQuery(t, eng.DNS, "mv-mx-"+n+".test.", dns.TypeMX, harness.QueryOpts{})

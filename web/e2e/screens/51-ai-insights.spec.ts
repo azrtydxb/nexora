@@ -23,6 +23,11 @@ for (const width of [1280, 400]) {
       );
 
     await page.goto("/ai/insights");
+    // The anomaly that always stays open proves the list has loaded, so a missing ack button below
+    // means "already acknowledged by the other width's run", never "not rendered yet".
+    await expect(
+      page.getByTestId(`ai-finding-${env("NEXORA_E2E_AI_ANOMALY_OPEN")}`),
+    ).toBeVisible();
     const card = page.getByTestId(`ai-finding-${anomaly}`);
     const ack = card.getByTestId("ai-finding-ack");
     if (await ack.count()) {
