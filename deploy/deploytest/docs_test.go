@@ -17,6 +17,7 @@ func TestOperationsDoc(t *testing.T) {
 	for _, h := range []string{
 		"## Install with Helm", "## Install with Docker Compose", "## Upgrade", "## Backup and restore PostgreSQL",
 		"## Engine groups and staged rollouts", "## Engine lifecycle", "## Monitoring and alerts", "## kw deployment",
+		"## Install with the Kubernetes operator", "## PostgreSQL high availability and backups",
 	} {
 		if !strings.Contains(string(ops), "\n"+h+"\n") {
 			t.Errorf("docs/operations.md lacks heading %q", h)

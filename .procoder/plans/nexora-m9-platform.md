@@ -4241,14 +4241,26 @@ Interfaces: none.
   - what stays manual (the CA and KEK backups, cross-region copies);
   - the in-tree `barmanObjectStore` deprecation note.
 
-  Replace the first sentence of `### CloudNativePG` with a link to the new section. Run the test
-  again and expect PASS (the path check covers every backticked path).
+  Replace the opening of `### CloudNativePG` (the `smartShutdownTimeout` paragraph Task 4 wrote and the
+  `barmanObjectStore` sentence, both now in the new section) with a link to the new section, keeping the
+  logical dump. Run the test again and expect PASS (the path check covers every backticked path).
 
 - [ ] Add `## Operator e2e (namespace nexora-optest)` to `deploy/kw/README.md`: what
       `scripts/kw-operator-e2e.sh` builds, installs and deletes; the guards; the MinIO bucket
       `nexora-optest`; the nodes; `--keep` for debugging; and the last recorded result from
       `.procoder/notes/plan-review.md`. Run `scripts/pc-format.sh docs/operations.md deploy/kw/README.md`
       and `scripts/dev-exec.sh 'go test ./deploy/deploytest -count=1'`, and expect PASS. Report the paths.
+
+As built (2026-09-15): the docs follow the code rather than the spec where they differ:
+`smartShutdownTimeout` 30 s with idle pool recycling and the measured 43/50 s failover; join token rotation
+revokes the previous and unrecorded `op/<cr uid>/` tokens before creating one, stops on a failed revoke
+(`JoinTokenRevokeFailed`) and caps a CR at 3 active tokens (`JoinTokenLimit`); `rolling-update`'s zero loss
+is the fresh-socket probe's, with `dnsperf` asserted only when it completes; the list of what the operator
+never deletes. Also changed in `docs/operations.md`: the "Known limitations" bullet that said Nexora had
+no operator, and a note in `### CloudNativePG` that a logical restore under the operator stops the operator
+first (the chart's `mgmt.replicas` minimum is 1). The Helm restore path renders the recovery `Cluster`
+with `helm template --show-only` and switches the release to `database.mode=external`, because changing
+`clusterName` in a Helm release deletes the old `Cluster`.
 
 ## Task 12: Deploy M9 to kw production and close the issues
 

@@ -7,12 +7,14 @@ homelab host to an ISP fleet. The design behind it is in
 - [Overview](#overview)
 - [Install with Helm](#install-with-helm)
 - [Install with Docker Compose](#install-with-docker-compose)
+- [Install with the Kubernetes operator](#install-with-the-kubernetes-operator)
 - [First-run setup and access](#first-run-setup-and-access)
 - [Enrolling engines](#enrolling-engines)
 - [Encrypted DNS: DoT, DoH and DoQ](#encrypted-dns-dot-doh-and-doq)
 - [Key storage](#key-storage)
 - [Upgrade](#upgrade)
 - [Backup and restore PostgreSQL](#backup-and-restore-postgresql)
+- [PostgreSQL high availability and backups](#postgresql-high-availability-and-backups)
 - [Engine groups and staged rollouts](#engine-groups-and-staged-rollouts)
 - [Engine lifecycle](#engine-lifecycle)
 - [Monitoring and alerts](#monitoring-and-alerts)
@@ -357,6 +359,346 @@ docker compose --profile otel up -d                    # optional collector (ote
 - The example is checked statically (`TestComposeExample`); it is not started
   in CI.
 
+## Install with the Kubernetes operator
+
+The operator (`nexora-operator`) manages Nexora with two namespaced custom
+resources in API group `nexora.io/v1alpha1`: `NexoraInstallation` (`nxi`), one
+Nexora installation, and `NexoraEngineGroup` (`nxeg`), one engine group of an
+installation with its join token. It renders the same chart as
+[Install with Helm](#install-with-helm) (`deploy/helm/nexora`, shipped inside
+the operator image) and applies the result with server-side apply, so the
+workloads are identical to a Helm install. The design is in
+`docs/architecture.md` (Platform (M9)).
+
+Prerequisites:
+
+- Kubernetes 1.28 or newer.
+- The CloudNativePG operator (1.25 or newer) for `database.mode: cnpg`, the
+  default; otherwise an existing database and `database.mode: external`.
+- Prometheus Operator CRDs, only for `metrics.serviceMonitor` or
+  `metrics.prometheusRule`.
+
+### Installing the operator
+
+With Helm, watching every namespace (ClusterRole and ClusterRoleBinding):
+
+```sh
+helm upgrade --install nexora-operator deploy/helm/nexora-operator -n nexora-operator --create-namespace \
+  --set image.registry=<registry> --set image.tag=<tag>
+```
+
+To watch only some namespaces (a Role and RoleBinding in each), add
+`--set rbac.scope=namespace --set-json 'watchNamespaces=["nexora"]'`. Other
+values (`deploy/helm/nexora-operator/values.yaml`): `replicas` with
+`leaderElection` (on by default), `imagePullSecrets` and `resources`. The
+image is `<registry>/nexora-operator:<tag>`; the tag defaults to the chart's
+`appVersion`.
+
+Without Helm, apply the generated CRDs and the plain manifests (namespace
+`nexora-operator`, cluster scope, rendered from the same chart):
+
+```sh
+kubectl apply --server-side -f deploy/operator/crds/ && kubectl apply -f deploy/operator/operator.yaml
+```
+
+Helm installs the chart's `crds/` only on the first install and never
+upgrades or deletes them, so apply `deploy/operator/crds/` with
+`--server-side` before upgrading the operator either way.
+
+### A NexoraInstallation and its engine groups
+
+The spec uses the chart's value names (`image`, `imagePullSecrets`, `mgmt`,
+`database`, `engine`, `otelCollector`, `metrics`). A field left out takes the
+default from `deploy/helm/nexora/values.yaml`: the CRD sets no defaults of its
+own. This installation runs two management replicas on a two-instance CNPG
+cluster with backups, two engines pinned to nodes with their own addresses, and
+an `edge` group on labelled nodes (the example of the operator's kw e2e,
+`operator/test/kw/testdata/`, with placeholder addresses and nodes):
+
+```yaml
+apiVersion: nexora.io/v1alpha1
+kind: NexoraInstallation
+metadata:
+  name: nexora
+  namespace: nexora
+spec:
+  image:
+    registry: <registry>
+    tag: <tag> # default: the operator's own version
+  mgmt:
+    replicas: 2
+    publicURL: https://nexora.example.net
+    ingress:
+      { enabled: true, host: nexora.example.net, clusterIssuer: <issuer> }
+  database:
+    mode: cnpg
+    cnpg:
+      instances: 2
+      storageClass: <storage class>
+      size: 10Gi
+      backup:
+        enabled: true
+        destinationPath: s3://nexora-backups/nexora
+        endpointURL: http://minio.minio.svc.cluster.local:9000
+        s3Credentials:
+          existingSecret: nexora-s3
+          accessKeyIdKey: ACCESS_KEY_ID
+          secretAccessKeyKey: ACCESS_SECRET_KEY
+  engine:
+    kind: DaemonSet
+    workers: 2
+    stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
+    groups:
+      - name: default
+        instances:
+          - name: a
+            node: <node-1>
+            service:
+              {
+                name: nexora-dns-a,
+                type: LoadBalancer,
+                loadBalancerIP: 192.0.2.53,
+              }
+          - name: b
+            node: <node-2>
+            service:
+              {
+                name: nexora-dns-b,
+                type: LoadBalancer,
+                loadBalancerIP: 192.0.2.54,
+              }
+      - name: edge
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {
+                      key: nexora.io/engine-group,
+                      operator: In,
+                      values: [edge],
+                    }
+        service:
+          {
+            name: nexora-dns-edge,
+            type: LoadBalancer,
+            loadBalancerIP: 192.0.2.55,
+          }
+---
+apiVersion: nexora.io/v1alpha1
+kind: NexoraEngineGroup
+metadata:
+  name: default
+  namespace: nexora
+spec:
+  installationRef: { name: nexora }
+  groupName: default # default: metadata.name
+---
+apiVersion: nexora.io/v1alpha1
+kind: NexoraEngineGroup
+metadata:
+  name: edge
+  namespace: nexora
+spec:
+  installationRef: { name: nexora }
+  description: edge sites
+  rollout: { strategy: canary, canaryCount: 1 }
+  joinToken: { ttl: 8760h, renewBefore: 720h, revokeGracePeriod: 10m }
+  deletionPolicy: Delete # default: Retain
+```
+
+What the operator adds to the values, and what the CRD therefore has no field
+for:
+
+- `mgmt.ca.existingSecret` and `mgmt.kek.existingSecret`: the Secrets you name
+  in the spec (they must exist and hold `ca.crt`/`ca.key` and `kek`), or the
+  operator's own `<name>-ca` (a new ECDSA P-256 CA) and `<name>-kek`.
+- `mgmt.bootstrapToken.existingSecret`: always `<name>-operator-token`.
+- `engine.groups[].joinTokenSecret`: the Secret of the `NexoraEngineGroup`
+  named by `engineGroupRef` (default: the group's `name`). A group whose
+  `NexoraEngineGroup` is missing, references another installation or is not
+  `JoinTokenReady` renders no engines yet (`EnginesReady=False`,
+  `JoinTokenPending`) while everything else renders, so a fresh install needs
+  no second step.
+- `image.tag` when unset: the operator's version; a development operator
+  (`dev`) requires `spec.image.tag` (`ImageTagRequired`).
+- `metrics.serviceMonitor.namespace` and `metrics.prometheusRule.namespace` are
+  emptied: every object lands in the installation's namespace, and an object
+  rendered for another namespace is refused (`ForeignNamespace`).
+
+Resource names follow the chart's prefix rule with the CR name as the release
+name (`nexora` above: `nexora-mgmt`, `nexora-db`, `nexora-dns-a`). Every
+rendered object carries the label `nexora.io/installation: <name>`.
+
+Generated Secrets and their retention:
+
+| Secret                  | Keys               | Owner                   | On deletion of the CR                          |
+| ----------------------- | ------------------ | ----------------------- | ---------------------------------------------- |
+| `<name>-ca`             | `ca.crt`, `ca.key` | none (label only)       | kept                                           |
+| `<name>-kek`            | `kek`              | none (label only)       | kept                                           |
+| `<name>-operator-token` | `token` (`nxt_…`)  | none (label only)       | kept                                           |
+| `<cr name>-join-token`  | `join-token`       | the `NexoraEngineGroup` | garbage-collected with the `NexoraEngineGroup` |
+
+The operator creates a missing Secret, never overwrites or deletes one, and
+reports a Secret that lacks a key as `SecretIncomplete`. Keep an offline copy
+of `<name>-ca` and `<name>-kek` like any other CA and KEK (see
+[What state lives where](#what-state-lives-where)). `joinToken.secretName`
+chooses another name for the join token Secret; an existing Secret of that name
+that the `NexoraEngineGroup` does not control is left alone and reported as
+`Conflict`.
+
+### Engine groups and join tokens
+
+A `NexoraEngineGroup` acts through the management API with the operator
+token, and only once its installation is `ManagementReady`. It adopts an
+existing group of the same name (`default` always exists) or creates it. Only
+the fields set in the CR are managed (`description`, `upstreamMode`,
+`extraACLCIDRs`, `otlpEndpoint`, `filterIndexMaxBytes`, `rollout`); fields left
+out keep whatever the GUI or API set. `groupName` and `installationRef` are
+immutable, and a second CR for the same group of one installation gets
+`DuplicateGroupName`.
+
+The join token lives in the Secret `<cr name>-join-token`, key `join-token`:
+
+- A token is created with `joinToken.ttl` (default `8760h`, from `1m` to
+  `8760h`), `maxUses` and `labels`, and named
+  `op/<cr uid>/<unix seconds>/<namespace>/<cr name>` (cut to 64 characters).
+  The `op/<cr uid>/` prefix marks every token of this CR, including those of a
+  deleted and recreated CR of the same name, which have a different uid.
+- The controller rotates when the Secret is missing, the recorded token is no
+  longer `active`, or it expires within `renewBefore` (default `720h`). It
+  first revokes the CR's older tokens (the previous token and any marked token
+  that status does not record, which a failed status write can leave behind),
+  then creates the new one. The replaced token stays valid for
+  `revokeGracePeriod` (default `10m`) so an engine that read the Secret just
+  before the rotation can still enroll.
+- A revoke that fails stops the rotation: nothing is created, the Secret keeps
+  its token, and `JoinTokenReady=False` with `JoinTokenRevokeFailed` until the
+  revoke succeeds (retried every 30 s). A CR never owns more than 3 active
+  tokens (the current one, the previous one in its grace period, and one of
+  slack); past that it reports `JoinTokenLimit` and creates none.
+- Enrolled engines never need the token again, so a rotation does not restart
+  them (the Secret content changes; hostPath state keeps their identity).
+
+### Status and conditions
+
+```sh
+kubectl -n nexora get nxi,nxeg              # Ready, Version / Group, Ready, Engines
+kubectl -n nexora describe nxi nexora       # conditions with reason and message, status.workloads
+kubectl -n nexora get nxeg edge -o jsonpath='{.status.conditions}'
+kubectl -n nexora-operator logs deploy/nexora-operator
+```
+
+`NexoraInstallation` (`status.version`, `status.managementURL`,
+`status.secrets`, `status.workloads` with each engine workload's desired,
+updated and ready counts):
+
+| Condition         | True when                                                                                    | Reasons when not                                                           |
+| ----------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `Rendered`        | the chart rendered, every object applied and pruning finished                                | `RenderFailed`, `ImageTagRequired`, `SecretIncomplete`, `ForeignNamespace` |
+| `DatabaseReady`   | the CNPG `Cluster` is `Ready` (external mode: the database Secret exists)                    | `Unavailable`                                                              |
+| `ManagementReady` | the mgmt Deployment has an available replica and `/api/v1/health` accepts the operator token | `ManagementUnavailable`, `Unauthorized`                                    |
+| `SetupRequired`   | no human user exists yet (first-run setup is pending); `Unknown` while mgmt is not ready     | —                                                                          |
+| `EnginesReady`    | every engine workload is updated and ready, and no group waits for its join token            | `JoinTokenPending`, `RollingUpdate`, `Unavailable`                         |
+| `Ready`           | `Rendered`, `DatabaseReady`, `ManagementReady` and `EnginesReady` are all true               | the reason of the first one that is not                                    |
+
+A render or apply failure changes nothing and prunes nothing; the reason's
+message carries the chart or API error (for example a missing required value).
+The installation is re-checked every 60 s (`--resync-interval`) and on every
+change of its objects.
+
+`NexoraEngineGroup` (`status.groupID`, `revision`, `engineCount`,
+`joinTokenSecret`, `joinTokenExpiresAt`, the current and previous token ids):
+
+| Condition        | True when                                        | Reasons when not                                                                                                 |
+| ---------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `Synced`         | the group matches the CR in the management plane | `ManagementUnavailable` (retry 10 s), `Unauthorized` (30 s), `Conflict`, `DuplicateGroupName`, `DeletionBlocked` |
+| `JoinTokenReady` | the Secret holds an active, unexpired token      | `JoinTokenRevokeFailed`, `JoinTokenLimit`, `Conflict`                                                            |
+| `Ready`          | both are true                                    | the failing condition's reason                                                                                   |
+
+While the management plane is unreachable, `JoinTokenReady` keeps its last
+value: the Secret and its token stay valid.
+
+### First-run setup and the operator's API token
+
+The operator needs no human account. The management plane creates the system
+user `nexora-operator` (source `system`, role `admin`, no password, cannot log
+in or be edited or deleted) with one API token named `bootstrap`, whose value
+is the Secret `<name>-operator-token`. Its actions appear in the audit log as
+that user.
+
+First-run setup stays manual: `SetupRequired=True` means no human admin exists.
+Complete it as in [First-run setup and access](#first-run-setup-and-access),
+with the prefix of the installation (`kubectl -n nexora logs -l
+app.kubernetes.io/name=nexora-mgmt -c mgmt --tail=-1 | grep "setup token"`).
+Engine groups and engines do not wait for it.
+
+To rotate the operator's token, delete its Secret:
+
+```sh
+kubectl -n nexora delete secret nexora-operator-token
+```
+
+The operator recreates it with a new token on its next reconcile. The kubelet
+updates the mounted file in the mgmt pods, and within
+`NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (default `30s`) the management plane
+makes the new value the only `bootstrap` token and revokes the old one. Until
+then both CRs may show `Unauthorized` for a minute or two.
+
+### Upgrading
+
+- Apply the new CRDs, then upgrade the operator (Helm or the plain manifests).
+  The operator image carries the chart of the same commit, so an operator
+  upgrade can change the rendered objects.
+- Without `spec.image.tag` the installation follows the operator's version:
+  the upgrade rolls the management plane (with its `migrate` init container)
+  and the engines. With `spec.image.tag` set, Nexora changes only when you edit
+  the tag. Back up first, as in [Upgrade](#upgrade).
+- Engines roll exactly as with Helm (one pod at a time; see
+  [Upgrade](#upgrade)). Watch `EnginesReady` (`RollingUpdate`) and
+  `status.workloads`.
+- An engine group removed from `spec.engine.groups` has its workload,
+  ConfigMap and Services pruned; the management-plane group stays until its
+  `NexoraEngineGroup` is deleted.
+
+### Deleting
+
+What the operator never deletes:
+
+- the CNPG `Cluster` (and with it the database volumes, the `<clusterName>-app`
+  Secret and the backups in object storage), which carries no owner reference
+  and is never pruned;
+- the Secrets `<name>-ca`, `<name>-kek` and `<name>-operator-token`, and every
+  Secret you named in the spec;
+- the engine state directories on the nodes (`engine.stateDir.hostPathPrefix`);
+- a management-plane engine group under `deletionPolicy: Retain`, and the group
+  `default` under any policy;
+- the CRDs, the `NexoraEngineGroup` objects and the namespace.
+
+Deleting a `NexoraInstallation` removes the workloads, ConfigMaps, Services,
+PodDisruptionBudget, Ingress, `ScheduledBackup`, ServiceMonitor and
+PrometheusRule through their owner references. Recreating it with the same name
+reuses the retained database and Secrets.
+
+Deleting a `NexoraEngineGroup` revokes every token carrying its marker; with
+`deletionPolicy: Delete` it also deletes the group. The management plane
+refuses to delete a group that still has engines, group-scoped configuration
+or other usable join tokens; the CR then stays with `DeletionBlocked` (retried
+every 30 s) until the group is empty. Its join token Secret is garbage-collected. When the installation is
+already gone, the finalizer `nexora.io/engine-group` is removed without any API
+call, so delete engine groups first when their tokens should be revoked.
+
+### Limits
+
+- The operator does not adopt a Helm release or its objects. Moving from Helm
+  means a new installation next to it (a different namespace or name); note
+  that `helm uninstall` deletes the release's CNPG `Cluster`.
+- It creates nothing outside the installation's namespace; cluster-level
+  pieces (the CNPG operator, cert-manager issuers, node labels, Prometheus
+  selectors) stay yours.
+- It does not manage DNS configuration (zones, upstreams, policies), engine
+  certificates or DoT/DoH/DoQ certificates; use the GUI, the API or
+  `mgmt.dnsTLS.existingSecret`.
+
 ## First-run setup and access
 
 When the database has no users, the first management instance to start logs a
@@ -559,20 +901,10 @@ certificate and TSIG secrets are never written there.
 
 ### CloudNativePG
 
-A primary that is deleted, restarted or switched over shuts PostgreSQL down
-smartly first, waiting for open client sessions. The chart sets
-`database.cnpg.smartShutdownTimeout: 30` (CNPG's own default is 180), which
-keeps a failover inside the 120 s target: with 180 a graceful primary deletion
-took 3m6s, because the management plane's pooled sessions kept the old primary
-busy. The management plane closes an idle pooled session within 45 s, so few
-sessions remain to wait for. Raise the value only when long-running
-transactions must be allowed to finish, and keep it well below CNPG's
-`stopDelay` (1800). The management plane needs no failover handling of its own:
-it connects through the `-rw` Service and reconnects.
-
-For continuous backups configure `spec.backup.barmanObjectStore` on the CNPG
-cluster and a `ScheduledBackup` (see the CNPG documentation). For a logical
-dump:
+High availability, continuous backups to S3-compatible storage and restores
+into a new cluster are in
+[PostgreSQL high availability and backups](#postgresql-high-availability-and-backups).
+For a logical dump:
 
 ```sh
 primary=$(kubectl -n nexora get cluster nexora-db -o jsonpath='{.status.currentPrimary}')
@@ -586,6 +918,11 @@ kubectl -n nexora scale deploy/nexora-mgmt --replicas=0
 kubectl -n nexora exec -i "$primary" -c postgres -- pg_restore --clean --if-exists -d nexora < nexora-backup.dump
 kubectl -n nexora scale deploy/nexora-mgmt --replicas=2
 ```
+
+Under the operator, stop the operator first
+(`kubectl -n nexora-operator scale deploy/nexora-operator --replicas=0`) and
+start it again afterwards: it would otherwise scale the management plane back
+up during the restore.
 
 ### Plain PostgreSQL and Compose
 
@@ -618,6 +955,181 @@ curl -fsS -X POST -H "Authorization: Bearer $NEXORA_TOKEN" \
 
 Any configuration change also publishes a version. `ahead` engines return to
 `current` once their group's version is above theirs.
+
+## PostgreSQL high availability and backups
+
+This applies to `database.mode: cnpg`, with Helm (`--set database.cnpg.…` or a
+values file) or with the operator (`spec.database.cnpg`, same names). It needs
+the CloudNativePG operator 1.25 or newer. The management plane has no failover
+logic of its own: it connects through the `-rw` Service in the Secret
+`<clusterName>-app` and reconnects.
+
+### High availability
+
+| Value                                 | Default                                  | Effect                                                                                              |
+| ------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `database.cnpg.instances`             | `2`                                      | one primary and streaming replicas; 1 has no failover                                               |
+| `database.cnpg.antiAffinity`          | `preferred`                              | `required` never places two instances on one node (needs as many nodes as instances)                |
+| `database.cnpg.primaryUpdateMethod`   | `switchover`                             | on an update the primary moves to an updated replica (`restart` restarts it in place); unsupervised |
+| `database.cnpg.smartShutdownTimeout`  | `30`                                     | seconds a stopping primary waits for client sessions before a fast shutdown (CNPG's default: 180)   |
+| `database.cnpg.resources`             | `{}`                                     | requests and limits of the PostgreSQL pods                                                          |
+| `database.cnpg.postgresql.parameters` | `{}`                                     | PostgreSQL settings as a string map, e.g. `{ max_connections: "200" }`                              |
+| `database.cnpg.storageClass`, `size`  | cluster default, `10Gi`                  | each instance's volume                                                                              |
+| `database.cnpg.imageName`             | `ghcr.io/cloudnative-pg/postgresql:17.6` | the PostgreSQL image (see the image requirement below)                                              |
+
+What a failover looks like: CNPG promotes a replica when the primary's pod or
+node is lost, or when the primary is deleted or switched over. A primary that
+shuts down gracefully first waits up to `smartShutdownTimeout` for open
+sessions; with CNPG's 180 s a graceful primary deletion took 3m6s on kw,
+because the management plane's pooled sessions kept the old primary busy. With
+30 s, and the management plane closing an idle pooled session within 45 s
+(idle time 30 s, health check 15 s; connections are recycled after 30 min), the
+kw e2e measured 43 s and 50 s from the deletion to the new primary, the API
+answering again 1–5 s later, and a configuration change reaching every engine
+48 s and 58 s after the deletion. During the switchover API requests fail
+with 503 and the GUI shows errors; nothing restarts. Engines keep answering DNS from their current snapshot throughout
+and receive changes made after the failover. Raise `smartShutdownTimeout` only
+when long-running transactions must finish, and keep it well below CNPG's
+`stopDelay` (1800).
+
+Watch it with:
+
+```sh
+kubectl -n nexora get cluster nexora-db -o jsonpath='{.status.currentPrimary}{"\n"}'
+kubectl -n nexora get cluster nexora-db     # instances, ready, status, primary
+kubectl -n nexora get pods -l cnpg.io/cluster=nexora-db -L cnpg.io/instanceRole
+```
+
+### Backups to S3-compatible storage
+
+`database.cnpg.backup` configures CNPG's continuous WAL archiving and base
+backups with Barman Cloud. Create the credentials Secret, then enable it. A
+MinIO example:
+
+```sh
+kubectl -n nexora create secret generic nexora-s3 \
+  --from-literal=ACCESS_KEY_ID=<access key> --from-literal=ACCESS_SECRET_KEY=<secret key>
+```
+
+```yaml
+database:
+  cnpg:
+    backup:
+      enabled: true
+      destinationPath: s3://nexora-backups/nexora # the bucket must exist
+      endpointURL: http://minio.minio.svc.cluster.local:9000 # omit for AWS S3
+      s3Credentials:
+        existingSecret: nexora-s3
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      # endpointCA: { existingSecret: minio-ca, key: ca.crt }   # a private CA on an https endpoint
+      serverName: "" # default: clusterName; the folder under destinationPath
+      retentionPolicy: 30d
+      walCompression: gzip
+      dataCompression: gzip
+      schedule: "0 0 3 * * *" # six fields, seconds first: 03:00 daily
+      immediate: false # true takes a base backup when the ScheduledBackup is created
+```
+
+This renders `spec.backup` on the `Cluster` and a `ScheduledBackup`
+`<clusterName>-scheduled`. WAL is archived continuously; base backups follow
+the schedule, and CNPG removes backups older than `retentionPolicy`. Take one
+now and check the state:
+
+```sh
+kubectl -n nexora apply -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: { name: nexora-db-manual }
+spec: { cluster: { name: nexora-db }, method: barmanObjectStore }
+YAML
+kubectl -n nexora get backups.postgresql.cnpg.io,scheduledbackups.postgresql.cnpg.io
+kubectl -n nexora get cluster nexora-db \
+  -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")]}{"\n"}'
+```
+
+A `Backup` reaches phase `completed`, and `ContinuousArchiving` is `True` once
+WAL reaches the bucket. An unreachable endpoint, a missing bucket or wrong
+credentials show as `ContinuousArchiving=False` and a `Backup` in phase
+`failed` (its `status.error`, and the `postgres` container's log). Nexora keeps
+serving meanwhile, but WAL piles up on the primary's volume, so alert on the
+condition. Use the fully qualified resource names: other operators (Longhorn,
+Velero) also define `backups`.
+
+The image requirement: archiving and restores run `barman-cloud-*` inside the
+PostgreSQL pods, so `imageName` must ship Barman Cloud. The default image does
+(the kw e2e backs up and restores with it); CNPG's `-minimal` and `-standard`
+image variants do not, and with them archiving fails as described above.
+
+The chart uses CNPG's in-tree `barmanObjectStore`, deprecated since CNPG 1.26
+in favour of the Barman Cloud plugin. It still works on current releases (kw
+runs 1.29.1 without the plugin); the chart will move to the plugin when a CNPG
+release removes the field.
+
+### Restoring into a new cluster
+
+A restore always creates a new cluster from the backup; it never overwrites a
+running one. `database.cnpg.recovery` renders `bootstrap.recovery` from the
+archive instead of an empty database:
+
+```yaml
+database:
+  cnpg:
+    clusterName: nexora-db-restore # a new name
+    recovery:
+      enabled: true
+      sourceServerName: nexora-db # the serverName the backup was archived under
+      targetTime: "" # RFC 3339 for a point in time; empty replays all archived WAL
+      # destinationPath, endpointURL, s3Credentials and endpointCA default to database.cnpg.backup.*
+```
+
+If backups stay enabled, the new cluster archives under its own `serverName`
+(its `clusterName` by default). Rendering fails when the restored cluster would
+archive into the very folder it restores from (same `destinationPath` and
+`serverName`).
+
+- **Operator:** change `spec.database.cnpg.clusterName` and add `recovery` in
+  the `NexoraInstallation`. The operator creates the new `Cluster`, and once it
+  is ready the management plane rolls onto `nexora-db-restore-app`. The old
+  `Cluster` is never pruned: keep it until the restore is verified, then
+  delete it yourself (`kubectl -n nexora delete cluster nexora-db`).
+- **Helm:** changing `clusterName` in the release would make Helm delete the
+  old `Cluster`. Create the restored cluster outside the release instead, then
+  point the release at it as an external database:
+
+  ```sh
+  helm template nexora deploy/helm/nexora -n nexora -f my-values.yaml --api-versions postgresql.cnpg.io/v1 \
+    --show-only templates/database-cnpg.yaml --set engine.enabled=false \
+    --set database.cnpg.clusterName=nexora-db-restore --set database.cnpg.backup.enabled=false \
+    --set database.cnpg.recovery.enabled=true --set database.cnpg.recovery.sourceServerName=nexora-db |
+    kubectl -n nexora apply -f -
+  kubectl -n nexora wait --for=condition=Ready cluster/nexora-db-restore --timeout=30m
+  helm upgrade nexora deploy/helm/nexora -n nexora -f my-values.yaml \
+    --set database.mode=external --set database.external.existingSecret=nexora-db-restore-app
+  ```
+
+Keep the `recovery` values while that cluster exists: CNPG only uses
+`bootstrap` when it creates a cluster. Restore with the same CA and KEK the
+database was written with (the operator keeps `<name>-ca` and `<name>-kek`),
+or engines must re-enroll and KEK-sealed secrets are unreadable. Afterwards,
+engines may be `ahead` of the restored database: see
+[Engines ahead of a restored database](#engines-ahead-of-a-restored-database).
+The kw e2e restores a fresh backup into a one-instance cluster in about 1.5
+minutes.
+
+### What stays manual
+
+- Backups of the CA and KEK Secrets (`<name>-ca`, `<name>-kek`, or the Secrets
+  you created): they are not in the database and not in the object store. Keep
+  them offline and apart from the database backups.
+- Copies of the bucket to another site or region, bucket versioning and object
+  lock, and the bucket's own lifecycle rules.
+- Test restores: nothing restores on a schedule; run the restore above into a
+  scratch name periodically.
+- Alerting on `ContinuousArchiving` and failed `Backup` objects: the chart's
+  PrometheusRule covers Nexora, not CNPG.
+- Deleting a `Cluster` you no longer need, and the backups of a deleted
+  cluster (CNPG does not remove them from the bucket).
 
 ## Engine groups and staged rollouts
 
@@ -1043,9 +1555,13 @@ validation of forwarded answers.
 - **PKCS#11 modules** are not included in the image and must match its glibc
   and architecture; PKCS#11 is exercised with SoftHSM2 in the test suite
   (`TestKeyStorageBackends`), not on kw.
-- **PostgreSQL HA** is the operator's responsibility; the chart's CNPG cluster
-  is a convenience, not a managed service. There is no Kubernetes operator or
-  CRD for Nexora itself.
+- **PostgreSQL HA and backups** come from CloudNativePG: the chart configures
+  instances, failover settings, Barman Cloud archiving and restores, but
+  off-site copies, CA and KEK backups and test restores stay manual (see
+  [What stays manual](#what-stays-manual)).
+- **Kubernetes operator**: `v1alpha1`; it does not adopt Helm releases, creates
+  nothing outside the installation's namespace and has no CRDs for DNS
+  configuration (see [Limits](#limits)).
 
 ## Troubleshooting
 
