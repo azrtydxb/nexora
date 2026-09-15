@@ -1,0 +1,5 @@
+nexora-operator {{ .Values.image.tag | default .Chart.AppVersion }} is installed in {{ .Release.Namespace }}
+{{- if eq .Values.rbac.scope "namespace" }} and watches {{ join ", " .Values.watchNamespaces }}{{ else }} and watches all namespaces{{ end }}.
+
+Create a NexoraInstallation (and NexoraEngineGroups) to deploy Nexora:
+  kubectl get nexorainstallations,nexoraenginegroups -A

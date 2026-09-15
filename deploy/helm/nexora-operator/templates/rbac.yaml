@@ -1,0 +1,83 @@
+{{- if and (eq .Values.rbac.scope "namespace") (not .Values.watchNamespaces) }}{{ fail "watchNamespaces is required when rbac.scope=namespace" }}{{ end }}
+{{- if eq .Values.rbac.scope "cluster" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nexora-operator
+  labels:
+    {{- include "nexora-operator.labels" . | nindent 4 }}
+rules:
+  {{- include "nexora-operator.rules" . | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nexora-operator
+  labels:
+    {{- include "nexora-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nexora-operator
+subjects:
+  - kind: ServiceAccount
+    name: nexora-operator
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{- range .Values.watchNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nexora-operator
+  namespace: {{ . }}
+  labels:
+    {{- include "nexora-operator.labels" $ | nindent 4 }}
+rules:
+  {{- include "nexora-operator.rules" $ | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nexora-operator
+  namespace: {{ . }}
+  labels:
+    {{- include "nexora-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nexora-operator
+subjects:
+  - kind: ServiceAccount
+    name: nexora-operator
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nexora-operator-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nexora-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nexora-operator-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nexora-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nexora-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: nexora-operator
+    namespace: {{ .Release.Namespace }}

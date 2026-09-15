@@ -48,7 +48,7 @@ func TestImagesWorkflow(t *testing.T) {
 		m := a.(map[string]any)
 		archs[fmt.Sprint(m["runner"], "|", m["platform"])] = true
 	}
-	for _, want := range []string{"nexora-engine", "nexora-mgmt"} {
+	for _, want := range []string{"nexora-engine", "nexora-mgmt", "nexora-operator"} {
 		if !images[want] {
 			t.Errorf("build matrix lacks image %s", want)
 		}

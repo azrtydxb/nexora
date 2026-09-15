@@ -17,11 +17,12 @@ func TestDockerfilesStampBuildInfo(t *testing.T) {
 		return string(b)
 	}
 	for file, wants := range map[string][]string{
-		"deploy/docker/mgmt.Dockerfile":   {"ARG VERSION=dev", "ARG COMMIT=", "ARG BUILD_DATE=", "-X main.commit=${COMMIT}", "-X main.buildDate=${BUILD_DATE}", "NEXORA_COMMIT=${COMMIT}"},
-		"deploy/docker/engine.Dockerfile": {"ARG COMMIT=", `NEXORA_COMMIT="${COMMIT}"`},
-		"scripts/build-image.sh":          {"build-arg:COMMIT=", "build-arg:BUILD_DATE="},
-		".github/workflows/images.yml":    {"COMMIT=${{ github.sha }}", "BUILD_DATE="},
-		"web/vite.config.ts":              {"__NEXORA_VERSION__", "__NEXORA_COMMIT__", "__NEXORA_BUILD_DATE__"},
+		"deploy/docker/mgmt.Dockerfile":     {"ARG VERSION=dev", "ARG COMMIT=", "ARG BUILD_DATE=", "-X main.commit=${COMMIT}", "-X main.buildDate=${BUILD_DATE}", "NEXORA_COMMIT=${COMMIT}"},
+		"deploy/docker/engine.Dockerfile":   {"ARG COMMIT=", `NEXORA_COMMIT="${COMMIT}"`},
+		"deploy/docker/operator.Dockerfile": {"ARG VERSION=dev", "ARG COMMIT=", "ARG BUILD_DATE=", "internal/version.Commit=${COMMIT}", "internal/version.BuildDate=${BUILD_DATE}", "COPY deploy/helm/nexora /charts/nexora"},
+		"scripts/build-image.sh":            {"build-arg:COMMIT=", "build-arg:BUILD_DATE="},
+		".github/workflows/images.yml":      {"COMMIT=${{ github.sha }}", "BUILD_DATE="},
+		"web/vite.config.ts":                {"__NEXORA_VERSION__", "__NEXORA_COMMIT__", "__NEXORA_BUILD_DATE__"},
 	} {
 		body := read(file)
 		for _, w := range wants {
