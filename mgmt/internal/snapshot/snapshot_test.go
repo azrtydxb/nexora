@@ -91,7 +91,7 @@ func TestBuildMapsEveryTable(t *testing.T) {
 		args []any
 	}{
 		{"insert into upstreams(name, protocol, address, tls_server_name, timeout_ms, position, enabled) values ('b','dot','9.9.9.9:853','dns.quad9.net',300,1,true), ('a','udp','1.1.1.1:53','',250,0,true), ('off','udp','8.8.8.8:53','',250,2,false)", nil},
-		{"update resolver_settings set strategy='fastest', cache_max_bytes=2097152, block_mode='nxdomain', block_ttl=30, trace_sample_one_in=100", nil},
+		{"update resolver_settings set strategy='parallel', parallel_max=3, cache_max_bytes=2097152, block_mode='nxdomain', block_ttl=30, trace_sample_one_in=100", nil},
 		{"update access_control set allow_cidrs=array['10.0.0.0/8']::cidr[]", nil},
 		{"insert into blobs(sha256, size, data) values ($1, 3, 'abc')", []any{sha}},
 		{"insert into filter_lists(name, kind, url, current_blob_sha256) values ('ads','block','http://x/ads', $1), ('empty','block','http://x/e', null)", []any{sha}},
@@ -114,7 +114,7 @@ func TestBuildMapsEveryTable(t *testing.T) {
 	if snap.Version != 7 || len(snap.Upstreams) != 2 || snap.Upstreams[0].Name != "a" || snap.Upstreams[1].Protocol != controlv1.UpstreamProtocol_UPSTREAM_PROTOCOL_DOT {
 		t.Fatalf("upstreams: %v", snap.Upstreams)
 	}
-	if snap.Resolver.Strategy != controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_FASTEST || snap.Cache.MaxBytes != 2097152 {
+	if snap.Resolver.Strategy != controlv1.UpstreamStrategy_UPSTREAM_STRATEGY_PARALLEL || snap.Resolver.ParallelMax != 3 || snap.Cache.MaxBytes != 2097152 {
 		t.Fatalf("resolver/cache: %v %v", snap.Resolver, snap.Cache)
 	}
 	if len(snap.AclAllowCidrs) != 1 || snap.AclAllowCidrs[0] != "10.0.0.0/8" {
