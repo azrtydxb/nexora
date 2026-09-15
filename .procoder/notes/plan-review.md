@@ -67,3 +67,5 @@
 - Follow-up (M11 T6, 2026-09-15): if a management instance dies mid-apply, the proposal stays open without a partial result (the claim holds the row in an uncommitted transaction). Re-apply is safe (applied actions return stale). Revisit: persist per-action progress in a separate short transaction.
 
 - Lead note (M11 T9, 2026-09-15): Task 13 must remove the condition in `TestAIDisabledChangesNothing` that only checks fixture calls once `querylog_anomalies` is enabled; Task 12 must make `TestAIOpenAICompatibleWire` run (no skip).
+
+- Follow-up (M11 T20, 2026-09-15): the capacity agent does not forecast the recursor cache because `recursor_cache_max_bytes` (M7 T12) was not on main when it was written. After the M7 merge, add the resource and its limit.
