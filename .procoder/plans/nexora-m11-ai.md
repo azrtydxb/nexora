@@ -2083,6 +2083,13 @@ func New(st *store.Store, svc *ai.Service, ql querylog.Backend, cat *catalog.Cat
   backend implements `querylog.Topper`. The second call gets
   `DataBlock({"filters", "top_names", "top_clients", "records": first 50})`.
 - Backend errors return `&ai.TaskError{Code: "querylog_unavailable", Message: err.Error()}`.
+- As built: every type carries snake_case JSON tags (`Result` is `AiQueryLogSearchResult`, `Filters` the
+  `searchQueryLog` parameter names, translation `list_names`, `policy_group_names`, `engine_names`).
+  A translation without a range uses the request's `from`/`to` when given, else the last hour; one bound
+  alone gets `to=now` or `from=to-1h`. Lists are named by their catalog source name for catalog lists,
+  categories come from the catalog, engines are `engines` rows not deleted. The top lists honour only the
+  range and the filter result (`querylog.TopQuery`; `debt:` comment). `e2e/ai_foundation_test.go`
+  replaces the Task 12 skip with a fatal assertion that `querylog_search` is registered.
 
 - [ ] Create `mgmt/internal/ai/qlsearch/qlsearch_test.go` with `TestQueryLogSearchTranslation`:
   ```go
@@ -2265,6 +2272,8 @@ Interfaces:
 
 ```go
 // package insight
+const Kind = "insight"
+const Name = "dashboard_insights"
 func Detect(ctx context.Context, q store.PolicyQuerier, now time.Time) ([]finding.Candidate, error)
 func Score(open []finding.Finding) int // min(10, 3*critical + 1*warning) over open insights
 type Agent struct{ Store *store.Store; Service *ai.Service; MinLLMInterval time.Duration; Now func() time.Time }
@@ -2273,7 +2282,18 @@ func (a *Agent) Run(ctx context.Context, run *ai.Run) error
 ```
 
 `Detect` reads `stats.DashboardSeries(ctx, q, "15m", now)` and `stats.DashboardSeries(ctx, q, "24h", now)`
-(M6), the per-engine samples through `fleet.EngineMetrics` for 1 h, and `stats.DashboardHealth`.
+(M6), the per-engine samples through `fleet.EngineMetrics` for 24 h (the per-engine baseline is the previous
+24 h, so a 1 h window cannot give it; `debt:` comment on the decode cost), and `stats.DashboardHealth`.
+
+- `<engine>` is the engine node name, as in the health alerts.
+- The current window is the last 15 min and the baseline everything before it. An engine point whose
+  interval (from the previous point) straddles the boundary counts for neither. Rates are time-weighted,
+  and ratios and p99 are query-weighted.
+- Every `≥ k × baseline` rule needs points on both sides and a positive baseline.
+- `upstream_degraded` is critical from the health alert `upstream_down`. Otherwise it is warning when the
+  gap-weighted RTT across the engines reporting that upstream name is at least twice its baseline.
+- `certificate_expiring` reads the expiry from the health alert message and falls back to the alert's
+  severity.
 
 | Candidate                                | Rule                                   | Severity                             |
 | ---------------------------------------- | -------------------------------------- | ------------------------------------ |
@@ -2288,41 +2308,59 @@ func (a *Agent) Run(ctx context.Context, run *ai.Run) error
 
 The model output is
 `{"insights":[{"candidate_id","related_candidates":[],"severity","confidence","title","description","possible_causes":[{"cause","confidence","supporting_candidates":[]}],"recommended_actions":[]}]}`.
-Every id must be in the set.
+Every id must be in the set (candidate, related and supporting ids), one insight per candidate id, and
+confidences in 0..1. Titles have at most 120 characters and descriptions at most 1,000. The stored detail
+holds `related_candidates`, `possible_causes`, `recommended_actions`, and `engines`, which is taken from
+the cited candidates' `engine` detail.
 
-- [ ] Create `mgmt/internal/ai/insight/detect_test.go` with `TestInsightDetectors`:
-  - `storetest`, two engines, and `engine_stats` samples every 10 s for 24 h (stride 5 min for the
-    older part is enough, plus 15 min at 10 s);
-  - engine A has a SERVFAIL ratio of 0.1% over the day and 8% in the last 15 min;
-  - upstream `fx` RTT is 20 ms, then 300 ms.
+- [x] Create `mgmt/internal/ai/insight/detect_test.go` with `TestInsightDetectors`:
+  - `storetest`, two connected engines `edge-a` and `edge-b`, and `engine_stats` samples every 5 min from
+    24 h ago until 15 min ago, then every 10 s;
+  - engine A has a SERVFAIL ratio of 0.1% over the day and 15% in the last 15 min (critical needs ≥ 10%);
+  - upstream `fx` (engine A) RTT is 20 ms, then 300 ms, and upstream `fy` (engine B) stays at 20 ms.
 
-  Assert `servfail_spike:<A>` (critical) and `upstream_degraded:fx`, and none for B. Build the samples
+  Assert `servfail_spike:edge-a` (critical) and `upstream_degraded:fx`, and no other candidate. Build the samples
   with the `controlv1.Stats` M6 fields as in M6 `TestDashboardAggregations`
   (`mgmt/internal/stats/dashboard_test.go`). Add `TestInsightScore`: one critical and one warning
   finding → 4, and 5 criticals → 10.
 
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/insight -count=1'` and expect FAIL:
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/insight -count=1'` and expect FAIL:
       `undefined: insight.Detect`. Implement `detect.go`, then run and expect PASS.
-- [ ] Create `agent_test.go` with `TestDashboardInsightCorrelation`, using the fake provider:
-  - an answer citing `servfail_spike:<A>` with `supporting_candidates:["upstream_degraded:fx"]` is
-    stored, explained, with `possible_causes` in detail;
-  - a first answer citing `servfail_spike:unknown` is re-asked (2 calls).
+- [x] Create `agent_test.go` with `TestDashboardInsightCorrelation`, using the fake provider:
+  - a first answer citing `servfail_spike:unknown` is re-asked (2 calls);
+  - the answer citing `servfail_spike:edge-a` with `supporting_candidates:["upstream_degraded:fx"]` is
+    stored, explained, with `possible_causes` and `engines: ["edge-a"]` in detail;
+  - the same candidates 30 s later give `no_change` and no call;
+  - a second agent (another instance) reads `llm_at` from the newest `ai_agent_runs` detail. A new
+    candidate (`engine_disconnected:edge-b`) within the interval is stored without a call. After the
+    interval the pending change calls a failing model, and the finding stays `explained=false` with
+    outcome `ok`.
 
-  Run, expect FAIL, implement `agent.go` with the same change and interval rules as Task 13, and expect
-  PASS.
+  Run, expect FAIL, implement `agent.go` and expect PASS. The rules follow Task 13:
+  - `finding.Sync`;
+  - a change stays pending until the model explains it;
+  - the model is called when pending and `now - lastLLM ≥ MinLLMInterval`;
+  - `lastLLM` is kept in memory and in `run.Detail["llm_at"]`, and recovered from `ai_agent_runs`;
+  - `ai.ErrBudgetExhausted` sets `skipped_budget`;
+  - another model error records `llm_error` and keeps outcome `ok`.
 
-- [ ] Implement `GetAiInsights`:
+- [x] Implement `GetAiInsights`:
   - `finding.List(kind insight, status open)` plus acknowledged;
   - `Score` over open ones;
-  - the summary `"<n> active insight(s) across the fleet."` or `"No active insights."`;
-  - `generated_at` = the newest `last_seen`.
+  - the summary `"<n> active insight(s) across the fleet."` (n counts open and acknowledged) or
+    `"No active insights."`;
+  - `generated_at` = the newest `last_seen`, `null` without insights.
 
-  Create `mgmt/internal/api/ai_insights_test.go` with `TestGetAiInsights` (one critical and one
-  warning insight → score 4 and the summary text; `Deps.AI` nil → 503). Run
-  `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/insight ./mgmt/internal/api -run "Insight" -count=1'`
+  Create `mgmt/internal/api/ai_insights_test.go` with `TestGetAiInsights`. It covers:
+  - no insights → score 0 and `generated_at` null;
+  - one critical and one warning insight → score 4 and the summary text, with an anomaly not counted;
+  - an acknowledged critical still listed → score 1;
+  - `Deps.AI` nil → 503.
+
+  Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/insight ./mgmt/internal/api -run "Insight" -count=1'`
   and expect PASS.
 
-- [ ] Report the paths. Commit message: `M11 T14: dashboard insight agent`.
+- [x] Report the paths. Commit message: `M11 T14: dashboard insight agent`.
 
 ## Task 15: Filter and policy recommendations agent
 
@@ -2380,6 +2418,26 @@ Code turns each recommendation into actions:
 `impact` is `{"additional_blocked_queries": DisabledCategoryHits[key] or the domain query sum, "total_queries_analyzed": Total, "coverage_percent": round(100*x/Total, 1)}`
 from code. At most 10 proposals per run go through `proposal.Upsert` after `Validator.Validate`. A
 validation failure is fed back through `ai.Generate` by running validation inside `Request.Validate`.
+
+- As built: `const Name = "filter_recommendations"` and `const MaxRecords = 50000` (`debt:` comment).
+  The types carry snake_case JSON tags. `GroupStats` also holds unexported per-name counts (not blocked,
+  blocked) for the impact numbers.
+- A record belongs to the policy group the engine attributed. Otherwise it belongs to the group with the
+  longest CIDR containing the client, among groups in scope for the engine's engine group. A record is
+  blocked when its filter result is `blocked` or its RPZ action is not `passthru`. A name is unblocked when
+  it is not blocked, not `allowed`, and not at or under a global or group allowlist entry.
+- A category is disabled for a scope when it is not enabled globally and, for a group, not in its
+  `category_keys`. Only the category's enabled catalog lists' current blobs are read (zstd, streamed).
+  A listed name also covers its subdomains.
+- `block_domains` ignores `policy_group_id`, since the RPZ zone is global, and counts impact over all
+  traffic. Its rule reason is fixed by code (`filter recommendation`) so the fingerprint survives
+  rewording.
+- `allow_domains` reports the matching blocked queries as a negative `additional_blocked_queries`.
+- `safe_search` counts the search-host queries of the families it turns on.
+- Enable proposals carry `evidence.license_notice_sources` for non-commercial sources.
+- The budget being exhausted gives outcome `skipped_budget`. No records, or nothing created or refreshed,
+  gives `no_change`.
+- The agent test also seeds 10 `tracker.aif.test` records (110 total).
 
 - [ ] Create `aggregate_test.go` with `TestAggregateGroupStats`:
   - `storetest`, policy group `guest` `10.9.0.0/24`, and a disabled catalog category `malware` whose
