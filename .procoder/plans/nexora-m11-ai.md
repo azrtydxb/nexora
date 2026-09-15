@@ -2838,7 +2838,7 @@ embedded in `mgmt/internal/api/gen.go` still carries the old line: the locally i
 `oapi-codegen` predates OpenAPI 3.1 and cannot regenerate this document, so the next `make proto`
 picks the change up.
 
-- [ ] Create `features_test.go` with `TestRolloutRiskFeatures`:
+- [x] Create `features_test.go` with `TestRolloutRiskFeatures`:
   - `Jaccard([{policy_group,update},{resolver_settings,update}], [{policy_group,update}]) == 0.5`;
   - with `storetest`: a group with 3 engines, two past completed rollouts (one `updatePolicyGroup`, one
     `updateUpstream`) and one halted `updatePolicyGroup` with `halt_reason`, plus a new rollout whose
@@ -2848,9 +2848,9 @@ picks the change up.
   `Similar[1].Version` the completed policy-group one. Insert the audit rows with `auth.WriteAudit`,
   and the rollouts and group snapshots with SQL as in `mgmt/internal/rollout` tests.
 
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/rolloutrisk -run TestRolloutRiskFeatures -count=1'`,
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/rolloutrisk -run TestRolloutRiskFeatures -count=1'`,
       expect FAIL, implement `features.go`, and expect PASS.
-- [ ] Create `agent_test.go` with `TestRolloutRiskAgent`. The fake model answers in order:
+- [x] Create `agent_test.go` with `TestRolloutRiskAgent`. The fake model answers in order:
   1. score 8 with level `low` (rejected);
   2. a cited version 999 (rejected);
   3. a valid medium: score 5, `canary`, `canary_count` 1, `min_health_queries` 200,
@@ -2860,8 +2860,8 @@ picks the change up.
   `rollout_strategy:"canary"`. A `rollback` rollout gets `skipped` with no model call. Run, expect FAIL,
   implement `agent.go` and `Get`, and expect PASS.
 
-- [ ] Implement `GetAiRolloutRisk` (404 for an unknown rollout), plus the registration file.
-- [ ] Create `e2e/ai_rollout_risk_test.go` with `TestRolloutNotDelayedByAI`:
+- [x] Implement `GetAiRolloutRisk` (404 for an unknown rollout), plus the registration file.
+- [x] Create `e2e/ai_rollout_risk_test.go` with `TestRolloutNotDelayedByAI`:
   1. mgmt with `AIEnv` plus `NEXORA_AI_ROLLOUT_RISK_ENABLED=true`, a 15 s scheduler interval (fixed) and
      `NEXORA_AI_AGENT_START_DELAY=0s` in extra env, and a managed engine.
   2. Wait until every rollout created so far has a risk row (unscripted features answer 500, so they
@@ -2871,8 +2871,8 @@ picks the change up.
   4. `WaitRollout(..., "completed")` within 30 s.
   5. `GET /rollouts/{id}/ai-risk` is still `pending` at that moment.
   6. After the delay (up to 200 s), it is `assessed`.
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestRolloutNotDelayedByAI -count=1 -v -timeout 15m'` and expect PASS.
-- [ ] Report the paths. Commit message: `M11 T18: rollout risk assessment`.
+- [x] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestRolloutNotDelayedByAI -count=1 -v -timeout 15m'` and expect PASS.
+- [x] Report the paths. Commit message: `M11 T18: rollout risk assessment`.
 
 ## Task 19: Threat checks, list classification and query-log threat labels
 
@@ -3289,6 +3289,8 @@ Files:
 
 - `web/src/pages/ai/AiInsightsPage.tsx`: filled.
 - `web/src/components/ai/DashboardAiCard.tsx`: created.
+- `web/src/components/ai/FindingCard.tsx`: takes an optional `children`, rendered under the
+  description, so the insights page can put the kind-specific detail inside the card.
 - `web/src/pages/DashboardPage.tsx`: render `<DashboardAiCard />` at the top of the page when
   `useAiEnabled()`.
 - `e2e/gui_seed_ai_insights_test.go`: created.
@@ -3296,7 +3298,8 @@ Files:
 
 Interfaces: test ids:
 
-- page: `ai-insights-tab-anomaly`, `ai-insights-tab-insight`, `ai-findings-kind`, `ai-findings-status`;
+- page: `ai-insights-tab-anomaly`, `ai-insights-tab-insight`, `ai-findings-kind`, `ai-findings-status`
+  (with `ai-findings-status-<status>` on its items), `ai-insight-cause`, `ai-anomaly-query-log`;
 - dashboard card: `dashboard-ai-card`, `ai-score` (text `n/10`), `ai-insight-top` (up to 3) and a link
   `dashboard-ai-card-all` to `/ai/insights?kind=insight`.
 
@@ -3308,27 +3311,33 @@ The page lists `FindingCard`s from `useAiFindings(kind, status)`:
 - anomalies show affected clients, sample domains as text, and a "Find in query log" link to
   `/query-log?client=<first client>`.
 
-- [ ] Create `e2e/gui_seed_ai_insights_test.go`:
+- [x] Create `e2e/gui_seed_ai_insights_test.go`:
   - `func init() { registerGUISeed(seedAIInsights) }`;
   - insert by SQL with `harness.PGExec(s.T, s.PGURL, ...)`;
-  - one open anomaly `dns_tunneling:10.0.1.45` (critical, explained) and one open insight
-    `servfail_spike:gui-engine` (warning, with `possible_causes`);
-  - `s.Vars["NEXORA_E2E_AI_ANOMALY"] = "dns_tunneling:10.0.1.45"`.
+  - two open anomalies and two open insights, so that every spec keeps a finding of both kinds after
+    51 acknowledges one and dismisses another (52's anomaly banner and 60's viewer list read the same
+    rows): `dns_tunneling:10.0.1.45` (critical, explained) and `nxdomain_burst:10.0.2.77` (warning),
+    `servfail_spike:gui-engine` (warning, with `possible_causes`) and `upstream_degraded:fixture`;
+  - `s.Vars["NEXORA_E2E_AI_ANOMALY"] = "dns_tunneling:10.0.1.45"`, plus
+    `NEXORA_E2E_AI_ANOMALY_CLIENT`, `NEXORA_E2E_AI_INSIGHT` and `NEXORA_E2E_AI_INSIGHT_DISMISS`.
 
-- [ ] Create `web/e2e/screens/51-ai-insights.spec.ts`. At 1280 and 400 px, as operator:
-  1. `/ai/insights` shows `ai-finding-dns_tunneling:10.0.1.45`.
-  2. Click `ai-finding-ack`, wait for the PATCH 200, and the status badge reads "Acknowledged".
+- [x] Create `web/e2e/screens/51-ai-insights.spec.ts`. At 1280 and 400 px, as operator:
+  1. `/ai/insights` shows `ai-finding-dns_tunneling:10.0.1.45` with its client and a
+     `ai-anomaly-query-log` link to `/query-log?client=10.0.1.45`.
+  2. Click `ai-finding-ack`, wait for the PATCH 200, and the card leaves the open list; under the
+     `acknowledged` status filter its `ai-finding-state` badge reads "acknowledged".
   3. Switch to `ai-insights-tab-insight`; the servfail insight shows a cause.
-  4. `ai-finding-dismiss` removes it from the open list.
-  5. Go to the dashboard: `dashboard-ai-card` shows `ai-score`.
+  4. `ai-finding-dismiss` on the second insight removes it from the open list.
+  5. Go to the dashboard: `dashboard-ai-card` shows `ai-score` and the top insight.
   6. `dashboard-ai-card-all` navigates to insights.
 
   The spec requests `listAiFindings`, `updateAiFinding` and `getAiInsights`. The 400 px run re-seeds
-  state by acknowledging only when the anomaly is still open (a test-level `if`).
+  state by acknowledging and dismissing only when the finding is still open (a test-level `if`), and
+  asserts on the findings 51 leaves untouched.
 
-- [ ] Run `scripts/dev-exec.sh 'make web-build e2e-build && go test ./e2e -run TestGUICoverage -count=1'` and
+- [x] Run `scripts/dev-exec.sh 'make web-build e2e-build && go test ./e2e -run TestGUICoverage -count=1'` and
       expect spec 51 to PASS (operations of the other wave 4 tasks may still be listed as uncovered).
-- [ ] Report the paths. Commit message: `M11 T23: AI insights GUI and dashboard card`.
+- [x] Report the paths. Commit message: `M11 T23: AI insights GUI and dashboard card`.
 
 ## Task 24: Query log GUI: Ask box, anomaly banner, threat badge
 

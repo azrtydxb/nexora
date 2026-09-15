@@ -1,6 +1,6 @@
 # M11 T18: Rollout risk agent
 
-Status: open
+Status: done
 Created: 2026-09-15
 
 ## Description
@@ -14,8 +14,8 @@ Implements Task 18 of `.procoder/plans/nexora-m11-ai.md` (spec `.procoder/specs/
 - [x] Create `agent_test.go` with `TestRolloutRiskAgent`. The fake model answers in order:
 - [x] Implement `GetAiRolloutRisk` (404 for an unknown rollout), plus the registration file.
 - [x] Create `e2e/ai_rollout_risk_test.go` with `TestRolloutNotDelayedByAI`:
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestRolloutNotDelayedByAI -count=1 -v -timeout 15m'` and expect PASS.
-- [ ] Report the paths. Commit message: `M11 T18: rollout risk assessment`.
+- [x] Run the e2e test and expect PASS (run in the private tree, see Notes).
+- [x] Report the paths. Commit message: `M11 T18: rollout risk assessment` (the lead commits).
 
 ## Evidence
 
@@ -40,6 +40,15 @@ TDD:
   `updateEngineGroup` proposal could ever validate. After removing `additionalProperties: false` from
   `EngineGroupInput` and implementing `agent.go`/`Get`:
   `ok  github.com/piwi3910/nexora/mgmt/internal/ai/rolloutrisk  5.252s` (with `mgmt/api` also ok).
+
+E2E: `NEXORA_E2E_BIN_DIR=/work/t18-priv/bin go test ./e2e -run TestRolloutNotDelayedByAI -count=1 -v -timeout 15m`
+→ `--- PASS: TestRolloutNotDelayedByAI (165.08s)` / `ok github.com/piwi3910/nexora/e2e 165.094s`.
+It first failed (`Status:skipped`) because a description-only policy group update leaves the snapshot
+content unchanged; widening the group's CIDRs makes it a real rollout.
+
+Full suites in the private tree, twice, both green:
+`go test ./mgmt/internal/ai/... ./mgmt/api ./mgmt/internal/api -count=1` — every package `ok`
+(`mgmt/internal/api 202.387s` / `117.582s`), which also proves the openapi.yaml change breaks nothing.
 
 Notes:
 

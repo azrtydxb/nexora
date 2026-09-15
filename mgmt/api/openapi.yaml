@@ -1696,9 +1696,12 @@ components:
             superseded,
           ],
       }
+    # No additionalProperties: false here. EngineGroupUpdate is an allOf of this schema and revision,
+    # and a closed base makes that allOf unsatisfiable, so no updateEngineGroup body could validate.
+    # Unknown fields are still rejected: proposal action bodies go through proposal.unknownFields, and
+    # the handlers decode into the generated structs.
     EngineGroupInput:
       type: object
-      additionalProperties: false
       required: [name]
       properties:
         name: { type: string, pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }
