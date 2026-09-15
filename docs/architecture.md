@@ -75,6 +75,10 @@ bench/                                  dnsperf corpora, perfgate tool
 deploy/docker/                          engine.Dockerfile, mgmt.Dockerfile
 deploy/compose/                         docker-compose example
 deploy/helm/nexora/                     Helm chart
+deploy/helm/nexora-operator/            (M9) operator chart (CRDs in crds/, RBAC, leader election)
+deploy/operator/                        (M9) generated CRDs (crds/) and plain manifests (operator.yaml)
+operator/                               (M9) Go module `github.com/piwi3910/nexora/operator`: CRD types,
+                                        nexora-operator manager, render, keys, API client, controllers
 deploy/kw/                              manifests for the kw test deployment
 deploy/deploytest/                      helm/compose/workflow/docs static tests
 deploy/dev/                             dev toolbox image + pod
@@ -449,7 +453,9 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   for DoT/DoH/DoQ, pushed to engines, never stored in PostgreSQL),
   `NEXORA_KEK_FILE` (M3: RPZ TSIG secrets sealed by internal/secrets; M4 adds
   DNSSEC and TSIG keys), `NEXORA_PKCS11_MODULE` / `_TOKEN_LABEL` /
-  `_PIN_FILE` (M4). M11 (AI, see [AI (M11)](#ai-m11)): `NEXORA_AI_BASE_URL`,
+  `_PIN_FILE` (M4), `NEXORA_BOOTSTRAP_TOKEN_FILE`,
+  `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (`30s`) (M9: the operator's `nxt_`
+  admin token for the system user `nexora-operator`). M11 (AI, see [AI (M11)](#ai-m11)): `NEXORA_AI_BASE_URL`,
   `NEXORA_AI_MODEL`, `NEXORA_AI_API_KEY`, `NEXORA_AI_ALLOW_PUBLIC_ENDPOINT` (`false`),
   `NEXORA_AI_STRUCTURED_OUTPUT` (`json_schema` | `prompt`), `NEXORA_AI_MAX_TOKENS` (`16384`),
   `NEXORA_AI_TEMPERATURE` (`0.2`), `NEXORA_AI_TIMEOUT` (`180s`),
@@ -724,6 +730,166 @@ The build is embedded into `nexora-mgmt`.
   `deploy/deploytest`.
 - CLI: `nexora-mgmt engine-group create`, `nexora-mgmt join-token create`,
   `nexora-mgmt ca init --if-missing`.
+
+## Platform (M9)
+
+### Operator module
+
+- `operator/` is its own Go module `github.com/piwi3910/nexora/operator`
+  (Go 1.27, controller-runtime v0.25.0, k8s.io v0.37.0, Helm SDK v3.21.4), so
+  the root `go.mod` gains no Kubernetes dependency. `operator/go.mod` lists
+  every dependency; `operator/tools.go` pins modules later packages import.
+  - `api/v1alpha1/`: CRD types, condition types and reasons, generated
+    deepcopy.
+  - `cmd/nexora-operator/`: the manager (flags `--chart-dir`
+    `/charts/nexora`, `--watch-namespaces`, `--leader-elect`,
+    `--leader-election-namespace`, `--metrics-bind-address` `:8080`,
+    `--health-probe-bind-address` `:8081`, `--resync-interval` `60s`;
+    subcommand `version`; leader election id `nexora-operator.nexora.io`).
+  - `internal/version` (stamped with `-X`), `internal/envtestutil` (envtest
+    with `deploy/operator/crds`), `internal/keys`, `internal/mgmtapi` (client
+    generated from `mgmt/api/openapi.yaml`, plus `fake/`), `internal/render`,
+    `internal/controller/{installation,enginegroup}`.
+- `make operator-generate` (laptop) runs controller-gen v0.20.1 into
+  `operator/api/v1alpha1/zz_generated.deepcopy.go` and
+  `deploy/operator/crds/`, copies the CRDs into
+  `deploy/helm/nexora-operator/crds/`, and regenerates the API client and
+  `deploy/operator/operator.yaml` once they exist. `make operator-test` runs
+  the module's tests with envtest assets for Kubernetes 1.34 from
+  setup-envtest v0.25.0. The CI job `operator` runs gofmt, vet, the tests and
+  fails on generated drift.
+- Installed by `deploy/helm/nexora-operator` (CRDs in `crds/`, RBAC scope
+  `cluster` or `namespace`, leader election) or the plain manifests
+  `deploy/operator/crds/` and `deploy/operator/operator.yaml`, rendered from
+  that chart. A separate chart keeps CRDs and cluster RBAC out of existing
+  `deploy/helm/nexora` releases.
+
+### CRDs
+
+- API group `nexora.io`, version `v1alpha1`, both namespaced, category
+  `nexora`.
+- `NexoraInstallation` (`nxi`): `spec` mirrors `deploy/helm/nexora/values.yaml`
+  with identical JSON names (`image`, `imagePullSecrets`, `mgmt`, `database`,
+  `engine`, `otelCollector`, `metrics`). Booleans and integers are pointers and
+  strings `omitempty`, and the CRD sets no defaults on values fields, so an
+  unset field is absent from the values and `values.yaml` stays the single
+  source of defaults. The operator injects and the CRD omits
+  `mgmt.bootstrapToken`, `engine.groups[].joinTokenSecret`/`joinTokenKey` and
+  `metrics.*.namespace`; `engine.groups[].engineGroupRef` (default: the group
+  `name`) names the `NexoraEngineGroup` supplying the join token. CEL rules
+  reject what the chart's `required`/`fail` rejects without looking at other
+  objects (external mode without a Secret, opensearch without a URL, backups
+  without a destination or credentials); groups and instances are map lists
+  keyed by `name` (at most 64). `status`: `observedGeneration`, `version`,
+  `managementURL`, `secrets{ca,kek,operatorToken}`, `workloads[]` and
+  conditions `Rendered`, `DatabaseReady`, `ManagementReady`, `SetupRequired`,
+  `EnginesReady`, `Ready`.
+- `NexoraEngineGroup` (`nxeg`): `installationRef.name` and `groupName`
+  (immutable, CEL), optional group fields (`description`, `upstreamMode`,
+  `extraACLCIDRs`, `otlpEndpoint`, `filterIndexMaxBytes`, `rollout{…}`),
+  `joinToken{secretName,ttl,renewBefore,revokeGracePeriod,maxUses,labels}`
+  (ttl 1m–8760h, renewBefore < ttl) and `deletionPolicy` (`Retain`, `Delete`).
+  `status`: `groupID`, `revision`, `engineCount`, the current and previous
+  join token and conditions `Synced`, `JoinTokenReady`, `Ready`.
+
+### Installation reconcile
+
+- Loop: resolve engine groups → build values → render → own → apply → prune →
+  status.
+  - Values: the spec as JSON minus every `engineGroupRef`, with
+    `engine.groups` always set to the resolved list, the CA, KEK and bootstrap
+    token Secrets, `image.tag` (default: the operator's stamped version; `dev`
+    without a tag is `ImageTagRequired`) and empty metrics namespaces.
+  - Render: the Helm SDK renders the Nexora chart in-process (release name =
+    CR name, namespace = CR namespace, `Release.Service` `nexora-operator`,
+    API versions from discovery). A chart error sets `Rendered=False`
+    (`RenderFailed`) and changes nothing; an object in another namespace is
+    refused (`ForeignNamespace`).
+  - Own: the label `nexora.io/installation: <name>` on top-level metadata
+    and a controller owner reference on every object except the CNPG
+    `Cluster`.
+  - Apply: server-side apply with field manager `nexora-operator` and force,
+    ordered ConfigMap, Service, Cluster, ScheduledBackup,
+    PodDisruptionBudget, Deployment, DaemonSet, Ingress, ServiceMonitor,
+    PrometheusRule.
+  - Prune: only after every object applied, list each served managed kind by
+    the installation label and delete what was not rendered, never a
+    `Cluster`.
+- Retained state: the CNPG `Cluster` and the Secrets `<name>-ca`
+  (`ca.crt`, `ca.key`, ECDSA P-256 CA), `<name>-kek` (`kek`) and
+  `<name>-operator-token` (`token`, `nxt_…`) carry the label but no owner
+  reference. The operator creates missing Secrets, never overwrites or deletes
+  them, and reports a Secret missing a key as `SecretIncomplete`.
+- Engine group gating: a group renders engines only when its
+  `NexoraEngineGroup` references this installation and has
+  `JoinTokenReady=True`; its Secret (`status.joinTokenSecret`) becomes the
+  group's `joinTokenSecret`. Otherwise `EnginesReady=False`
+  (`JoinTokenPending`) while mgmt and other groups render, so a fresh install
+  needs no second phase.
+- `status.managementURL` is `http://<rendered mgmt Service>.<namespace>.svc:8080`.
+
+### Engine group reconcile
+
+- Calls the management API with the operator token (from
+  `status.secrets.operatorToken`) only when the installation has
+  `ManagementReady=True`. It creates or adopts the group by name (including
+  `default`). Managed fields: only fields set in the CR; an update sends the
+  current group overlaid with those fields and the current `revision`, only
+  when the overlay differs, and a 409 re-reads and retries. A second CR with
+  the same `groupName` for one installation gets `DuplicateGroupName`.
+- Join token rotation: a token named
+  `op/<cr uid>/<unix seconds>/<namespace>/<cr name>` (cut to 64 characters)
+  is written to the CR-owned Secret key `join-token` when the Secret is
+  missing, the recorded token is not `active`, or it expires within
+  `renewBefore`; the previous token is revoked after `revokeGracePeriod`.
+  An older token carrying the `op/<cr uid>/` marker that status does not
+  record (a failed status write) is revoked on the next reconcile.
+- Finalizer `nexora.io/engine-group`: `Retain` revokes the CR's tokens and
+  keeps the group; `Delete` also deletes it (never `default`; 409 keeps the
+  finalizer with `DeletionBlocked`); a missing installation removes the
+  finalizer without API calls. Both controllers take `Now func() time.Time`.
+
+### Bootstrap token and system users
+
+- `NEXORA_BOOTSTRAP_TOKEN_FILE` (optional, an `nxt_` token) and
+  `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (default `30s`). At start and every
+  interval, `auth.Service.EnsureBootstrapToken` runs in one transaction under
+  `pg_advisory_xact_lock(hashtext('nexora:bootstrap_token'))`: the user
+  `nexora-operator` (source `system`, role `admin`, no password) exists, one
+  unrevoked admin API token `bootstrap` with that hash exists, and other
+  unrevoked `bootstrap` tokens are revoked. A change audits
+  `ensureBootstrapToken`; errors count in
+  `nexora_mgmt_bootstrap_token_errors_total`.
+- Migration `01000_system_users.sql` allows `users.source = 'system'`. Setup
+  checks and the last-admin rule ignore system users; `updateUser` and
+  `deleteUser` on one return 409 `system_user`, and login fails.
+- The chart value `mgmt.bootstrapToken.existingSecret` (key `token`) mounts
+  the Secret at `/etc/nexora/bootstrap-token` and sets the env; the operator
+  sets it to `<name>-operator-token`.
+
+### CNPG values
+
+- `database.cnpg`: `instances`, `antiAffinity` (`preferred`/`required`, into
+  `spec.affinity`), `primaryUpdateMethod` (`switchover`/`restart`, with
+  `primaryUpdateStrategy: unsupervised`), `resources`,
+  `postgresql.parameters`. Failover needs no management-plane logic: mgmt
+  connects through `<clusterName>-app` (the `-rw` Service).
+- `database.cnpg.smartShutdownTimeout` (default 30, CNPG's own default is 180)
+  is the seconds a shutting-down primary waits for open client sessions before
+  CNPG asks PostgreSQL for a fast shutdown. With 180 a graceful primary
+  deletion took 3m6s on kw, past the 120 s failover target, because the
+  management plane holds pooled sessions. The pool closes an idle session
+  within 45 s (`MaxConnIdleTime` 30 s, health check 15 s) and recycles a
+  connection after 30 minutes, so few sessions are left to wait for. Raise the
+  timeout only when long-running transactions must finish; keep it well below
+  CNPG's `stopDelay` (1800).
+- `database.cnpg.backup` renders `spec.backup.barmanObjectStore` and
+  `retentionPolicy`, plus a `ScheduledBackup` `<clusterName>-scheduled`
+  (`method: barmanObjectStore`). `database.cnpg.recovery` renders
+  `bootstrap.recovery` from `externalClusters[0]` `backup-source` instead of
+  `initdb`, defaulting to the backup values, and fails on an archive
+  collision. The in-tree `barmanObjectStore` is used because kw's CNPG 1.29.1
+  has no Barman Cloud plugin.
 
 ## Deployment on kw
 

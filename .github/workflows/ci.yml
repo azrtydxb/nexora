@@ -74,6 +74,32 @@ jobs:
       - run: go build -o bin/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
       - run: go test -race -count=1 ./mgmt/... ./gen/... ./bench/...
 
+  operator:
+    runs-on: arc-azrtydxb
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    timeout-minutes: 30
+    steps:
+      - name: Trust the cluster CA
+        run: |
+          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
+          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
+            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: gofmt
+        run: test -z "$(gofmt -l operator | tee /dev/stderr)"
+      - run: cd operator && go vet ./...
+      - run: make operator-test
+      - name: Generated operator files are up to date
+        run: make operator-generate && git diff --exit-code -- operator deploy/operator deploy/helm/nexora-operator
+
   web:
     runs-on: arc-azrtydxb
     container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }

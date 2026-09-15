@@ -123,7 +123,7 @@ func hashToken(token string) []byte {
 	return sum[:]
 }
 
-// EnsureSetupToken creates the single setup token when no user exists. created is true only for
+// EnsureSetupToken creates the single setup token when no human user exists. created is true only for
 // the caller whose insert took effect; that caller must show the token to the operator.
 func (s *Service) EnsureSetupToken(ctx context.Context, instanceID string) (string, bool, error) {
 	var token string
@@ -131,7 +131,7 @@ func (s *Service) EnsureSetupToken(ctx context.Context, instanceID string) (stri
 	err := s.st.InTx(ctx, func(tx pgx.Tx) error {
 		token, created = "", false
 		var users int
-		if err := tx.QueryRow(ctx, "select count(*) from users").Scan(&users); err != nil {
+		if err := tx.QueryRow(ctx, "select count(*) from users where source <> 'system'").Scan(&users); err != nil {
 			return err
 		}
 		if users > 0 {
@@ -157,10 +157,10 @@ func (s *Service) EnsureSetupToken(ctx context.Context, instanceID string) (stri
 	return token, created, nil
 }
 
-// SetupRequired reports whether no user exists yet.
+// SetupRequired reports whether no human user (any source but system) exists yet.
 func (s *Service) SetupRequired(ctx context.Context) (bool, error) {
 	var users int
-	if err := s.st.Pool.QueryRow(ctx, "select count(*) from users").Scan(&users); err != nil {
+	if err := s.st.Pool.QueryRow(ctx, "select count(*) from users where source <> 'system'").Scan(&users); err != nil {
 		return false, store.MapError(err)
 	}
 	return users == 0, nil
@@ -175,7 +175,7 @@ func (s *Service) CompleteSetup(ctx context.Context, token, username, email, pas
 			return err
 		}
 		var users int
-		if err := tx.QueryRow(ctx, "select count(*) from users").Scan(&users); err != nil {
+		if err := tx.QueryRow(ctx, "select count(*) from users where source <> 'system'").Scan(&users); err != nil {
 			return err
 		}
 		if tag.RowsAffected() != 1 || users > 0 {
@@ -215,7 +215,7 @@ var (
 )
 
 // Login verifies a local user's password and creates a session. Unknown users, users without a
-// password (OIDC) and disabled users all yield ErrInvalidCredentials after the same argon2 work,
+// password (OIDC, system) and disabled users all yield ErrInvalidCredentials after the same argon2 work,
 // and each such failure counts against username and client (the caller's address). More than
 // maxAuthFailures within authFailureWindow yield ErrTooManyAttempts before any password check.
 func (s *Service) Login(ctx context.Context, username, password, client string) (string, User, error) {
@@ -227,7 +227,7 @@ func (s *Service) Login(ctx context.Context, username, password, client string) 
 	if err = store.MapError(err); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return "", User{}, err
 	}
-	if err != nil || hash == nil {
+	if err != nil || hash == nil || u.Source == "system" {
 		dummyHashOnce.Do(func() { dummyHash, _ = HashPassword("nexora-dummy-password") })
 		_, _ = VerifyPassword(dummyHash, password)
 		return "", User{}, s.failed(ctx, username, client, ErrInvalidCredentials)

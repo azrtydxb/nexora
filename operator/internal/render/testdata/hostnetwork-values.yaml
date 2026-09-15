@@ -1,0 +1,15 @@
+# Task 6 TestRenderMatchesHelmTemplate: external database, host-network engine Deployment, collector.
+mgmt:
+  ca: { existingSecret: nexora-ca }
+database:
+  mode: external
+  external: { existingSecret: nexora-db }
+engine:
+  kind: Deployment
+  hostNetwork: true
+  groups:
+    - name: default
+      replicas: 2
+      joinTokenSecret: jt
+otelCollector:
+  enabled: true

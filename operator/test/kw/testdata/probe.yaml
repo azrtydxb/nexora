@@ -1,0 +1,32 @@
+# The in-cluster client of the operator e2e: dig, dnsperf, curl and psql, with the MinIO credentials of
+# Secret optest-s3 at /s3. Pinned to the engine nodes of the run (never master-12 or master-13).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe
+  labels:
+    nexora.io/e2e: operator
+spec:
+  terminationGracePeriodSeconds: 1
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values: [worker-21, worker-22, worker-23]
+  containers:
+    - name: probe
+      image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-1
+      command: ["sleep", "infinity"]
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { cpu: "1", memory: 512Mi }
+      volumeMounts:
+        - { name: s3, mountPath: /s3, readOnly: true }
+  volumes:
+    - name: s3
+      secret:
+        secretName: optest-s3
+        defaultMode: 0400

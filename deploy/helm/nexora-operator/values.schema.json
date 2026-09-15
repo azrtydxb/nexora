@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["image", "rbac"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["registry"],
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "replicas": { "type": "integer", "minimum": 1 },
+    "rbac": {
+      "type": "object",
+      "required": ["scope"],
+      "properties": { "scope": { "enum": ["cluster", "namespace"] } }
+    },
+    "watchNamespaces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+        "maxLength": 63
+      },
+      "uniqueItems": true
+    },
+    "leaderElection": { "type": "boolean" },
+    "createNamespace": { "type": "boolean" },
+    "resources": { "type": "object" }
+  }
+}

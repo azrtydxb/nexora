@@ -1,0 +1,19 @@
+# The engine groups of the operator e2e installation nexora-optest.
+apiVersion: nexora.io/v1alpha1
+kind: NexoraEngineGroup
+metadata:
+  name: default
+spec:
+  installationRef:
+    name: nexora-optest
+  groupName: default
+---
+apiVersion: nexora.io/v1alpha1
+kind: NexoraEngineGroup
+metadata:
+  name: edge
+spec:
+  installationRef:
+    name: nexora-optest
+  description: optest edge
+  deletionPolicy: Delete

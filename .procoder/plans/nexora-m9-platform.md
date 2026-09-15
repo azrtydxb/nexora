@@ -93,7 +93,7 @@ and nexora.io/metrics=true>.<namespace>.svc:8080`. The chart's prefix helper is 
   `ManagementReady=True`. The token is read from the Secret named in `status.secrets.operatorToken`.
   - Updates always send the full current group overlaid with the fields set in the CR, and only when
     the overlay differs.
-  - Join token name: `op/<namespace>/<cr name>/<unix seconds>`, cut to 64 characters.
+  - Join token name: `op/<cr uid>/<unix seconds>/<namespace>/<cr name>`, cut to 64 characters.
 - **Clock:** both controllers have `Now func() time.Time`. Tests call `Reconcile` directly against
   envtest, with no manager, so fake clocks are deterministic.
 - **Bootstrap token in the management plane:** `auth.Service.EnsureBootstrapToken(ctx, token)` runs in
@@ -311,7 +311,7 @@ type EngineSpec struct {
 }
 type EngineGroupSpec struct {
 	Name string // required, pattern ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
-	EngineGroupRef, WorkloadName, NodeNamePrefix string; Replicas *int32
+	EngineGroupRef, WorkloadName string; NodeNamePrefix *string /* pointer: "" differs from unset */; Replicas *int32
 	NodeAffinity *corev1.NodeAffinity; Service *ServiceSpec; ExtraServices []ServiceSpec
 	Instances []EngineInstanceSpec // +listType=map +listMapKey=name +MaxItems=64
 }
@@ -366,18 +366,21 @@ const (
 
 The CEL rules (markers on the named types; the messages are the literal strings the tests match):
 
-| Type                    | Rule                                                                                                                                             | Message                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `DatabaseSpec`          | `!has(self.mode) \|\| self.mode != 'external' \|\| (has(self.external.existingSecret) && self.external.existingSecret != '')`                    | `database.external.existingSecret is required when database.mode=external`       |
-| `QuerylogSpec`          | `!has(self.backend) \|\| self.backend != 'opensearch' \|\| (has(self.opensearch.url) && self.opensearch.url != '')`                              | `mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch` |
-| `CNPGBackupSpec`        | `!has(self.enabled) \|\| !self.enabled \|\| (has(self.destinationPath) && self.destinationPath != '' && has(self.s3Credentials.existingSecret))` | `database.cnpg.backup needs destinationPath and s3Credentials.existingSecret`    |
-| `JoinTokenSpec`         | `!has(self.ttl) \|\| (duration(self.ttl) >= duration('1m') && duration(self.ttl) <= duration('8760h'))`                                          | `joinToken.ttl must be between 1m and 8760h`                                     |
-| `JoinTokenSpec`         | `!has(self.ttl) \|\| !has(self.renewBefore) \|\| duration(self.renewBefore) < duration(self.ttl)`                                                | `joinToken.renewBefore must be less than joinToken.ttl`                          |
-| `NexoraEngineGroupSpec` | `has(self.groupName) == has(oldSelf.groupName) && (!has(self.groupName) \|\| self.groupName == oldSelf.groupName)`                               | `groupName is immutable`                                                         |
-| `NexoraEngineGroupSpec` | `self.installationRef.name == oldSelf.installationRef.name`                                                                                      | `installationRef is immutable`                                                   |
+| Type                    | Rule                                                                                                                                                 | Message                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `DatabaseSpec`          | `!has(self.mode) \|\| self.mode != 'external' \|\| (has(self.external.existingSecret) && size(self.external.existingSecret) > 0)`                    | `database.external.existingSecret is required when database.mode=external`       |
+| `QuerylogSpec`          | `!has(self.backend) \|\| self.backend != 'opensearch' \|\| (has(self.opensearch.url) && size(self.opensearch.url) > 0)`                              | `mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch` |
+| `CNPGBackupSpec`        | `!has(self.enabled) \|\| !self.enabled \|\| (has(self.destinationPath) && size(self.destinationPath) > 0 && has(self.s3Credentials.existingSecret))` | `database.cnpg.backup needs destinationPath and s3Credentials.existingSecret`    |
+| `JoinTokenSpec`         | `!has(self.ttl) \|\| (duration(self.ttl) >= duration('1m') && duration(self.ttl) <= duration('8760h'))`                                              | `joinToken.ttl must be between 1m and 8760h`                                     |
+| `JoinTokenSpec`         | `!has(self.ttl) \|\| !has(self.renewBefore) \|\| duration(self.renewBefore) < duration(self.ttl)`                                                    | `joinToken.renewBefore must be less than joinToken.ttl`                          |
+| `NexoraEngineGroupSpec` | `has(self.groupName) == has(oldSelf.groupName) && (!has(self.groupName) \|\| self.groupName == oldSelf.groupName)`                                   | `groupName is immutable`                                                         |
+| `NexoraEngineGroupSpec` | `self.installationRef.name == oldSelf.installationRef.name`                                                                                          | `installationRef is immutable`                                                   |
 
 `CNPGBackupSpec.S3Credentials` and `QuerylogSpec.Opensearch` and `DatabaseSpec.External` are
-non-pointer structs with `+kubebuilder:default={}` so `self.external` always exists in CEL.
+non-pointer structs with `+kubebuilder:default={}` so `self.external` always exists in CEL; so is
+`NexoraEngineGroupSpec.JoinToken`, so the join token duration defaults apply when `joinToken` is omitted.
+The rules use `size(x) > 0` instead of `x != ''`: gofmt rewrites `''` in doc comments to a typographic
+quote, which breaks the marker.
 `NexoraEngineGroupSpec.GroupName` has the pattern `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`.
 
 ```go
@@ -401,7 +404,7 @@ leader election id `nexora-operator.nexora.io`, and the subcommand `version` pri
 fields) and a manager, then calls `setupControllers(mgr, opts)`, a function in the same file that
 Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
 
-- [ ] Create `deploy/deploytest/platform_docs_test.go`:
+- [x] Create `deploy/deploytest/platform_docs_test.go`:
   ```go
   package deploytest
 
@@ -434,13 +437,13 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestArchitectureDocNamesPlatform -count=1'` and
   expect FAIL `docs/architecture.md lacks ## Platform (M9)`.
-- [ ] Write `## Platform (M9)` in `docs/architecture.md` after `## Fleet (M5)`: the module layout, both
+- [x] Write `## Platform (M9)` in `docs/architecture.md` after `## Fleet (M5)`: the module layout, both
       CRDs and their JSON-mirrors-values rule, the render → own → apply → prune → status loop, the
       retained kinds and Secrets, engine group gating, the engine group controller's managed-fields rule
       and join token rotation, the bootstrap token (`NEXORA_BOOTSTRAP_TOKEN_FILE`, system user,
       `01000_system_users.sql`), and the CNPG values (`barmanObjectStore`, ScheduledBackup, recovery).
       Add the three directories to the repository layout block. Run the test again and expect PASS.
-- [ ] Create `operator/go.mod` (`module github.com/piwi3910/nexora/operator`, `go 1.27`) and
+- [x] Create `operator/go.mod` (`module github.com/piwi3910/nexora/operator`, `go 1.27`) and
       `operator/tools.go`:
   ```go
   //go:build tools
@@ -461,10 +464,10 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   and expect a `go.sum` and no error. If Helm v3.21.4 does not compile against k8s.io v0.37.0
   (`go build ./...` error in `helm.sh/helm/v3/pkg/engine`), stop and report the error to the lead
   instead of changing versions.
-- [ ] Write the types, `groupversion_info.go`, `version.go`, `envtestutil.go`, `main.go` and the two
+- [x] Write the types, `groupversion_info.go`, `version.go`, `envtestutil.go`, `main.go` and the two
       samples exactly as in Interfaces. The installation sample has group `default` with instances `a`
       and `b` on `node-1` and `node-2`, mode `cnpg` with backup enabled, and `image.tag: sha-0000000`.
-- [ ] Add to `Makefile`:
+- [x] Add to `Makefile`:
   ```make
   CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.1
   ENVTEST_K8S ?= 1.34.x
@@ -481,7 +484,7 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   and add both names to `.PHONY`. Run `make operator-generate` on the laptop and expect the deepcopy
   file and both CRD files in `deploy/operator/crds/` and `deploy/helm/nexora-operator/crds/`.
-- [ ] Create `operator/api/v1alpha1/validation_test.go`:
+- [x] Create `operator/api/v1alpha1/validation_test.go`:
   ```go
   package v1alpha1_test
 
@@ -605,11 +608,11 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   `go test ./api/... -run CRDValidation` inside the target's environment) and expect FAIL on
   `external-no-secret` (admitted). Add the markers from the table, run `make operator-generate`, and
   expect PASS.
-- [ ] Write `operator/internal/render/testdata/kw-installation.yaml`: `deploy/kw/values-kw.yaml` as a
+- [x] Write `operator/internal/render/testdata/kw-installation.yaml`: `deploy/kw/values-kw.yaml` as a
       `NexoraInstallation` named `nexora` in namespace `nexora`. Leave out `mgmt.ca`, `mgmt.kek` and
       `engine.groups[].joinTokenSecret`, give group `default` `engineGroupRef: default`, and drop
       `metrics.*.namespace`. Every other key and value is the same.
-- [ ] Add the CI job to `.github/workflows/ci.yml` after `mgmt`, with the same container, timeout 30 and
+- [x] Add the CI job to `.github/workflows/ci.yml` after `mgmt`, with the same container, timeout 30 and
       the same "Trust the cluster CA", checkout and `safe.directory` steps, then:
   ```yaml
   - name: gofmt
@@ -621,7 +624,7 @@ Task 7 and Task 9 extend; Task 1 leaves its body `return nil`.
   ```
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run TestImagesWorkflow -count=1'` and expect
   PASS (the images workflow is unchanged).
-- [ ] Run `scripts/dev-exec.sh 'make operator-test'` and `scripts/dev-exec.sh 'cd operator && go vet ./... && go run ./cmd/nexora-operator version'`.
+- [x] Run `scripts/dev-exec.sh 'make operator-test'` and `scripts/dev-exec.sh 'cd operator && go vet ./... && go run ./cmd/nexora-operator version'`.
       Expect PASS and `nexora-operator dev`. Report the paths.
 
 ## Task 2: Management API contract: system users, error code, migration 01000
@@ -729,8 +732,10 @@ Interfaces:
       `{ $ref: "#/components/responses/Error" }` with the description line
       `# 409: stale revision, last admin, or system_user (system users are managed by automation)` as a
       YAML comment above it. Regenerate:
-      `cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml` and
-      `cd web && pnpm run gen:api`.
+      `cd mgmt/api && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml`
+      (v2.6.0 fails on this spec) and `cd web && pnpm run gen:api` (openapi-typescript 7.13.0). With a
+      third enum value the generator prefixes the constants: `api.UserSourceLocal`, `api.UserSourceOidc`,
+      `api.UserSourceSystem` (the old `api.Local`/`api.Oidc` had no users outside `gen.go`).
 - [ ] In `web/src/pages/UsersPage.tsx` replace
       `{u.source === "oidc" ? "Identity provider" : "Password"}` with
       `{u.source === "oidc" ? "Identity provider" : u.source === "system" ? "System" : "Password"}`.
@@ -913,20 +918,24 @@ BootstrapTokenReloadInterval time.Duration // NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTE
   ```
   Run `scripts/dev-exec.sh 'go test ./mgmt/internal/auth -run "Bootstrap|SystemUsers" -count=1'` and expect
   a build failure `undefined: auth.EnsureBootstrapToken` (method) and `auth.BootstrapUsername`.
-- [ ] Implement `mgmt/internal/auth/bootstrap.go`. In one `s.st.InTx`:
+- [ ] Implement `mgmt/internal/auth/bootstrap.go`. Validate `strings.HasPrefix(token, apiTokenPrefix)` and
+      `len(token) > len(apiTokenPrefix)+8` before any database work, else `ErrBootstrapTokenInvalid`. Then,
+      in one `s.st.InTx`:
   1. `select pg_advisory_xact_lock(hashtext('nexora:bootstrap_token'))`.
-  2. Validate `strings.HasPrefix(token, apiTokenPrefix)` and `len(token) > len(apiTokenPrefix)+8`, else
-     `ErrBootstrapTokenInvalid`.
+  2. (validation, done above).
   3. `select id, source from users where username = $1 for update`; a non-`system` row →
      `ErrBootstrapUserConflict`; no row → insert
      `(username, role, source, disabled) values ('nexora-operator', 'admin', 'system', false)`; an existing
      system row with `role <> 'admin' or disabled` → update to admin, not disabled.
-  4. When an unrevoked, unexpired token with `token_hash = hashToken(token)` exists for that user,
-     return `changed=false` unless step 3 wrote.
-  5. Otherwise insert `api_tokens(user_id, name, prefix, token_hash, role)` with name `bootstrap`,
-     prefix `token[:12]`, role `admin`. Then `update api_tokens set revoked_at = now() where user_id = $1
-and name = 'bootstrap' and revoked_at is null and token_hash <> $2`.
-  6. Write `WriteAudit(ctx, tx, Actor{Type: "system", ID: "bootstrap", Name: "bootstrap"},
+  4. Select the user's unrevoked, unexpired `bootstrap` token hashes and compare each with
+     `hashToken(token)` using `subtle.ConstantTimeCompare`.
+  5. When none matches, delete any stale (revoked or expired) row of that user with the same hash
+     (`token_hash` is unique, so a file rolled back to an old token would otherwise conflict), then insert
+     `api_tokens(user_id, name, prefix, token_hash, role)` with name `bootstrap`, prefix `token[:12]`,
+     role `admin`. In every case run `update api_tokens set revoked_at = now() where user_id = $1
+and name = 'bootstrap' and revoked_at is null and token_hash <> $2`. `changed` is true when step 3,
+     the insert or a revocation wrote; otherwise return without an audit row.
+  6. When `changed`, write `WriteAudit(ctx, tx, Actor{Type: "system", ID: "bootstrap", Name: "bootstrap"},
 Change{Action: "ensureBootstrapToken", TargetType: "user", TargetID: userID,
 After: map[string]any{"token_prefix": token[:12]}}, nil)`.
 
@@ -997,18 +1006,18 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run TestSystemUserIsReadOnlyInAPI -count=1'` and expect
   FAIL `update system user -> 200`.
 - [ ] In `handlers_admin.go`, after `lockUser` in `UpdateUser` and `DeleteUser`, return
-      `coded(http.StatusConflict, "system_user", "system users are managed by automation")` when
-      `before.Source == "system"`. Add `and source <> 'system'` to the query in `ensureOtherAdmin`. Run
+      `errSystemUser = coded(http.StatusConflict, "system_user", "system users are managed by automation")`
+      when `before.Source == "system"`. Add `and source <> 'system'` to the query in `ensureOtherAdmin`. Run
       and expect PASS. If the delete of the self-admin answers 409 with a different code because it is
       the caller's own account, keep the assertion on 409 only, as written.
 - [ ] Add `TestConfigBootstrapToken` to `mgmt/internal/config/config_test.go`: with only the required
       env set, `BootstrapTokenFile == ""` and `BootstrapTokenReloadInterval == 30*time.Second`;
-      `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL=500ms` gives an error mentioning
+      both set give those values; `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL=500ms` gives an error mentioning
       `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL`. Implement, and expect PASS.
 - [ ] In `main.go` `serve`, register `auth.BootstrapTokenErrors` next to `pki.DNSTLSReloadErrors`, and
       after `EnsureSetupToken` add
       `if cfg.BootstrapTokenFile != "" { go authSvc.RunBootstrapToken(ctx, cfg.BootstrapTokenFile, cfg.BootstrapTokenReloadInterval, logger.Printf) }`,
-      using the logger `serve` already uses.
+      using the logger `serve` already uses (`log.Printf`).
 - [ ] Create `e2e/bootstrap_token_test.go`:
   ```go
   package e2e
@@ -1040,7 +1049,7 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   	harness.EventuallyTrue(t, 10*time.Second, func() bool {
   		code, _ := api.Do(http.MethodGet, "/engine-groups", nil, nil)
   		return code == http.StatusOK
-  	})
+  	}, "the bootstrap token authenticates")
   	g := api.CreateEngineGroup(map[string]any{"name": "boot"})
   	join := api.CreateJoinTokenFor(g.ID, nil)
   	en := env.StartManagedEngine("boot-1", []string{mg.GRPCURL}, join)
@@ -1061,24 +1070,30 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
   	next.Bearer = second
   	harness.EventuallyTrue(t, 5*time.Second, func() bool {
   		oldCode, _ := api.Do(http.MethodGet, "/engine-groups", nil, nil)
-  		newCode, _ := next.Do(http.MethodPost, "/engine-groups", map[string]any{"name": "boot2"}, nil)
-  		return oldCode == http.StatusUnauthorized && newCode == http.StatusCreated
-  	})
+  		newCode, _ := next.Do(http.MethodGet, "/engine-groups", nil, nil)
+  		return oldCode == http.StatusUnauthorized && newCode == http.StatusOK
+  	}, "the rotated token replaces the old one")
+  	next.CreateEngineGroup(map[string]any{"name": "boot2"})
   }
   ```
   Run `scripts/dev-exec.sh 'make e2e-build && NEXORA_E2E_BIN_DIR=bin go test ./e2e -run TestBootstrapTokenFleetBootstrap -count=1'`.
   Expect PASS once the steps above are in; with the `main.go` step removed it fails in the first
-  `EventuallyTrue`. If `harness.EventuallyTrue`, `EngineView.Connected` or `EngineView.EngineGroupID` have
-  different names in `e2e/harness`, use the existing names.
+  `EventuallyTrue`. `harness.EventuallyTrue` takes a message argument. The rotation check polls with GET and
+  creates `boot2` once afterwards: a POST inside the poll would answer 409 on every retry after its first
+  success.
 - [ ] In `web/src/pages/UsersPage.tsx`, render the row actions only when `u.source !== "system"`. Create
       `web/e2e/screens/71-system-user.spec.ts`:
   ```ts
-  import { test, expect, login } from "../fixtures";
+  import { test, expect, env, login } from "../fixtures";
 
   test("system users show as System without edit or delete", async ({
     page,
   }) => {
-    await login(page);
+    await login(
+      page,
+      env("NEXORA_E2E_ADMIN_USER"),
+      env("NEXORA_E2E_ADMIN_PASSWORD"),
+    );
     await page.route("**/api/v1/users", async (route) => {
       const res = await route.fetch();
       const users = await res.json();
@@ -1091,7 +1106,6 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
         disabled: false,
         revision: 1,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
         display_name: "",
         last_login_at: null,
         preferences: {
@@ -1111,10 +1125,11 @@ After: map[string]any{"token_prefix": token[:12]}}, nil)`.
     await expect(admin.getByRole("button").first()).toBeVisible();
   });
   ```
-  Run `scripts/dev-exec.sh 'go test ./e2e -run TestGUICoverage/71-system-user -count=1'` (or the
-  project's Playwright invocation through `TestGUICoverage`). Expect FAIL on `toHaveCount(0)` before the
-  UsersPage change and PASS after. Adapt the mocked user fields to the `User` schema in
-  `web/src/api/schema.d.ts` if typecheck of the spec requires it.
+  `TestGUICoverage` has no per-spec subtests; run
+  `scripts/dev-exec.sh 'go test ./e2e -run "^TestGUICoverage$" -count=1 -timeout 40m'` (for a quick
+  red/green, a throwaway e2e test running `00-setup` then `71-system-user` through
+  `harness.RunPlaywright`, deleted afterwards). Expect FAIL on `toHaveCount(0)` (`unexpected value "2"`)
+  before the UsersPage change and PASS after.
 - [ ] Add `NEXORA_BOOTSTRAP_TOKEN_FILE` and `NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL` (`30s`) to the
       management environment list in `docs/architecture.md`. Run
       `scripts/dev-exec.sh 'go vet ./... && go test -race -count=1 ./mgmt/...'` and
@@ -1177,15 +1192,33 @@ database:
 ```
 
 Rendered objects: `Cluster.spec.affinity`, `spec.primaryUpdateStrategy: unsupervised`,
-`spec.primaryUpdateMethod`, `spec.resources`, `spec.postgresql.parameters`, `spec.backup`,
-`bootstrap.recovery` and `externalClusters`. The ScheduledBackup is named `<clusterName>-scheduled`.
-Mgmt env `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume `bootstrap-token`.
+`spec.primaryUpdateMethod`, `spec.smartShutdownTimeout`, `spec.resources`,
+`spec.postgresql.parameters`, `spec.backup`, `bootstrap.recovery` and `externalClusters`. The
+ScheduledBackup is named `<clusterName>-scheduled`. Mgmt env
+`NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume `bootstrap-token`.
 
-- [ ] Before editing any chart file, capture the golden render in the dev pod:
-      `scripts/dev-exec.sh 'helm template nexora deploy/helm/nexora --namespace nexora -f deploy/kw/values-kw.yaml --api-versions monitoring.coreos.com/v1 --set image.tag=golden > deploy/deploytest/testdata/kw-render.golden.yaml'`,
-      then copy the file back to the laptop (`kubectl cp` from the pod, or rerun the same command on
-      the laptop with `helm` and confirm `diff` shows no difference).
-- [ ] Create `deploy/deploytest/helm_cnpg_test.go`:
+As built (after the kw operator e2e, 2026-09-15):
+
+- `database.cnpg.smartShutdownTimeout` (added, default 30, integer `minimum: 0` in the schema) renders
+  `Cluster.spec.smartShutdownTimeout`. CNPG's own default (180) made a graceful primary deletion fail
+  over in 3m6s, past the 120 s target, because the smart shutdown waits for the management plane's
+  pooled sessions. The kw production render is unchanged (`deploy/kw/values-kw.yaml` uses
+  `database.mode: external`, so it renders no `Cluster`), and `TestHelmKwRenderUnchanged` still passes
+  against the unmodified golden. kw production's own `deploy/kw/cnpg-cluster.yaml` is out of scope for
+  M9 and still carries CNPG's default.
+- `TestHelmCNPGHighAvailability` checks the rendered default (30) and that a set value (120) reaches
+  the Cluster.
+- The management plane closes idle pooled sessions faster so fewer are left for the smart shutdown to
+  wait for: `store.Open` sets `MaxConnIdleTime` 30 s, `HealthCheckPeriod` 15 s, `MaxConnLifetime`
+  30 min and `MaxConnLifetimeJitter` 5 min (pgx's defaults are 30 min / 1 min / 1 h), so an idle
+  session is gone within 45 s. `TestOpenClosesIdleConnectionsQuickly` in `mgmt/internal/store`.
+
+- [x] Before editing any chart file, capture the golden render in the dev pod:
+      `scripts/dev-exec.sh 'helm template nexora deploy/helm/nexora --namespace nexora -f deploy/kw/values-kw.yaml --api-versions monitoring.coreos.com/v1 --set image.tag=golden' > deploy/deploytest/testdata/kw-render.golden.yaml`,
+      writing the file on the laptop (redirect the command's stdout there; a file written only in the pod is
+      removed by the next `dev-sync.sh --delete`). Do not regenerate it with the laptop's `helm`: Helm 4.1
+      emits different blank lines between documents than the pod's Helm 4.3, and the test runs in the pod.
+- [x] Create `deploy/deploytest/helm_cnpg_test.go`:
   ```go
   package deploytest
 
@@ -1352,10 +1385,12 @@ Mgmt env `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run "TestHelmKwRenderUnchanged|TestHelmCNPG|TestHelmBootstrapToken" -count=1'`.
   Expect PASS for `TestHelmKwRenderUnchanged` and FAIL for the other four (for example
   `antiAffinity = <nil>, want true`).
-- [ ] Add the values from Interfaces to `values.yaml` and their schema to `values.schema.json`:
+- [x] Add the values from Interfaces to `values.yaml` and their schema to `values.schema.json`:
       enums for `antiAffinity` and `primaryUpdateMethod`; `schedule` pattern
-      `^\\S+( \\S+){5}$`; `postgresql.parameters` as an object of strings.
-- [ ] Edit `templates/database-cnpg.yaml`:
+      `^\\S+( \\S+){5}$`; `postgresql.parameters` as an object of scalars
+      (`string`, `number` or `boolean`, because `--set ...max_connections=200` parses as a number; the
+      template always renders them as quoted strings).
+- [x] Edit `templates/database-cnpg.yaml`:
   - Always render `affinity: { enablePodAntiAffinity: true, topologyKey: kubernetes.io/hostname,
 podAntiAffinityType: <antiAffinity> }`, `primaryUpdateStrategy: unsupervised`,
     `primaryUpdateMethod`, `resources` (when non-empty) and `postgresql.parameters` (when non-empty,
@@ -1378,17 +1413,20 @@ podAntiAffinityType: <antiAffinity> }`, `primaryUpdateStrategy: unsupervised`,
     `owner: nexora`, `recoveryTarget.targetTime` when set) instead of `initdb`. Render
     `externalClusters: [{ name: backup-source, barmanObjectStore: { ... } }]` from the recovery values,
     each empty field falling back to `backup.*`, with
-    `required "database.cnpg.recovery.sourceServerName is required when database.cnpg.recovery.enabled"`.
+    `required "database.cnpg.recovery.sourceServerName is required when database.cnpg.recovery.enabled"`
+    (checked first), then `required` on the effective `destinationPath` and
+    `s3Credentials.existingSecret`. The object-store stanza shared by `backup` and `externalClusters`
+    is the `define "nexora.cnpgObjectStore"` at the top of the template.
     Fail with
     `database.cnpg.recovery.sourceServerName equals the backup serverName on the same destinationPath: the restored cluster would archive into the backup it restores from; set database.cnpg.backup.serverName`
     when backup is enabled, the effective paths are equal and the server names are equal.
-  - Add the comment
-    `# debt: in-tree barmanObjectStore (deprecated since CNPG 1.26, present in kw's 1.29.1); move to the Barman Cloud plugin when a CNPG release removes the field or the plugin is installed on kw.`
-- [ ] Edit `templates/mgmt-deployment.yaml`: with `mgmt.bootstrapToken.existingSecret`, add env
+  - Add the template comment (`{{- /* ... */}}`, so it stays out of the rendered output)
+    `debt: in-tree barmanObjectStore (deprecated since CNPG 1.26, present in kw's 1.29.1); move to the Barman Cloud plugin when a CNPG release removes the field or the plugin is installed on kw.`
+- [x] Edit `templates/mgmt-deployment.yaml`: with `mgmt.bootstrapToken.existingSecret`, add env
       `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, the mount
       `{ name: bootstrap-token, mountPath: /etc/nexora/bootstrap-token, readOnly: true }` and the volume
       `secret: { secretName: <value>, defaultMode: 0440 }`.
-- [ ] Add to `ci/lint-values.yaml`:
+- [x] Add to `ci/lint-values.yaml`:
   ```yaml
   cnpg:
     backup:
@@ -1468,7 +1506,7 @@ func (s *Server) SetTokenState(id uuid.UUID, state string, expiresAt time.Time)
 func (s *Server) SetHealth(ok bool, setupRequired bool)
 ```
 
-- [ ] Create `operator/internal/keys/keys_test.go`:
+- [x] Create `operator/internal/keys/keys_test.go`:
   ```go
   package keys_test
 
@@ -1576,7 +1614,7 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   ```
   Run `scripts/dev-exec.sh 'cd operator && go test ./internal/keys -count=1'` and expect a build failure
   (package `keys` does not exist). Implement `keys.go` and expect PASS.
-- [ ] Create `operator/internal/mgmtapi/oapi-codegen.yaml`:
+- [x] Create `operator/internal/mgmtapi/oapi-codegen.yaml`:
   ```yaml
   package: mgmtapi
   output: client.gen.go
@@ -1584,6 +1622,8 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
     client: true
     models: true
   output-options:
+    # The hand-written Client in client.go wraps the generated one.
+    client-type-name: rawClient
     include-operation-ids:
       [
         getHealth,
@@ -1599,7 +1639,9 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
       ]
   ```
   Run `make operator-generate` on the laptop and expect `client.gen.go` with `ClientWithResponses`.
-- [ ] Create `operator/internal/mgmtapi/client_test.go`:
+  `client-type-name: rawClient` renames the generated low-level `Client` type, which otherwise collides
+  with the hand-written `mgmtapi.Client`.
+- [x] Create `operator/internal/mgmtapi/client_test.go`:
   ```go
   package mgmtapi_test
 
@@ -1651,9 +1693,10 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   ```
   Run it and expect a build failure (`mgmtapi.New` undefined). Implement `client.go`: every method calls
   the generated `…WithResponse` method and maps non-2xx through `APIError` (decoding the JSON
-  `{code,message}`). A transport error is wrapped with `ErrUnavailable`. `SetupRequired` returns
+  `{code,message}`). A transport error, an undecodable response and a 2xx without its JSON body are
+  wrapped with `ErrUnavailable`. `SetupRequired` returns
   `SetupStatus.Required`. Expect PASS.
-- [ ] Create `operator/internal/mgmtapi/fake/fake_test.go`: `TestFakeServesEngineGroupsAndTokens` uses
+- [x] Create `operator/internal/mgmtapi/fake/fake_test.go`: `TestFakeServesEngineGroupsAndTokens` uses
       `mgmtapi.New(s.URL, s.Token, nil)`:
   1. lists `default`;
   2. creates `edge` (201, revision 1);
@@ -1665,10 +1708,12 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   7. `NonEmpty["edge"]` makes the delete fail with `ErrConflict`;
   8. deleting `default` gives 409 `engine_group_protected`.
 
+  `TestFakeKnobs` covers `SetHealth`, `ConflictOnce`, `MutateGroup`, `SetTokenState` and `Status`.
+
   Run and expect a build failure; implement `fake.go` (in-memory maps under a mutex, `httptest.NewServer`,
   closed by `t.Cleanup`) and expect PASS.
 
-- [ ] Run `scripts/dev-exec.sh 'make operator-test'` and `cd operator && go vet ./...`, and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'make operator-test'` and `cd operator && go vet ./...`, and expect PASS.
       Report the paths.
 
 ## Task 6: Rendering the Nexora chart from a NexoraInstallation
@@ -2011,9 +2056,19 @@ func Own(objs []*unstructured.Unstructured, owner metav1.Object, ownerGVK schema
   - group `default` with `joinTokenSecret: jt` and instances `a`/`b` on `node-1`/`node-2`, each with
     a ClusterIP service.
 
-  Write `testdata/hostnetwork-values.yaml`: external mode, `engine.hostNetwork: true`,
-  `engine.kind: Deployment`, group `default` with `replicas: 2` and `joinTokenSecret: jt`,
-  `otelCollector.enabled: true`.
+  Write `testdata/hostnetwork-values.yaml`: external mode (`external.existingSecret: nexora-db`),
+  `mgmt.ca.existingSecret: nexora-ca`, `engine.hostNetwork: true`, `engine.kind: Deployment`, group
+  `default` with `replicas: 2` and `joinTokenSecret: jt`, `otelCollector.enabled: true`.
+
+  As built: `BuildValues` removes empty maps from the marshalled spec (unset struct fields marshal to
+  `{}` despite `omitempty`; an empty map merges into the chart default unchanged). `Render` parses each
+  `SplitManifests` document with a trailing newline appended, as Helm writes manifests, so a trailing
+  block scalar (ConfigMap data) keeps its final newline.
+
+  Task 1 type change made here (lead decision): `TestValuesFromKwEquivalentInstallation` failed on
+  `engine.groups[0].nodeNamePrefix: ""`, which `values-kw.yaml` sets and `NodeNamePrefix string` with
+  `omitempty` dropped. `EngineGroupSpec.NodeNamePrefix` is now `*string`; `make operator-generate`
+  changed only `zz_generated.deepcopy.go` (the CRD schema is identical).
 
   Run the tests in the dev pod (which has `helm`) and expect a build failure. Implement
   `render.go` and `objects.go`, and expect PASS. `TestRenderMatchesHelmTemplate` fails when a
@@ -2094,7 +2149,45 @@ Deletion:
     30 s.
 - Then remove the finalizer.
 
-- [ ] Create `operator/internal/controller/enginegroup/controller_test.go`:
+As built (details the order above leaves open):
+
+- Status is written with a merge patch (`client.MergeFrom`), so a concurrent spec edit does not fail the
+  write. A failed `Synced` sets `Ready=False` with the same reason and leaves `JoinTokenReady` unchanged:
+  the Secret stays valid while the management plane is briefly unreachable.
+- `DuplicateGroupName` requeues after 30 s. A 400/422 refusal by the API, or a `rollout.maxServfailRatio`
+  that is not a decimal, sets `Synced=False` with reason `Conflict` and requeues after 30 s (the
+  reason list has no "invalid" reason). Kubernetes API errors are returned for controller-runtime's
+  backoff.
+- A token counts as current only when it is listed `active` for this group's id. `joinTokenExpiresAt`
+  is `now + ttl` on the controller clock at creation, so renewal uses one clock.
+- A rotation while a previous token is still in its grace period revokes that previous token at once
+  (one previous token is tracked); a token whose Secret write fails is revoked immediately.
+- No new join token is created while a token this CR owns could not be revoked (kw operator e2e: with
+  every `DELETE` answered 415 the controller created ~2500 tokens in nine minutes). Before creating,
+  `syncJoinToken` revokes every superseded token and the previous one; the first failure ends the
+  reconcile with `JoinTokenReady=False`, reason `JoinTokenRevokeFailed`, naming the token, and requeues
+  after 30 s. `Synced` stays `True` (the group is synced) and the Secret keeps the token it holds, so
+  engines that already read it keep enrolling. A revoke failure is no longer returned as an error.
+  `rotate` records the new token in `status` right after the Secret write, before anything else can
+  fail, so no created token can stay unrecorded and make the next reconcile create another.
+  `maxOwnedTokens` (3) is a hard ceiling on the active tokens carrying this CR's marker, counted from
+  the management plane rather than from status, so neither a reconcile storm nor a stale status can
+  pass it; past it `JoinTokenReady=False` with reason `JoinTokenLimit` and nothing is created.
+  `TestEngineGroupNeverMultipliesTokensWhenRevokeFails` (fake knob `RevokeStatus`) holds the count at 2
+  over 140 reconciles across renewals and proves the controller recovers once revocation works again.
+- Token names start with the marker `op/<cr uid>/`. Each reconcile revokes an active token of the group
+  that carries the marker, is neither `joinTokenID` nor `previousJoinTokenID`, and was created (API
+  `created_at`) before the recorded token: a token left unrecorded by a failed status write. A newer
+  marked token is kept, because a reconcile reading a stale cached status sees the recorded token as
+  unrecorded. `TestEngineGroupRevokesUnrecordedToken`.
+- Deletion revokes `joinTokenID`, `previousJoinTokenID` and every active token carrying the marker, in
+  any group (a failed first status write leaves `groupID` unrecorded too; the uid is unique to the CR).
+  `TestEngineGroupDeletionRevokesUnrecordedToken`.
+- Deletion deletes only the group whose id is `status.groupID`, looked up for its current revision, so
+  a `DuplicateGroupName` CR (no `groupID`) never deletes the group another CR manages.
+- The watch on `NexoraInstallation` enqueues every `NexoraEngineGroup` in its namespace referencing it.
+
+- [x] Create `operator/internal/controller/enginegroup/controller_test.go`:
 
   ```go
   package enginegroup_test
@@ -2448,7 +2541,7 @@ Deletion:
   Run `scripts/dev-exec.sh 'make operator-test'` and expect a build failure (package `enginegroup` does
   not exist). Implement `controller.go` and `token.go` per the reconcile order above, and expect PASS.
 
-- [ ] Register the controller in `setupControllers` in `main.go`:
+- [x] Register the controller in `setupControllers` in `main.go`:
   ```go
   if err := (&enginegroup.Reconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
   	ClientFor: enginegroup.DefaultClientFor(mgr.GetClient()), Now: time.Now}).SetupWithManager(mgr); err != nil {
@@ -2462,7 +2555,7 @@ Deletion:
 Files:
 
 - `deploy/docker/operator.Dockerfile`: created.
-- `.github/workflows/images.yml`: matrix entry `nexora-operator`.
+- `.github/workflows/images.yml`: matrix entries `nexora-operator` (build and merge).
 - `deploy/helm/nexora-operator/Chart.yaml`, `values.yaml`, `values.schema.json`, `.helmignore`: created.
 - `deploy/helm/nexora-operator/templates/_helpers.tpl`, `deployment.yaml`, `serviceaccount.yaml`,
   `rbac.yaml`, `namespace.yaml`, `NOTES.txt`: created. (`crds/` belongs to Task 1.)
@@ -2521,6 +2614,7 @@ Interfaces:
   - Namespace scope: Role plus RoleBinding `nexora-operator` in each watched namespace.
   - Leader election: Role `nexora-operator-leader-election` (`coordination.k8s.io` leases:
     `get, list, watch, create, update, patch, delete`) in the release namespace, always.
+    bound by RoleBinding `nexora-operator-leader-election` to the ServiceAccount.
 
 - [ ] Create `deploy/deploytest/operator_chart_test.go`:
   ```go
@@ -2648,8 +2742,10 @@ Interfaces:
 - [ ] Write the operator chart per Interfaces. `watchNamespaces` must be non-empty with namespace scope:
       `{{- if and (eq .Values.rbac.scope "namespace") (not .Values.watchNamespaces) }}{{ fail "watchNamespaces is required when rbac.scope=namespace" }}{{ end }}`.
       `Chart.yaml` has `name: nexora-operator`, `version: 0.1.0`, `appVersion: "main"`, `kubeVersion: ">=1.28.0-0"`.
-      Run `make operator-generate` on the laptop, which writes `deploy/operator/operator.yaml`. Run the
-      tests and expect PASS.
+      Generate `deploy/operator/operator.yaml` with the helm of the dev pod (the `helm template` line of
+      `make operator-generate`, run through `scripts/dev-exec.sh` with stdout redirected into the laptop file):
+      the laptop's helm 4.1 separates documents differently from the pod's and CI's helm 4.3, and CI
+      regenerates the file in the toolbox image. Run the tests and expect PASS.
 - [ ] Create `deploy/docker/operator.Dockerfile`:
   ```dockerfile
   # syntax=docker/dockerfile:1.10
@@ -2675,7 +2771,7 @@ Interfaces:
   ENTRYPOINT ["/nexora-operator"]
   ```
   Add `- { name: nexora-operator, file: deploy/docker/operator.Dockerfile }` to the `images.yml` build
-  matrix.
+  matrix, and `nexora-operator` to the `merge` job's image matrix (else no multi-arch tag is created).
 - [ ] In `workflow_test.go` add `"nexora-operator"` to the wanted images. In `buildinfo_test.go` add
       `"deploy/docker/operator.Dockerfile": {"ARG VERSION=dev", "ARG COMMIT=", "ARG BUILD_DATE=", "internal/version.Commit=${COMMIT}", "internal/version.BuildDate=${BUILD_DATE}", "COPY deploy/helm/nexora /charts/nexora"}`.
       Run those tests before editing the Dockerfile and workflow to see them FAIL
@@ -2699,6 +2795,9 @@ Files:
   `clusters.postgresql.cnpg.io` (v1, namespaced, `x-kubernetes-preserve-unknown-fields: true` on spec
   and status).
 - `operator/cmd/nexora-operator/main.go`: registers the controller and the healthz and readyz checks.
+- `deploy/helm/nexora/values.schema.json`: `engine.groups` loses `minItems: 1`. The operator renders
+  `engine.groups: []` while every group waits for its join token (S-5: the management plane renders
+  first), which the schema refused. An empty list renders no engine workload or ConfigMap.
 
 Interfaces:
 
@@ -2759,10 +2858,26 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
      - `RollingUpdate` when any workload has `observedGeneration < generation` or updated < desired;
      - `Unavailable` when ready < desired or desired == 0;
      - otherwise `True`.
-   - `Rendered=True` and `Ready`.
+   - `Rendered=True` and `Ready` (reason: the first false condition's reason among `Rendered`,
+     `DatabaseReady`, `ManagementReady`, `EnginesReady`).
    - `RequeueAfter: ResyncInterval`.
 
-- [ ] Create `operator/internal/controller/installation/controller_test.go`:
+As built:
+
+- Failures before apply (`SecretIncomplete`, `ImageTagRequired`, `RenderFailed`, `ForeignNamespace`) set
+  `Rendered=False` and `Ready=False`, write the status and requeue after `ResyncInterval` without an
+  error; no object changes. A failed apply sets the same conditions and also returns the error for
+  backoff, unless the API server refused the object as invalid. Kubernetes read/list failures set
+  `Ready=False` and return the error.
+- A named `mgmt.ca.existingSecret`/`mgmt.kek.existingSecret` that does not exist is `SecretIncomplete`.
+- `SetupRequired` is `Unknown` while `ManagementReady` is false; `DatabaseReady=False` uses reason
+  `Unavailable`. Zero engine workloads (no groups) count as `EnginesReady=True`.
+- A CR being deleted is not reconciled: owned objects go by garbage collection; the key Secrets and
+  the CNPG `Cluster` have no owner reference and stay.
+- `SetupWithManager` filters the `NexoraInstallation` watch with `GenerationChangedPredicate`, so the
+  controller's own status writes do not requeue it.
+
+- [x] Create `operator/internal/controller/installation/controller_test.go`:
   ```go
   package installation_test
 
@@ -3105,7 +3220,7 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
   `scripts/dev-exec.sh 'make operator-test'` and expect a build failure (package missing). Implement
   per the reconcile order, and expect PASS. The `401` case maps to `ManagementReady=False`; the reason
   is `Unauthorized` when `errors.Is(err, mgmtapi.ErrUnauthorized)`, else `ManagementUnavailable`.
-- [ ] Create `operator/internal/controller/installation/rbac_test.go`:
+- [x] Create `operator/internal/controller/installation/rbac_test.go`:
   ```go
   package installation_test
 
@@ -3215,7 +3330,7 @@ BootstrapTokenSecret, JoinTokenSecrets}`. `ErrImageTagRequired` → reason `Imag
   (Task 1's `envtestutil.Start` already installs `deploy/operator/crds/`.) Run and expect FAIL if any
   rendered kind is missing from Task 8's rules; fix the chart RBAC in a follow-up reported to the lead
   (Task 8 is committed), otherwise PASS.
-- [ ] Register in `setupControllers`:
+- [x] Register in `setupControllers`:
   ```go
   chart, err := render.LoadChart(opts.chartDir)
   if err != nil {
@@ -3271,368 +3386,755 @@ Interfaces:
 
 - [ ] Create `scripts/kw-operator-e2e.sh`:
   ```bash
-  #!/usr/bin/env bash
-  # Operator e2e on kw in the disposable namespace nexora-optest: build the three images, install the CRDs and
-  # the operator (namespace scope), run TestKwOperator from operator/test/kw, and clean up. Never touches the
-  # production namespace nexora or its addresses.
-  #   scripts/kw-operator-e2e.sh [--tag TAG] [--skip-build] [--keep]
-  set -euo pipefail
-  root="$(cd "$(dirname "$0")/.." && pwd)"
+
+  ```
+
+#!/usr/bin/env bash
+
+# Operator e2e on kw in the disposable namespace nexora-optest: build the three images, install the CRDs and
+
+# the operator (namespace scope), run TestKwOperator from operator/test/kw, and clean up. Never touches the
+
+# production namespace nexora or its addresses. The CRDs stay installed (cluster-scoped, unused by production).
+
+# scripts/kw-operator-e2e.sh [--tag TAG] [--skip-build] [--keep]
+
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
   ctx="${NEXORA_KW_CONTEXT:-kw}"
-  ns=nexora-optest
+ns=nexora-optest
+nodes="${NEXORA_OPTEST_NODES:-worker-21,worker-22,worker-23}"
   tag="sha-$(git -C "$root" rev-parse --short=7 HEAD)"
   build=1 keep=0
   while [ $# -gt 0 ]; do
-  	case "$1" in
-  	--tag) tag="$2"; shift 2 ;;
-  	--skip-build) build=0; shift ;;
-  	--keep) keep=1; shift ;;
-  	*) echo "usage: $0 [--tag TAG] [--skip-build] [--keep]" >&2; exit 2 ;;
+case "$1" in
+  	--tag)
+  		tag="$2"
+shift 2
+;;
+--skip-build)
+build=0
+shift
+;;
+--keep)
+keep=1
+shift
+;;
+*)
+echo "usage: $0 [--tag TAG] [--skip-build] [--keep]" >&2
+  		exit 2
+  		;;
   	esac
   done
-  [ "$ns" != nexora ] || { echo "refusing the production namespace" >&2; exit 2; }
+  [ "$ns" != nexora ] || {
+echo "refusing the production namespace" >&2
+exit 2
+}
+for node in ${nodes//,/ }; do
+  	case "$node" in master-12 | master-13)
+echo "node $node carries the production DNS addresses; refusing it" >&2
+  		exit 2
+  		;;
+  	esac
+  done
   k() { kubectl --context "$ctx" -n "$ns" "$@"; }
-  run="$(date +%Y%m%d%H%M%S)"
+run="$(date +%Y%m%d%H%M%S)"
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"' EXIT
 
-  if [ "$build" = 1 ]; then
-  	git -C "$root" worktree add --detach "$tmp/src" HEAD
-  	for img in engine mgmt operator; do
-  		"$root/scripts/build-image.sh" -f "deploy/docker/$img.Dockerfile" -n "nexora-$img" -t "$tag" "$tmp/src"
-  	done
-  	git -C "$root" worktree remove --force "$tmp/src"
-  fi
+if [ "$build" = 1 ]; then
+  	# The committed tree only (git archive), stamped with HEAD's commit through GIT_DIR.
+  	mkdir "$tmp/src"
+git -C "$root" archive HEAD | tar -x -C "$tmp/src"
+gitdir="$(git -C "$root" rev-parse --absolute-git-dir)"
+for img in engine mgmt operator; do
+GIT_DIR="$gitdir" "$root/scripts/build-image.sh" -f "deploy/docker/$img.Dockerfile" -n "nexora-$img" -t "$tag" "$tmp/src"
+done
+fi
 
-  if kubectl --context "$ctx" get namespace "$ns" >/dev/null 2>&1; then
-  	[ "$(kubectl --context "$ctx" get namespace "$ns" -o jsonpath='{.metadata.labels.nexora\.io/e2e}')" = operator ] ||
-  		{ echo "namespace $ns exists without label nexora.io/e2e=operator; refusing to reuse it" >&2; exit 1; }
-  else
-  	kubectl --context "$ctx" create namespace "$ns"
-  	kubectl --context "$ctx" label namespace "$ns" nexora.io/e2e=operator
-  fi
-  kubectl --context "$ctx" apply --server-side -f "$root/deploy/operator/crds/"
-  helm --kube-context "$ctx" upgrade --install nexora-operator "$root/deploy/helm/nexora-operator" -n "$ns" \
+if kubectl --context "$ctx" get namespace "$ns" >/dev/null 2>&1; then
+[ "$(kubectl --context "$ctx" get namespace "$ns" -o jsonpath='{.metadata.labels.nexora\.io/e2e}')" = operator ] ||
+  		{
+  			echo "namespace $ns exists without label nexora.io/e2e=operator; refusing to reuse it" >&2
+exit 1
+}
+else
+kubectl --context "$ctx" create namespace "$ns"
+kubectl --context "$ctx" label namespace "$ns" nexora.io/e2e=operator
+fi
+kubectl --context "$ctx" apply --server-side -f "$root/deploy/operator/crds/"
+helm --kube-context "$ctx" upgrade --install nexora-operator "$root/deploy/helm/nexora-operator" -n "$ns" \
   	--set image.tag="$tag" --set image.pullPolicy=Always --set rbac.scope=namespace --set-json "watchNamespaces=[\"$ns\"]" --wait
 
-  # MinIO credentials for the CNPG backup; never printed.
-  kubectl --context "$ctx" -n minio get secret minio-root -o json |
-  	jq '{apiVersion:"v1",kind:"Secret",metadata:{name:"optest-s3"},data:{ACCESS_KEY_ID:(.data["MINIO_ROOT_USER"] // .data["rootUser"]),ACCESS_SECRET_KEY:(.data["MINIO_ROOT_PASSWORD"] // .data["rootPassword"])}}' |
+# MinIO credentials for the CNPG backup; never printed.
+
+kubectl --context "$ctx" -n minio get secret minio-root -o json |
+  	jq '{apiVersion:"v1",kind:"Secret",metadata:{name:"optest-s3"},data:{ACCESS_KEY_ID:.data.MINIO_ROOT_USER,ACCESS_SECRET_KEY:.data.MINIO_ROOT_PASSWORD}}' |
   	k apply -f -
   k apply -f "$root/operator/test/kw/testdata/probe.yaml"
-  k wait --for=condition=Ready pod/probe --timeout=5m
-  k exec probe -- sh -c 'curl -fsS --aws-sigv4 "aws:amz:us-east-1:s3" --user "$(cat /s3/ACCESS_KEY_ID):$(cat /s3/ACCESS_SECRET_KEY)" -X PUT http://minio.minio.svc.cluster.local:9000/nexora-optest -o /dev/null -w "%{http_code}\n" | grep -Eq "^(200|409)$"'
+k wait --for=condition=Ready pod/probe --timeout=5m
 
-  status=0
-  (cd "$root/operator" && NEXORA_KW_CONTEXT="$ctx" NEXORA_OPTEST_NAMESPACE="$ns" NEXORA_OPTEST_TAG="$tag" \
-  	NEXORA_OPTEST_NODES="${NEXORA_OPTEST_NODES:-worker-21,worker-22,worker-23}" NEXORA_OPTEST_S3_PATH="s3://nexora-optest/$run" \
-  	go test -tags kwe2e -count=1 -timeout 90m -v ./test/kw -run TestKwOperator) || status=$?
+# Expanded by the probe's shell, which reads the credentials from the mounted Secret.
 
-  if [ "$keep" = 0 ]; then
-  	k exec probe -- sh -c "for key in \$(curl -fsS --aws-sigv4 aws:amz:us-east-1:s3 --user \"\$(cat /s3/ACCESS_KEY_ID):\$(cat /s3/ACCESS_SECRET_KEY)\" 'http://minio.minio.svc.cluster.local:9000/nexora-optest?list-type=2&prefix=$run/' | grep -o '<Key>[^<]*' | cut -c6-); do curl -fsS --aws-sigv4 aws:amz:us-east-1:s3 --user \"\$(cat /s3/ACCESS_KEY_ID):\$(cat /s3/ACCESS_SECRET_KEY)\" -X DELETE \"http://minio.minio.svc.cluster.local:9000/nexora-optest/\$key\"; done" || { echo "S3 prefix $run left behind" >&2; status=1; }
-  	for node in ${NEXORA_OPTEST_NODES:-worker-21 worker-22 worker-23}; do
-  		node=${node//,/ }
+# shellcheck disable=SC2016
+
+s3='curl -fsS --aws-sigv4 aws:amz:us-east-1:s3 --user "$(cat /s3/ACCESS_KEY_ID):$(cat /s3/ACCESS_SECRET_KEY)"'
+minio=http://minio.minio.svc.cluster.local:9000
+k exec probe -- sh -c "curl -sS --aws-sigv4 aws:amz:us-east-1:s3 --user \"\$(cat /s3/ACCESS_KEY_ID):\$(cat /s3/ACCESS_SECRET_KEY)\" -X PUT $minio/nexora-optest -o /dev/null -w '%{http_code}\n' | grep -Eq '^(200|409)$'"
+
+status=0
+(cd "$root/operator" && NEXORA_KW_CONTEXT="$ctx" NEXORA_OPTEST_NAMESPACE="$ns" NEXORA_OPTEST_TAG="$tag" \
+NEXORA_OPTEST_NODES="$nodes" NEXORA_OPTEST_S3_PATH="s3://nexora-optest/$run" \
+go test -tags kwe2e -count=1 -timeout 90m -v ./test/kw -run TestKwOperator) || status=$?
+
+if [ "$keep" = 0 ]; then
+  	# Order matters: the workloads and databases stop writing before their state is removed, and the
+  	# NexoraEngineGroup finalizers run while the operator is still installed.
+  	k delete nexorainstallations --all --wait=true --timeout=5m || status=1
+  	k wait --for=delete pod -l app.kubernetes.io/name=nexora-engine --timeout=5m || status=1
+  	k delete clusters.postgresql.cnpg.io --all --wait=true --timeout=5m || status=1
+  	k exec probe -- sh -c "set -e; for pass in 1 2 3; do keys=\$($s3 '$minio/nexora-optest?list-type=2&prefix=$run/' | grep -o '<Key>[^<]*' | cut -c6-) || exit 1; [ -n \"\$keys\" ] || break; for key in \$keys; do $s3 -X DELETE \"$minio/nexora-optest/\$key\"; done; done; [ -z \"\$($s3 '$minio/nexora-optest?list-type=2&prefix=$run/' | grep -o '<Key>')\" ]; $s3 -X DELETE $minio/nexora-optest || true" ||
+  		{
+  			echo "S3 prefix $run left behind" >&2
+status=1
+}
+for node in ${nodes//,/ }; do
   		sed "s/NODE/$node/g" "$root/operator/test/kw/testdata/cleanup-job.yaml" | k apply -f -
   	done
-  	k wait --for=condition=complete job -l nexora.io/e2e-cleanup=true --timeout=5m || { echo "node state cleanup incomplete" >&2; status=1; }
-  	helm --kube-context "$ctx" uninstall nexora-operator -n "$ns" || true
-  	kubectl --context "$ctx" delete namespace "$ns" --wait=true --timeout=10m
+  	k wait --for=condition=complete job -l nexora.io/e2e-cleanup=true --timeout=5m || {
+  		echo "node state cleanup incomplete" >&2
+  		status=1
+  	}
+  	k delete nexoraenginegroups --all --wait=true --timeout=5m || status=1
+  	helm --kube-context "$ctx" uninstall nexora-operator -n "$ns" --wait || true
+  	kubectl --context "$ctx" delete namespace "$ns" --wait=true --timeout=10m || status=1
   fi
   exit "$status"
-  ```
-  `probe.yaml` mounts Secret `optest-s3` at `/s3` (mode 0400). `cleanup-job.yaml` is a Job
-  `cleanup-NODE` pinned with `nodeName: NODE`, image `192.168.10.131/library/busybox:1.37`, running
-  `rm -rf /host/var/lib/nexora-optest` with hostPath `/var/lib/nexora-optest` mounted at
-  `/host/var/lib/nexora-optest`, and label `nexora.io/e2e-cleanup: "true"`. Split
-  `NEXORA_OPTEST_NODES` on commas once, before the loop. Adjust the MinIO Secret key names to the real
-  keys of `minio/minio-root`, found with
-  `kubectl --context kw -n minio get secret minio-root -o jsonpath='{.data}' | jq 'keys'`, which prints
-  names only.
+
+````
+`probe.yaml` mounts Secret `optest-s3` at `/s3` (mode 0400) and pins the pod to worker-21..23.
+`cleanup-job.yaml` is a Job `cleanup-NODE` pinned with `nodeName: NODE`, image
+`192.168.10.131/library/busybox:1.37`, running `rm -rf /host/var/lib/nexora-optest` with hostPath
+`/var/lib/nexora-optest`'s **parent** `/var/lib` mounted at `/host/var/lib` (a mount point cannot
+remove itself: mounting the state directory made every Job fail with `Device or resource busy`), and
+label `nexora.io/e2e-cleanup: "true"`. `NEXORA_OPTEST_NODES` is split on commas once, before the loop.
+The MinIO Secret `minio/minio-root` holds `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (found with
+`kubectl --context kw -n minio get secret minio-root -o jsonpath='{.data}' | jq 'keys'`, which prints
+names only).
+
+As built, differing from the draft above:
+- the build stage copies the committed tree with `git archive HEAD` instead of `git worktree add`
+  (no git state is written), and exports `GIT_DIR` so `build-image.sh` still stamps HEAD's commit;
+- cleanup runs in an order that lets it finish: delete the `NexoraInstallation`s, wait for the engine
+  pods, delete the CNPG `Cluster`s (nothing writes to S3 or the node directories any more), remove the
+  S3 prefix (and the bucket when it is empty), run the node Jobs, delete the `NexoraEngineGroup`s while
+  the operator is still installed (their finalizer needs it), then uninstall the operator and delete
+  the namespace.
 - [ ] Create `operator/test/kw/helpers_test.go` (`//go:build kwe2e`) with:
-  - `kubectl(t, args...) string` (runs `kubectl --context $NEXORA_KW_CONTEXT -n $ns`, fails the test on
-    error);
-  - `probe(t, stdin string, script string) string` (`kubectl exec -i probe -- sh -c script`);
-  - `apiCall(t, method, path string, body any, out any) int`: reads the token from Secret
-    `nexora-optest-operator-token` with the controller-runtime client and runs, in the probe,
-    `read -r T; curl -sS -o /tmp/out -w '%{http_code}' -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -X METHOD --data @- http://nexora-optest-mgmt.nexora-optest.svc:8080/api/v1PATH; cat /tmp/out`,
-    with the token on the first stdin line and the JSON body after it;
-  - `newClient(t) client.Client` (`config.GetConfigWithContext(ctx)` plus the v1alpha1 scheme);
-  - `waitFor(t, timeout, what string, cond func() (bool, error))`;
-  - `condTrue(inst, typ) bool`;
-  - `dnsperf(t, serviceIP string, seconds int) (lost int, noerror bool)` running
-    `printf 'www.optest.nexora.test. A\n' > /tmp/q-$$; dnsperf -s IP -d /tmp/q-$$ -Q 5 -l SECONDS -t 2`
-    in the probe and parsing `Queries lost:` and `NOERROR`.
+- `kubectl(t, args...) string` (runs `kubectl --context $NEXORA_KW_CONTEXT -n $ns`, fails the test on
+  error);
+- `probe(t, stdin string, script string) string` (`kubectl exec -i probe -- sh -c script`);
+- `apiCall(t, method, path string, body any, out any) int`: reads the token from Secret
+  `nexora-optest-operator-token` with the controller-runtime client and runs, in the probe,
+  `read -r T; curl -sS -o /tmp/out -w '%{http_code}' -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -X METHOD --data @- http://nexora-optest-mgmt.nexora-optest.svc:8080/api/v1PATH; cat /tmp/out`,
+  with the token on the first stdin line and the JSON body after it;
+- `newClient(t) client.Client` (`config.GetConfigWithContext(ctx)` plus the v1alpha1 scheme);
+- `waitFor(t, timeout, what string, cond func() (bool, error))`;
+- `condTrue(inst, typ) bool`;
+- `dnsperf(t, serviceIP string, seconds int) (lost int, noerror, aborted bool)` running
+  `printf 'www.optest.nexora.test. A\n' > $q; dnsperf -s IP -d $q -Q 5 -l SECONDS -t 2`
+  in the probe and parsing `Queries lost:`, `Queries completed:` and the response codes; `aborted` is
+  true (no test error) only when dnsperf died with `Software caused connection abort`, any other failure
+  is a test error;
+- `digLoop(t, serviceIP string, seconds int) (probeResult, bool)`: the authoritative zero-loss probe.
+  5 queries/s, each from a fresh `dig +short +tries=1 +time=2` (a fresh socket per query), counting
+  every query that did not answer `192.0.2.10` (timeout, refusal, a socket destroyed in flight, a wrong
+  answer). `probeResult` also carries the queries sent, the first and last send (Unix seconds) and the
+  longest gap between two sends in whole seconds, so the subtest can prove the probe sent continuously
+  across the whole roll (see the kw finding below);
+- `updateRetry(t, c, key, obj, mutate)`, which retries on the conflicts the operator's status writes
+  cause;
+- `kubectlErr`/`probeErr`, the error-returning forms the dnsperf and dig goroutines use (`t.Fatal` is
+  not allowed off the test goroutine).
 - [ ] Create `operator/test/kw/kw_operator_test.go`:
 
-  ```go
-  //go:build kwe2e
+```go
+//go:build kwe2e
 
-  package kw_test
+package kw_test
 
-  import (
-  	"context"
-  	"os"
-  	"strings"
-  	"sync"
-  	"testing"
-  	"time"
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
 
-  	appsv1 "k8s.io/api/apps/v1"
-  	corev1 "k8s.io/api/core/v1"
-  	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-  	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-  	"k8s.io/apimachinery/pkg/types"
-  	"sigs.k8s.io/controller-runtime/pkg/client"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-  	"github.com/piwi3910/nexora/operator/api/v1alpha1"
-  	"github.com/piwi3910/nexora/operator/internal/render"
-  )
+	"github.com/piwi3910/nexora/operator/api/v1alpha1"
+	"github.com/piwi3910/nexora/operator/internal/render"
+)
 
-  func TestKwOperator(t *testing.T) {
-  	ns := os.Getenv("NEXORA_OPTEST_NAMESPACE")
-  	nodes := strings.Split(os.Getenv("NEXORA_OPTEST_NODES"), ",")
-  	c := newClient(t)
-  	ctx := context.Background()
-  	key := types.NamespacedName{Namespace: ns, Name: "nexora-optest"}
-  	var inst v1alpha1.NexoraInstallation
+func TestKwOperator(t *testing.T) {
+	ns := os.Getenv("NEXORA_OPTEST_NAMESPACE")
+	nodes := strings.Split(os.Getenv("NEXORA_OPTEST_NODES"), ",")
+	ctx := context.Background()
+	key := types.NamespacedName{Namespace: ns, Name: "nexora-optest"}
+	var inst v1alpha1.NexoraInstallation
 
-  	t.Run("guards", func(t *testing.T) {
-  		if ns != "nexora-optest" {
-  			t.Fatalf("namespace %q: the operator e2e runs only in nexora-optest", ns)
-  		}
-  		for _, n := range nodes {
-  			if n == "master-12" || n == "master-13" {
-  				t.Fatalf("node %s carries the production DNS addresses", n)
-  			}
-  		}
-  		manifest := loadInstallation(t) // testdata/installation.yaml with the tag, nodes and S3 path substituted
-  		chart, err := render.LoadChart("../../../deploy/helm/nexora")
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		vals, err := render.BuildValues(manifest.Spec, render.Injected{Tag: os.Getenv("NEXORA_OPTEST_TAG"), BootstrapTokenSecret: "x",
-  			JoinTokenSecrets: map[string]string{"default": "x", "edge": "x"}})
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		objs, err := chart.Render(render.Target{Name: key.Name, Namespace: ns, KubeVersion: "v1.34.4", APIVersions: []string{"postgresql.cnpg.io/v1"}}, vals.Map)
-  		if err != nil {
-  			t.Fatal(err)
-  		}
-  		for _, o := range objs {
-  			if o.GetKind() != "Service" {
-  				continue
-  			}
-  			typ, _, _ := unstructured.NestedString(o.Object, "spec", "type")
-  			ip, _, _ := unstructured.NestedString(o.Object, "spec", "loadBalancerIP")
-  			if typ == "LoadBalancer" || ip != "" {
-  				t.Fatalf("Service %s would take a LoadBalancer address (%s %s)", o.GetName(), typ, ip)
-  			}
-  		}
-  		kubectl(t, "apply", "-f", writeTemp(t, manifest), "-f", "testdata/enginegroups.yaml")
-  	})
+	// A failed guard stops everything: nothing may be applied that could touch production.
+	if !t.Run("guards", func(t *testing.T) {
+		if ns != "nexora-optest" {
+			t.Fatalf("namespace %q: the operator e2e runs only in nexora-optest", ns)
+		}
+		if kubeContext() != "kw" {
+			t.Fatalf("kube context %q: the operator e2e runs only on kw", kubeContext())
+		}
+		if len(nodes) != 3 {
+			t.Fatalf("NEXORA_OPTEST_NODES %q must name three nodes", os.Getenv("NEXORA_OPTEST_NODES"))
+		}
+		for _, n := range nodes {
+			if n == "master-12" || n == "master-13" {
+				t.Fatalf("node %s carries the production DNS addresses", n)
+			}
+		}
+		manifest := loadInstallation(t)
+		chart, err := render.LoadChart("../../../deploy/helm/nexora")
+		if err != nil {
+			t.Fatal(err)
+		}
+		vals, err := render.BuildValues(manifest.Spec, render.Injected{Tag: os.Getenv("NEXORA_OPTEST_TAG"), CASecret: "x", KEKSecret: "x", BootstrapTokenSecret: "x",
+			JoinTokenSecrets: map[string]string{"default": "x", "edge": "x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		objs, err := chart.Render(render.Target{Name: key.Name, Namespace: ns, KubeVersion: "v1.34.4", APIVersions: []string{"postgresql.cnpg.io/v1"}}, vals.Map)
+		if err != nil {
+			t.Fatal(err)
+		}
+		services := 0
+		for _, o := range objs {
+			if o.GetNamespace() != ns {
+				t.Fatalf("%s %s renders into namespace %q", o.GetKind(), o.GetName(), o.GetNamespace())
+			}
+			if o.GetKind() != "Service" {
+				continue
+			}
+			services++
+			typ, _, _ := unstructured.NestedString(o.Object, "spec", "type")
+			ip, _, _ := unstructured.NestedString(o.Object, "spec", "loadBalancerIP")
+			if typ == "LoadBalancer" || typ == "NodePort" || ip != "" {
+				t.Fatalf("Service %s would take a node or LoadBalancer address (%s %s)", o.GetName(), typ, ip)
+			}
+		}
+		if services == 0 {
+			t.Fatal("no Service rendered: the guard checked nothing")
+		}
+		kubectl(t, "apply", "-f", writeTemp(t, manifest), "-f", "testdata/enginegroups.yaml")
+	}) {
+		t.FailNow()
+	}
+	c := newClient(t)
 
-  	t.Run("install", func(t *testing.T) {
-  		waitFor(t, 15*time.Minute, "installation Ready", func() (bool, error) {
-  			if err := c.Get(ctx, key, &inst); err != nil {
-  				return false, err
-  			}
-  			return condTrue(&inst, v1alpha1.ConditionReady), nil
-  		})
-  		var zone map[string]any
-  		if code := apiCall(t, "POST", "/zones", map[string]any{"name": "optest.nexora.test.", "kind": "primary", "default_ttl": 60,
-  			"soa": map[string]string{"mname": "ns1.optest.nexora.test.", "rname": "hostmaster.optest.nexora.test."},
-  			"nameservers": []string{"ns1.optest.nexora.test."}}, &zone); code != 201 {
-  			t.Fatalf("create zone -> %d %v", code, zone)
-  		}
-  		if code := apiCall(t, "POST", "/zones/"+zone["id"].(string)+"/records", map[string]any{"name": "www.optest.nexora.test.", "type": "A", "data": "192.0.2.10", "ttl": 60}, nil); code != 201 {
-  			t.Fatalf("create record -> %d", code)
-  		}
-  		for _, svc := range []string{"nexora-optest-dns-a", "nexora-optest-dns-b"} {
-  			ip := serviceIP(t, c, ns, svc)
-  			waitFor(t, 2*time.Minute, svc+" answers the zone", func() (bool, error) {
-  				out := probe(t, "", "dig +short +time=1 +tries=1 @"+ip+" www.optest.nexora.test. A")
-  				return strings.TrimSpace(out) == "192.0.2.10", nil
-  			})
-  		}
-  	})
+	if !t.Run("install", func(t *testing.T) {
+		start := time.Now()
+		waitFor(t, 15*time.Minute, "installation Ready", func() (bool, error) {
+			if err := c.Get(ctx, key, &inst); err != nil {
+				return false, err
+			}
+			return condTrue(&inst, v1alpha1.ConditionReady), nil
+		})
+		t.Logf("installation Ready after %s", time.Since(start).Round(time.Second))
+		var zone map[string]any
+		if code := apiCall(t, "POST", "/zones", map[string]any{"name": "optest.nexora.test.", "kind": "primary", "default_ttl": 60,
+			"soa":         map[string]string{"mname": "ns1.optest.nexora.test.", "rname": "hostmaster.optest.nexora.test."},
+			"nameservers": []string{"ns1.optest.nexora.test."}}, &zone); code != 201 {
+			t.Fatalf("create zone -> %d %v", code, zone)
+		}
+		if code := apiCall(t, "POST", "/zones/"+zone["id"].(string)+"/records", map[string]any{"name": "www.optest.nexora.test.", "type": "A", "data": "192.0.2.10", "ttl": 60}, nil); code != 201 {
+			t.Fatalf("create record -> %d", code)
+		}
+		for _, svc := range []string{"nexora-optest-dns-a", "nexora-optest-dns-b"} {
+			ip := serviceIP(t, c, ns, svc)
+			waitFor(t, 2*time.Minute, svc+" answers the zone", func() (bool, error) {
+				out, _ := probeErr("", "dig +short +time=1 +tries=1 @"+ip+" www.optest.nexora.test. A")
+				return strings.TrimSpace(out) == "192.0.2.10", nil
+			})
+		}
+	}) {
+		t.FailNow()
+	}
 
-  	t.Run("engine-groups", func(t *testing.T) {
-  		var edge v1alpha1.NexoraEngineGroup
-  		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "edge"}, &edge); err != nil || edge.Status.GroupID == "" {
-  			t.Fatalf("edge engine group: %v %+v", err, edge.Status)
-  		}
-  		waitFor(t, 5*time.Minute, "an engine enrolled into edge on "+nodes[2], func() (bool, error) {
-  			var engines []map[string]any
-  			apiCall(t, "GET", "/engines", nil, &engines)
-  			for _, e := range engines {
-  				if e["engine_group_id"] == edge.Status.GroupID && e["node_name"] == nodes[2] && e["connected"] == true {
-  					return true, nil
-  				}
-  			}
-  			return false, nil
-  		})
-  	})
+	t.Run("engine-groups", func(t *testing.T) {
+		var edge v1alpha1.NexoraEngineGroup
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "edge"}, &edge); err != nil || edge.Status.GroupID == "" {
+			t.Fatalf("edge engine group: %v %+v", err, edge.Status)
+		}
+		waitFor(t, 5*time.Minute, "an engine enrolled into edge on "+nodes[2], func() (bool, error) {
+			var engines []map[string]any
+			apiCall(t, "GET", "/engines", nil, &engines)
+			for _, e := range engines {
+				if e["engine_group_id"] == edge.Status.GroupID && e["node_name"] == nodes[2] && e["connected"] == true {
+					return true, nil
+				}
+			}
+			return false, nil
+		})
+	})
 
-  	t.Run("rolling-update", func(t *testing.T) {
-  		before := enginePodUIDs(t, c, ns)
-  		ips := map[string]string{"a": serviceIP(t, c, ns, "nexora-optest-dns-a"), "b": serviceIP(t, c, ns, "nexora-optest-dns-b")}
-  		type result struct {
-  			lost    int
-  			noerror bool
-  		}
-  		results := map[string]result{}
-  		var mu sync.Mutex
-  		var wg sync.WaitGroup
-  		for name, ip := range ips {
-  			wg.Add(1)
-  			go func() {
-  				defer wg.Done()
-  				lost, ok := dnsperf(t, ip, 240)
-  				mu.Lock()
-  				results[name] = result{lost, ok}
-  				mu.Unlock()
-  			}()
-  		}
-  		time.Sleep(10 * time.Second)
-  		if err := c.Get(ctx, key, &inst); err != nil {
-  			t.Fatal(err)
-  		}
-  		one := int32(1)
-  		inst.Spec.Engine.Workers = &one
-  		if err := c.Update(ctx, &inst); err != nil {
-  			t.Fatal(err)
-  		}
-  		waitFor(t, 200*time.Second, "every engine pod replaced and ready", func() (bool, error) {
-  			after := enginePodUIDs(t, c, ns)
-  			if len(after) != len(before) {
-  				return false, nil
-  			}
-  			for uid := range after {
-  				if before[uid] {
-  					return false, nil
-  				}
-  			}
-  			return enginesReady(t, c, ns), nil
-  		})
-  		wg.Wait()
-  		for name, r := range results {
-  			if r.lost != 0 || !r.noerror {
-  				t.Errorf("instance %s during the roll: %d lost, NOERROR=%v", name, r.lost, r.noerror)
-  			}
-  		}
-  	})
+	t.Run("rolling-update", func(t *testing.T) {
+		const seconds = 240
+		before := enginePodUIDs(t, c, ns)
+		ips := map[string]string{"a": serviceIP(t, c, ns, "nexora-optest-dns-a"), "b": serviceIP(t, c, ns, "nexora-optest-dns-b")}
+		type perf struct {
+			lost             int
+			noerror, aborted bool
+			ended            time.Time
+		}
+		perfs := map[string]perf{}
+		probes := map[string]probeResult{}
+		probed := map[string]bool{}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for name, ip := range ips {
+			wg.Add(2)
+			// Authoritative: 5 queries/s, each from a fresh socket, across the whole roll (Task 10 findings).
+			go func() {
+				defer wg.Done()
+				r, ok := digLoop(t, ip, seconds)
+				mu.Lock()
+				probes[name], probed[name] = r, ok
+				mu.Unlock()
+			}()
+			// dnsperf's single connected socket is destroyed by Cilium's socket LB when its backend leaves; it
+			// is held to zero loss only when it survives the roll.
+			go func() {
+				defer wg.Done()
+				lost, ok, aborted := dnsperf(t, ip, seconds)
+				mu.Lock()
+				perfs[name] = perf{lost, ok, aborted, time.Now()}
+				mu.Unlock()
+			}()
+		}
+		time.Sleep(10 * time.Second)
+		start := time.Now()
+		updateRetry(t, c, key, &inst, func() {
+			one := int32(1)
+			inst.Spec.Engine.Workers = &one
+		})
+		waitFor(t, 200*time.Second, "every engine pod replaced and ready", func() (bool, error) {
+			after := enginePodUIDs(t, c, ns)
+			if len(after) != len(before) {
+				return false, nil
+			}
+			for uid := range after {
+				if before[uid] {
+					return false, nil
+				}
+			}
+			return enginesReady(t, c, ns), nil
+		})
+		rolled := time.Now()
+		t.Logf("every engine pod replaced after %s", rolled.Sub(start).Round(time.Second))
+		wg.Wait()
+		for _, name := range []string{"a", "b"} {
+			r := probes[name]
+			if !probed[name] {
+				continue // digLoop reported the error
+			}
+			t.Logf("instance %s during the roll: probe sent %d, lost %d", name, r.sent, r.lost)
+			if r.lost != 0 {
+				t.Errorf("instance %s during the roll: the probe lost or got a wrong answer for %d of %d queries", name, r.lost, r.sent)
+			}
+			// The probe must have been sending, without a pause, from before the change until every pod was
+			// replaced and ready: 5 queries/s allows 20% fork overhead, a gap is at most one clock second.
+			if r.sent < 4*seconds || r.maxGap > 1 {
+				t.Errorf("instance %s: the probe sent %d queries in %ds with a longest gap of %ds, not continuously", name, r.sent, seconds, r.maxGap)
+			}
+			if r.first >= start.Unix() || r.last <= rolled.Unix() {
+				t.Errorf("instance %s: the probe sent from %d to %d, which does not cover the roll %d..%d", name, r.first, r.last, start.Unix(), rolled.Unix())
+			}
+			p := perfs[name]
+			switch {
+			case p.aborted:
+				t.Logf("instance %s: dnsperf aborted (ECONNABORTED from the destroyed connected socket) %s after the change, the roll took %s; the probe is the measure",
+					name, p.ended.Sub(start).Round(time.Second), rolled.Sub(start).Round(time.Second))
+			case p.lost != 0 || !p.noerror:
+				t.Errorf("instance %s during the roll: dnsperf %d lost, NOERROR only=%v", name, p.lost, p.noerror)
+			default:
+				t.Logf("instance %s during the roll: dnsperf 0 lost, NOERROR only", name)
+			}
+		}
+	})
 
-  	t.Run("join-token-rotation", func(t *testing.T) {
-  		var edge v1alpha1.NexoraEngineGroup
-  		_ = c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "edge"}, &edge)
-  		oldID := edge.Status.JoinTokenID
-  		var sec corev1.Secret
-  		_ = c.Get(ctx, types.NamespacedName{Namespace: ns, Name: edge.Status.JoinTokenSecret}, &sec)
-  		oldToken := string(sec.Data["join-token"])
-  		edge.Spec.JoinToken.TTL = &metav1.Duration{Duration: 3 * time.Minute}
-  		edge.Spec.JoinToken.RenewBefore = &metav1.Duration{Duration: 2 * time.Minute}
-  		edge.Spec.JoinToken.RevokeGracePeriod = &metav1.Duration{Duration: 30 * time.Second}
-  		if err := c.Update(ctx, &edge); err != nil {
-  			t.Fatal(err)
-  		}
-  		waitFor(t, 5*time.Minute, "rotated join token and revoked predecessor", func() (bool, error) {
-  			_ = c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "edge"}, &edge)
-  			_ = c.Get(ctx, types.NamespacedName{Namespace: ns, Name: edge.Status.JoinTokenSecret}, &sec)
-  			if edge.Status.JoinTokenID == oldID || string(sec.Data["join-token"]) == oldToken {
-  				return false, nil
-  			}
-  			var tokens []map[string]any
-  			apiCall(t, "GET", "/join-tokens", nil, &tokens)
-  			for _, tok := range tokens {
-  				if tok["id"] == oldID {
-  					return tok["state"] == "revoked", nil
-  				}
-  			}
-  			return false, nil
-  		})
-  	})
+	t.Run("join-token-rotation", func(t *testing.T) {
+		egKey := types.NamespacedName{Namespace: ns, Name: "edge"}
+		var edge v1alpha1.NexoraEngineGroup
+		updateRetry(t, c, egKey, &edge, func() {
+			edge.Spec.JoinToken.TTL = &metav1.Duration{Duration: 3 * time.Minute}
+			edge.Spec.JoinToken.RenewBefore = &metav1.Duration{Duration: 2 * time.Minute}
+			edge.Spec.JoinToken.RevokeGracePeriod = &metav1.Duration{Duration: 30 * time.Second}
+		})
+		tokenState := func(id string) string {
+			var tokens []map[string]any
+			apiCall(t, "GET", "/join-tokens", nil, &tokens)
+			for _, tok := range tokens {
+				if tok["id"] == id {
+					s, _ := tok["state"].(string)
+					return s
+				}
+			}
+			return ""
+		}
+		// rotated waits until the join token differs from (id, token) in the status and the Secret, and the
+		// controller has revoked id.
+		rotated := func(what, id, token string) (string, string) {
+			start := time.Now()
+			var sec corev1.Secret
+			waitFor(t, 4*time.Minute, what, func() (bool, error) {
+				if err := c.Get(ctx, egKey, &edge); err != nil {
+					return false, err
+				}
+				if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: edge.Status.JoinTokenSecret}, &sec); err != nil {
+					return false, err
+				}
+				if edge.Status.JoinTokenID == id || string(sec.Data["join-token"]) == token || len(sec.Data["join-token"]) == 0 {
+					return false, nil
+				}
+				return tokenState(id) == "revoked", nil
+			})
+			t.Logf("%s after %s", what, time.Since(start).Round(time.Second))
+			return edge.Status.JoinTokenID, string(sec.Data["join-token"])
+		}
 
-  	t.Run("prune", func(t *testing.T) {
-  		_ = c.Get(ctx, key, &inst)
-  		var groups []v1alpha1.EngineGroupSpec
-  		for _, g := range inst.Spec.Engine.Groups {
-  			if g.Name != "edge" {
-  				groups = append(groups, g)
-  			}
-  		}
-  		inst.Spec.Engine.Groups = groups
-  		if err := c.Update(ctx, &inst); err != nil {
-  			t.Fatal(err)
-  		}
-  		waitFor(t, 3*time.Minute, "edge DaemonSet pruned", func() (bool, error) {
-  			var ds appsv1.DaemonSet
-  			err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-optest-engine-edge"}, &ds)
-  			return client.IgnoreNotFound(err) == nil && err != nil, nil
-  		})
-  	})
+		// The token recorded at install expires in 8760h, so a ttl change alone schedules nothing: remove its
+		// Secret, one of the three renewal triggers. The old token, still active, is revoked after the grace.
+		if err := c.Get(ctx, egKey, &edge); err != nil {
+			t.Fatal(err)
+		}
+		firstID := edge.Status.JoinTokenID
+		var sec corev1.Secret
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: edge.Status.JoinTokenSecret}, &sec); err != nil {
+			t.Fatal(err)
+		}
+		firstToken := string(sec.Data["join-token"])
+		if tokenState(firstID) != "active" {
+			t.Fatalf("join token %s of edge is not active before the rotation", firstID)
+		}
+		if err := c.Delete(ctx, &sec); err != nil {
+			t.Fatal(err)
+		}
+		secondID, secondToken := rotated("new join token for the missing Secret, predecessor revoked after the grace", firstID, firstToken)
+		// The new token lives 3m and renews 2m before expiry: the controller rotates it after about 1m on its
+		// own and revokes it 30s later.
+		rotated("renewal before expiry, predecessor revoked after the grace", secondID, secondToken)
+	})
 
-  	t.Run("cnpg-failover", func(t *testing.T) { cnpgFailover(t, c, ns) })
-  	t.Run("cnpg-backup-restore", func(t *testing.T) { cnpgBackupRestore(t, c, ns) })
+	t.Run("prune", func(t *testing.T) {
+		updateRetry(t, c, key, &inst, func() {
+			var groups []v1alpha1.EngineGroupSpec
+			for _, g := range inst.Spec.Engine.Groups {
+				if g.Name != "edge" {
+					groups = append(groups, g)
+				}
+			}
+			inst.Spec.Engine.Groups = groups
+		})
+		waitFor(t, 3*time.Minute, "edge DaemonSet and Service pruned", func() (bool, error) {
+			dsErr := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-optest-engine-edge"}, &appsv1.DaemonSet{})
+			svcErr := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-optest-dns-edge"}, &corev1.Service{})
+			gone := func(err error) bool { return err != nil && client.IgnoreNotFound(err) == nil }
+			return gone(dsErr) && gone(svcErr), nil
+		})
+	})
 
-  	t.Run("delete-retains-state", func(t *testing.T) {
-  		_ = c.Get(ctx, key, &inst)
-  		if err := c.Delete(ctx, &inst); err != nil {
-  			t.Fatal(err)
-  		}
-  		waitFor(t, 2*time.Minute, "workloads garbage-collected", func() (bool, error) {
-  			var d appsv1.Deployment
-  			err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-optest-mgmt"}, &d)
-  			return err != nil && client.IgnoreNotFound(err) == nil && !enginesExist(t, c, ns), nil
-  		})
-  		cluster := &unstructured.Unstructured{}
-  		cluster.SetAPIVersion("postgresql.cnpg.io/v1")
-  		cluster.SetKind("Cluster")
-  		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-db"}, cluster); err != nil || cluster.GetDeletionTimestamp() != nil {
-  			t.Fatalf("CNPG cluster after deleting the installation: %v", err)
-  		}
-  		for _, s := range []string{"nexora-optest-ca", "nexora-optest-kek", "nexora-optest-operator-token"} {
-  			var sec corev1.Secret
-  			if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: s}, &sec); err != nil {
-  				t.Errorf("secret %s: %v", s, err)
-  			}
-  		}
-  	})
-  }
-  ```
+	t.Run("cnpg-failover", func(t *testing.T) { cnpgFailover(t, c, ns) })
+	t.Run("cnpg-backup-restore", func(t *testing.T) { cnpgBackupRestore(t, c, ns) })
 
-  Add to `helpers_test.go`:
-  - `loadInstallation`, `writeTemp`, `serviceIP`;
-  - `enginePodUIDs` (pods labelled `app.kubernetes.io/name=nexora-engine`, UID set);
-  - `enginesReady` (every engine DaemonSet has updated == desired == ready and observedGeneration ==
-    generation);
-  - `enginesExist`.
+	t.Run("delete-retains-state", func(t *testing.T) {
+		if err := c.Get(ctx, key, &inst); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Delete(ctx, &inst); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		waitFor(t, 2*time.Minute, "workloads garbage-collected", func() (bool, error) {
+			err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-optest-mgmt"}, &appsv1.Deployment{})
+			return err != nil && client.IgnoreNotFound(err) == nil && !enginesExist(t, c, ns), nil
+		})
+		t.Logf("workloads removed after %s", time.Since(start).Round(time.Second))
+		cluster := cnpgObject("Cluster")
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: "nexora-db"}, cluster); err != nil || cluster.GetDeletionTimestamp() != nil {
+			t.Fatalf("CNPG cluster after deleting the installation: err %v, deletionTimestamp %v", err, cluster.GetDeletionTimestamp())
+		}
+		for _, s := range []string{"nexora-optest-ca", "nexora-optest-kek", "nexora-optest-operator-token"} {
+			var sec corev1.Secret
+			if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: s}, &sec); err != nil || sec.GetDeletionTimestamp() != nil {
+				t.Errorf("secret %s: err %v, deletionTimestamp %v", s, err, sec.GetDeletionTimestamp())
+			}
+		}
+	})
+}
 
-  And two subtest bodies:
-  - `cnpgFailover`:
-    1. Read `status.currentPrimary` of Cluster `nexora-db` and the engines' max `applied_version` from
-       `/engines`.
-    2. Delete the primary pod.
-    3. Require `currentPrimary` to change within 120 s, then `apiCall GET /health == 200` within 60 s.
-    4. Patch NexoraEngineGroup `default` `description` to `failover-<unix>`.
-    5. Require `/engine-groups` to show it and every connected engine's `applied_version` to rise within
-       120 s.
-  - `cnpgBackupRestore`:
-    1. Create `Backup` `optest-<unix>` (`spec.cluster.name: nexora-db`, `method: barmanObjectStore`) and
-       require `status.phase == completed` within 10 minutes.
-    2. Build values with `render.BuildValues` from the installation manifest, with
-       `database.cnpg.clusterName: nexora-db-restore`, `backup.enabled: false`, and recovery enabled with
-       `sourceServerName: nexora-db`.
-    3. `Chart.Render` it and take the single `Cluster` object; `Own` is not called, so the object has no
-       owner. Apply it with the client.
-    4. Require its `Ready` condition within 15 minutes.
-    5. Require
-       `kubectl exec nexora-db-restore-1 -c postgres -- psql -d nexora -tAc "select count(*) from engine_groups where name = 'edge'"`
-       to print `1`.
-    6. Delete the restore Cluster.
+func cnpgObject(kind string) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion("postgresql.cnpg.io/v1")
+	u.SetKind(kind)
+	return u
+}
 
-  The `edge` group is deleted in the API only when its CR is deleted, which never happens before this
-  subtest, so the row exists.
+// connectedEngines returns the applied_version of every connected engine by id.
+func connectedEngines(t *testing.T) map[string]int64 {
+	t.Helper()
+	var engines []map[string]any
+	if code := apiCall(t, "GET", "/engines", nil, &engines); code != 200 {
+		t.Fatalf("GET /engines -> %d", code)
+	}
+	out := map[string]int64{}
+	for _, e := range engines {
+		if e["connected"] == true {
+			v, _ := e["applied_version"].(float64)
+			out[e["id"].(string)] = int64(v)
+		}
+	}
+	return out
+}
+
+// cnpgFailover deletes the primary of nexora-db and proves the management plane and configuration
+// distribution survive: a new primary, a healthy API and a group change that reaches every engine.
+func cnpgFailover(t *testing.T, c client.Client, ns string) {
+	ctx := context.Background()
+	clusterKey := types.NamespacedName{Namespace: ns, Name: "nexora-db"}
+	cluster := cnpgObject("Cluster")
+	if err := c.Get(ctx, clusterKey, cluster); err != nil {
+		t.Fatal(err)
+	}
+	primary, _, _ := unstructured.NestedString(cluster.Object, "status", "currentPrimary")
+	if primary == "" {
+		t.Fatal("nexora-db has no current primary")
+	}
+	before := connectedEngines(t)
+	var maxApplied int64
+	for _, v := range before {
+		maxApplied = max(maxApplied, v)
+	}
+	if len(before) == 0 {
+		t.Fatal("no connected engine before the failover")
+	}
+
+	start := time.Now()
+	if err := c.Delete(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: primary}}); err != nil {
+		t.Fatalf("delete primary pod %s: %v", primary, err)
+	}
+	// Measured up to 5 minutes so an overrun reports its real duration; the requirement is 120 s.
+	var newPrimary string
+	waitFor(t, 5*time.Minute, "a new CNPG primary", func() (bool, error) {
+		if err := c.Get(ctx, clusterKey, cluster); err != nil {
+			return false, err
+		}
+		newPrimary, _, _ = unstructured.NestedString(cluster.Object, "status", "currentPrimary")
+		return newPrimary != "" && newPrimary != primary, nil
+	})
+	promoted := time.Now()
+	targetAt, _, _ := unstructured.NestedString(cluster.Object, "status", "targetPrimaryTimestamp")
+	t.Logf("new primary %s after %s (CNPG targetPrimaryTimestamp %s, pod deleted at %s)", newPrimary,
+		promoted.Sub(start).Round(time.Second), targetAt, start.UTC().Format(time.RFC3339))
+	if promoted.Sub(start) > 120*time.Second {
+		t.Errorf("currentPrimary changed after %s, want within 120s", promoted.Sub(start).Round(time.Second))
+	}
+	waitFor(t, 60*time.Second, "GET /health 200", func() (bool, error) {
+		return apiCall(t, "GET", "/health", nil, nil) == 200, nil
+	})
+	healthy := time.Now()
+	t.Logf("failover: primary %s -> %s after %s; API healthy %s after the primary change (%s after the pod deletion)",
+		primary, newPrimary, promoted.Sub(start).Round(time.Second), healthy.Sub(promoted).Round(time.Second), healthy.Sub(start).Round(time.Second))
+
+	desc := fmt.Sprintf("failover-%d", time.Now().Unix())
+	var eg v1alpha1.NexoraEngineGroup
+	updateRetry(t, c, types.NamespacedName{Namespace: ns, Name: "default"}, &eg, func() { eg.Spec.Description = &desc })
+	waitFor(t, 120*time.Second, "group description and a higher applied_version on every connected engine", func() (bool, error) {
+		var groups []map[string]any
+		apiCall(t, "GET", "/engine-groups", nil, &groups)
+		found := false
+		for _, g := range groups {
+			if g["name"] == "default" && g["description"] == desc {
+				found = true
+			}
+		}
+		if !found {
+			return false, nil
+		}
+		now := connectedEngines(t)
+		if len(now) == 0 {
+			return false, nil
+		}
+		for _, v := range now {
+			if v <= maxApplied {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	t.Logf("group change applied by every connected engine %s after the pod deletion", time.Since(start).Round(time.Second))
+}
+
+// cnpgBackupRestore takes an on-demand backup of nexora-db and restores it into a separate cluster
+// rendered by the chart's recovery values, then checks the restored data.
+func cnpgBackupRestore(t *testing.T, c client.Client, ns string) {
+	ctx := context.Background()
+	start := time.Now()
+	backup := cnpgObject("Backup")
+	backup.SetNamespace(ns)
+	backup.SetName(fmt.Sprintf("optest-%d", time.Now().Unix()))
+	backup.Object["spec"] = map[string]any{"cluster": map[string]any{"name": "nexora-db"}, "method": "barmanObjectStore"}
+	if err := c.Create(ctx, backup); err != nil {
+		t.Fatalf("create Backup: %v", err)
+	}
+	waitFor(t, 10*time.Minute, "Backup "+backup.GetName()+" completed", func() (bool, error) {
+		if err := c.Get(ctx, client.ObjectKeyFromObject(backup), backup); err != nil {
+			return false, err
+		}
+		phase, _, _ := unstructured.NestedString(backup.Object, "status", "phase")
+		if phase == "failed" {
+			msg, _, _ := unstructured.NestedString(backup.Object, "status", "error")
+			t.Fatalf("Backup %s failed: %s", backup.GetName(), msg)
+		}
+		return phase == "completed", nil
+	})
+	backedUp := time.Now()
+	t.Logf("backup completed after %s", backedUp.Sub(start).Round(time.Second))
+
+	manifest := loadInstallation(t)
+	cnpg := &manifest.Spec.Database.CNPG
+	cnpg.ClusterName = "nexora-db-restore"
+	// One instance: the restore proves the data, not replication.
+	cnpg.Instances = ptr(int32(1))
+	cnpg.Backup.Enabled = ptr(false)
+	cnpg.Recovery.Enabled = ptr(true)
+	cnpg.Recovery.SourceServerName = "nexora-db"
+	chart, err := render.LoadChart("../../../deploy/helm/nexora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vals, err := render.BuildValues(manifest.Spec, render.Injected{Tag: os.Getenv("NEXORA_OPTEST_TAG"), CASecret: "x", KEKSecret: "x", BootstrapTokenSecret: "x",
+		JoinTokenSecrets: map[string]string{"default": "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := chart.Render(render.Target{Name: "nexora-optest", Namespace: ns, KubeVersion: "v1.34.4", APIVersions: []string{"postgresql.cnpg.io/v1"}}, vals.Map)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restore *unstructured.Unstructured
+	for _, o := range objs {
+		if o.GetKind() == "Cluster" {
+			if restore != nil {
+				t.Fatal("more than one Cluster rendered")
+			}
+			restore = o
+		}
+	}
+	if restore == nil || restore.GetName() != "nexora-db-restore" || len(restore.GetOwnerReferences()) != 0 {
+		t.Fatalf("restore Cluster not rendered as expected: %v", restore)
+	}
+	if err := c.Create(ctx, restore); err != nil {
+		t.Fatalf("create restore Cluster: %v", err)
+	}
+	defer func() {
+		if err := c.Delete(ctx, restore); client.IgnoreNotFound(err) != nil {
+			t.Errorf("delete restore Cluster: %v", err)
+		}
+	}()
+	waitFor(t, 15*time.Minute, "restore Cluster Ready", func() (bool, error) {
+		live := cnpgObject("Cluster")
+		if err := c.Get(ctx, client.ObjectKeyFromObject(restore), live); err != nil {
+			return false, err
+		}
+		conds, _, _ := unstructured.NestedSlice(live.Object, "status", "conditions")
+		for _, cond := range conds {
+			if m, ok := cond.(map[string]any); ok && m["type"] == "Ready" && m["status"] == "True" {
+				return true, nil
+			}
+		}
+		phase, _, _ := unstructured.NestedString(live.Object, "status", "phase")
+		return false, fmt.Errorf("phase %q", phase)
+	})
+	out := kubectl(t, "exec", "nexora-db-restore-1", "-c", "postgres", "--", "psql", "-d", "nexora", "-tAc",
+		"select count(*) from engine_groups where name = 'edge'")
+	if strings.TrimSpace(out) != "1" {
+		t.Fatalf("restored engine_groups rows named edge: %q, want 1", out)
+	}
+	t.Logf("restore Ready and verified %s after the backup (%s in total)", time.Since(backedUp).Round(time.Second), time.Since(start).Round(time.Second))
+}
+
+func ptr[T any](v T) *T { return &v }
+````
+
+Add to `helpers_test.go`:
+
+- `loadInstallation`, `writeTemp`, `serviceIP`;
+- `enginePodUIDs` (pods labelled `app.kubernetes.io/name=nexora-engine`, UID set);
+- `enginesReady` (every engine DaemonSet has updated == desired == ready and observedGeneration ==
+  generation);
+- `enginesExist`.
+
+And two subtest bodies:
+
+- `cnpgFailover`:
+  1. Read `status.currentPrimary` of Cluster `nexora-db` and the engines' max `applied_version` from
+     `/engines`.
+  2. Delete the primary pod.
+  3. Require `currentPrimary` to change within 120 s, then `apiCall GET /health == 200` within 60 s.
+  4. Patch NexoraEngineGroup `default` `description` to `failover-<unix>`.
+  5. Require `/engine-groups` to show it and every connected engine's `applied_version` to rise within
+     120 s.
+- `cnpgBackupRestore`:
+  1. Create `Backup` `optest-<unix>` (`spec.cluster.name: nexora-db`, `method: barmanObjectStore`) and
+     require `status.phase == completed` within 10 minutes.
+  2. Build values with `render.BuildValues` from the installation manifest, with
+     `database.cnpg.clusterName: nexora-db-restore`, `instances: 1` (the restore proves the data, not
+     replication), `backup.enabled: false`, and recovery enabled with `sourceServerName: nexora-db`.
+     `render.Injected` also needs `CASecret` and `KEKSecret` (the chart fails without
+     `mgmt.ca.existingSecret`).
+  3. `Chart.Render` it and take the single `Cluster` object; `Own` is not called, so the object has no
+     owner. Apply it with the client.
+  4. Require its `Ready` condition within 15 minutes.
+  5. Require
+     `kubectl exec nexora-db-restore-1 -c postgres -- psql -d nexora -tAc "select count(*) from engine_groups where name = 'edge'"`
+     to print `1`.
+  6. Delete the restore Cluster.
+
+The `edge` group is deleted in the API only when its CR is deleted, which never happens before this
+subtest, so the row exists.
+
+As built, differing from the draft above:
+
+- `guards` and `install` run through `if !t.Run(...) { t.FailNow() }`: a guard that refuses must stop
+  the run, and every later subtest is meaningless without an installation. `guards` also refuses a
+  kube context other than `kw`, a `NodePort` Service and an object rendered outside the namespace, and
+  fails when no Service was checked at all.
+- `join-token-rotation` cannot rotate by editing `ttl` alone: the recorded token still expires in
+  8760 h, so nothing is due. The subtest sets `ttl: 3m`, `renewBefore: 2m`, `revokeGracePeriod: 30s`
+  and then deletes the join token Secret (S-8's "the Secret is missing" trigger). It requires a new
+  token in status and in the Secret and the predecessor `revoked` (the grace), and then a second,
+  renewal-driven rotation about a minute later with the same revocation. Measured: 33 s and 59 s.
+- `cnpg-failover` waits up to 5 minutes for the new primary and then asserts the 120 s requirement, so
+  an overrun reports its real duration instead of only a timeout (see the findings).
+- `rolling-update` asserts zero loss with `digLoop`, the fresh-socket probe, and no longer with
+  `dnsperf`, which cannot survive a roll through a ClusterIP on kw (finding 3). Per instance it requires
+  `lost == 0`, at least `4 × 240` queries sent with no gap over one second, and a send window that
+  starts before the `workers` change and ends after every engine pod was replaced and ready. `dnsperf`
+  still runs next to it: it is held to `Queries lost: 0` and NOERROR only when it completes, and an
+  ECONNABORTED abort is logged with its time after the change.
 
 - [ ] Run `cd operator && go vet -tags kwe2e ./test/kw` and expect success. Run
       `scripts/kw-operator-e2e.sh` from the laptop after the lead has committed Tasks 1–9. Expect
@@ -3644,8 +4146,55 @@ Interfaces:
       Services `nexora-dns` and `nexora-dns-2` still hold `192.168.10.136` and `192.168.10.139`
       (`kubectl --context kw -n nexora get svc nexora-dns nexora-dns-2 -o wide`).
 - [ ] Record in `.procoder/notes/plan-review.md` under `## M9 operator e2e (<date>)`: the image tag, each
-      subtest's result and duration, the dnsperf lost counts per instance, the failover time
+      subtest's result and duration, the probe's sent and lost counts per instance, the failover time
       (primary change to healthy API) and the backup/restore duration. Report the paths.
+
+### Findings from the kw runs (2026-09-15)
+
+1. **The management API refuses the operator's bodiless DELETEs (fixed here).** `jsonOnly`
+   (`mgmt/internal/api/server.go`) demands `Content-Type: application/json` on every request other than
+   GET and HEAD, and the generated client sends `DELETE /join-tokens/{id}` and
+   `DELETE /engine-groups/{id}` without it: every revoke and group deletion answered
+   `415 unsupported_media_type`. The first kw run showed it as `Synced=False (Conflict)` on both engine
+   groups. Fixed in Task 5's files (reported to the lead): the client's request editor sets the type on
+   every non-GET request, and `internal/mgmtapi/fake` now enforces the same rule as the management plane,
+   which turns it into a unit-test failure (`TestFakeServesEngineGroupsAndTokens`) instead of a kw-only one.
+2. **A failing revoke makes the controller create join tokens in a loop.** With the 415 above, the first
+   run created about 2500 join tokens for `edge` in nine minutes: `rotate` writes the new token into the
+   Secret, then revokes the pending predecessor; the failed revoke returns before the status records the
+   new token, the Secret write wakes the controller, the recorded (old) token is still due for renewal,
+   and it rotates again. RESOLVED in Task 7 (revoke before create, cap 3); the re-run created 1 token for
+   `default` and 8 for `edge` in about nine minutes (the install token, the missing-Secret rotation and
+   one renewal a minute under the test's `ttl: 3m`), with 1 active at the end and no operator error.
+3. **`dnsperf` cannot measure a roll through a ClusterIP on kw.** Both instances failed with
+   `Error: failed to receive packet: Software caused connection abort` (`ECONNABORTED`) the moment the
+   first engine pod left its Service's backends, in both runs. kw runs Cilium 1.19.4 with
+   `kube-proxy-replacement=true`, whose socket load balancer destroys UDP sockets connected to a removed
+   backend so clients reconnect; `dnsperf` keeps one connected socket for the whole run and treats the
+   destroyed socket as fatal. The same 5 queries/s with a fresh socket per query (`digLoop`) lost **0 of
+   1174** queries per instance during the roll, so the engines lose no query; the tool cannot prove it
+   here. Options for the lead: keep `dnsperf` and accept a red subtest on kw, drop the `dnsperf`
+   assertion in favour of `digLoop`, or run `dnsperf` against a LoadBalancer address (forbidden in
+   `nexora-optest`).
+   Decided (2026-09-15 re-run): the fresh-socket probe is the authoritative measure. Cilium's socket LB
+   is enabled on kw (`cilium-dbg status`: `Socket LB: Enabled`, coverage Full), so `dnsperf`'s abort
+   is a client-side socket event, not a lost query: in the re-run both `dnsperf`s aborted 11 s after the
+   change (the first old pod leaving its Service) while the probe, sending across that same instant,
+   lost 0 of 1174 and 0 of 1173. A query in flight on a destroyed socket still counts as lost in the
+   probe, which keeps the check strict. The subtest additionally proves the probe's continuity (see
+   "As built" above). The spec's wording ("dnsperf reports `Queries lost: 0`") is met in intent (no query
+   lost by the engines); `dnsperf` is still asserted whenever it completes.
+4. **A graceful primary deletion fails over in about 3 minutes, not 120 s.** Measured 3m6s (and 2m9s in
+   the first run) from `kubectl delete pod` to `status.currentPrimary` changing, of which the management
+   API needed 1 s to answer 200 again and the group change reached every engine 5 s later. CNPG's
+   `smartShutdownTimeout` defaults to 180 s and PostgreSQL's smart shutdown waits for the management
+   plane's pooled sessions, so the failover starts only after it. The 120 s in the spec is therefore not
+   reachable with a graceful delete: either the chart must set `spec.smartShutdownTimeout` (Task 4's
+   files), the spec must allow about 200 s, or the subtest must delete the primary with
+   `--grace-period=0` (an unplanned loss rather than a graceful shutdown).
+   RESOLVED (Task 4, `smartShutdownTimeout` 30 s and idle pool recycling): the re-run on
+   `dev-m9-8483b44` measured 43 s and 50 s from the pod deletion to the new primary, API healthy 1-5 s
+   later, the group change on every engine 48 s and 58 s after the deletion.
 
 ## Task 11: Operations guide, kw README and docs test
 
@@ -3692,14 +4241,26 @@ Interfaces: none.
   - what stays manual (the CA and KEK backups, cross-region copies);
   - the in-tree `barmanObjectStore` deprecation note.
 
-  Replace the first sentence of `### CloudNativePG` with a link to the new section. Run the test
-  again and expect PASS (the path check covers every backticked path).
+  Replace the opening of `### CloudNativePG` (the `smartShutdownTimeout` paragraph Task 4 wrote and the
+  `barmanObjectStore` sentence, both now in the new section) with a link to the new section, keeping the
+  logical dump. Run the test again and expect PASS (the path check covers every backticked path).
 
 - [ ] Add `## Operator e2e (namespace nexora-optest)` to `deploy/kw/README.md`: what
       `scripts/kw-operator-e2e.sh` builds, installs and deletes; the guards; the MinIO bucket
       `nexora-optest`; the nodes; `--keep` for debugging; and the last recorded result from
       `.procoder/notes/plan-review.md`. Run `scripts/pc-format.sh docs/operations.md deploy/kw/README.md`
       and `scripts/dev-exec.sh 'go test ./deploy/deploytest -count=1'`, and expect PASS. Report the paths.
+
+As built (2026-09-15): the docs follow the code rather than the spec where they differ:
+`smartShutdownTimeout` 30 s with idle pool recycling and the measured 43/50 s failover; join token rotation
+revokes the previous and unrecorded `op/<cr uid>/` tokens before creating one, stops on a failed revoke
+(`JoinTokenRevokeFailed`) and caps a CR at 3 active tokens (`JoinTokenLimit`); `rolling-update`'s zero loss
+is the fresh-socket probe's, with `dnsperf` asserted only when it completes; the list of what the operator
+never deletes. Also changed in `docs/operations.md`: the "Known limitations" bullet that said Nexora had
+no operator, and a note in `### CloudNativePG` that a logical restore under the operator stops the operator
+first (the chart's `mgmt.replicas` minimum is 1). The Helm restore path renders the recovery `Cluster`
+with `helm template --show-only` and switches the release to `database.mode=external`, because changing
+`clusterName` in a Helm release deletes the old `Cluster`.
 
 ## Task 12: Deploy M9 to kw production and close the issues
 

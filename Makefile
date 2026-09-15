@@ -4,7 +4,7 @@ CARGO_TARGET_DIR ?= $(CURDIR)/target
 BIN := $(CURDIR)/bin
 GO_PKGS := $(foreach d,mgmt gen bench deploy,$(if $(wildcard $(d)),./$(d)/...))
 
-.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench images
+.PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench images operator-generate operator-test
 
 proto:
 	protoc -I proto \
@@ -73,3 +73,16 @@ bench:
 images:
 	scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine .
 	scripts/build-image.sh -f deploy/docker/mgmt.Dockerfile -n nexora-mgmt .
+
+CONTROLLER_GEN := go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.1
+ENVTEST_K8S ?= 1.34.x
+
+operator-generate:
+	cd operator && $(CONTROLLER_GEN) object paths=./api/...
+	cd operator && $(CONTROLLER_GEN) crd paths=./api/... output:crd:artifacts:config=../deploy/operator/crds
+	mkdir -p deploy/helm/nexora-operator/crds && cp deploy/operator/crds/*.yaml deploy/helm/nexora-operator/crds/
+	if [ -f operator/internal/mgmtapi/oapi-codegen.yaml ]; then cd operator/internal/mgmtapi && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml ../../../mgmt/api/openapi.yaml; fi
+	if [ -f deploy/helm/nexora-operator/Chart.yaml ]; then helm template nexora-operator deploy/helm/nexora-operator --namespace nexora-operator --set rbac.scope=cluster --set createNamespace=true > deploy/operator/operator.yaml; fi
+
+operator-test:
+	cd operator && KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.0 use $(ENVTEST_K8S) --bin-dir $(CURDIR)/bin/envtest -p path)" go test -race -count=1 ./...

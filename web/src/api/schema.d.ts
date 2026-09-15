@@ -1653,7 +1653,7 @@ export interface components {
       email: string;
       role: components["schemas"]["Role"];
       /** @enum {string} */
-      source: "local" | "oidc";
+      source: "local" | "oidc" | "system";
       disabled: boolean;
       /** Format: int64 */
       revision: number;

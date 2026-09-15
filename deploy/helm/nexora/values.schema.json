@@ -36,6 +36,10 @@
           "type": "object",
           "properties": { "existingSecret": { "type": "string" } }
         },
+        "bootstrapToken": {
+          "type": "object",
+          "properties": { "existingSecret": { "type": "string" } }
+        },
         "dnsTLS": {
           "type": "object",
           "properties": {
@@ -51,7 +55,10 @@
         "mcp": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "enabled": { "type": "boolean" }, "readOnly": { "type": "boolean" } }
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "readOnly": { "type": "boolean" }
+          }
         },
         "querylog": {
           "type": "object",
@@ -116,7 +123,76 @@
             "instances": { "type": "integer", "minimum": 1 },
             "imageName": { "type": "string", "minLength": 1 },
             "storageClass": { "type": "string" },
-            "size": { "type": "string", "minLength": 1 }
+            "size": { "type": "string", "minLength": 1 },
+            "resources": { "type": "object" },
+            "antiAffinity": { "enum": ["preferred", "required"] },
+            "primaryUpdateMethod": { "enum": ["switchover", "restart"] },
+            "smartShutdownTimeout": { "type": "integer", "minimum": 0 },
+            "postgresql": {
+              "type": "object",
+              "properties": {
+                "parameters": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": ["string", "number", "boolean"]
+                  }
+                }
+              }
+            },
+            "backup": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "destinationPath": { "type": "string" },
+                "endpointURL": { "type": "string" },
+                "serverName": { "type": "string" },
+                "s3Credentials": {
+                  "type": "object",
+                  "properties": {
+                    "existingSecret": { "type": "string" },
+                    "accessKeyIdKey": { "type": "string" },
+                    "secretAccessKeyKey": { "type": "string" }
+                  }
+                },
+                "endpointCA": {
+                  "type": "object",
+                  "properties": {
+                    "existingSecret": { "type": "string" },
+                    "key": { "type": "string" }
+                  }
+                },
+                "retentionPolicy": { "type": "string" },
+                "walCompression": { "type": "string" },
+                "dataCompression": { "type": "string" },
+                "schedule": { "type": "string", "pattern": "^\\S+( \\S+){5}$" },
+                "immediate": { "type": "boolean" }
+              }
+            },
+            "recovery": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "sourceServerName": { "type": "string" },
+                "destinationPath": { "type": "string" },
+                "endpointURL": { "type": "string" },
+                "s3Credentials": {
+                  "type": "object",
+                  "properties": {
+                    "existingSecret": { "type": "string" },
+                    "accessKeyIdKey": { "type": "string" },
+                    "secretAccessKeyKey": { "type": "string" }
+                  }
+                },
+                "endpointCA": {
+                  "type": "object",
+                  "properties": {
+                    "existingSecret": { "type": "string" },
+                    "key": { "type": "string" }
+                  }
+                },
+                "targetTime": { "type": "string" }
+              }
+            }
           }
         }
       },
@@ -170,7 +246,6 @@
         "resources": { "type": "object" },
         "groups": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "required": ["name"],

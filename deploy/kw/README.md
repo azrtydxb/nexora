@@ -72,6 +72,70 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
 | `bind-primary.yaml` | `nexora-bind`: BIND primary of the secondary zone `bind-demo.kw.` (ClusterIP 10.43.200.53:5353)                                                                                                                    |
 | `bootstrap.sh`      | API bootstrap over HTTPS: admin, upstreams, block list, resolution, RPZ, demo zones, filter categories, join token, removal of engine group `edge-b` and of engines that no longer run                             |
 
+## Operator e2e (namespace nexora-optest)
+
+`scripts/kw-operator-e2e.sh [--tag TAG] [--skip-build] [--keep]` proves the Kubernetes operator
+(`docs/operations.md`, "Install with the Kubernetes operator") on kw without touching production. It
+runs from the laptop with kube context `kw` (`NEXORA_KW_CONTEXT`):
+
+1. Builds and pushes `nexora-engine`, `nexora-mgmt` and `nexora-operator` at `sha-<7>` from the
+   committed tree (`git archive HEAD`, so uncommitted changes are not in the images); `--skip-build`
+   reuses `--tag`.
+2. Creates the namespace `nexora-optest` with the label `nexora.io/e2e=operator`, or reuses it only when
+   it carries that label.
+3. Server-side applies `deploy/operator/crds/` and installs `deploy/helm/nexora-operator` as release
+   `nexora-operator` in `nexora-optest` with `rbac.scope=namespace` (it watches only that namespace).
+4. Copies the MinIO root credentials into the Secret `optest-s3` (never printed), starts the probe pod
+   `probe` (dig, dnsperf, curl, psql) and creates the bucket `nexora-optest` on
+   `minio.minio.svc.cluster.local:9000`.
+5. Runs `TestKwOperator` (`go test -tags kwe2e ./test/kw` in `operator/`) with the installation and
+   engine groups in `operator/test/kw/testdata/`: CNPG with two instances and backups to
+   `s3://nexora-optest/<run timestamp>`, two management replicas, the `default` group as instances `a`
+   and `b` and an `edge` group, every Service `ClusterIP`. Subtests: `guards`, `install`,
+   `engine-groups`, `rolling-update`, `join-token-rotation`, `prune`, `cnpg-failover`,
+   `cnpg-backup-restore`, `delete-retains-state`.
+6. Unless `--keep`: deletes the installation and waits for the engine pods, deletes the CNPG clusters,
+   removes the run's S3 prefix and the bucket, runs a cleanup Job per node that removes
+   `/var/lib/nexora-optest`, deletes the engine groups while the operator can still run their
+   finalizers, uninstalls the operator and deletes the namespace. A failed cleanup step exits non-zero.
+   The two CRDs stay installed (cluster-scoped, unused by production).
+
+Guards: the script refuses the namespace `nexora` and the nodes `master-12` and `master-13`, which carry
+the production addresses; the `guards` subtest renders the installation first and fails the run (before
+anything is applied) on a namespace other than `nexora-optest`, a context other than `kw`, a node list
+without exactly three nodes or with `master-12`/`master-13`, any rendered LoadBalancer or NodePort
+Service, any `loadBalancerIP`, or an object outside `nexora-optest`. Engines run only on `worker-21`,
+`worker-22` and `worker-23` (`NEXORA_OPTEST_NODES`), with hostPath prefix `/var/lib/nexora-optest`.
+Check production before and after a run: `kubectl --context kw -n nexora get nexorainstallations`
+prints `No resources found`, and `kubectl --context kw -n nexora get svc nexora-dns nexora-dns-2 -o wide`
+still shows `192.168.10.136` and `192.168.10.139`.
+
+`--keep` leaves the namespace, workloads, database, S3 prefix and node directories for debugging
+(`kubectl --context kw -n nexora-optest describe nxi nexora-optest`, `get nxeg`, the operator's log);
+debug only in `nexora-optest`, never in `nexora`. Clean up afterwards by running the script's cleanup
+sequence by hand or a run without `--keep`.
+
+What the run measures:
+
+- `rolling-update` changes `engine.workers` and requires zero lost queries from a fresh-socket probe
+  (one `dig` per query, 5 queries/s per instance Service, at least 960 sent, no gap over 1 s, from before
+  the change until every pod is ready). `dnsperf` runs too, but kw's Cilium socket load balancer destroys
+  its connected UDP socket when the first old pod leaves the Service (`ECONNABORTED`), which is a client
+  socket event rather than a lost query; it is asserted only when it completes.
+- `cnpg-failover` deletes the primary pod and measures the time to a new primary, a healthy API and a
+  group change on every engine.
+- `cnpg-backup-restore` takes a `Backup` and restores it into a new one-instance cluster
+  `nexora-db-restore`.
+- `delete-retains-state` checks that deleting the `NexoraInstallation` removes the workloads and keeps
+  the `Cluster` and the Secrets `nexora-optest-ca`, `-kek` and `-operator-token`.
+
+Last recorded result (2026-09-15, images `dev-m9-8483b44`, details in `.procoder/notes/plan-review.md`):
+every subtest passed. Ready after 1m54s; the roll replaced every engine pod in 29 s with 0 of 1174 and 0
+of 1173 probe queries lost; join token rotation 31 s (missing Secret) and 1m2s (renewal), with at most
+one or two active tokens per group; new primary 50 s after the deletion (43 s in the previous run), API
+healthy 5 s later, the group change on every engine at 58 s; backup 32 s and restore verified 1m30s
+later; workloads gone 18 s after deleting the installation.
+
 ## Addresses
 
 - GUI/API: `https://nexora.kw.local` only (ingress, certificate from the `cluster-ca` ClusterIssuer;

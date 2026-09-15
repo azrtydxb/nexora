@@ -16,6 +16,8 @@ mgmt:
     existingSecret: "" # required: secret with ca.crt and ca.key (nexora-mgmt ca init)
   kek:
     existingSecret: "" # optional: secret with key "kek" (32 random bytes, base64)
+  bootstrapToken:
+    existingSecret: "" # optional: secret with key "token" (an nxt_ API token); set by the operator
   dnsTLS:
     existingSecret: "" # optional: kubernetes.io/tls secret for DoT/DoH/DoQ, pushed to engines
     reloadInterval: 30s
@@ -62,6 +64,46 @@ database:
     imageName: ghcr.io/cloudnative-pg/postgresql:17.6
     storageClass: ""
     size: 10Gi
+    resources: {}
+    antiAffinity: preferred # preferred | required
+    primaryUpdateMethod: switchover # switchover | restart
+    # Seconds a shutting-down PostgreSQL waits for open client sessions before CNPG switches to a fast
+    # shutdown. CNPG's default (180) makes a primary deletion take about three minutes, because the
+    # management plane holds pooled sessions open; 30 keeps failover inside the 120 s target. Raise it
+    # only when long-running transactions must finish, and keep it well below stopDelay (CNPG: 1800).
+    smartShutdownTimeout: 30
+    postgresql:
+      parameters: {} # string map, e.g. { max_connections: "200" }
+    backup:
+      enabled: false
+      destinationPath: "" # s3://bucket/path
+      endpointURL: ""
+      serverName: "" # default: clusterName
+      s3Credentials:
+        existingSecret: ""
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      endpointCA:
+        existingSecret: ""
+        key: ca.crt
+      retentionPolicy: 30d
+      walCompression: gzip
+      dataCompression: gzip
+      schedule: "0 0 3 * * *" # six fields, seconds first
+      immediate: false
+    recovery:
+      enabled: false
+      sourceServerName: "" # required with enabled: the serverName the backup was archived under
+      destinationPath: "" # default: backup.destinationPath
+      endpointURL: "" # default: backup.endpointURL
+      s3Credentials: # each default: backup.s3Credentials.*
+        existingSecret: ""
+        accessKeyIdKey: ""
+        secretAccessKeyKey: ""
+      endpointCA: # each default: backup.endpointCA.*
+        existingSecret: ""
+        key: ""
+      targetTime: "" # RFC 3339; empty recovers to the end of the WAL archive
 
 engine:
   enabled: true

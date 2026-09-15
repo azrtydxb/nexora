@@ -3,6 +3,11 @@ mgmt:
 database:
   mode: external
   external: { existingSecret: nexora-db, key: uri }
+  cnpg:
+    backup:
+      enabled: true
+      destinationPath: s3://nexora-lint/backups
+      s3Credentials: { existingSecret: nexora-s3 }
 engine:
   groups:
     - name: default

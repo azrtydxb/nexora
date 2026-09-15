@@ -1,0 +1,18 @@
+image:
+  registry: 192.168.10.131/azrtydxb
+  # Default: the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+replicas: 1
+rbac:
+  # cluster: ClusterRole and ClusterRoleBinding; namespace: a Role and RoleBinding per watched namespace.
+  scope: cluster
+# Required (non-empty) with rbac.scope=namespace.
+watchNamespaces: []
+leaderElection: true
+# Renders the release Namespace (used for deploy/operator/operator.yaml).
+createNamespace: false
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }

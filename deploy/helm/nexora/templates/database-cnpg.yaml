@@ -1,5 +1,23 @@
+{{- /* A barmanObjectStore location: dict with path, url, server, secret, idKey, secretKey, caSecret, caKey. */ -}}
+{{- define "nexora.cnpgObjectStore" -}}
+destinationPath: {{ .path | quote }}
+{{- with .url }}
+endpointURL: {{ . | quote }}
+{{- end }}
+serverName: {{ .server | quote }}
+s3Credentials:
+  accessKeyId: { name: {{ .secret | quote }}, key: {{ .idKey | quote }} }
+  secretAccessKey: { name: {{ .secret | quote }}, key: {{ .secretKey | quote }} }
+{{- if .caSecret }}
+endpointCA: { name: {{ .caSecret | quote }}, key: {{ .caKey | quote }} }
+{{- end }}
+{{- end }}
 {{- if eq .Values.database.mode "cnpg" }}
 {{- $c := .Values.database.cnpg }}
+{{- $b := $c.backup }}
+{{- $r := $c.recovery }}
+{{- $backupServer := $b.serverName | default $c.clusterName }}
+{{- /* debt: in-tree barmanObjectStore (deprecated since CNPG 1.26, present in kw's 1.29.1); move to the Barman Cloud plugin when a CNPG release removes the field or the plugin is installed on kw. */}}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -8,14 +26,100 @@ metadata:
 spec:
   instances: {{ $c.instances }}
   imageName: {{ $c.imageName }}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: {{ $c.antiAffinity }}
+  # Updates move the primary without an operator's approval; the management plane reconnects
+  # through the -rw Service behind <clusterName>-app.
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: {{ $c.primaryUpdateMethod }}
+  # A deleted or demoted primary shuts PostgreSQL down smartly for this long before CNPG asks for a fast
+  # shutdown: with CNPG's default (180) a failover waits for the management plane's pooled sessions.
+  smartShutdownTimeout: {{ $c.smartShutdownTimeout }}
+  {{- with $c.resources }}
+  resources: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $c.postgresql.parameters }}
+  postgresql:
+    parameters:
+      {{- range $k, $v := . }}
+      {{ $k }}: {{ $v | toString | quote }}
+      {{- end }}
+  {{- end }}
   # CNPG writes the connection URI to the Secret <clusterName>-app, key uri.
   bootstrap:
+    {{- if $r.enabled }}
+    {{- $_ := required "database.cnpg.recovery.sourceServerName is required when database.cnpg.recovery.enabled" $r.sourceServerName }}
+    recovery:
+      source: backup-source
+      database: nexora
+      owner: nexora
+      {{- with $r.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+    {{- else }}
     initdb:
       database: nexora
       owner: nexora
+    {{- end }}
+  {{- if $r.enabled }}
+  {{- $path := required "database.cnpg.recovery.destinationPath (or database.cnpg.backup.destinationPath) is required when database.cnpg.recovery.enabled" ($r.destinationPath | default $b.destinationPath) }}
+  {{- if and $b.enabled (eq $path $b.destinationPath) (eq $r.sourceServerName $backupServer) }}
+  {{- fail "database.cnpg.recovery.sourceServerName equals the backup serverName on the same destinationPath: the restored cluster would archive into the backup it restores from; set database.cnpg.backup.serverName" }}
+  {{- end }}
+  externalClusters:
+    - name: backup-source
+      barmanObjectStore: {{- include "nexora.cnpgObjectStore" (dict
+          "path" $path
+          "url" ($r.endpointURL | default $b.endpointURL)
+          "server" $r.sourceServerName
+          "secret" (required "database.cnpg.recovery.s3Credentials.existingSecret (or database.cnpg.backup.s3Credentials.existingSecret) is required when database.cnpg.recovery.enabled" ($r.s3Credentials.existingSecret | default $b.s3Credentials.existingSecret))
+          "idKey" ($r.s3Credentials.accessKeyIdKey | default $b.s3Credentials.accessKeyIdKey)
+          "secretKey" ($r.s3Credentials.secretAccessKeyKey | default $b.s3Credentials.secretAccessKeyKey)
+          "caSecret" ($r.endpointCA.existingSecret | default $b.endpointCA.existingSecret)
+          "caKey" ($r.endpointCA.key | default $b.endpointCA.key)) | nindent 8 }}
+  {{- end }}
+  {{- if $b.enabled }}
+  backup:
+    retentionPolicy: {{ $b.retentionPolicy | quote }}
+    barmanObjectStore:
+      {{- include "nexora.cnpgObjectStore" (dict
+          "path" (required "database.cnpg.backup.destinationPath is required when database.cnpg.backup.enabled" $b.destinationPath)
+          "url" $b.endpointURL
+          "server" $backupServer
+          "secret" (required "database.cnpg.backup.s3Credentials.existingSecret is required when database.cnpg.backup.enabled" $b.s3Credentials.existingSecret)
+          "idKey" $b.s3Credentials.accessKeyIdKey
+          "secretKey" $b.s3Credentials.secretAccessKeyKey
+          "caSecret" $b.endpointCA.existingSecret
+          "caKey" $b.endpointCA.key) | nindent 6 }}
+      wal:
+        compression: {{ $b.walCompression }}
+      data:
+        compression: {{ $b.dataCompression }}
+  {{- end }}
   storage:
     size: {{ $c.size }}
     {{- with $c.storageClass }}
     storageClass: {{ . }}
     {{- end }}
+{{- if $b.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $c.clusterName }}-scheduled
+  labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-db") | nindent 4 }}
+spec:
+  schedule: {{ $b.schedule | quote }}
+  immediate: {{ $b.immediate }}
+  backupOwnerReference: self
+  method: barmanObjectStore
+  cluster:
+    name: {{ $c.clusterName }}
+{{- end }}
+{{- end }}
+{{- if and (eq .Values.database.mode "cnpg") (not (.Capabilities.APIVersions.Has "postgresql.cnpg.io/v1")) }}
+{{- fail "database.mode=cnpg needs the CloudNativePG operator (API postgresql.cnpg.io/v1); install it or set database.mode=external" }}
 {{- end }}

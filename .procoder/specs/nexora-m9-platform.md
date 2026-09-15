@@ -168,7 +168,7 @@ The roadmap puts this in M9 Platform, after M6–M8.
   - `joinToken` settings: `secretName` (default `<cr name>-join-token`), `ttl` (default `8760h`, range
     1m–8760h), `renewBefore` (default `720h`, less than `ttl`), `revokeGracePeriod` (default `10m`),
     `maxUses` (optional), `labels` (optional, at most 32).
-  - The controller creates a token named `op/<namespace>/<cr name>/<unix seconds>`, truncated to the
+  - The controller creates a token named `op/<cr uid>/<unix seconds>/<namespace>/<cr name>`, truncated to the
     API's 64-character limit, and writes it to the Secret key `join-token`. That Secret is owned by the
     CR.
   - It creates a new token when the Secret is missing, when the recorded token is not `active`, or when
@@ -680,7 +680,7 @@ delete` in the ClusterRole of `deploy/operator/operator.yaml`, and Secrets and E
     NOERROR from `nexora-optest-dns-a` and `-b`.
   - `engine-groups`: an engine of group `edge` enrolls into `edge`.
   - `rolling-update`: `spec.engine.workers` goes 2→1 while dnsperf sends 5 queries/s to each instance
-    Service. Every engine pod is replaced, and dnsperf reports `Queries lost: 0` on both.
+    Service. Every engine pod is replaced, and a continuous fresh-socket probe on both loses 0 queries (at least 960 sent, no gap over 1 s, from before the change until every pod is ready). dnsperf also runs and must report 0 lost when it finishes; on kw, Cilium's socket load balancer aborts dnsperf's connected UDP socket when its backend leaves, which is a client-socket effect, not an engine loss (lead decision 2026-09-15).
   - `join-token-rotation`: `ttl: 3m`, `renewBefore: 2m`, `revokeGracePeriod: 30s`. The Secret changes
     and the old token shows `revoked`.
   - `prune`: removing group `edge` deletes its DaemonSet.

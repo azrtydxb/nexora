@@ -84,6 +84,10 @@ spec:
             # 32 random bytes (base64) sealing stored secrets such as TSIG keys.
             - { name: NEXORA_KEK_FILE, value: /etc/nexora/kek/kek }
             {{- end }}
+            {{- if $m.bootstrapToken.existingSecret }}
+            # An nxt_ API token for the nexora-operator system user, re-read while running.
+            - { name: NEXORA_BOOTSTRAP_TOKEN_FILE, value: /etc/nexora/bootstrap-token/token }
+            {{- end }}
             {{- if $m.dnsTLS.existingSecret }}
             # The kubelet updates Secret volumes in place, so rotating the Secret rotates the DNS
             # serving certificate without restarts.
@@ -123,6 +127,9 @@ spec:
             {{- if $m.kek.existingSecret }}
             - { name: kek, mountPath: /etc/nexora/kek, readOnly: true }
             {{- end }}
+            {{- if $m.bootstrapToken.existingSecret }}
+            - { name: bootstrap-token, mountPath: /etc/nexora/bootstrap-token, readOnly: true }
+            {{- end }}
             {{- if $m.dnsTLS.existingSecret }}
             - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
             {{- end }}
@@ -136,6 +143,10 @@ spec:
             defaultMode: 0440
         {{- with $m.kek.existingSecret }}
         - name: kek
+          secret: { secretName: {{ . }}, defaultMode: 0440 }
+        {{- end }}
+        {{- with $m.bootstrapToken.existingSecret }}
+        - name: bootstrap-token
           secret: { secretName: {{ . }}, defaultMode: 0440 }
         {{- end }}
         {{- with $m.dnsTLS.existingSecret }}

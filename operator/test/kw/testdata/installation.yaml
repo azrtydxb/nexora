@@ -1,0 +1,55 @@
+# The operator e2e installation. TestKwOperator substitutes TAG, NODE1..NODE3 and S3_PATH from the
+# environment. Every Service is ClusterIP; engines run only on NODE1..NODE3.
+apiVersion: nexora.io/v1alpha1
+kind: NexoraInstallation
+metadata:
+  name: nexora-optest
+spec:
+  image:
+    registry: 192.168.10.131/azrtydxb
+    tag: TAG
+    pullPolicy: Always
+  mgmt:
+    replicas: 2
+  database:
+    mode: cnpg
+    cnpg:
+      instances: 2
+      storageClass: longhorn
+      size: 1Gi
+      backup:
+        enabled: true
+        destinationPath: S3_PATH
+        endpointURL: http://minio.minio.svc.cluster.local:9000
+        s3Credentials:
+          existingSecret: optest-s3
+          accessKeyIdKey: ACCESS_KEY_ID
+          secretAccessKeyKey: ACCESS_SECRET_KEY
+  engine:
+    kind: DaemonSet
+    workers: 2
+    initImage: 192.168.10.131/library/busybox:1.37
+    stateDir:
+      type: hostPath
+      hostPathPrefix: /var/lib/nexora-optest
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 768Mi }
+    groups:
+      - name: default
+        instances:
+          - name: a
+            node: NODE1
+            service: { name: nexora-optest-dns-a, type: ClusterIP }
+          - name: b
+            node: NODE2
+            service: { name: nexora-optest-dns-b, type: ClusterIP }
+      - name: edge
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [NODE3]
+        service: { name: nexora-optest-dns-edge, type: ClusterIP }

@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -73,5 +74,27 @@ func TestLoadCatalogMirror(t *testing.T) {
 		"NEXORA_CATALOG_MIRROR": "mirror.test"}))
 	if err == nil || err.Error() != "NEXORA_CATALOG_MIRROR must be an http(s) URL" {
 		t.Fatalf("bad mirror -> %v", err)
+	}
+}
+
+func TestConfigBootstrapToken(t *testing.T) {
+	base := func() map[string]string {
+		return map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k"}
+	}
+	c, err := config.Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BootstrapTokenFile != "" || c.BootstrapTokenReloadInterval != 30*time.Second {
+		t.Fatalf("defaults: file=%q interval=%s", c.BootstrapTokenFile, c.BootstrapTokenReloadInterval)
+	}
+	m := base()
+	m["NEXORA_BOOTSTRAP_TOKEN_FILE"], m["NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL"] = "/run/token", "5s"
+	if c, err = config.Load(env(m)); err != nil || c.BootstrapTokenFile != "/run/token" || c.BootstrapTokenReloadInterval != 5*time.Second {
+		t.Fatalf("set: file=%q interval=%s err=%v", c.BootstrapTokenFile, c.BootstrapTokenReloadInterval, err)
+	}
+	m["NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL"] = "500ms"
+	if _, err := config.Load(env(m)); err == nil || !strings.Contains(err.Error(), "NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL") {
+		t.Fatalf("500ms interval: %v", err)
 	}
 }

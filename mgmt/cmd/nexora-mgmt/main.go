@@ -389,7 +389,11 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		stats.NewCollector(st), fleet.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter, xfrin.NotifyIgnored)
+		stats.NewCollector(st), fleet.NewCollector(st), pki.DNSTLSReloadErrors, pki.DNSTLSNotAfter, xfrin.NotifyIgnored,
+		auth.BootstrapTokenErrors)
+	if cfg.BootstrapTokenFile != "" {
+		go authSvc.RunBootstrapToken(ctx, cfg.BootstrapTokenFile, cfg.BootstrapTokenReloadInterval, log.Printf)
+	}
 	dnsTLS := control.NewDNSTLSFanout()
 	if cfg.DNSTLSCertFile != "" {
 		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)

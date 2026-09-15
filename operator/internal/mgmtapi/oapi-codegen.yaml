@@ -1,0 +1,21 @@
+package: mgmtapi
+output: client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  # The hand-written Client in client.go wraps the generated one.
+  client-type-name: rawClient
+  include-operation-ids:
+    [
+      getHealth,
+      getSetupStatus,
+      listEngineGroups,
+      createEngineGroup,
+      getEngineGroup,
+      updateEngineGroup,
+      deleteEngineGroup,
+      listJoinTokens,
+      createJoinToken,
+      revokeJoinToken,
+    ]

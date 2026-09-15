@@ -1,5 +1,88 @@
 # Plan review log
 
+## M9 operator e2e re-run (2026-09-15, `dev-m9-8483b44`)
+
+Images built from HEAD `8483b44` by `scripts/kw-operator-e2e.sh --tag dev-m9-8483b44 --keep` (run A,
+test unchanged, exit 1), then `--skip-build --keep` with the changed `rolling-update` (run B, exit 0);
+each run was cleaned up with the script's cleanup sequence after the join tokens were counted.
+
+| Subtest              | A    | B    | B duration | Notes (B)                                                                          |
+| -------------------- | ---- | ---- | ---------- | ---------------------------------------------------------------------------------- |
+| guards               | PASS | PASS | 2.0 s      |                                                                                    |
+| install              | PASS | PASS | 120 s      | Ready after 1m54s                                                                  |
+| engine-groups        | PASS | PASS | 1.5 s      |                                                                                    |
+| rolling-update       | FAIL | PASS | 241 s      | roll 29 s; probe 0 lost of 1174 (a) and 1173 (b), gap <= 1 s; dnsperf ECONNABORTED |
+| join-token-rotation  | PASS | PASS | 95 s       | 31 s and 1m2s                                                                      |
+| prune                | PASS | PASS | 2.8 s      |                                                                                    |
+| cnpg-failover        | PASS | PASS | 59 s       | new primary 50 s after the deletion (A: 43 s), API 200 5 s later, engines at 58 s  |
+| cnpg-backup-restore  | PASS | PASS | 123 s      | backup 32 s, restore verified 1m30s later                                          |
+| delete-retains-state | PASS | PASS | 18 s       |                                                                                    |
+
+- RESOLVED: failover is within the 120 s target (43 s and 50 s, previously 3m6s).
+- RESOLVED: no join token storm. `join_tokens` per group at the end: A `default` 1, `edge` 6; B
+  `default` 1, `edge` 8 (install token, missing-Secret rotation, then one renewal a minute under the
+  test's `ttl: 3m`/`renewBefore: 2m`); one or two active, zero `error` lines in the operator log.
+- DECIDED: `rolling-update` proves zero loss with the fresh-socket probe (`digLoop`), not `dnsperf`.
+  Evidence: kw's Cilium has socket LB enabled (`cilium-dbg status`: `Socket LB: Enabled`, coverage
+  Full), which destroys connected UDP sockets whose ClusterIP backend is removed; both `dnsperf`s died
+  with `ECONNABORTED` 11 s after the change (first old pod leaving), in all four kw runs so far,
+  while the probe sending 5 queries/s through that same instant lost 0 every time. `dnsperf` measures
+  its own socket's fate, not the engines'. The probe is not weaker: each query has one try and 2 s, a
+  query in flight on a destroyed socket counts as lost, and the subtest now also requires >= 960 sent
+  in 240 s, no gap over 1 s, and a send window from before the change to after every pod is ready.
+  `dnsperf` still runs and is asserted (0 lost, NOERROR only) whenever it completes. The spec's
+  "dnsperf reports `Queries lost: 0`" (S line 683) should read "the probe"; left to the lead.
+
+Production untouched before and after both runs (`nexora` has no `NexoraInstallation`; `nexora-dns` and
+`nexora-dns-2` still hold 192.168.10.136 and 192.168.10.139); `nexora-optest` is deleted (NotFound), the
+S3 prefixes and node state directories were removed, and the two CRDs stay installed.
+
+## M9 operator e2e (2026-09-15)
+
+`scripts/kw-operator-e2e.sh --skip-build --tag dev-m9-749166b-dirty` in `nexora-optest` on kw (images
+`dev-m9-749166b` plus the `internal/mgmtapi` Content-Type fix; run 1 used `dev-m9-749166b` unfixed).
+Run 2 (756 s total, exit 1):
+
+| Subtest              | Result | Duration | Notes                                                                                         |
+| -------------------- | ------ | -------- | --------------------------------------------------------------------------------------------- |
+| guards               | PASS   | 1.8 s    | no LoadBalancer/NodePort Service, no object outside the namespace                             |
+| install              | PASS   | 117 s    | Ready after 1m53s; zone answered by both instance Services                                    |
+| engine-groups        | PASS   | 1.3 s    | an engine of `edge` enrolled on worker-23                                                     |
+| rolling-update       | FAIL   | 241 s    | every pod replaced in 27 s; dig loop 0 lost of 1174 per instance; dnsperf aborted (see below) |
+| join-token-rotation  | PASS   | 94 s     | rotation on the missing Secret 33 s, renewal rotation 59 s, predecessors revoked              |
+| prune                | PASS   | 2.7 s    | `edge` DaemonSet and Service removed                                                          |
+| cnpg-failover        | FAIL   | 192 s    | new primary after 3m6s (> 120 s); API 200 1 s later; group change on every engine 5 s later   |
+| cnpg-backup-restore  | PASS   | 86 s     | backup completed in 20 s, restore Ready and `edge` row found 1m6s later                       |
+| delete-retains-state | PASS   | 19 s     | workloads gone in 18 s; `Cluster` and the three Secrets kept                                  |
+
+Findings (details in the plan, Task 10 "Findings from the kw runs"):
+
+- The operator's bodiless `DELETE`s reached the API without `Content-Type: application/json` and got
+  `415`; every join token revoke and group delete failed. Fixed in `operator/internal/mgmtapi/client.go`
+  with the rule enforced by `internal/mgmtapi/fake`.
+- RESOLVED (Task 7 files, 2026-09-15): with that failure the controller created ~2500 join tokens in
+  nine minutes (rotate writes the Secret, then fails revoking the predecessor, and rotates again on the
+  Secret event). `rotate` now records the new token in status right after the Secret write, before
+  anything else can fail; `syncJoinToken` revokes every superseded and previous token _before_ it
+  creates one and stops with `JoinTokenReady=False`, reason `JoinTokenRevokeFailed`, when a revoke
+  fails (requeue 30 s, Secret untouched, `Synced` still `True`); `maxOwnedTokens` (3) is a hard ceiling
+  on the active tokens carrying the CR's marker, counted from the management plane, with reason
+  `JoinTokenLimit`. `TestEngineGroupNeverMultipliesTokensWhenRevokeFails` holds the count at 2 over 140
+  reconciles with every revoke answered 415.
+- `dnsperf` dies with `ECONNABORTED` when an engine leaves a ClusterIP's backends (Cilium 1.19.4 socket
+  LB destroys connected UDP sockets). A fresh-socket probe at the same rate lost nothing.
+- RESOLVED (Task 4 files, 2026-09-15): a graceful primary deletion fails over in about 3 minutes
+  because CNPG's `smartShutdownTimeout` (180 s) waits for the management plane's sessions. The chart
+  value `database.cnpg.smartShutdownTimeout` (default 30) now renders `Cluster.spec`, and the
+  management plane closes idle pooled sessions within 45 s (`MaxConnIdleTime` 30 s, `HealthCheckPeriod`
+  15 s, `MaxConnLifetime` 30 min). The kw production render is byte-identical (kw uses
+  `database.mode: external`); kw's own `deploy/kw/cnpg-cluster.yaml` is out of M9 scope and still
+  carries CNPG's 180 s default. RESOLVED: the re-run above measured 43 s and 50 s.
+
+Production was untouched: `kubectl --context kw -n nexora get nexorainstallations` printed
+`No resources found` before and after, and `nexora-dns`/`nexora-dns-2` still hold 192.168.10.136 and
+192.168.10.139. `nexora-optest` was deleted; the two cluster-scoped CRDs stay installed, as the spec says.
+
 ## M3 (2026-09-13)
 
 - RESOLVED (M3: `rpz_zones.tsig_secret_envelope` holds an NXE1 envelope from `mgmt/internal/secrets`, CHECK-constrained to the `NXE1` magic; no plaintext column exists): FIX BEFORE M3 BUILD: plan stores RPZ TSIG secret plaintext in `rpz_zones.tsig_secret`. Violates architecture rule "secrets never plaintext in DB" and S-23. Resolution: pull the M4 KEK envelope-encryption helper (`mgmt/internal/secrets`, AES-256-GCM, refuses without KEK) forward into M3 and store the RPZ TSIG secret through it.
@@ -73,3 +156,5 @@
 - Flaky (M11 final check, 2026-09-15): `54-ai-assistant` can time out waiting for the "Thinking" status (the fake model may answer before the status renders). Fix in M11 Task 32 without weakening: assert the task reaches running or succeeded, or have the fixture hold the response until the spec observes the status.
 
 - Follow-up (M7 T13, 2026-09-15): pgx v5.11 keeps a reference to a pooled connection's last query parameters until that connection runs another query, so a blob upload can stay in memory on an idle pooled connection. Bounded by pool size x largest blob; revisit if management plane memory on large list refreshes becomes a problem.
+
+- RESOLVED (M9 T7, 2026-09-15; token names carry `op/<cr uid>/` and each reconcile revokes older unrecorded marked tokens, `TestEngineGroupRevokesUnrecordedToken`): a join token created by the engine group controller whose status write then fails is not recorded and stays valid until its TTL. Fix before M9 closes if cheap: name tokens with the CR uid and revoke unrecorded ones on the next reconcile.

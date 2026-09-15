@@ -23,6 +23,7 @@ jobs:
         image:
           - { name: nexora-engine, file: deploy/docker/engine.Dockerfile }
           - { name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile }
+          - { name: nexora-operator, file: deploy/docker/operator.Dockerfile }
         arch:
           - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb-publish }
           - {
@@ -90,7 +91,7 @@ jobs:
     needs: build
     strategy:
       matrix:
-        image: [nexora-engine, nexora-mgmt]
+        image: [nexora-engine, nexora-mgmt, nexora-operator]
     runs-on: arc-azrtydxb-publish
     timeout-minutes: 15
     steps:
