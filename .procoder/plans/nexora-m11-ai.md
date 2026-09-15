@@ -2155,6 +2155,8 @@ Files:
 - `mgmt/internal/ai/anomaly/agent.go`, `mgmt/internal/ai/anomaly/agent_test.go`: agent and model call.
 - `mgmt/cmd/nexora-mgmt/ai_anomaly.go`: registration.
 - `e2e/ai_anomaly_test.go`: created.
+- `e2e/ai_foundation_test.go`: the `agentRegistered` condition in `TestAIDisabledChangesNothing` becomes a hard
+  check, so the configured-instance agent-run check always runs (lead note in `plan-review.md`).
 
 Interfaces:
 
@@ -2167,6 +2169,8 @@ type Window struct {
 	PriorThreats map[string]bool // "client:<ip>" or "group:<id>" with malware|phishing|cryptomining blocks in the prior 24 h
 	From, To  time.Time
 }
+const AgentName = "querylog_anomalies"
+var ThreatCategories = []string{"malware", "phishing", "cryptomining"}
 const MaxRecords = 5000 // debt: newest 5,000 records per run; revisit when a backend offers server-side aggregation for these detectors
 func Entropy(label string) float64
 func RegistrableParent(name string) string // last two labels, or three when the second-level label is one of co, com, net, org, gov, ac, edu
@@ -2175,6 +2179,7 @@ type Agent struct {
 	Store   *store.Store
 	Service *ai.Service
 	QueryLog querylog.Backend
+	Interval time.Duration // the first window reaches back one interval (the agent's configured interval)
 	MinLLMInterval time.Duration
 	Now     func() time.Time
 }
@@ -2230,18 +2235,30 @@ at most 120 characters and a description of at most 1,000.
   - a builtin backend fed through `Ingest` (as `querylog/builtin_test.go` does) with the tunnelling
     records;
   - an injected `Now` and `MinLLMInterval: 5*time.Minute`;
+  - each run goes through a helper that inserts and finishes the `ai_agent_runs` row as the scheduler does;
   - run 1 → 1 model call and the finding explained;
-  - run 2 at +30 s with the same records → 0 new calls;
-  - run 3 at +6 min with 100 records (the severity rises from nxdomain) → 1 call;
-  - a model returning errors (`aitest.MockModel{Err: ...}`) → the finding stored with
+  - run 2 at +30 s on a fresh `Agent` (another instance, `llm_at` read back from the run rows) with the
+    same traffic → 0 new calls, `no_change`;
+  - run 3 at +2 min with 100 NXDOMAIN tunnelling records → `nxdomain_burst` is new (the set changed) but
+    the last call is under `MinLLMInterval` old → 0 calls, finding unexplained;
+  - run 4 at +6 min with the same set → the pending change gets 1 call. Detector severities are fixed per
+    type, so a candidate-set change (a new id) stands in for the spec's "severity change";
+  - run 5: a model returning errors (`aitest.MockModel{Err: ...}`) → the new finding stored with
     `explained=false` and `run.Outcome == "ok"`;
-  - no detection for 31 min → `resolved`.
+  - run 6: no detection for 31 min → every finding `resolved`, no call.
+
+  `TestAnomalyAgentOutcomes` covers `skipped_budget` (finding still stored, no call), `no_change` for
+  `Noop` and `querylog.ErrBackendUnavailable` returned. `TestEntropyAndRegistrableParent` covers the helpers.
 
   Run, expect FAIL, implement `agent.go`:
   - the window is from the last successful run's `started_at` (or now−interval) to now;
   - `finding.Sync`;
-  - the model call only when `changed` and `now - lastLLM ≥ MinLLMInterval` (kept in memory and in
-    `run.Detail["llm_at"]`);
+  - the window starts at the newest other run with outcome `ok`, `no_change` or `skipped_budget`;
+    baselines come from `Topper.Top(client)` (limit `MaxRecords`) and prior threats from a blocked
+    threat-category search over the 24 h before the window;
+  - the model call only when a change is pending (`changed` since the last call, kept in memory while
+    candidates exist) and `now - lastLLM ≥ MinLLMInterval` (kept in memory and in
+    `run.Detail["llm_at"]`); a run without a pending change is `no_change`;
   - `ai.ErrBudgetExhausted` sets `run.Outcome = "skipped_budget"`;
   - a `Noop` backend sets `no_change`;
   - `querylog.ErrBackendUnavailable` returns an error.
@@ -2256,7 +2273,10 @@ at most 120 characters and a description of at most 1,000.
   4. Wait for the records in `/query-log`.
   5. `POST /ai/agents/querylog_anomalies/run`.
   6. Poll `/ai/findings?kind=anomaly` until the finding has description `scripted`.
-- [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestAIQueryLogAnomalies -count=1 -v'` and expect PASS.
+- [ ] Build `nexora-mgmt` and `nexora-fixture` into a private bin directory (copy the shared engine binary,
+      never overwrite `/work/nexora/bin`), run
+      `NEXORA_E2E_BIN_DIR=<dir> go test ./e2e -run 'TestAIQueryLogAnomalies|TestAIDisabledChangesNothing' -count=1 -v`
+      in the dev pod and expect PASS, then delete the directory.
 - [ ] Report the paths. Commit message: `M11 T13: query log anomaly agent`.
 
 ## Task 14: Dashboard insight agent
@@ -2487,7 +2507,10 @@ type Session struct{ ID uuid.UUID; OwnerID, OwnerKind, Title string; CreatedAt, 
 type Message struct{ ID int64; SessionID uuid.UUID; Role, Content string; ProposalID, TaskID *uuid.UUID; CreatedAt time.Time }
 func CreateSession(ctx context.Context, st *store.Store, p auth.Principal) (Session, error)
 func GetSession(ctx context.Context, st *store.Store, id uuid.UUID, p auth.Principal) (Session, []Message, error) // store.ErrNotFound unless owner
-func AddUserMessage(ctx context.Context, st *store.Store, sessionID uuid.UUID, content string, taskID uuid.UUID) (Message, error)
+func AddUserMessage(ctx context.Context, st *store.Store, sessionID uuid.UUID, content string) (Message, error)
+func LinkTask(ctx context.Context, st *store.Store, messageID int64, taskID uuid.UUID) error // the task input needs the message id, so the message is inserted first
+func CurrentProposalID(ctx context.Context, st *store.Store, sessionID uuid.UUID) (*uuid.UUID, error) // newest non-superseded session proposal
+func LatestTaskID(ctx context.Context, st *store.Store, sessionID uuid.UUID) (*uuid.UUID, error)
 type Plan struct {
 	Reply, Summary string
 	Actions        []proposal.Action // ≤ 8
@@ -2498,7 +2521,8 @@ func NewTask(st *store.Store, svc *ai.Service, v *proposal.Validator, now func()
 
 The first user message (truncated to 80 characters) becomes the session title. The model context is the
 spec's JSON context, built from store reads (`store` policy, category, list, engine group, access
-control, safe search, allowlist, resolver and RPZ functions) and never containing TSIG or other secrets.
+control, safe search, allowlist, resolver and RPZ functions, plus upstreams without CA certificates so
+`updateUpstream` plans can carry a revision) and never containing TSIG or other secrets.
 The system prompt says: plans may use only the listed operations, bodies must be complete request bodies
 with the current revision, and a reply without actions is allowed. A plan with actions:
 
@@ -2563,8 +2587,8 @@ DROP TABLE ai_assistant_messages, ai_assistant_sessions;
   - `GetAiAssistantSession` gives messages, the newest open or non-superseded session proposal and the
     newest task; a foreign session gives 404.
   - `PostAiAssistantMessage` checks ownership, content 1..2,000 characters, and
-    `TaskKinds[assistant_message]` (else 503 `feature_disabled`); it inserts the user message and
-    starts the task.
+    `TaskKinds[assistant_message]` (else 503 `feature_disabled`); it inserts the user message,
+    starts the task with `{session_id, message_id}` and links the task to the message with `LinkTask`.
 
   Add the registration file.
 
@@ -2578,6 +2602,10 @@ DROP TABLE ai_assistant_messages, ai_assistant_sessions;
   - a second operator gets 404 on `GET /ai/assistant/sessions/{id}`, and a viewer gets 403 on
     `POST /ai/assistant/sessions`.
 - [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run TestAIConfigAssistant -count=1 -v'` and expect PASS.
+      Blocked (2026-09-15): the apply answers `open` because `licenseOperations` in
+      `mgmt/internal/api/ai_proposals.go` (Task 6) does not merge `acknowledge_license` into
+      `createPolicyGroup`, and the `adult` category has the non-commercial `oisd-nsfw` source enabled by
+      default. Adding `"createPolicyGroup": true` there unblocks it.
 - [ ] Report the paths. Commit message: `M11 T16: configuration assistant`.
 
 ## Task 17: Upstream health prediction agent
@@ -2624,8 +2652,11 @@ Code builds the actions:
 - `switch_strategy` → `updateResolverSettings` with the current body, `strategy` from the model
   (`fastest` or `parallel` only) and the revision.
 - `reorder` → `updateUpstream` with `position` for this upstream.
-- `disable` → `updateUpstream` `enabled:false`, rejected by validation when fewer than 2 enabled
-  upstreams exist in its scope.
+- `disable` → `updateUpstream` `enabled:false`, rejected by the agent's answer validator (so the model is
+  re-asked) when fewer than 2 enabled upstreams exist in its scope (the global upstreams, or those of its
+  engine group); `proposal.Validator` does not know this rule.
+- `reorder` to the current position and `switch_strategy` to the current strategy are rejected too.
+- Only enabled upstreams are predicted. The stored detail's `recommendation` is `{type, description}`.
 
 The forecast detail is the `AiUpstreamPrediction` shape. `valid_until = now + Interval`.
 
@@ -2673,7 +2704,8 @@ The forecast detail is the `AiUpstreamPrediction` shape. `valid_until = now + In
     `strategy:"fastest"`;
   - a second fake answer `disable` for the only upstream → re-asked, and the third answer `none` stores
     a forecast without a proposal;
-  - an upstream with 5 points gets a forecast with trend `insufficient_data` and no model call.
+  - an upstream with 5 points (scoped to another engine group and reported by a second engine) gets a
+    forecast with trend `insufficient_data` and no model call.
 
   Run, expect FAIL, implement `agent.go`, and expect PASS.
 
