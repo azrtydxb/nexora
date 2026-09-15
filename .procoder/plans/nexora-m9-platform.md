@@ -1479,7 +1479,7 @@ func (s *Server) SetTokenState(id uuid.UUID, state string, expiresAt time.Time)
 func (s *Server) SetHealth(ok bool, setupRequired bool)
 ```
 
-- [ ] Create `operator/internal/keys/keys_test.go`:
+- [x] Create `operator/internal/keys/keys_test.go`:
   ```go
   package keys_test
 
@@ -1587,7 +1587,7 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   ```
   Run `scripts/dev-exec.sh 'cd operator && go test ./internal/keys -count=1'` and expect a build failure
   (package `keys` does not exist). Implement `keys.go` and expect PASS.
-- [ ] Create `operator/internal/mgmtapi/oapi-codegen.yaml`:
+- [x] Create `operator/internal/mgmtapi/oapi-codegen.yaml`:
   ```yaml
   package: mgmtapi
   output: client.gen.go
@@ -1595,6 +1595,8 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
     client: true
     models: true
   output-options:
+    # The hand-written Client in client.go wraps the generated one.
+    client-type-name: rawClient
     include-operation-ids:
       [
         getHealth,
@@ -1610,7 +1612,9 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
       ]
   ```
   Run `make operator-generate` on the laptop and expect `client.gen.go` with `ClientWithResponses`.
-- [ ] Create `operator/internal/mgmtapi/client_test.go`:
+  `client-type-name: rawClient` renames the generated low-level `Client` type, which otherwise collides
+  with the hand-written `mgmtapi.Client`.
+- [x] Create `operator/internal/mgmtapi/client_test.go`:
   ```go
   package mgmtapi_test
 
@@ -1662,9 +1666,10 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   ```
   Run it and expect a build failure (`mgmtapi.New` undefined). Implement `client.go`: every method calls
   the generated `…WithResponse` method and maps non-2xx through `APIError` (decoding the JSON
-  `{code,message}`). A transport error is wrapped with `ErrUnavailable`. `SetupRequired` returns
+  `{code,message}`). A transport error, an undecodable response and a 2xx without its JSON body are
+  wrapped with `ErrUnavailable`. `SetupRequired` returns
   `SetupStatus.Required`. Expect PASS.
-- [ ] Create `operator/internal/mgmtapi/fake/fake_test.go`: `TestFakeServesEngineGroupsAndTokens` uses
+- [x] Create `operator/internal/mgmtapi/fake/fake_test.go`: `TestFakeServesEngineGroupsAndTokens` uses
       `mgmtapi.New(s.URL, s.Token, nil)`:
   1. lists `default`;
   2. creates `edge` (201, revision 1);
@@ -1676,10 +1681,12 @@ func (s *Server) SetHealth(ok bool, setupRequired bool)
   7. `NonEmpty["edge"]` makes the delete fail with `ErrConflict`;
   8. deleting `default` gives 409 `engine_group_protected`.
 
+  `TestFakeKnobs` covers `SetHealth`, `ConflictOnce`, `MutateGroup`, `SetTokenState` and `Status`.
+
   Run and expect a build failure; implement `fake.go` (in-memory maps under a mutex, `httptest.NewServer`,
   closed by `t.Cleanup`) and expect PASS.
 
-- [ ] Run `scripts/dev-exec.sh 'make operator-test'` and `cd operator && go vet ./...`, and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'make operator-test'` and `cd operator && go vet ./...`, and expect PASS.
       Report the paths.
 
 ## Task 6: Rendering the Nexora chart from a NexoraInstallation
