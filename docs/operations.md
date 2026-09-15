@@ -1031,6 +1031,14 @@ validation of forwarded answers.
   transfers, updates and RPZ transfers cannot run until it reconnects.
 - **Built-in query log** is in memory and per instance; use OpenSearch for more
   than one mgmt replica or for retention.
+- **OpenSearch query-log paging** sorts by `@timestamp` and then `_id`, which
+  needs `indices.id_field_data.enabled` (the default, true in OpenSearch 3.x).
+  With it disabled, query-log searches fail with HTTP 400.
+- **Record edits of DNSSEC-signed zones** still rebuild from the whole zone per
+  edit; unsigned zones load only the owners an edit touches.
+- **Recursor cache budget** is `recursor_cache_max_bytes` (default 64 MiB,
+  4 MiB to 16 GiB), set as "Recursor cache memory (MiB)" in the Resolution
+  section of `/upstreams`.
 - **Restores** leave engines `ahead` until enough versions are published
   (see [Backup and restore PostgreSQL](#backup-and-restore-postgresql)).
 - **Node names are not unique**: re-enrolling a host creates a new engine

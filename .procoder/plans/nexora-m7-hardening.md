@@ -2265,7 +2265,7 @@ Interfaces: `TestM7DebtMarkersResolved`.
   - remove entries these tasks lifted, if listed (zone export memory, per-edit zone loads for unsigned zones, collector drop behaviour);
   - add: "Record edits of DNSSEC-signed zones still rebuild from the whole zone per edit.";
   - add: "The OpenSearch query log sorts by `_id`, which needs `indices.id_field_data.enabled` (the default).";
-  - add: "The recursor cache budget is `recursor_cache_max_bytes` (default 64 MiB) under Forwarding & recursion.".
+  - add: "The recursor cache budget is `recursor_cache_max_bytes` (default 64 MiB), set as "Recursor cache memory (MiB)" in the Resolution section of `/upstreams`." (M6's "Forwarding & recursion" navigation is not on the M7 branch; the GUI location follows the committed code.)
 - [ ] Run `scripts/dev-exec.sh 'go test -count=1 ./deploy/deploytest/...'` and expect PASS.
 - [ ] (Lead note from Task 14) In `docs/operations.md` Known limitations / OpenSearch, state that query-log paging sorts by `_id`, which requires `indices.id_field_data.enabled` (true by default in OpenSearch 3.x); with it disabled, searches fail with HTTP 400.
 
