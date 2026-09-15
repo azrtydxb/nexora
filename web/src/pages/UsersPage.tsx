@@ -12,6 +12,7 @@ import {
   roles,
   StatusDot,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -281,7 +282,10 @@ function UserDialog({
           <ErrorAlert error={save.error} thing="This user" />
           {!user && (
             <div className="grid gap-1.5">
-              <Label htmlFor="user-username">Username</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="user-username">Username</Label>
+                <HelpTip id="user-username" label="Username" />
+              </div>
               <Input
                 id="user-username"
                 data-testid="user-username"
@@ -294,7 +298,10 @@ function UserDialog({
             </div>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="user-email">Email</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="user-email">Email</Label>
+              <HelpTip id="user-email" label="Email" />
+            </div>
             <Input
               id="user-email"
               data-testid="user-email"
@@ -306,9 +313,12 @@ function UserDialog({
           </div>
           {local && (
             <div className="grid gap-1.5">
-              <Label htmlFor="user-password">
-                {user ? "New password" : "Password"}
-              </Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="user-password">
+                  {user ? "New password" : "Password"}
+                </Label>
+                <HelpTip id="user-password" label="Password" />
+              </div>
               <Input
                 id="user-password"
                 data-testid="user-password"
@@ -332,7 +342,10 @@ function UserDialog({
             </div>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="user-role">Role</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="user-role">Role</Label>
+              <HelpTip id="user-role" label="Role" />
+            </div>
             <Select
               value={form.role}
               onValueChange={(v) => set("role", v as Role)}
@@ -357,19 +370,25 @@ function UserDialog({
             </p>
           </div>
           {user && (
-            <label className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
+            <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
               <span>
-                <span className="font-medium">Disabled</span>
+                <span className="flex items-center gap-1.5">
+                  <label htmlFor="user-disabled" className="font-medium">
+                    Disabled
+                  </label>
+                  <HelpTip id="user-disabled" label="Disabled" />
+                </span>
                 <span className="text-muted-foreground block text-xs">
                   A disabled user cannot sign in.
                 </span>
               </span>
               <Switch
+                id="user-disabled"
                 checked={form.disabled}
                 onCheckedChange={(v) => set("disabled", v)}
                 data-testid="user-disabled"
               />
-            </label>
+            </div>
           )}
           <DialogFooter className="gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>

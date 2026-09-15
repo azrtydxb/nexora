@@ -14,6 +14,7 @@ import {
   SecretValue,
   StatusDot,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -297,7 +298,10 @@ function TokenDialog({ onClose }: { onClose: () => void }) {
             <form onSubmit={submit} className="grid gap-4">
               <ErrorAlert error={create.error} />
               <div className="grid gap-1.5">
-                <Label htmlFor="token-name">Name</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="token-name">Name</Label>
+                  <HelpTip id="token-name" label="Name" />
+                </div>
                 <Input
                   id="token-name"
                   data-testid="token-name"
@@ -310,7 +314,10 @@ function TokenDialog({ onClose }: { onClose: () => void }) {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-1.5">
-                  <Label htmlFor="token-role">Role</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="token-role">Role</Label>
+                    <HelpTip id="token-role" label="Role" />
+                  </div>
                   <Select
                     value={role}
                     onValueChange={(v) => setRole(v as Role)}
@@ -332,7 +339,10 @@ function TokenDialog({ onClose }: { onClose: () => void }) {
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="token-expiry">Expires</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="token-expiry">Expires</Label>
+                    <HelpTip id="token-expiry" label="Expires" />
+                  </div>
                   <Select value={expiry} onValueChange={setExpiry}>
                     <SelectTrigger
                       id="token-expiry"

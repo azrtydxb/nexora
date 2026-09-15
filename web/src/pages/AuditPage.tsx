@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 
 import { api, unwrap, type Schemas } from "@/api/client";
 import { useCan } from "@/auth/AuthProvider";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -88,7 +89,12 @@ export function AuditPage() {
               <TableHead>Actor</TableHead>
               <TableHead>Action</TableHead>
               <TableHead>Target</TableHead>
-              <TableHead className="text-right">Version</TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1.5">
+                  Version
+                  <HelpTip id="audit-col-version" label="Version" />
+                </span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

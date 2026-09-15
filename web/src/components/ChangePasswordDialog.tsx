@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 
 import { api, ApiError, unwrap } from "@/api/client";
 import { errorMessage } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,7 +94,10 @@ export function ChangePasswordDialog({
             </Alert>
           )}
           <div className="grid gap-1.5">
-            <Label htmlFor="password-current">Current password</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="password-current">Current password</Label>
+              <HelpTip id="password-current" label="Current password" />
+            </div>
             <Input
               id="password-current"
               data-testid="password-current"
@@ -105,7 +109,10 @@ export function ChangePasswordDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="password-new">New password</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="password-new">New password</Label>
+              <HelpTip id="password-new" label="New password" />
+            </div>
             <Input
               id="password-new"
               data-testid="password-new"
@@ -121,7 +128,10 @@ export function ChangePasswordDialog({
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="password-confirm">Confirm new password</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="password-confirm">Confirm new password</Label>
+              <HelpTip id="password-confirm" label="Confirm new password" />
+            </div>
             <Input
               id="password-confirm"
               data-testid="password-confirm"
@@ -132,17 +142,23 @@ export function ChangePasswordDialog({
               onChange={(e) => setConfirm(e.target.value)}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                id="password-revoke-others"
+                data-testid="password-revoke-others"
+                className="accent-primary h-4 w-4"
+                checked={revokeOthers}
+                onChange={(e) => setRevokeOthers(e.target.checked)}
+              />
+              Sign out my other sessions
+            </label>
+            <HelpTip
               id="password-revoke-others"
-              data-testid="password-revoke-others"
-              className="accent-primary h-4 w-4"
-              checked={revokeOthers}
-              onChange={(e) => setRevokeOthers(e.target.checked)}
+              label="Sign out my other sessions"
             />
-            Sign out my other sessions
-          </label>
+          </div>
           <DialogFooter className="gap-2 pt-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel

@@ -24,6 +24,7 @@ import {
 import type { Engine } from "@/api/fleet";
 import { ErrorAlert, MessageRow, StatusDot } from "@/components/common";
 import { EngineStatusBadge, engineStatuses } from "@/components/fleet";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -179,27 +180,30 @@ export function DashboardPage() {
         description="Traffic, latency, filtering and health across all resolvers. Pick a time range; charts refresh automatically."
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <Select value={range} onValueChange={(v) => update("range", v)}>
-              <SelectTrigger
-                id="dashboard-range"
-                data-testid="dashboard-range"
-                aria-label="Time range"
-                className="h-9 w-44"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {dashboardRanges.map((r) => (
-                  <SelectItem
-                    key={r}
-                    value={r}
-                    data-testid={`dashboard-range-${r}`}
-                  >
-                    {rangeLabels[r]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-1.5">
+              <Select value={range} onValueChange={(v) => update("range", v)}>
+                <SelectTrigger
+                  id="dashboard-range"
+                  data-testid="dashboard-range"
+                  aria-label="Time range"
+                  className="h-9 w-44"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {dashboardRanges.map((r) => (
+                    <SelectItem
+                      key={r}
+                      value={r}
+                      data-testid={`dashboard-range-${r}`}
+                    >
+                      {rangeLabels[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <HelpTip id="dashboard-range" label="Time range" />
+            </div>
             <div className="flex items-center gap-2">
               <Switch
                 id="dashboard-auto-refresh"
@@ -210,6 +214,7 @@ export function DashboardPage() {
               <Label htmlFor="dashboard-auto-refresh" className="text-sm">
                 Auto refresh
               </Label>
+              <HelpTip id="dashboard-auto-refresh" label="Auto refresh" />
             </div>
           </div>
         }
@@ -332,8 +337,18 @@ export function DashboardPage() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="h-9 pl-5">Upstream</TableHead>
-                <TableHead className="h-9">Up on</TableHead>
-                <TableHead className="h-9 pr-5 text-right">RTT</TableHead>
+                <TableHead className="h-9">
+                  <span className="inline-flex items-center gap-1.5">
+                    Up on
+                    <HelpTip id="dashboard-col-up-on" label="Up on" />
+                  </span>
+                </TableHead>
+                <TableHead className="h-9 pr-5 text-right">
+                  <span className="inline-flex items-center gap-1.5">
+                    RTT
+                    <HelpTip id="dashboard-col-rtt" label="RTT" />
+                  </span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -995,8 +1010,18 @@ function FleetSection({ q }: { q: ReturnType<typeof useDashboardHealth> }) {
             <TableHead className="h-9 text-right">QPS</TableHead>
             <TableHead className="h-9 text-right">p99</TableHead>
             <TableHead className="h-9 text-right">Cache hits</TableHead>
-            <TableHead className="h-9 text-right">Filter index</TableHead>
-            <TableHead className="h-9 text-right">Config</TableHead>
+            <TableHead className="h-9 text-right">
+              <span className="inline-flex items-center gap-1.5">
+                Filter index
+                <HelpTip id="dashboard-col-filter-index" label="Filter index" />
+              </span>
+            </TableHead>
+            <TableHead className="h-9 text-right">
+              <span className="inline-flex items-center gap-1.5">
+                Config
+                <HelpTip id="dashboard-col-config" label="Config" />
+              </span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

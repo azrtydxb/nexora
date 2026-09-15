@@ -4695,13 +4695,22 @@ Files:
   `web/src/pages/ForwardZonesSection.tsx`, `web/src/pages/SettingsPage.tsx`,
   `web/src/pages/DnssecPage.tsx`, `web/src/pages/AccessControlPage.tsx`: a `HelpTip` per control and
   column header, plus header text.
+- `web/e2e/screens/16-dnssec.spec.ts`, `web/e2e/screens/17-resolution.spec.ts`: `getByLabel(...)`
+  calls on labels that now have an info icon get `{ exact: true }`. Playwright's `getByLabel` also
+  matches the icon's `aria-label` ("Help: Domain") as a substring, so the unchanged calls hit two
+  elements.
 
 Interfaces:
 
 - Catalogue ids are the control ids already in these files (`settings-strategy`, `upstream-timeout`,
-  and so on). `ListEditor` instances use `help="acl-cidr-input"` and `help="authacl-input"`.
-- Column headers whose meaning is not obvious use ids `<page>-col-<name>`, for example
-  `upstreams-col-rtt`.
+  and so on). `ListEditor` instances use `help="acl-cidr-input"` and `help="authacl-input"`. Switches
+  whose id is built at run time (`resolution-qname-min`, `resolution-aggressive-nsec`,
+  `dnssec-validation`, `dnssec-validate-forwarded`, `dnssec-rfc5011`) and the id-less
+  `upstream-enabled` switch and root hints list (`resolution-root-hints`) get an entry and a tip too.
+- Column headers whose meaning is not obvious use ids `<page>-col-<name>`: `upstreams-col-position`,
+  `forwardzones-col-dnssec`, `trustanchors-col-source`, `dnssec-col-secure`, `dnssec-col-insecure`,
+  `dnssec-col-bogus`, `dnssec-col-indeterminate`, `dnssec-col-keys`, `access-col-queries`,
+  `access-col-transfers` and `access-col-updates`.
 - The Settings description becomes exactly: "Resolver behaviour for every client: upstream selection,
   cache, blocking and telemetry. Saving publishes a new configuration version."
 
@@ -4712,8 +4721,9 @@ Interfaces:
       control in the six files. Save the list: it is this task's inventory.
 - [ ] For every listed id, add an entry to `resolverHelp.entries` and a `<HelpTip id="<id>" label="<visible label>" />`
       beside its `Label`, in the `Field` helpers' label slot. Extend the local `Field` components in
-      `SettingsPage.tsx` and `ResolutionSection.tsx` with an optional `help?: string` prop that renders the
-      tip. Validation messages stay below the input, and the tip sits in the label row, so it never covers
+      `SettingsPage.tsx` and `ResolutionSection.tsx` with an optional `help?: ReactNode` prop (the
+      `<HelpTip id="…" />` element itself, so `check-help.mjs` sees the literal id) rendered in the label
+      row; `SwitchField` and the DNSSEC `toggle` helper take the tip the same way. Validation messages stay below the input, and the tip sits in the label row, so it never covers
       them. Write each entry from the defaults and ranges in `mgmt/api/openapi.yaml` and
       `docs/operations.md`. These entries are required verbatim:
   ```ts
@@ -4753,6 +4763,9 @@ Interfaces:
       paragraphs, uses the same defaults as the catalogue entries, and follows the architecture rules in
       `docs/architecture.md` (`### ACL`, `### Upstreams (forwarding)`).
 - [ ] Set the `SettingsPage` description to the Interfaces text.
+- [ ] Reword section, dialog and hint texts in the six files that describe features through "engines"
+      or "management plane" ("How engines pick…", "every engine applies", "the management plane's
+      default") into operator wording; "engine group" stays, because it is the object the field selects.
 - [ ] Run
       `cd web && node scripts/check-help.mjs && pnpm run typecheck && pnpm run lint`, and expect PASS.
       Then run
@@ -4770,6 +4783,10 @@ Files:
   `web/src/pages/PoliciesPage.tsx`, `web/src/pages/RewritesPage.tsx`, `web/src/pages/RpzPage.tsx`:
   tips and header text.
 - `web/e2e/screens/04-filtering.spec.ts`: text assertions for the new description.
+- `web/e2e/screens/12-policies.spec.ts`, `13-rewrites.spec.ts`, `15-rpz.spec.ts`,
+  `21-engine-group-scope.spec.ts`, `22-filter-categories.spec.ts`: `getByLabel("…")` becomes
+  `getByLabel("…", { exact: true })`. Playwright's `getByLabel` also matches `aria-label`
+  substrings, so a tip's `Help: Name` button would otherwise collide with the `Name` field.
 
 Interfaces:
 
@@ -4781,11 +4798,17 @@ Interfaces:
   `/filtering/categories`) and `filtering-link-policies` (to `/policies`).
 - The filter categories switches get `data-help="category-toggle"` and `data-help="source-toggle"`,
   with one entry each.
+- Controls without a static id also get `data-help` ids: `list-enabled` (list dialog switch),
+  `categories-search`, `safe-search-engine` and `safe-search-youtube` (both safe search forms),
+  `group-filter-lists` and `group-categories` (policy group fieldsets). The allowlist editor uses
+  `help="allowlist-input"`.
 
-- [ ] Set `pages` in `web/src/help/catalog/filtering.ts` to the five page files. Run
+- [x] Set `pages` in `web/src/help/catalog/filtering.ts` to the five page files. Run
       `cd web && node scripts/check-help.mjs` and expect FAIL listing the controls of those files (for
       example `pages/FilteringPage.tsx: control "list-url" has no help entry`).
-- [ ] Add to `web/e2e/screens/04-filtering.spec.ts`, after navigation:
+- [x] Add to `web/e2e/screens/04-filtering.spec.ts`, after navigation (the last three lines go after
+      the `list-add` click, because the URL field and its tip live in the add dialog; the spec then
+      moves the mouse to 0,0 before filling the form):
   ```ts
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Blocklist / allowlist",
@@ -4806,7 +4829,7 @@ Interfaces:
   ```
   Run the `TestGUICoverage` command of Task 28 and expect FAIL in `04-filtering.spec.ts`:
   "Domains on the allowlist are never blocked" not found.
-- [ ] Add entries and `HelpTip`s for every listed control. Required verbatim:
+- [x] Add entries and `HelpTip`s for every listed control. Required verbatim:
   ```ts
   "list-url": {
     text: "The address of a blocklist in hosts, domain-per-line or Adblock format. Nexora downloads it, keeps the last good copy when a download fails, and refreshes it on the interval below.",
@@ -4826,9 +4849,9 @@ Interfaces:
   `rewrites`, `safe-search` and `rpz` from `docs/operations.md` `## Filter categories` and
   `docs/architecture.md` `### Filtering`. Allowlist precedence reads "Allowlist entries beat every
   blocklist, category and policy block."
-- [ ] Apply the Filtering description and link row. Replace "management plane" and "ships to every
+- [x] Apply the Filtering description and link row. Replace "management plane" and "ships to every
       engine" wherever they appear in section texts of the five files.
-- [ ] Run `cd web && node scripts/check-help.mjs && pnpm run typecheck && pnpm run lint` and the
+- [x] Run `cd web && node scripts/check-help.mjs && pnpm run typecheck && pnpm run lint` and the
       `TestGUICoverage` command, and expect specs 04, 12, 13, 15, 22 and 28 to pass.
 - [ ] Report the paths. Commit message: `gui: help and operator wording for filtering pages`.
 
@@ -4841,14 +4864,27 @@ Files:
 - `web/src/pages/ZonesPage.tsx`, `web/src/pages/ZoneDetailPage.tsx`, `web/src/pages/ZoneRecordsTab.tsx`,
   `web/src/pages/ZoneRecordEditor.tsx`, `web/src/pages/ZoneTransfersTab.tsx`,
   `web/src/pages/ZoneDnssecTab.tsx`, `web/src/pages/ZoneImportExportTab.tsx`,
-  `web/src/pages/TsigKeysPage.tsx`: tips and header text.
+  `web/src/pages/TsigKeysPage.tsx`: tips and header text. `ZoneDetailPage.tsx` has no form controls
+  and needs no change.
+- `web/e2e/screens/18-zones.spec.ts`, `web/e2e/screens/19-zone-security.spec.ts`: every `getByLabel`
+  gets `{ exact: true }`. Playwright's `getByLabel` also matches `aria-label` by substring, so
+  `getByLabel("Zone name")` would match the info icon "Help: Zone name" too.
 
 Interfaces:
 
 - The Zones description is exactly: "Authoritative zones Nexora serves: primary zones edited here or
   through dynamic updates, and secondary zones transferred from their primaries."
 - The record type-dependent inputs in `ZoneRecordEditor.tsx` use `data-help="record-data"` with one
-  entry that points to `web/src/lib/zoneRdataHints.ts` hints in its text.
+  entry that points to `web/src/lib/zoneRdataHints.ts` hints in its text. The editor's other
+  `useId`-based inputs use `data-help="record-name"`, `"record-type"` and `"record-ttl"`.
+- Controls check-help cannot see get tips too: `zone-transfer-primaries` and `zone-notify` beside the
+  Transfers tab section titles (optional `tip` prop on its `Section`), `zone-update-keys` on the update
+  key fieldset (moved below "Allowed update sources", so that entry's "list below" is true),
+  `zone-dnssec-propagation`, `zone-dnssec-parent-ds-ttl` and `zone-dnssec-zsk-lifetime` passed to the
+  DNSSEC tab's `number` helper. Column tips: `zones-col-serial`, `zones-col-transfers`,
+  `zone-dnssec-col-state`, `zone-dnssec-col-ds`.
+- The DNSSEC tab's signing description loses "management plane" and "engines": "Nexora signs every
+  change and rolls keys on schedule, and serves the signed zone."
 
 - [ ] Set `pages` in `web/src/help/catalog/zones.ts` to the eight files. Run
       `cd web && node scripts/check-help.mjs` and expect FAIL listing their controls (for example
@@ -4894,14 +4930,21 @@ Files:
   word "engine").
 
 Interfaces: the rollout health settings in `EngineGroupPage.tsx` use their existing control ids as
-catalogue ids.
+catalogue ids (`enginegroup-ack-timeout`, `enginegroup-health-window`, `enginegroup-max-servfail`,
+`enginegroup-min-queries`, and the canary size fields). Its local `NumberField` takes a required
+`data-help` (forwarded to the `Input`, so the check sees the dynamic id) and a `help` node holding
+the `HelpTip`. The labels editors carry `data-help="jointoken-labels"` and
+`data-help="engine-labels"` on their heading, the engine modal's level select
+`data-help="engine-logs-level"`. Column and state tips: `engines-col-status`, `rollout-state`,
+`rollout-col-progress`. `components/fleet.tsx` has no literal control ids (its select and labels
+editor get ids and tips at their call sites).
 
 - [ ] Set `pages` in `web/src/help/catalog/fleet.ts` to the six files. Run
       `cd web && node scripts/check-help.mjs` and expect FAIL listing their controls.
 - [ ] Add entries and `HelpTip`s for every listed control. Required verbatim for the health window
-      control, whatever its id is in `EngineGroupPage.tsx` (for example `group-health-window`):
+      control, keyed by its id in `EngineGroupPage.tsx`, `enginegroup-health-window`:
   ```ts
-  "group-health-window": {
+  "enginegroup-health-window": {
     text: "How long canary engines must run a new configuration before the rollout continues. Each canary needs at least two stats samples in the window, and a SERVFAIL ratio above the limit halts the rollout.",
     default: "30 seconds",
     topic: "fleet",
@@ -4953,7 +4996,14 @@ why it was blocked, allowed, rewritten or refused."
     anchor: "account",
   },
   ```
-  The `MultiSelect` triggers in `QueryLogPage.tsx` carry `data-help` with their test ids. Write the
+  The `MultiSelect` filters in `QueryLogPage.tsx` are written out one `Field` each, with a literal
+  `htmlFor="<test id>"` (which `check-help.mjs` reads as the control id) and a
+  `tip={<HelpTip id="<test id>" />}` in the label row, instead of being mapped from an array. The Live
+  checkbox (`querylog-live`) and the user dialog's Disabled switch (`user-disabled`) gain ids so they are
+  checked too; the non-obvious column headers get `<page>-col-<name>` tips (`querylog-col-reason`,
+  `audit-col-version`, `dashboard-col-up-on`, `dashboard-col-rtt`, `dashboard-col-filter-index`,
+  `dashboard-col-config`). Sign-in and setup entries have no topic, because help pages need a signed-in
+  user. Write the
   `users.md` sections `roles`, `api-tokens`, `oidc` and `account`, and the `observability.md` sections
   `query-log`, `dashboard`, `metrics` and `traces`, from `docs/operations.md`
   `## First-run setup and access`, `## Monitoring and alerts` and `### Query logs, traces and OTLP`.

@@ -6,6 +6,7 @@ import { KeyRound } from "lucide-react";
 import { api, unwrap } from "@/api/client";
 import { safeReturnTo, useSetupStatus, useSignedIn } from "@/auth/AuthProvider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,7 +82,10 @@ export function LoginPage() {
           </Alert>
         )}
         <div className="space-y-1.5">
-          <Label htmlFor="username">Username</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="username">Username</Label>
+            <HelpTip id="username" label="Username" />
+          </div>
           <Input
             id="username"
             data-testid="login-username"
@@ -93,7 +97,10 @@ export function LoginPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password">Password</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="password">Password</Label>
+            <HelpTip id="password" label="Password" />
+          </div>
           <Input
             id="password"
             type="password"

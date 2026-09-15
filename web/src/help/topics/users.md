@@ -11,13 +11,18 @@ Every change is recorded in the audit log.
 - **operator** also changes DNS configuration.
 - **admin** can do everything, including managing users and tokens.
 
+A role change takes effect on the user's next request. Disabling a user or setting a new password for
+them signs them out everywhere, and a disabled user's API tokens are refused. The last active admin
+cannot be demoted or disabled.
+
 The first admin is created on the setup page with the one-time token that the management plane logs
-on first start.
+on first start. If that log line is gone, create the admin with `nexora-mgmt user create --admin`.
 
 ## API tokens
 
 API clients send a bearer token (`Authorization: Bearer nxt_...`). A token has a name, a role that never
-exceeds its creator's, and an optional expiry. It is shown only once, when created. Revoking a token
+exceeds its creator's, and an optional expiry (90 days unless you pick another). It is shown only
+once, when created, and is tied to its creator's account. Revoking a token
 refuses its requests from then on. Mutating requests must send `Content-Type: application/json`.
 
 ## OIDC

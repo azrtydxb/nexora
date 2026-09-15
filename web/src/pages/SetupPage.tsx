@@ -8,6 +8,7 @@ import {
   useSignedIn,
 } from "@/auth/AuthProvider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { HelpTip } from "@/components/HelpTip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,7 +66,10 @@ export function SetupPage() {
           </Alert>
         )}
         <div className="space-y-1.5">
-          <Label htmlFor="setup-token">Setup token</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="setup-token">Setup token</Label>
+            <HelpTip id="setup-token" label="Setup token" />
+          </div>
           <Input
             id="setup-token"
             data-testid="setup-token"
@@ -76,7 +80,10 @@ export function SetupPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="setup-username">Username</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="setup-username">Username</Label>
+            <HelpTip id="setup-username" label="Username" />
+          </div>
           <Input
             id="setup-username"
             data-testid="setup-username"
@@ -86,7 +93,10 @@ export function SetupPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="setup-email">Email</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="setup-email">Email</Label>
+            <HelpTip id="setup-email" label="Email" />
+          </div>
           <Input
             id="setup-email"
             data-testid="setup-email"
@@ -97,7 +107,10 @@ export function SetupPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="setup-password">Password</Label>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor="setup-password">Password</Label>
+            <HelpTip id="setup-password" label="Password" />
+          </div>
           <Input
             id="setup-password"
             data-testid="setup-password"

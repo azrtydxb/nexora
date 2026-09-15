@@ -10,10 +10,19 @@ instance, only for its own engines, and loses them on restart, so it suits singl
 With OpenSearch, engines send their records through an OpenTelemetry Collector and every instance
 searches the same indices. Each record shows why a query was blocked, allowed, rewritten or refused.
 
+The name filter matches part of a name, ignoring case and a trailing dot, so "tube" finds youtube.com.
+The client filter needs the exact address. Filters that take several values match any of them, and
+different filters must all match. The Source filter separates blocklists, filter category sources, the
+allowlist, response policy zones, rewrites and access control refusals. The filters live in the page
+address, so a copied link opens the same search. Live mode reloads the newest page every 5 seconds and
+pauses while you page through older results; your account sets whether it starts on.
+
 ## Dashboard
 
 The dashboard charts queries, latency, cache hits and outcomes from the statistics every engine reports
-every 10 seconds, with five-minute summaries kept for 8 days. Its health panel lists disconnected
+every 10 seconds, with five-minute summaries kept for 8 days. Pick a range from the last 15 minutes to
+the last 7 days; longer ranges use coarser steps. With auto refresh on, charts reload every 10 seconds
+for ranges up to an hour and every minute for longer ones. Its health panel lists disconnected
 engines, stale categories, upstreams that are down, DNS certificates expiring within 14 days, trust
 anchor refresh failures and dropped telemetry.
 

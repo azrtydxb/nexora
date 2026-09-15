@@ -9,6 +9,7 @@ import {
   formatDateTime,
   SavedNote,
 } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -113,7 +114,10 @@ function AccountForm({ user }: { user: User }) {
           <ErrorAlert error={save.error} thing="Your profile" />
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="account-email">Email</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="account-email">Email</Label>
+                <HelpTip id="account-email" label="Email" />
+              </div>
               <Input
                 id="account-email"
                 data-testid="account-email"
@@ -125,7 +129,10 @@ function AccountForm({ user }: { user: User }) {
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="account-display-name">Display name</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="account-display-name">Display name</Label>
+                <HelpTip id="account-display-name" label="Display name" />
+              </div>
               <Input
                 id="account-display-name"
                 data-testid="account-display-name"
@@ -147,7 +154,10 @@ function AccountForm({ user }: { user: User }) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="account-theme">Theme</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="account-theme">Theme</Label>
+                <HelpTip id="account-theme" label="Theme" />
+              </div>
               <Select
                 value={form.preferences.theme}
                 onValueChange={(v) =>
@@ -171,7 +181,10 @@ function AccountForm({ user }: { user: User }) {
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="account-time-zone">Time zone</Label>
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="account-time-zone">Time zone</Label>
+                <HelpTip id="account-time-zone" label="Time zone" />
+              </div>
               <Input
                 id="account-time-zone"
                 data-testid="account-time-zone"
@@ -188,9 +201,14 @@ function AccountForm({ user }: { user: User }) {
               </p>
             </div>
           </div>
-          <label className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
+          <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
             <span>
-              <span className="font-medium">24-hour clock</span>
+              <span className="flex items-center gap-1.5">
+                <label htmlFor="account-clock-24h" className="font-medium">
+                  24-hour clock
+                </label>
+                <HelpTip id="account-clock-24h" label="24-hour clock" />
+              </span>
               <span className="text-muted-foreground block text-xs">
                 Show times as 14:05 instead of 2:05 PM.
               </span>
@@ -201,10 +219,18 @@ function AccountForm({ user }: { user: User }) {
               checked={form.preferences.clock_24h}
               onCheckedChange={(v) => setPref("clock_24h", v)}
             />
-          </label>
-          <label className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-md border px-3 py-2.5 text-sm">
             <span>
-              <span className="font-medium">Query log live by default</span>
+              <span className="flex items-center gap-1.5">
+                <label htmlFor="account-querylog-live" className="font-medium">
+                  Query log live by default
+                </label>
+                <HelpTip
+                  id="account-querylog-live"
+                  label="Query log live by default"
+                />
+              </span>
               <span className="text-muted-foreground block text-xs">
                 The query log opens following new queries as they arrive.
               </span>
@@ -215,7 +241,7 @@ function AccountForm({ user }: { user: User }) {
               checked={form.preferences.querylog_live}
               onCheckedChange={(v) => setPref("querylog_live", v)}
             />
-          </label>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="submit"

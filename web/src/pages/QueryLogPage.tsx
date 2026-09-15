@@ -16,6 +16,7 @@ import { useFilterCategories } from "@/api/filterCategories";
 import { useEngines } from "@/api/fleet";
 import { usePolicyGroups } from "@/api/policies";
 import { ErrorAlert, MessageRow } from "@/components/common";
+import { HelpTip } from "@/components/HelpTip";
 import { MultiSelect } from "@/components/MultiSelect";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -185,58 +186,38 @@ export function QueryLogPage() {
     q.error instanceof ApiError && q.error.code === "querylog_unavailable";
   const records = q.data?.records ?? [];
 
-  const selects: {
-    key: Exclude<ListKey, "list_id">;
-    label: string;
-    id: string;
-    options: { value: string; label?: string }[];
-  }[] = [
-    { key: "qtype", label: "Type", id: "querylog-qtype", options: qtypes },
-    { key: "rcode", label: "Response", id: "querylog-rcode", options: rcodes },
-    {
-      key: "cache",
-      label: "Cache",
-      id: "querylog-cache",
-      options: cacheStates,
-    },
-    {
-      key: "filter",
-      label: "Filter",
-      id: "querylog-filter",
-      options: filterStates,
-    },
-    {
-      key: "category",
-      label: "Category",
-      id: "querylog-category",
-      options: (categories.data ?? []).map((c) => ({ value: c.key })),
-    },
-    { key: "source", label: "Source", id: "querylog-source", options: sources },
-    {
-      key: "policy_group",
-      label: "Policy group",
-      id: "querylog-policy-group",
-      options: [
-        { value: "global", label: "Global" },
-        ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name })),
-      ],
-    },
-    {
-      key: "engine_id",
-      label: "Engine",
-      id: "querylog-engine",
-      options: (engines.data ?? []).map((e) => ({
-        value: e.id,
-        label: e.node_name,
-      })),
-    },
+  // One filter per list parameter. Each is written out so check-help sees its id.
+  const multi = (
+    key: Exclude<ListKey, "list_id">,
+    id: string,
+    label: string,
+    options: { value: string; label?: string }[],
+  ) => (
+    <MultiSelect
+      id={id}
+      label={label}
+      options={options}
+      value={form[key]}
+      onChange={(v) => set(key, v)}
+    />
+  );
+  const categoryOptions = (categories.data ?? []).map((c) => ({
+    value: c.key,
+  }));
+  const groupOptions = [
+    { value: "global", label: "Global" },
+    ...(groups.data ?? []).map((g) => ({ value: g.id, label: g.name })),
   ];
+  const engineOptions = (engines.data ?? []).map((e) => ({
+    value: e.id,
+    label: e.node_name,
+  }));
 
   return (
     <>
       <PageHeader
         title="Query log"
-        description="Queries answered by the engines, newest first."
+        description="Every DNS query Nexora answered, newest first, with why it was blocked, allowed, rewritten or refused."
         actions={
           <div className="flex flex-wrap items-center gap-3 text-sm">
             {q.dataUpdatedAt > 0 && (
@@ -248,16 +229,20 @@ export function QueryLogPage() {
                 Updated {formatTimestamp(new Date(q.dataUpdatedAt), prefs)}
               </span>
             )}
-            <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5">
-              <input
-                type="checkbox"
-                data-testid="querylog-live"
-                className="accent-primary h-4 w-4"
-                checked={live}
-                onChange={(e) => setLive(e.target.checked)}
-              />
-              Live{cursor ? " (paused on older pages)" : ""}
-            </label>
+            <span className="flex items-center gap-1.5">
+              <label className="text-muted-foreground flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  id="querylog-live"
+                  data-testid="querylog-live"
+                  className="accent-primary h-4 w-4"
+                  checked={live}
+                  onChange={(e) => setLive(e.target.checked)}
+                />
+                Live{cursor ? " (paused on older pages)" : ""}
+              </label>
+              <HelpTip id="querylog-live" label="Live" />
+            </span>
             <Button
               type="button"
               variant="outline"
@@ -294,7 +279,12 @@ export function QueryLogPage() {
           className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6"
           role="search"
         >
-          <Field label="Name" htmlFor="querylog-name" className="col-span-2">
+          <Field
+            label="Name"
+            htmlFor="querylog-name"
+            tip={<HelpTip id="querylog-name" label="Name" />}
+            className="col-span-2"
+          >
             <Input
               id="querylog-name"
               data-testid="querylog-name"
@@ -307,6 +297,7 @@ export function QueryLogPage() {
           <Field
             label="Client"
             htmlFor="querylog-client"
+            tip={<HelpTip id="querylog-client" label="Client" />}
             className="col-span-2"
           >
             <Input
@@ -318,17 +309,72 @@ export function QueryLogPage() {
               onChange={(e) => set("client", e.target.value)}
             />
           </Field>
-          {selects.map((s) => (
-            <Field key={s.key} label={s.label} htmlFor={s.id}>
-              <MultiSelect
-                id={s.id}
-                label={s.label}
-                options={s.options}
-                value={form[s.key]}
-                onChange={(v) => set(s.key, v)}
-              />
-            </Field>
-          ))}
+          <Field
+            label="Type"
+            htmlFor="querylog-qtype"
+            tip={<HelpTip id="querylog-qtype" label="Type" />}
+          >
+            {multi("qtype", "querylog-qtype", "Type", qtypes)}
+          </Field>
+          <Field
+            label="Response"
+            htmlFor="querylog-rcode"
+            tip={<HelpTip id="querylog-rcode" label="Response" />}
+          >
+            {multi("rcode", "querylog-rcode", "Response", rcodes)}
+          </Field>
+          <Field
+            label="Cache"
+            htmlFor="querylog-cache"
+            tip={<HelpTip id="querylog-cache" label="Cache" />}
+          >
+            {multi("cache", "querylog-cache", "Cache", cacheStates)}
+          </Field>
+          <Field
+            label="Filter"
+            htmlFor="querylog-filter"
+            tip={<HelpTip id="querylog-filter" label="Filter" />}
+          >
+            {multi("filter", "querylog-filter", "Filter", filterStates)}
+          </Field>
+          <Field
+            label="Category"
+            htmlFor="querylog-category"
+            tip={<HelpTip id="querylog-category" label="Category" />}
+          >
+            {multi(
+              "category",
+              "querylog-category",
+              "Category",
+              categoryOptions,
+            )}
+          </Field>
+          <Field
+            label="Source"
+            htmlFor="querylog-source"
+            tip={<HelpTip id="querylog-source" label="Source" />}
+          >
+            {multi("source", "querylog-source", "Source", sources)}
+          </Field>
+          <Field
+            label="Policy group"
+            htmlFor="querylog-policy-group"
+            tip={<HelpTip id="querylog-policy-group" label="Policy group" />}
+          >
+            {multi(
+              "policy_group",
+              "querylog-policy-group",
+              "Policy group",
+              groupOptions,
+            )}
+          </Field>
+          <Field
+            label="Engine"
+            htmlFor="querylog-engine"
+            tip={<HelpTip id="querylog-engine" label="Engine" />}
+          >
+            {multi("engine_id", "querylog-engine", "Engine", engineOptions)}
+          </Field>
           <div className="col-span-full flex items-end justify-end gap-2">
             <Button
               type="submit"
@@ -389,7 +435,12 @@ export function QueryLogPage() {
               <TableHead className="h-10">Response</TableHead>
               <TableHead className="h-10">Cache</TableHead>
               <TableHead className="h-10">Filter</TableHead>
-              <TableHead className="h-10">Reason</TableHead>
+              <TableHead className="h-10">
+                <span className="inline-flex items-center gap-1.5">
+                  Reason
+                  <HelpTip id="querylog-col-reason" label="Reason" />
+                </span>
+              </TableHead>
               <TableHead className="h-10">Upstream</TableHead>
               <TableHead className="h-10 text-right">Duration</TableHead>
             </TableRow>
@@ -600,19 +651,24 @@ function formatDuration(us: number): string {
 function Field({
   label,
   htmlFor,
+  tip,
   className,
   children,
 }: {
   label: string;
   htmlFor: string;
+  tip: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <div className={cn("grid gap-1.5", className)}>
-      <Label htmlFor={htmlFor} className="text-muted-foreground text-xs">
-        {label}
-      </Label>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor={htmlFor} className="text-muted-foreground text-xs">
+          {label}
+        </Label>
+        {tip}
+      </div>
       {children}
     </div>
   );
