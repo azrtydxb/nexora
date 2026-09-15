@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,9 +51,16 @@ func joinTokenSecretName(eg *v1alpha1.NexoraEngineGroup) string {
 	return eg.Name + "-join-token"
 }
 
-// tokenName is op/<namespace>/<cr name>/<unix seconds>, cut to the API's 64 characters.
+// tokenPrefix marks the join tokens created for eg: op/<cr uid>/. The uid keeps the marker unique
+// across CRs and across a deleted and recreated CR of the same name.
+func tokenPrefix(eg *v1alpha1.NexoraEngineGroup) string {
+	return "op/" + string(eg.UID) + "/"
+}
+
+// tokenName is op/<cr uid>/<unix seconds>/<namespace>/<cr name>, cut to the API's 64 characters (the
+// 51-character marker and timestamp always survive the cut).
 func tokenName(eg *v1alpha1.NexoraEngineGroup, now time.Time) string {
-	name := fmt.Sprintf("op/%s/%s/%d", eg.Namespace, eg.Name, now.Unix())
+	name := fmt.Sprintf("%s%d/%s/%s", tokenPrefix(eg), now.Unix(), eg.Namespace, eg.Name)
 	if len(name) > maxTokenName {
 		name = name[:maxTokenName]
 	}
@@ -93,6 +101,12 @@ func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.Ne
 	if err != nil {
 		return "", err
 	}
+	var currentCreated time.Time // API creation time of the recorded token; zero when it is not listed
+	for _, t := range tokens {
+		if t.Id.String() == eg.Status.JoinTokenID {
+			currentCreated = t.CreatedAt
+		}
+	}
 	active := func(id string) bool {
 		for _, t := range tokens {
 			if t.Id.String() == id {
@@ -109,7 +123,7 @@ func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.Ne
 	current := st.JoinTokenID != "" && active(st.JoinTokenID) && secretExists && len(sec.Data[joinTokenKey]) > 0 &&
 		st.JoinTokenExpiresAt != nil && now.Before(st.JoinTokenExpiresAt.Add(-renewBefore(eg)))
 	if !current {
-		if err := r.rotate(ctx, api, eg, group, name, active(st.JoinTokenID), now); err != nil {
+		if currentCreated, err = r.rotate(ctx, api, eg, group, name, active(st.JoinTokenID), now); err != nil {
 			return "", err
 		}
 	}
@@ -119,14 +133,27 @@ func (r *Reconciler) syncJoinToken(ctx context.Context, api API, eg *v1alpha1.Ne
 		}
 		st.PreviousJoinTokenID, st.PreviousJoinTokenRevokeAt = "", nil
 	}
+	// A token carrying this CR's marker that status does not record, created before the recorded token,
+	// was created by a reconcile whose status write failed: revoke it instead of leaving it valid until its
+	// TTL. A newer unrecorded token is kept: it is the recorded one when this reconcile read a stale status
+	// from the cache.
+	for _, t := range tokens {
+		id := t.Id.String()
+		if t.State == tokenActive && t.EngineGroupId == group.Id && strings.HasPrefix(t.Name, tokenPrefix(eg)) &&
+			t.CreatedAt.Before(currentCreated) && id != st.JoinTokenID && id != st.PreviousJoinTokenID {
+			if err := revoke(ctx, api, id); err != nil {
+				return "", err
+			}
+		}
+	}
 	st.JoinTokenSecret = name
 	return "", nil
 }
 
 // rotate creates a join token, writes it to the Secret and records it; an old token that is still active
-// becomes the previous token, revoked after revokeGracePeriod.
+// becomes the previous token, revoked after revokeGracePeriod. It returns the new token's API creation time.
 func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEngineGroup, group mgmtapi.EngineGroup,
-	secretName string, oldActive bool, now time.Time) error {
+	secretName string, oldActive bool, now time.Time) (time.Time, error) {
 	st := &eg.Status
 	spec := eg.Spec.JoinToken
 	ttl := durationOr(spec.TTL, defaultTTL)
@@ -139,7 +166,7 @@ func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEng
 	}
 	created, err := api.CreateJoinToken(ctx, in)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: eg.Namespace, Name: secretName}}
@@ -151,21 +178,18 @@ func (r *Reconciler) rotate(ctx context.Context, api API, eg *v1alpha1.NexoraEng
 	if err != nil {
 		// The token never reached a Secret: revoke it so it cannot outlive this attempt.
 		_ = api.RevokeJoinToken(ctx, created.JoinToken.Id)
-		return fmt.Errorf("write join token Secret %q: %w", secretName, err)
+		return time.Time{}, fmt.Errorf("write join token Secret %q: %w", secretName, err)
 	}
 
-	// debt: a failed status patch after this point leaves the new token unrecorded (and the old one
-	// unscheduled for revocation) until their TTL; the merge patch makes that rare. Revisit if it is
-	// observed, e.g. by recording the token id in a Secret annotation.
 	if oldActive {
 		// A still-pending previous token loses its grace period: only one previous token is tracked.
 		if err := revoke(ctx, api, st.PreviousJoinTokenID); err != nil {
-			return err
+			return time.Time{}, err
 		}
 		st.PreviousJoinTokenID = st.JoinTokenID
 		st.PreviousJoinTokenRevokeAt = &metav1.Time{Time: now.Add(durationOr(spec.RevokeGracePeriod, defaultRevokeGracePeriod))}
 	}
 	st.JoinTokenID = created.JoinToken.Id.String()
 	st.JoinTokenExpiresAt = &metav1.Time{Time: now.Add(ttl)}
-	return nil
+	return created.JoinToken.CreatedAt, nil
 }

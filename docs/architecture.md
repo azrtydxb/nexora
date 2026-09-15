@@ -805,11 +805,13 @@ The build is embedded into `nexora-mgmt`.
   current group overlaid with those fields and the current `revision`, only
   when the overlay differs, and a 409 re-reads and retries. A second CR with
   the same `groupName` for one installation gets `DuplicateGroupName`.
-- Join token rotation: a token named `op/<namespace>/<cr name>/<unix seconds>`
-  (cut to 64 characters) is written to the CR-owned Secret key `join-token`
-  when the Secret is missing, the recorded token is not `active`, or it
-  expires within `renewBefore`; the previous token is revoked after
-  `revokeGracePeriod`.
+- Join token rotation: a token named
+  `op/<cr uid>/<unix seconds>/<namespace>/<cr name>` (cut to 64 characters)
+  is written to the CR-owned Secret key `join-token` when the Secret is
+  missing, the recorded token is not `active`, or it expires within
+  `renewBefore`; the previous token is revoked after `revokeGracePeriod`.
+  An older token carrying the `op/<cr uid>/` marker that status does not
+  record (a failed status write) is revoked on the next reconcile.
 - Finalizer `nexora.io/engine-group`: `Retain` revokes the CR's tokens and
   keeps the group; `Delete` also deletes it (never `default`; 409 keeps the
   finalizer with `DeletionBlocked`); a missing installation removes the

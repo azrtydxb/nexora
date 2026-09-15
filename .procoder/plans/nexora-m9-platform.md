@@ -93,7 +93,7 @@ and nexora.io/metrics=true>.<namespace>.svc:8080`. The chart's prefix helper is 
   `ManagementReady=True`. The token is read from the Secret named in `status.secrets.operatorToken`.
   - Updates always send the full current group overlaid with the fields set in the CR, and only when
     the overlay differs.
-  - Join token name: `op/<namespace>/<cr name>/<unix seconds>`, cut to 64 characters.
+  - Join token name: `op/<cr uid>/<unix seconds>/<namespace>/<cr name>`, cut to 64 characters.
 - **Clock:** both controllers have `Now func() time.Time`. Tests call `Reconcile` directly against
   envtest, with no manager, so fake clocks are deterministic.
 - **Bootstrap token in the management plane:** `auth.Service.EnsureBootstrapToken(ctx, token)` runs in
@@ -2145,6 +2145,11 @@ As built (details the order above leaves open):
   is `now + ttl` on the controller clock at creation, so renewal uses one clock.
 - A rotation while a previous token is still in its grace period revokes that previous token at once
   (one previous token is tracked); a token whose Secret write fails is revoked immediately.
+- Token names start with the marker `op/<cr uid>/`. Each reconcile revokes an active token of the group
+  that carries the marker, is neither `joinTokenID` nor `previousJoinTokenID`, and was created (API
+  `created_at`) before the recorded token: a token left unrecorded by a failed status write. A newer
+  marked token is kept, because a reconcile reading a stale cached status sees the recorded token as
+  unrecorded. `TestEngineGroupRevokesUnrecordedToken`.
 - Deletion deletes only the group whose id is `status.groupID`, looked up for its current revision, so
   a `DuplicateGroupName` CR (no `groupID`) never deletes the group another CR manages.
 - The watch on `NexoraInstallation` enqueues every `NexoraEngineGroup` in its namespace referencing it.

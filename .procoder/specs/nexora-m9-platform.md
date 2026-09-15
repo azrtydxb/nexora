@@ -168,7 +168,7 @@ The roadmap puts this in M9 Platform, after M6–M8.
   - `joinToken` settings: `secretName` (default `<cr name>-join-token`), `ttl` (default `8760h`, range
     1m–8760h), `renewBefore` (default `720h`, less than `ttl`), `revokeGracePeriod` (default `10m`),
     `maxUses` (optional), `labels` (optional, at most 32).
-  - The controller creates a token named `op/<namespace>/<cr name>/<unix seconds>`, truncated to the
+  - The controller creates a token named `op/<cr uid>/<unix seconds>/<namespace>/<cr name>`, truncated to the
     API's 64-character limit, and writes it to the Secret key `join-token`. That Secret is owned by the
     CR.
   - It creates a new token when the Secret is missing, when the recorded token is not `active`, or when

@@ -2,6 +2,7 @@ package enginegroup_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -338,5 +339,81 @@ func TestEngineGroupUnauthorized(t *testing.T) {
 	err := e.c.Get(context.Background(), types.NamespacedName{Namespace: e.ns, Name: "edge-join-token"}, &sec)
 	if cond(g, v1alpha1.ConditionSynced).Reason != v1alpha1.ReasonUnauthorized || err == nil {
 		t.Fatalf("unauthorized: %v secret err=%v", cond(g, v1alpha1.ConditionSynced), err)
+	}
+}
+
+// failStatus fails the next status write once *fail is set, as a lost API server connection would.
+type failStatus struct {
+	client.Client
+	fail *bool
+}
+
+func (c failStatus) Status() client.SubResourceWriter { return failWriter{c.Client.Status(), c.fail} }
+
+type failWriter struct {
+	client.SubResourceWriter
+	fail *bool
+}
+
+func (w failWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if *w.fail {
+		*w.fail = false
+		return errors.New("injected status write failure")
+	}
+	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
+}
+
+// Catches: a join token created by a reconcile whose status write failed staying active (unrecorded)
+// until its TTL, and the sweep revoking tokens this CR did not create.
+func TestEngineGroupRevokesUnrecordedToken(t *testing.T) {
+	e := setup(t)
+	fail := true
+	e.r.Client = failStatus{e.c, &fail}
+	e.create(&v1alpha1.NexoraEngineGroup{ObjectMeta: metav1.ObjectMeta{Name: "edge"}})
+	if _, err := e.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: e.ns, Name: "edge"}}); err == nil {
+		t.Fatal("the injected status write failure was not returned")
+	}
+	tokens := e.f.Tokens()
+	if len(tokens) != 1 {
+		t.Fatalf("tokens after the failed reconcile: %+v", tokens)
+	}
+	orphan := tokens[0].Id
+	fg, _ := e.f.Group("edge")
+	api, err := mgmtapi.New(e.f.URL, e.f.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := api.CreateJoinToken(context.Background(), mgmtapi.JoinTokenCreate{Name: "manual", TtlSeconds: 3600, EngineGroupId: &fg.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, g := e.reconcile("edge")
+	state := map[uuid.UUID]string{}
+	for _, tok := range e.f.Tokens() {
+		state[tok.Id] = string(tok.State)
+	}
+	current := uuid.MustParse(g.Status.JoinTokenID)
+	if current == orphan || state[current] != "active" {
+		t.Fatalf("current token %s state %q", current, state[current])
+	}
+	if state[orphan] != "revoked" {
+		t.Fatalf("unrecorded token %s is %q, want revoked", orphan, state[orphan])
+	}
+	if state[foreign.JoinToken.Id] != "active" {
+		t.Fatal("a token this CR did not create was revoked")
+	}
+
+	// A marked token newer than the recorded one is what a reconcile reading a stale status would see
+	// as unrecorded: it must survive.
+	newer, err := api.CreateJoinToken(context.Background(), mgmtapi.JoinTokenCreate{Name: "op/" + string(g.UID) + "/1/x", TtlSeconds: 3600, EngineGroupId: &fg.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.reconcile("edge")
+	for _, tok := range e.f.Tokens() {
+		if tok.Id == newer.JoinToken.Id && tok.State != "active" {
+			t.Fatal("a marked token newer than the recorded token was revoked")
+		}
 	}
 }
