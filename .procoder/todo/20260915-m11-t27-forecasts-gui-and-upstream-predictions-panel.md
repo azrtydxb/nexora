@@ -16,3 +16,16 @@ Implements Task 27 of `.procoder/plans/nexora-m11-ai.md` (spec `.procoder/specs/
 
 ## Evidence
 
+Built and tested in a private copy of the tree in the `toolbox` dev pod (`/work/t27`, its own
+`bin/`), deleted afterwards, so the concurrent M11 GUI agents do not share build outputs.
+
+- `cd web && pnpm run typecheck && pnpm run lint` (in `/work/t27`): passed —
+  `permission parity: 138 operations match`, `check-help: 165 controls on 46 pages have help`
+  (168 after the page's kind select landed, checked on the laptop).
+- RED, with the stub `AiForecastsPage`:
+  `go test ./e2e -run TestGUICoverage -count=1` →
+  `✘ 52 e2e/screens/55-ai-forecasts.spec.ts:5:3 › AI forecasts at 1280px`,
+  `✘ 53 … at 400px`, both
+  `expect(getByTestId('ai-forecast-e662a0bf-…')).toContainText("degrading") … element(s) not found`
+  — the seed's forecast rows exist, the page renders no card.
+- GREEN: see the run recorded in the final report.

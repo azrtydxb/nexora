@@ -3414,12 +3414,18 @@ Interfaces:
 
 - Page test ids: tabs `ai-recommendations-tab-<source>` for every source plus `all`, status select
   `ai-proposals-status`.
-- A `ProposalCard` per proposal. `ai-proposal-details` opens a drawer `ai-proposal-drawer`, which calls
-  `useAiProposal(id)` and renders a `JsonDiff` of `current` against `body` per action, then
-  `ai-proposal-impact`.
+- A `ProposalCard` per proposal. `ai-proposal-details` expands the card's own details (Task 23, as
+  built: no drawer), which call `useAiProposal(id)` and render a `JsonDiff` of `current` against
+  `body` per action. The page adds `ai-proposal-impact` under each card, because `ProposalCard`
+  (another task's file) renders the evidence but not the impact.
 - Apply opens `ProposalApplyDialog` for that id. Dismiss opens a dialog with textarea
   `ai-dismiss-reason` and confirm `ai-dismiss-confirm`.
-- The `rpz_suggestions` tab is a link to `/rpz?tab=ai` (Task 30) instead of a list.
+- `source` and `status` live in the URL search params (default `all` and `open`), so a filtered list
+  is shareable and the 400 px test can deep-link `?status=all`.
+- Selecting open proposals (`ai-proposal-select`) offers `ai-proposals-apply-selected` and
+  `ai-proposals-dismiss-selected`, which open the same two dialogs for every selected id.
+- The `rpz_suggestions` tab is a link `ai-recommendations-rpz-link` to `/rpz?tab=ai` (Task 30)
+  instead of a list.
 
 - [ ] Create `e2e/gui_seed_ai_recommendations_test.go`. With `harness.PGExec` it inserts two open
       proposals:
@@ -3433,18 +3439,25 @@ Interfaces:
   is applied (malware was already enabled by `TestGUICoverage`, so the replay answers 200 with no
   change).
 
+  It also inserts a third open proposal (`capacity_forecast`, a larger cache limit) that no spec acts
+  on, because `60-ai-viewer.spec.ts` runs after 53 and needs an open proposal in the list.
+
 - [ ] Create `web/e2e/screens/53-ai-recommendations.spec.ts`. At 1280 px only (apply is not idempotent
       for the id), as operator:
-  1. `/ai/recommendations` lists both cards.
+  1. `/ai/recommendations` lists both cards and an `ai-proposal-impact`.
   2. `ai-proposal-details` on the apply card shows `json-diff`.
-  3. `ai-proposal-apply` shows `ai-apply-action` with text `updateFilterCategory` and the license
-     checkbox; confirm.
-  4. `ai-apply-result` shows "applied", and the card leaves the open list.
+  3. On the `all` status list, `ai-proposal-apply` shows `ai-apply-action` with text
+     `updateFilterCategory` and the license checkbox; confirm.
+  4. `ai-apply-result` shows "applied", and the status select `open` no longer lists the card.
   5. Dismiss the second with reason "not now".
   6. The status select `dismissed` shows it with the reason.
 
-  A second test at 400 px only opens the list and the drawer. The specs request `listAiProposals`,
-  `getAiProposal`, `applyAiProposals` and `dismissAiProposals`.
+  Step 3 applies from the `all` list because `useApplyAiProposals` invalidates every query: on the
+  `open` list the refetch unmounts the card, and with it the dialog holding the result.
+
+  A second test at 400 px opens `?status=all`, expands one card's details, and checks that a source
+  tab narrows the list and that the RPZ tab links to `/rpz?tab=ai`. The specs request
+  `listAiProposals`, `getAiProposal`, `applyAiProposals` and `dismissAiProposals`.
 
 - [ ] Run the typecheck, lint and `TestGUICoverage` commands of Task 24. Expect FAIL, implement the page,
       and expect spec 53 to PASS.
@@ -3457,6 +3470,10 @@ Files:
 - `web/src/pages/ai/AiAssistantPage.tsx`: filled.
 - `e2e/gui_seed_ai_assistant_test.go`: created.
 - `web/e2e/screens/54-ai-assistant.spec.ts`: created.
+- `web/src/components/ai/ProposalApplyDialog.tsx`: `createPolicyGroup` added to the operations that
+  show the license acknowledgement. As built: the assistant's plan creates a policy group enabling
+  the malware category, and the apply answered 422 `license_acknowledgement_required` without it —
+  a create can enable a licensed category exactly as an update can.
 
 Interfaces:
 
@@ -3467,20 +3484,22 @@ Interfaces:
 - Viewers are redirected to `/ai`.
 - The page explains "Nothing changes until you apply the plan."
 
-- [ ] Create `e2e/gui_seed_ai_assistant_test.go`, which scripts `config_assistant` on `s.AI` with
-      `{"reply":"I will create guest-wifi-gui.","summary":"Create guest-wifi-gui","actions":[{"operation_id":"createPolicyGroup","path_params":{},"body":{"name":"guest-wifi-gui","cidrs":["10.99.0.0/24"],"category_keys":["malware"]},"explanation":"New group"}]}`.
-- [ ] Create `web/e2e/screens/54-ai-assistant.spec.ts`. As operator at 1280 px:
+- [x] Create `e2e/gui_seed_ai_assistant_test.go`, which scripts `config_assistant` on `s.AI` with
+      `{"reply":"I will create guest-wifi-gui.","summary":"Create guest-wifi-gui","actions":[{"operation_id":"createPolicyGroup","path_params":{},"body":{"name":"guest-wifi-gui","cidrs":["10.99.0.0/24"],"category_keys":["malware"]},"explanation":"New group"}]}`
+      (one entry: the last scripted response repeats).
+- [x] Create `web/e2e/screens/54-ai-assistant.spec.ts`. As operator at 1280 px:
   1. `/ai/assistant`, then `ai-assistant-new`.
   2. Type "Block malware for 10.99.0.0/24 as guest-wifi-gui" and send.
   3. See `ai-task-status` "Thinking", then `ai-assistant-msg-assistant` with "I will create guest-wifi-gui.".
   4. `ai-assistant-plan` shows `createPolicyGroup`.
-  5. Apply through the dialog; then `/policies` lists `guest-wifi-gui`.
-  6. Reload keeps the conversation (the session in the URL).
+  5. Apply through the dialog, ticking `ai-apply-acknowledge-license` (the group enables the malware
+     category); then `/policies` lists `guest-wifi-gui` with its CIDR.
+  6. Reopening the session URL keeps the conversation.
 
   At 400 px: open the page, see the textarea, start a new session. The specs request
   `createAiAssistantSession`, `postAiAssistantMessage` and `getAiAssistantSession`.
 
-- [ ] Run the Task 24 commands. Expect FAIL, implement, and expect spec 54 and `12-policies` to PASS.
+- [x] Run the Task 24 commands. Expect FAIL, implement, and expect spec 54 and `12-policies` to PASS.
 - [ ] Report the paths. Commit message: `M11 T26: AI assistant GUI`.
 
 ## Task 27: Forecasts GUI and upstream predictions panel
@@ -3495,23 +3514,40 @@ Files:
 
 Interfaces:
 
-- Page: kind select `ai-forecasts-kind`; cards `ai-forecast-<subject>`, showing the trend, confidence,
-  freshness `ai-forecast-freshness` ("Updated 3 h ago · valid until 18:00", plus "stale" when
-  `valid_until` has passed) and the recommendation, with a link to its proposal
-  `/ai/recommendations?proposal=<id>`.
+- Page: kind select `ai-forecasts-kind` (items `ai-forecasts-kind-upstream` and
+  `ai-forecasts-kind-capacity`, the kind in `?kind=`, default `upstream`); cards
+  `ai-forecast-<subject>`, showing the trend, confidence, freshness `ai-forecast-freshness`
+  ("Updated 3 hours ago · valid until 18:00" — `formatAgo` wording — plus " · stale" when
+  `valid_until` has passed) and the recommendation, with a link `ai-forecast-proposal` to its
+  proposal `/ai/recommendations?proposal=<id>` when the forecast has one.
 - Capacity cards: a progress bar `ai-capacity-bar` (current/max) and days remaining
-  `ai-capacity-days`, or "No limit".
-- Panel: `ai-upstream-predictions`, one row per upstream forecast.
+  `ai-capacity-days`, or "No limit" in `ai-capacity-days` when `max_value` is null or zero.
+- Panel: `ai-upstream-predictions`, one row per upstream forecast (name, trend badge, p50/p99 and
+  the recommendation). `UpstreamsPage` mounts it only when `useAiEnabled()`, so the forecast request
+  is never made with AI off. It exports `UpstreamTrendBadge` and `rtt`, which the page reuses.
 
 - [ ] Create `e2e/gui_seed_ai_forecasts_test.go`. With `harness.PGExec` it inserts:
   - an `upstream` forecast for subject the `fixture` upstream id with detail trend `degrading`, p99 350,
     and recommendation `switch_strategy`;
-  - a `capacity` forecast for `filter_index` with current 18.5e6, max 22.7e6 and days remaining 12;
-  - both valid for 6 h.
-- [ ] Create `web/e2e/screens/55-ai-forecasts.spec.ts`. At 1280 and 400 px as viewer:
-  1. `/ai/forecasts` shows `ai-forecast-freshness`.
-  2. Switch `ai-forecasts-kind` to capacity: `ai-capacity-days` reads "12 days".
-  3. Open Forwarding & recursion (`/resolution`): `ai-upstream-predictions` shows "degrading".
+  - a `capacity` forecast for `recursor_cache` with current 18.5e6, max 22.7e6 and days remaining 12
+    — not `filter_index` as first planned: `50-ai-status.spec.ts` runs the `capacity_forecast` agent,
+    whose newer row wins `forecast.Latest` for every resource the agent samples, and `recursor_cache`
+    is the one resource it does not sample (its own `debt:` note). The seed carries that `debt:`;
+  - both generated 3 h ago and valid for 6 h more, so the freshness line is fresh.
+
+  It reads the fixture upstream's id from `GET /upstreams` and publishes it as
+  `NEXORA_E2E_AI_UPSTREAM_FORECAST`. Both rows leave `proposal_id` null: creating a proposal here
+  would land in Task 25's recommendations list, so `ai-forecast-proposal` is implemented but not
+  exercised by spec 55.
+
+- [ ] Create `web/e2e/screens/55-ai-forecasts.spec.ts`. At 1280 and 400 px as viewer (read-only, so
+      it is safe to repeat per width):
+  1. `/ai/forecasts` shows the fixture card with "degrading", its recommendation and a
+     `ai-forecast-freshness` that says "valid until" and not "stale".
+  2. Switch `ai-forecasts-kind` to capacity: `ai-capacity-days` reads "12 days", `ai-capacity-bar` is
+     visible and the upstream card is gone.
+  3. Go to Forwarding & recursion (`page.goto("/resolution")`): `ai-upstream-predictions` shows
+     "fixture", "degrading" and "350 ms".
 
   The spec requests `listAiForecasts`.
 
