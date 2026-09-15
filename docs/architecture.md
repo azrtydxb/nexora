@@ -898,7 +898,7 @@ Namespace `nexora`. `scripts/kw-deploy.sh` applies `deploy/kw/namespace.yaml`,
 `otelcol.yaml` (traces to `jaeger.observability.svc:4317`, query logs to
 OpenSearch) and `blocklist.yaml`, then installs `deploy/helm/nexora` with
 `deploy/kw/values-kw.yaml`: `nexora-mgmt` Deployment (2 replicas) behind ingress
-`nexora.kw.local` (class `nginx`, ClusterIssuer `cluster-ca`, HTTPS only) and a
+`nexora.kw.watteel.lab` (class `nginx`, ClusterIssuer `cluster-ca`, HTTPS only) and a
 gRPC LoadBalancer `192.168.10.135:9443`; two engines of the group `default`
 (chart `instances`, each a DaemonSet pinned to one node and the only endpoint
 of its DNS/DoT/DoH/DoQ LoadBalancer, `externalTrafficPolicy: Local`):

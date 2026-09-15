@@ -12,7 +12,7 @@ spec:
     pullPolicy: Always
   mgmt:
     replicas: 2
-    publicURL: https://nexora.kw.local
+    publicURL: https://nexora.kw.watteel.lab
     secureCookies: true
     extraEnv:
       - { name: NEXORA_TRUSTED_PROXY_CIDRS, value: "10.42.0.0/16" }
@@ -31,7 +31,7 @@ spec:
       enabled: true
       name: nexora
       className: nginx
-      host: nexora.kw.local
+      host: nexora.kw.watteel.lab
       clusterIssuer: cluster-ca
       tlsSecretName: nexora-ingress-tls
   database:

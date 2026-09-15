@@ -86,7 +86,7 @@ dns_ips=$(helm --kube-context "$ctx" template nexora "$root/deploy/helm/nexora" 
 	awk '/^kind: Service$/ {svc = 1} /^---/ {svc = 0; eng = 0} svc && /nexora.io\/engine-group:/ {eng = 1} svc && eng && /loadBalancerIP:/ {print $2; eng = 0}' |
 	sort -u | paste -sd, -)
 [ -n "$dns_ips" ] || { echo "no engine group loadBalancerIP found in the chart" >&2; exit 1; }
-dns_names="dns.nexora.kw.local,$dns_ips"
+dns_names="dns.nexora.kw.watteel.lab,$dns_ips"
 if k get secret nexora-dns-tls >/dev/null 2>&1; then
 	sans=$(k get secret nexora-dns-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -ext subjectAltName 2>/dev/null)
 	for n in ${dns_names//,/ }; do
@@ -156,8 +156,8 @@ engine_ip=$(k get pods -l app.kubernetes.io/name=nexora-engine,nexora.io/engine-
 echo "NEXORA_KW_DNS_ADDR=${dns_ip}:53"
 echo "NEXORA_KW_DNS_ADDR_2=${dns_ip_2}:53"
 echo "NEXORA_KW_ENGINE_ADDR=${engine_ip}:53"
-echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.local}"
+echo "NEXORA_KW_API_URL=${NEXORA_KW_API_URL:-https://nexora.kw.watteel.lab}"
 echo "NEXORA_KW_ENCRYPTED_ADDR=${dns_ip}"
-echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local"
+echo "NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.watteel.lab"
 echo "NEXORA_KW_ENGINES=${engines}"
 echo "NEXORA_KW_MGMT_LB_IP=${mgmt_ip}"

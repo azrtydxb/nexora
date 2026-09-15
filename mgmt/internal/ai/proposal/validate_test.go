@@ -56,7 +56,7 @@ func TestProposalActionValidation(t *testing.T) {
 	ctx := testCtx(t)
 	st := storetest.New(t)
 	g := createGroup(t, ctx, st, "guests", "10.9.0.0/16")
-	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.local"}
+	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.watteel.lab"}
 	id := map[string]string{"id": g.ID.String()}
 
 	valid := proposal.Action{OperationID: "updatePolicyGroup", PathParams: id, Body: groupBody(g.Revision, nil)}
@@ -103,14 +103,14 @@ func TestRpzSuggestionValidation(t *testing.T) {
 	if _, err := st.Pool.Exec(ctx, `update allowlist set domains = '{ok.example}'`); err != nil {
 		t.Fatal(err)
 	}
-	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.local"}
+	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.watteel.lab"}
 	if err := v.Validate(ctx, []proposal.Action{rpzAction("c2.evil.example")}); err != nil {
 		t.Fatalf("c2.evil.example: %v", err)
 	}
 	for _, c := range []struct{ record, want string }{
 		{"*.com", "wildcard needs two labels"},
 		{"www.corp.example", "hosted zone corp.example."},
-		{"nexora.kw.local", "management host"},
+		{"nexora.kw.watteel.lab", "management host"},
 		{"bad..name", "invalid name"},
 		{"dns.quad9.net", "upstream host"},
 		{"ok.example", "allowlisted"},

@@ -138,8 +138,8 @@ later; workloads gone 18 s after deleting the installation.
 
 ## Addresses
 
-- GUI/API: `https://nexora.kw.local` only (ingress, certificate from the `cluster-ca` ClusterIssuer;
-  plain `http://nexora.kw.local` answers 308 to HTTPS). Session cookies are `Secure`. The
+- GUI/API: `https://nexora.kw.watteel.lab` only (ingress, certificate from the `cluster-ca` ClusterIssuer;
+  plain `http://nexora.kw.watteel.lab` answers 308 to HTTPS). Session cookies are `Secure`. The
   LoadBalancer IP `192.168.10.135` has no HTTP port, so there is no cleartext login path.
 - Engine gRPC: `nexora-mgmt-grpc.nexora.svc.cluster.local:9443` in the cluster,
   `192.168.10.135:9443` outside (both in the server certificate).
@@ -151,10 +151,10 @@ later; workloads gone 18 s after deleting the installation.
   `https://192.168.10.136/dns-query` (443/TCP; `.139` likewise) — hand out both `192.168.10.136` and
   `192.168.10.139` as DNS servers to LAN clients. The engines share the group's ConfigMap and state
   directory name (`/var/lib/nexora/nexora-engine`), so an engine keeps the identity the former group
-  DaemonSet had on that node. The serving certificate names `dns.nexora.kw.local`, `192.168.10.136`
+  DaemonSet had on that node. The serving certificate names `dns.nexora.kw.watteel.lab`, `192.168.10.136`
   and `192.168.10.139` (a certificate issued before the removal of `edge-b` also still names
   `192.168.10.137`, which is unused) and is issued by the Nexora CA (`nexora-ca`), e.g.
-  `kdig @192.168.10.136 +tls-ca=/work/kw-ca.crt +tls-hostname=dns.nexora.kw.local example.com`
+  `kdig @192.168.10.136 +tls-ca=/work/kw-ca.crt +tls-hostname=dns.nexora.kw.watteel.lab example.com`
   (`+https`, `+quic` likewise).
 - The DNS Services use `externalTrafficPolicy: Local`, so engines (per-client policy, query log) see
   the real client address. With `Local`, an address only answers when kube-vip announces it from the
@@ -307,8 +307,13 @@ DNS content filter that redirected all outbound port-53 traffic to its own resol
 (issue #1). `TestKwSmoke/recursion` fails with a clear message if that redirect comes back.
 
 Node resolvers: the kw nodes' netplan (`/etc/netplan/netcfg.yaml`, backup `netcfg.yaml.bak-nexora`)
-uses `192.168.10.1` as nameserver so CoreDNS resolves UniFi-local names such as `nexora.kw.local`;
-they previously listed 8.8.8.8/1.1.1.1, which only worked while the gateway intercepted DNS.
+uses `192.168.10.1` as nameserver; they previously listed 8.8.8.8/1.1.1.1, which only worked while
+the gateway intercepted DNS. UniFi does not serve `watteel.lab`: the `watteel.lab.` primary zone
+(with `kw` a subdomain inside it, `*.kw.watteel.lab` -> 192.168.10.120) is served by Nexora itself
+on 192.168.10.136 and .139. CoreDNS forwards `.` to the node resolver, so pods in the cluster cannot
+resolve `nexora.kw.watteel.lab` or any other `watteel.lab` name. In-cluster resolution needs a
+CoreDNS conditional forward for `watteel.lab` to 192.168.10.136 and 192.168.10.139; it is not
+configured.
 
 ## Known limits
 

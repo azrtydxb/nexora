@@ -4,7 +4,7 @@ image:
   pullPolicy: Always # kw tags are rebuilt in place
 mgmt:
   replicas: 2
-  publicURL: https://nexora.kw.local
+  publicURL: https://nexora.kw.watteel.lab
   secureCookies: true
   # ingress-nginx runs on the pod network: believe its X-Forwarded-For so the login throttle keys on
   # the real client address.
@@ -27,7 +27,7 @@ mgmt:
     enabled: true
     name: nexora
     className: nginx
-    host: nexora.kw.local
+    host: nexora.kw.watteel.lab
     clusterIssuer: cluster-ca
     tlsSecretName: nexora-ingress-tls
 database:

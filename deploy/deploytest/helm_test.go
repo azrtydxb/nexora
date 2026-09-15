@@ -112,7 +112,7 @@ func TestHelmTemplate(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"NEXORA_KEK_FILE": "/etc/nexora/kek/kek", "NEXORA_DNS_TLS_CERT_FILE": "/etc/nexora/dns-tls/tls.crt",
-		"NEXORA_QUERYLOG_BACKEND": "opensearch", "NEXORA_SECURE_COOKIES": "true", "NEXORA_PUBLIC_URL": "https://nexora.kw.local",
+		"NEXORA_QUERYLOG_BACKEND": "opensearch", "NEXORA_SECURE_COOKIES": "true", "NEXORA_PUBLIC_URL": "https://nexora.kw.watteel.lab",
 	} {
 		if e := env(mc, name); e == nil || e["value"] != want {
 			t.Errorf("mgmt %s = %v, want %s", name, e, want)

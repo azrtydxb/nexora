@@ -553,7 +553,7 @@ spec:
             - name: NEXORA_GRPC_SERVER_NAMES
               value: "nexora-mgmt-grpc,nexora-mgmt-grpc.nexora.svc,nexora-mgmt-grpc.nexora.svc.cluster.local,192.168.10.135"
             - name: NEXORA_PUBLIC_URL
-              value: "https://nexora.kw.local"
+              value: "https://nexora.kw.watteel.lab"
             - name: NEXORA_SECURE_COOKIES
               value: "true"
             - name: NEXORA_ENGINE_CERT_TTL
@@ -636,10 +636,10 @@ metadata:
 spec:
   ingressClassName: nginx
   tls:
-    - hosts: ["nexora.kw.local"]
+    - hosts: ["nexora.kw.watteel.lab"]
       secretName: nexora-ingress-tls
   rules:
-    - host: "nexora.kw.local"
+    - host: "nexora.kw.watteel.lab"
       http:
         paths:
           - path: /

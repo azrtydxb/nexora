@@ -1907,7 +1907,7 @@ from the dev pod against the live release. The admin password is in the secret `
 
 | Component                                   | Address                                                                                                     |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| GUI and API                                 | `https://nexora.kw.local` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                               |
+| GUI and API                                 | `https://nexora.kw.watteel.lab` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                               |
 | Engine gRPC                                 | `192.168.10.135:9443`, in cluster `nexora-mgmt-grpc.nexora.svc.cluster.local:9443`                          |
 | DNS, engine `nexora-engine-a` (`master-12`) | `192.168.10.136` (`nexora-dns`): 53, DoT 853, DoH 443 `/dns-query`, DoQ 853; `externalTrafficPolicy: Local` |
 | DNS, engine `nexora-engine-b` (`master-13`) | `192.168.10.139` (`nexora-dns-2`), same ports; `externalTrafficPolicy: Local`                               |

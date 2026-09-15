@@ -13,7 +13,7 @@
 set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
 ns=nexora
-api="${NEXORA_KW_API_URL:-https://nexora.kw.local}"
+api="${NEXORA_KW_API_URL:-https://nexora.kw.watteel.lab}"
 k() { kubectl --context "$ctx" -n "$ns" "$@"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -52,7 +52,7 @@ if [ "$required" = true ]; then
 		exit 1
 	}
 	jq -n --arg t "$token" --arg u "$user" --rawfile p "$tmp/password" \
-		'{token:$t, username:$u, email:($u+"@kw.local"), password:$p}' |
+		'{token:$t, username:$u, email:($u+"@kw.watteel.lab"), password:$p}' |
 		curl -fsS -c "$jar" -H 'Content-Type: application/json' -d @- "$api/api/v1/setup" >/dev/null
 	echo "setup completed: admin user $user"
 else

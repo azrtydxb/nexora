@@ -20,9 +20,9 @@ engine_ip=$(k get pods -l app.kubernetes.io/name=nexora-engine,nexora.io/engine-
 
 exec "$(dirname "$0")/dev-exec.sh" env \
 	NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_DNS_ADDR_2=192.168.10.139:53 NEXORA_KW_ENGINE_ADDR="${engine_ip}:53" \
-	NEXORA_KW_API_URL=https://nexora.kw.local \
+	NEXORA_KW_API_URL=https://nexora.kw.watteel.lab \
 	NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \
-	NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.local NEXORA_KW_ENGINES="$engines" \
+	NEXORA_KW_CA_FILE=/work/kw-ca.crt NEXORA_KW_DNS_TLS_NAME=dns.nexora.kw.watteel.lab NEXORA_KW_ENGINES="$engines" \
 	NEXORA_KW_MGMT_LB_IP=192.168.10.135 NEXORA_KW_ADMIN_PASSWORD_FILE=/work/kw-admin-password \
 	NEXORA_KW_PROMETHEUS_URL=http://kps-prometheus.monitoring.svc:9090 NEXORA_KW_FILTER_REPORT=/work/kw-filter-categories.json \
 	go test -count=1 -v -timeout 75m -run "$run" ./e2e/

@@ -36,7 +36,7 @@ func TestPromptInjectionCannotEscalate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.local"}
+	v := &proposal.Validator{Store: st, PublicURL: "https://nexora.kw.watteel.lab"}
 
 	// The model answers the injected instruction three times: once per validation attempt.
 	escalation := aifake.JSON(map[string]any{"actions": []map[string]any{{
