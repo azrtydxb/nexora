@@ -23,10 +23,10 @@ test("operator scopes an upstream and a rewrite to an engine group", async ({
     "gui-edge",
   );
 
-  await page.getByTestId("nav-upstreams").click();
+  await page.getByTestId("nav-resolution").click();
   await expect(
     page
-      .getByRole("region", { name: "Upstreams", exact: true })
+      .getByRole("region", { name: "Upstream forwarders", exact: true })
       .getByRole("columnheader", { name: "Engine group" }),
   ).toBeVisible();
 });

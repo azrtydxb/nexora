@@ -6,17 +6,20 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
   ArrowLeftRight,
   BadgeCheck,
   ChevronDown,
+  ChevronRight,
   Cpu,
   Funnel,
   Globe,
   KeyRound,
   KeySquare,
   LayoutDashboard,
+  LifeBuoy,
+  ListX,
   LogOut,
   Moon,
   ScrollText,
@@ -34,22 +37,45 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api/client";
-import { useCan, useCurrentUser, useLogout } from "@/auth/AuthProvider";
-import { roleCan, type OperationId } from "@/auth/permissions";
+import { useCurrentUser, useLogout } from "@/auth/AuthProvider";
+import { roleCan, type OperationId, type Role } from "@/auth/permissions";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SavedNote } from "@/components/common";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
-type NavItem = {
+type NavLeaf = {
   route: string;
   path: string;
   label: string;
   icon: LucideIcon;
-  op: OperationId;
+  /** The screen's list operation; absent for a screen every signed-in user may open (Help). */
+  op?: OperationId;
   /** Active only on the exact path, for an item with a sibling item below its path. */
   end?: boolean;
 };
+
+type NavParent = {
+  route: string;
+  label: string;
+  icon: LucideIcon;
+  children: NavLeaf[];
+};
+
+type NavItem = NavLeaf | NavParent;
+
+const isParent = (item: NavItem): item is NavParent => "children" in item;
+
+const leafAllowed = (role: Role | undefined, leaf: NavLeaf) =>
+  role !== undefined && (leaf.op === undefined || roleCan(role, leaf.op));
+
+/** True when the pathname is the leaf's screen or a screen below it. */
+function onLeaf(pathname: string, leaf: NavLeaf) {
+  if (leaf.path === "/") return pathname === "/";
+  return pathname === leaf.path || pathname.startsWith(`${leaf.path}/`);
+}
+
+const FILTERING_NAV_KEY = "nexora-nav-filtering";
 
 // Each item shows when the user may call the screen's list operation.
 const navGroups: { label: string; items: NavItem[] }[] = [
@@ -70,39 +96,59 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         icon: TextSearch,
         op: "searchQueryLog",
       },
+      {
+        route: "help",
+        path: "/help",
+        label: "Help",
+        icon: LifeBuoy,
+      },
     ],
   },
   {
     label: "Resolver",
     items: [
       {
-        route: "upstreams",
-        path: "/upstreams",
-        label: "Upstreams",
+        route: "resolution",
+        path: "/resolution",
+        label: "Forwarding & recursion",
         icon: Server,
         op: "listUpstreams",
       },
       {
-        route: "filtering",
-        path: "/filtering",
+        route: "filtering-group",
         label: "Filtering",
         icon: Funnel,
-        op: "listFilterLists",
-        end: true,
-      },
-      {
-        route: "filter-categories",
-        path: "/filtering/categories",
-        label: "Categories",
-        icon: Tags,
-        op: "listFilterCategories",
-      },
-      {
-        route: "policies",
-        path: "/policies",
-        label: "Policies",
-        icon: ShieldHalf,
-        op: "listPolicyGroups",
+        children: [
+          {
+            route: "filtering",
+            path: "/filtering",
+            label: "Blocklist / allowlist",
+            icon: ListX,
+            op: "listFilterLists",
+            end: true,
+          },
+          {
+            route: "filter-categories",
+            path: "/filtering/categories",
+            label: "Categories",
+            icon: Tags,
+            op: "listFilterCategories",
+          },
+          {
+            route: "policies",
+            path: "/policies",
+            label: "Policies",
+            icon: ShieldHalf,
+            op: "listPolicyGroups",
+          },
+          {
+            route: "rpz",
+            path: "/rpz",
+            label: "RPZ",
+            icon: ShieldBan,
+            op: "listRpzZones",
+          },
+        ],
       },
       {
         route: "rewrites",
@@ -110,13 +156,6 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Rewrites",
         icon: ArrowLeftRight,
         op: "listRewrites",
-      },
-      {
-        route: "rpz",
-        path: "/rpz",
-        label: "RPZ",
-        icon: ShieldBan,
-        op: "listRpzZones",
       },
       {
         route: "dnssec",
@@ -226,37 +265,119 @@ function Sidebar() {
 function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
   const { user } = useCurrentUser();
   // A group whose every screen is out of the user's reach (Administration for non-admins) is hidden.
-  if (!items.some((i) => roleCan(user?.role, i.op))) return null;
+  const leaves = items.flatMap((i) => (isParent(i) ? i.children : [i]));
+  if (!leaves.some((l) => leafAllowed(user?.role, l))) return null;
   return (
     <div className="flex items-center gap-1 md:flex-col md:items-stretch">
       <div className="hidden px-2 pb-1 text-xs font-medium text-white/40 md:block">
         {label}
       </div>
-      {items.map((item) => (
-        <NavEntry key={item.route} item={item} />
-      ))}
+      {items.map((item) =>
+        isParent(item) ? (
+          <NavParentEntry key={item.route} item={item} />
+        ) : (
+          <NavEntry key={item.route} item={item} />
+        ),
+      )}
     </div>
   );
 }
 
-function NavEntry({ item }: { item: NavItem }) {
-  const allowed = useCan(item.op);
-  if (!allowed) return null;
+function readFilteringOpen() {
+  try {
+    return localStorage.getItem(FILTERING_NAV_KEY) !== "closed";
+  } catch {
+    return true;
+  }
+}
+
+const navItemClass = (active: boolean) =>
+  cn(
+    "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors",
+    "focus-visible:ring-sidebar-highlight focus-visible:ring-2 focus-visible:outline-none",
+    active
+      ? "bg-sidebar-active text-white"
+      : "hover:bg-sidebar-active/60 hover:text-white",
+  );
+
+/** A collapsible parent (Filtering): open by default, remembered, and opened on a child route. */
+function NavParentEntry({ item }: { item: NavParent }) {
+  const { user } = useCurrentUser();
+  const { pathname } = useLocation();
+  const onChild = item.children.some((c) => onLeaf(pathname, c));
+  const [open, setOpen] = useState(() => onChild || readFilteringOpen());
+  // Entering a child route (a link elsewhere, the address bar) opens the group; the user may
+  // still collapse it there.
+  const [wasOnChild, setWasOnChild] = useState(onChild);
+  if (onChild !== wasOnChild) {
+    setWasOnChild(onChild);
+    if (onChild) setOpen(true);
+  }
+  if (!item.children.some((c) => leafAllowed(user?.role, c))) return null;
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      localStorage.setItem(FILTERING_NAV_KEY, next ? "open" : "closed");
+    } catch {
+      // Storage unavailable (private mode, quota): the state lasts for this page only.
+    }
+  };
+  const Icon = item.icon;
+  const listId = `nav-${item.route}-children`;
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={`nav-${item.route}`}
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={toggle}
+        className={cn(navItemClass(onChild && !open), "text-left")}
+      >
+        <Icon
+          className={cn(
+            "h-4 w-4",
+            onChild ? "text-sidebar-highlight" : "opacity-70",
+          )}
+        />
+        <span className={cn("flex-1", onChild && "text-white")}>
+          {item.label}
+        </span>
+        <ChevronRight
+          aria-hidden
+          className={cn(
+            "h-3.5 w-3.5 opacity-60 transition-transform",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      <div
+        id={listId}
+        className={cn(
+          "items-center gap-1 md:flex-col md:items-stretch md:pl-4",
+          open ? "flex" : "hidden",
+        )}
+      >
+        {item.children.map((c) => (
+          <NavEntry key={c.route} item={c} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function NavEntry({ item }: { item: NavLeaf }) {
+  const { user } = useCurrentUser();
+  if (!leafAllowed(user?.role, item)) return null;
   const Icon = item.icon;
   return (
     <NavLink
       to={item.path}
       end={item.path === "/" || item.end}
       data-testid={`nav-${item.route}`}
-      className={({ isActive }) =>
-        cn(
-          "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors",
-          "focus-visible:ring-sidebar-highlight focus-visible:ring-2 focus-visible:outline-none",
-          isActive
-            ? "bg-sidebar-active text-white"
-            : "hover:bg-sidebar-active/60 hover:text-white",
-        )
-      }
+      className={({ isActive }) => navItemClass(isActive)}
     >
       {({ isActive }) => (
         <>
@@ -474,6 +595,9 @@ export function PageHeader({
   description?: string;
   actions?: ReactNode;
 }) {
+  useEffect(() => {
+    document.title = `${title} · Nexora`;
+  }, [title]);
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">

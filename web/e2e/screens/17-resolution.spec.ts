@@ -10,9 +10,9 @@ test("operator edits resolution settings and forward zones", async ({
     env("NEXORA_E2E_OPERATOR_USER"),
     env("NEXORA_E2E_OPERATOR_PASSWORD"),
   );
-  await page.getByTestId("nav-upstreams").click();
+  await page.getByTestId("nav-resolution").click();
 
-  const card = page.getByRole("region", { name: "Resolution" });
+  const card = page.getByRole("region", { name: "Resolution mode" });
   await expect(card.getByLabel("Mode")).toContainText("Forward");
   await card
     .getByLabel("Maximum upstream queries per client query")
@@ -28,7 +28,7 @@ test("operator edits resolution settings and forward zones", async ({
   await page.reload();
   await expect(
     page
-      .getByRole("region", { name: "Resolution" })
+      .getByRole("region", { name: "Resolution mode" })
       .getByLabel("Maximum upstream queries per client query"),
   ).toHaveValue("150");
 

@@ -6,7 +6,7 @@ test("upstreams create, edit, delete", async ({ page }) => {
     env("NEXORA_E2E_ADMIN_USER"),
     env("NEXORA_E2E_ADMIN_PASSWORD"),
   );
-  await page.getByTestId("nav-upstreams").click();
+  await page.getByTestId("nav-resolution").click();
   await page.getByTestId("upstream-add").click();
   await page.getByTestId("upstream-name").fill("gui-doh");
   await page.getByTestId("upstream-protocol").click();

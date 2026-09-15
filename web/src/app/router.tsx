@@ -13,6 +13,7 @@ import { EngineGroupPage } from "@/pages/EngineGroupPage";
 import { EnginesPage } from "@/pages/EnginesPage";
 import { FilterCategoriesPage } from "@/pages/FilterCategoriesPage";
 import { FilteringPage } from "@/pages/FilteringPage";
+import HelpPage from "@/pages/HelpPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PoliciesPage } from "@/pages/PoliciesPage";
 import { QueryLogPage } from "@/pages/QueryLogPage";
@@ -40,7 +41,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "query-log", element: <QueryLogPage /> },
-      { path: "upstreams", element: <UpstreamsPage /> },
+      { path: "resolution", element: <UpstreamsPage /> },
+      { path: "upstreams", element: <Navigate to="/resolution" replace /> },
       { path: "access-control", element: <AccessControlPage /> },
       { path: "filtering", element: <FilteringPage /> },
       { path: "filtering/categories", element: <FilterCategoriesPage /> },
@@ -59,6 +61,8 @@ export const router = createBrowserRouter([
       { path: "api-tokens", element: <ApiTokensPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "account", element: <AccountPage /> },
+      { path: "help", element: <HelpPage /> },
+      { path: "help/:topic", element: <HelpPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],

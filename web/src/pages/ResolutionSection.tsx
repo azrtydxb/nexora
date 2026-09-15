@@ -59,8 +59,8 @@ export function splitList(v: string): string[] {
 export function ResolutionSection() {
   const settings = useResolutionSettings();
   return (
-    <section aria-label="Resolution" className="mb-10">
-      <h2 className="mb-1 text-sm font-semibold">Resolution</h2>
+    <section aria-label="Resolution mode" className="mb-10">
+      <h2 className="mb-1 text-sm font-semibold">Resolution mode</h2>
       <p className="text-muted-foreground mb-3 max-w-prose text-sm">
         Forward mode sends queries to the upstreams below; recursive mode
         resolves from the root servers. Forward zones override the mode for

@@ -78,7 +78,7 @@ export function FilteringPage() {
   return (
     <>
       <PageHeader
-        title="Filtering"
+        title="Blocklist / allowlist"
         description="Blocklist subscriptions the management plane fetches and ships to every engine, and domains that are always allowed."
         actions={
           canCreate && (

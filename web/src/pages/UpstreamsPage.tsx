@@ -75,15 +75,15 @@ export function UpstreamsPage() {
   return (
     <>
       <PageHeader
-        title="Upstreams"
-        description="How engines resolve names: the resolution mode, forward zones, and the global upstreams used in forward mode."
+        title="Forwarding & recursion"
+        description="How Nexora resolves names: recursion from the root or forwarding, conditional forward zones, and the upstream forwarders used in forward mode."
       />
       <ResolutionSection />
       <ForwardZonesSection />
-      <section aria-label="Upstreams">
+      <section aria-label="Upstream forwarders">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="mb-1 text-sm font-semibold">Upstreams</h2>
+            <h2 className="mb-1 text-sm font-semibold">Upstream forwarders</h2>
             <p className="text-muted-foreground max-w-prose text-sm">
               Resolvers the engines forward to in forward mode, tried in the
               order listed. An engine group in override mode uses only its own.

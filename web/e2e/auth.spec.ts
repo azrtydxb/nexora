@@ -8,7 +8,7 @@ test("viewer cannot change config, operator can, audit shows actor and diff", as
     env("NEXORA_E2E_VIEWER_USER"),
     env("NEXORA_E2E_VIEWER_PASSWORD"),
   );
-  await page.getByTestId("nav-upstreams").click();
+  await page.getByTestId("nav-resolution").click();
   await expect(page.getByTestId("upstream-row-seed")).toBeVisible();
   await expect(page.getByTestId("upstream-add")).toHaveCount(0);
   await expect(page.getByTestId("upstream-edit-seed")).toHaveCount(0);
@@ -36,7 +36,7 @@ test("viewer cannot change config, operator can, audit shows actor and diff", as
     env("NEXORA_E2E_OPERATOR_USER"),
     env("NEXORA_E2E_OPERATOR_PASSWORD"),
   );
-  await page.getByTestId("nav-upstreams").click();
+  await page.getByTestId("nav-resolution").click();
   await page.getByTestId("upstream-add").click();
   await page.getByTestId("upstream-name").fill("operator-added");
   await page.getByTestId("upstream-address").fill("192.0.2.54:53");
