@@ -29,8 +29,9 @@ func TestGUICoverage(t *testing.T) {
 	web.SetList(t, "hagezi-pro", "ads.gui.test\n")
 	web.SetList(t, "oisd-big", "*.oisd.gui.test\n")
 	web.SetList(t, "hagezi-tif", "malware.gui.test\n")
+	ai := env.StartOpenAIFixture()
 	mgmt := env.StartMgmt(pg, ca, harness.MgmtOptions{OIDC: oidc, OIDCAdminGroup: "nexora-admins",
-		ExtraEnv: []string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t), harness.CatalogMirrorEnv(web)}})
+		ExtraEnv: append([]string{"NEXORA_KEK_FILE=" + harness.WriteKEK(t), harness.CatalogMirrorEnv(web)}, harness.AIEnv(ai)...)})
 	fx := env.StartDNSFixture()
 
 	vars := map[string]string{
@@ -77,7 +78,7 @@ func TestGUICoverage(t *testing.T) {
 		return firstA(harness.MustQuery(t, eng.DNS, blocked, dns.TypeA, harness.QueryOpts{})) == "0.0.0.0"
 	}, blocked+" blocked by the malware category")
 	vars["NEXORA_E2E_CATEGORY_QUERY_NAME"] = strings.TrimSuffix(blocked, ".")
-	runGUISeeds(guiSeedEnv{T: t, Env: env, Mgmt: mgmt, Admin: admin, Engine: eng, Web: web, DNS: fx.UDP, Vars: vars})
+	runGUISeeds(guiSeedEnv{T: t, Env: env, Mgmt: mgmt, Admin: admin, Engine: eng, Web: web, DNS: fx.UDP, Vars: vars, AI: ai, PGURL: pg.URL})
 	time.Sleep(12 * time.Second) // one engine Stats interval so the dashboard has samples
 
 	specs, _ := filepath.Glob(filepath.Join(harness.RepoRoot(t), "web/e2e/screens/[0-9][0-9]-*.spec.ts"))

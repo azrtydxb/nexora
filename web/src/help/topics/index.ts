@@ -7,6 +7,7 @@ import fleet from "./fleet.md?raw";
 import accessControl from "./access-control.md?raw";
 import users from "./users.md?raw";
 import observability from "./observability.md?raw";
+import ai from "./ai.md?raw";
 
 export const topics: { key: HelpTopic; title: string; body: string }[] = [
   { key: "resolution", title: "Forwarding & recursion", body: resolution },
@@ -21,4 +22,5 @@ export const topics: { key: HelpTopic; title: string; body: string }[] = [
     title: "Query log and observability",
     body: observability,
   },
+  { key: "ai", title: "AI", body: ai },
 ];

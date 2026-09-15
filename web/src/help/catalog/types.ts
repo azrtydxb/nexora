@@ -6,7 +6,8 @@ export type HelpTopic =
   | "fleet"
   | "access-control"
   | "users"
-  | "observability";
+  | "observability"
+  | "ai";
 
 export type HelpEntry = {
   text: string;

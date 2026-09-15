@@ -8,6 +8,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
+  Activity,
   ArrowLeftRight,
   BadgeCheck,
   ChevronDown,
@@ -19,8 +20,11 @@ import {
   KeySquare,
   LayoutDashboard,
   LifeBuoy,
+  Lightbulb,
+  ListChecks,
   ListX,
   LogOut,
+  MessageSquare,
   Moon,
   ScrollText,
   Server,
@@ -28,14 +32,17 @@ import {
   ShieldBan,
   ShieldCheck,
   ShieldHalf,
+  Sparkles,
   Sun,
   Tags,
   TextSearch,
+  TrendingUp,
   UserRound,
   Users,
   type LucideIcon,
 } from "lucide-react";
 
+import { useAiEnabled } from "@/api/ai";
 import { api } from "@/api/client";
 import { useCurrentUser, useLogout } from "@/auth/AuthProvider";
 import { roleCan, type OperationId, type Role } from "@/auth/permissions";
@@ -61,6 +68,10 @@ type NavParent = {
   label: string;
   icon: LucideIcon;
   children: NavLeaf[];
+  /** localStorage key remembering whether the group is open. */
+  storageKey: string;
+  /** Shown only while the AI status reports enabled. */
+  ai?: boolean;
 };
 
 type NavItem = NavLeaf | NavParent;
@@ -75,8 +86,6 @@ function onLeaf(pathname: string, leaf: NavLeaf) {
   if (leaf.path === "/") return pathname === "/";
   return pathname === leaf.path || pathname.startsWith(`${leaf.path}/`);
 }
-
-const FILTERING_NAV_KEY = "nexora-nav-filtering";
 
 // Each item shows when the user may call the screen's list operation.
 const navGroups: { label: string; items: NavItem[] }[] = [
@@ -96,6 +105,51 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Query log",
         icon: TextSearch,
         op: "searchQueryLog",
+      },
+      {
+        route: "ai",
+        label: "AI",
+        icon: Sparkles,
+        storageKey: "nexora-nav-ai",
+        ai: true,
+        children: [
+          {
+            route: "ai-insights",
+            path: "/ai/insights",
+            label: "Insights",
+            icon: Lightbulb,
+            op: "listAiFindings",
+          },
+          {
+            route: "ai-recommendations",
+            path: "/ai/recommendations",
+            label: "Recommendations",
+            icon: ListChecks,
+            op: "listAiProposals",
+          },
+          {
+            route: "ai-assistant",
+            path: "/ai/assistant",
+            label: "Assistant",
+            icon: MessageSquare,
+            op: "createAiAssistantSession",
+          },
+          {
+            route: "ai-forecasts",
+            path: "/ai/forecasts",
+            label: "Forecasts",
+            icon: TrendingUp,
+            op: "listAiForecasts",
+          },
+          {
+            route: "ai-status",
+            path: "/ai",
+            label: "AI status",
+            icon: Activity,
+            op: "getAiStatus",
+            end: true,
+          },
+        ],
       },
       {
         route: "help",
@@ -119,6 +173,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         route: "filtering-group",
         label: "Filtering",
         icon: Funnel,
+        storageKey: "nexora-nav-filtering",
         children: [
           {
             route: "filtering",
@@ -286,9 +341,9 @@ function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
   );
 }
 
-function readFilteringOpen() {
+function readNavOpen(key: string) {
   try {
-    return localStorage.getItem(FILTERING_NAV_KEY) !== "closed";
+    return localStorage.getItem(key) !== "closed";
   } catch {
     return true;
   }
@@ -303,12 +358,15 @@ const navItemClass = (active: boolean) =>
       : "hover:bg-sidebar-active/60 hover:text-white",
   );
 
-/** A collapsible parent (Filtering): open by default, remembered, and opened on a child route. */
+/** A collapsible parent (Filtering, AI): open by default, remembered, and opened on a child route. */
 function NavParentEntry({ item }: { item: NavParent }) {
   const { user } = useCurrentUser();
+  const aiEnabled = useAiEnabled();
   const { pathname } = useLocation();
   const onChild = item.children.some((c) => onLeaf(pathname, c));
-  const [open, setOpen] = useState(() => onChild || readFilteringOpen());
+  const [open, setOpen] = useState(
+    () => onChild || readNavOpen(item.storageKey),
+  );
   // Entering a child route (a link elsewhere, the address bar) opens the group; the user may
   // still collapse it there.
   const [wasOnChild, setWasOnChild] = useState(onChild);
@@ -316,13 +374,14 @@ function NavParentEntry({ item }: { item: NavParent }) {
     setWasOnChild(onChild);
     if (onChild) setOpen(true);
   }
+  if (item.ai && !aiEnabled) return null;
   if (!item.children.some((c) => leafAllowed(user?.role, c))) return null;
 
   const toggle = () => {
     const next = !open;
     setOpen(next);
     try {
-      localStorage.setItem(FILTERING_NAV_KEY, next ? "open" : "closed");
+      localStorage.setItem(item.storageKey, next ? "open" : "closed");
     } catch {
       // Storage unavailable (private mode, quota): the state lasts for this page only.
     }

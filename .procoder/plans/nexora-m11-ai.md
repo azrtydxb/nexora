@@ -1564,6 +1564,7 @@ type AIRuntime struct {
 	Config        config.AIConfig
 	InstanceStart time.Time
 	TaskKinds     map[ai.TaskKind]bool // registered kinds; a missing kind answers 503 feature_disabled
+	Agents        map[string]bool      // registered agents built by startAI; a missing one is reported disabled and runAiAgent answers 404
 }
 // Deps gains MCP http.Handler: mounted at /mcp before the GUI catch-all when non-nil.
 func (h *handlers) startTask(ctx context.Context, kind ai.TaskKind, input any) (AiTask, error) // 202 body
@@ -1592,14 +1593,17 @@ func (h *handlers) startTask(ctx context.Context, kind ai.TaskKind, input any) (
     - `POST /api/v1/ai/agents/capacity_forecast/run` as viewer → 403, as operator → 202 and an
       `ai_agent_requests` row;
     - `POST /api/v1/ai/agents/nope/run` → 400 (enum), and a valid agent name disabled in `Config.Agents`
-      → 404 `unknown_agent`;
-    - a task started through `startTask` is readable by its requester and an admin, and another viewer
-      gets 404.
+      (registered) or enabled but not registered in `AIRuntime.Agents` → 404 `unknown_agent`; status reports
+      only registered, configured-on agents as enabled;
+    - `startTask` of an unregistered kind → 503 `feature_disabled`; a task started through `startTask` is
+      readable by its requester and an admin, and another viewer gets 404.
+  - The test is an in-package test (`package api`), because `startTask` is unexported.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run TestAiStatusAndTasks -count=1'` and expect
       FAIL: `GetAiStatus is not implemented yet`.
 - [ ] Implement `ai_status.go`, `ai_tasks.go` and the `AIRuntime` fields.
   - The status budget comes from `Service.Budget`.
-  - Agents come from `ai.AgentStates`.
+  - Agents come from `ai.AgentStates` over the configuration with unregistered agents disabled (so a
+    feature that has not landed shows no next run).
   - `endpoint_host` is the base URL host without userinfo.
   - The features flags come from `TaskKinds`.
   - `mcp` comes from `Config`.
@@ -1632,21 +1636,30 @@ func (h *handlers) startTask(ctx context.Context, kind ai.TaskKind, input any) (
     1. Start one fixture, and first a configured mgmt with `AIEnv` plus
        `NEXORA_AI_QUERYLOG_INTERVAL=2s` and `NEXORA_AI_AGENT_START_DELAY=0s`, with the
        `querylog_anomalies` script returning `{"anomalies":[]}`.
-    2. Send 20 DNS queries through a managed engine and assert the fixture received at least one
-       request, or that `nexora_mgmt_ai_agent_runs_total{agent="querylog_anomalies"}` rose. This is the
-       positive path; the agent may record `no_change` without a model call, so assert the metric.
+    2. Send 20 DNS queries through a managed engine. Positive path: status `enabled:true`, `/metrics` has
+       `nexora_mgmt_ai_enabled 1` and `nexora_mgmt_ai_budget_used_ratio`; and, once status reports
+       `querylog_anomalies` enabled (registered by Task 13, which removes the condition), the fixture
+       received at least one request or a `nexora_mgmt_ai_agent_runs_total{agent="querylog_anomalies"}`
+       sample appears within 60 s (the agent may record `no_change` without a model call).
     3. `fx.Reset`, stop that mgmt, and start an unconfigured mgmt on a fresh database.
     4. Send traffic for 60 s.
     5. Assert `len(fx.Requests(t)) == 0`, `/ai/status` `{enabled:false, reason:"not_configured"}`,
-       `/ai/proposals` 503 `ai_disabled`, and no `nexora_mgmt_ai_agent_runs_total` line in `/metrics`.
+       `/ai/proposals` 503 `ai_disabled`, no `nexora_mgmt_ai_agent_runs_total`,
+       `nexora_mgmt_ai_budget_used_ratio`, `nexora_mgmt_ai_open_proposals` or `nexora_mgmt_ai_requests_total`
+       in `/metrics`, and `nexora_mgmt_ai_enabled 0`.
   - `TestApplyAiProposalsReplaysThroughAPI` follows the spec criterion against real mgmt and a managed
     engine:
-    1. Insert the proposal rows with `harness.PGExec(t, pg.URL, sql)`.
-    2. After apply, wait until `gui`-style `WaitEngine` sees the new `LatestVersion`.
-    3. Assert the `audit_log` actors with SQL.
+    1. Insert the proposal rows with `harness.PGExec(t, pg.URL, sql)` (mgmt runs with `AIEnv`, since apply
+       answers 503 while AI is off).
+    2. After apply, wait until `WaitEngine` sees the new `LatestVersion`.
+    3. Assert the `audit_log` actors with SQL: `updatePolicyGroup` and `applyAiProposals` (proposal id,
+       `http_status` 200) by the operator, none by the viewer; then `proposal_not_open`, `stale` with 409,
+       and dismiss with its reason, `reviewed_by` and `dismissAiProposals` audit row.
 - [ ] Run
       `scripts/dev-exec.sh 'make e2e-build && go test ./e2e -run "TestAIDisabledChangesNothing|TestApplyAiProposalsReplaysThroughAPI|TestAIOpenAICompatibleWire" -count=1 -v'`
-      and expect PASS (the wire test SKIP until Task 12).
+      and expect PASS (the wire test SKIP until Task 12). With concurrent agents on the pod, build the
+      engine, mgmt and fixture into a private `CARGO_TARGET_DIR` and bin directory and run with
+      `NEXORA_E2E_BIN_DIR` pointing at it.
 - [ ] Report the paths. Commit message: `M11 T9: wire AI into nexora-mgmt, status and tasks`.
 
 ## Task 10: MCP server and stdio bridge
@@ -1874,6 +1887,27 @@ export function ProposalApplyDialog(props: {
 }): JSX.Element; // lists every action (data-testid="ai-apply-action"), license checkbox id ai-apply-acknowledge-license when any action is updateFilterCategory/updatePolicyGroup, confirm ai-apply-confirm, results ai-apply-result
 ```
 
+Also built (consumed by Tasks 23–30):
+
+```ts
+// web/src/api/ai.ts
+export function useAiProposalsById(
+  ids: string[],
+): UseQueryResult<Schemas["AiProposal"]>[]; // getAiProposal per id (apply dialog)
+// web/src/components/ai/AiOff.tsx
+export function AiPage(props: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}): JSX.Element; // PageHeader, then AiOff when status enabled === false, the status load error, or children when enabled
+// web/src/components/ai/ProposalCard.tsx
+export function DismissDialog(props: {
+  ids: string[];
+  onClose: () => void;
+}): JSX.Element; // textarea id ai-dismiss-reason, confirm ai-dismiss-confirm
+```
+
 - **Routes:** `/ai` → `AiStatusPage`, `/ai/insights`, `/ai/recommendations`, `/ai/assistant` and
   `/ai/forecasts`.
 - **Nav group:** `nav-ai`, label "AI", icon `Sparkles`, children:
@@ -1883,7 +1917,9 @@ export function ProposalApplyDialog(props: {
   - `nav-ai-forecasts` "Forecasts" (op `listAiForecasts`);
   - `nav-ai-status` "AI status" (op `getAiStatus`).
 
-  It renders only when `useAiEnabled()`.
+  It is a collapsible parent (like Filtering) in the Overview group after Query log, and renders only
+  when `useAiEnabled()`. `NavParent` gains `storageKey` (Filtering keeps `nexora-nav-filtering`, AI
+  uses `nexora-nav-ai`) and `ai?: boolean`.
 
 - **Every `/ai*` page** renders `AiOff` when `useAiStatus().data?.enabled === false`.
 
@@ -1985,13 +2021,18 @@ export function ProposalApplyDialog(props: {
       `ai-agent-run` button for operators);
     - `ai-mcp-state` ("MCP endpoint /mcp: on, read-only" / "MCP: off").
   - The help entries in `web/src/help/catalog/ai.ts` use `topic: "ai"` and the ids of the plan
-    decisions, with `pages` naming the AI pages and components of Tasks 23–30.
+    decisions. `check-help.mjs` fails on a listed page that does not exist, so `pages` names the AI
+    pages and components that exist after Task 11; Tasks 23–30 append new AI files they create to `pages`
+    (pages already in another area, such as `pages/QueryLogPage.tsx`, need no entry).
   - `ai.md` headings: `## Enabling AI`, `## Insights`, `## Recommendations`, `## Assistant`,
     `## Forecasts`, `## Rollout risk`, `## Threat checks`, `## RPZ suggestions`, `## MCP`, each naming
     the `docs/operations.md` section `AI` that Task 31 writes.
 - [ ] Run `cd web && pnpm run typecheck && pnpm run lint`, then
-      `scripts/dev-exec.sh 'make web-build && go test ./e2e -run TestGUICoverage -count=1'`. Expect specs
-      50 and 59 to PASS. The coverage assertion still lists the AI operations of Tasks 22–30 as
+      `scripts/dev-exec.sh 'make web-build && go test ./e2e -run TestGUICoverage -count=1'`. Expect spec
+      59 to PASS, and spec 50 to pass up to the `ai-agent-run` click. Task 9's `runAiAgent` answers 404
+      `unknown_agent` (and status reports `enabled: false`, so the button is disabled) for an agent with no
+      registered implementation, so the 202 on `capacity_forecast` needs Task 20; spec 50 passes fully
+      once Task 20 lands. The coverage assertion still lists the AI operations of Tasks 22–30 as
       uncovered; record that list in the report.
 - [ ] Report the paths. Commit message: `M11 T11: GUI foundation for AI`.
 

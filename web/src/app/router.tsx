@@ -27,6 +27,11 @@ import { UpstreamsPage } from "@/pages/UpstreamsPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { ZoneDetailPage } from "@/pages/ZoneDetailPage";
 import { ZonesPage } from "@/pages/ZonesPage";
+import { AiAssistantPage } from "@/pages/ai/AiAssistantPage";
+import { AiForecastsPage } from "@/pages/ai/AiForecastsPage";
+import { AiInsightsPage } from "@/pages/ai/AiInsightsPage";
+import { AiRecommendationsPage } from "@/pages/ai/AiRecommendationsPage";
+import { AiStatusPage } from "@/pages/ai/AiStatusPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -64,6 +69,11 @@ export const router = createBrowserRouter([
       { path: "help", element: <HelpPage /> },
       { path: "help/:topic", element: <HelpPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "ai", element: <AiStatusPage /> },
+      { path: "ai/insights", element: <AiInsightsPage /> },
+      { path: "ai/recommendations", element: <AiRecommendationsPage /> },
+      { path: "ai/assistant", element: <AiAssistantPage /> },
+      { path: "ai/forecasts", element: <AiForecastsPage /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

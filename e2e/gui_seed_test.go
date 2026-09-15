@@ -16,6 +16,8 @@ type guiSeedEnv struct {
 	Web    *harness.HTTPFixture
 	DNS    string
 	Vars   map[string]string
+	AI     *harness.OpenAIFixture // the scripted fake model mgmt's AI points at
+	PGURL  string                 // mgmt's database, for AI seeds that insert rows with harness.PGExec
 }
 
 var guiSeeds []func(guiSeedEnv)

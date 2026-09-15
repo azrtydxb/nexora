@@ -1,4 +1,5 @@
 import { adminHelp } from "./admin";
+import { aiHelp } from "./ai";
 import { filteringHelp } from "./filtering";
 import { fleetHelp } from "./fleet";
 import { resolverHelp } from "./resolver";
@@ -13,6 +14,7 @@ export const areas: Record<string, HelpArea> = {
   zones: zonesHelp,
   fleet: fleetHelp,
   admin: adminHelp,
+  ai: aiHelp,
 };
 
 function merge(): Record<string, HelpEntry> {
