@@ -7,6 +7,7 @@ const group = "guest-wifi-gui";
 // run, an apply that does not reach the configuration API, and a session lost on reload.
 test("operator plans a policy group with the assistant and applies it", async ({
   page,
+  request,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await login(
@@ -23,11 +24,18 @@ test("operator plans a policy group with the assistant and applies it", async ({
     .getByTestId("ai-assistant-message")
     .fill(`Block malware for 10.99.0.0/24 as ${group}`);
   await page.getByTestId("ai-assistant-send").click();
+  // The seed holds the fake model's answer, so the task is still in progress here.
   await expect(page.getByTestId("ai-task-status")).toContainText("Thinking");
   await expect(page.getByTestId("ai-assistant-msg-user")).toContainText(group);
+  await expect(page.getByTestId("ai-assistant-msg-assistant")).toHaveCount(0);
+  const released = await request.post(
+    `${env("NEXORA_E2E_AI_CONTROL_URL")}/release/config_assistant`,
+  );
+  expect(released.status()).toBe(204);
   await expect(page.getByTestId("ai-assistant-msg-assistant")).toContainText(
     `I will create ${group}.`,
   );
+  await expect(page.getByTestId("ai-task-status")).toHaveCount(0);
 
   const plan = page.getByTestId("ai-assistant-plan");
   await expect(plan).toContainText("createPolicyGroup");

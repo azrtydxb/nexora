@@ -614,7 +614,7 @@ Interfaces (OpenAPI component and operation names are the Go and TS names after 
   - `account.go`: `UpdateCurrentUser`, `ChangeOwnPassword`.
 - [ ] In `mgmt/internal/api/handlers_admin.go` `SearchQueryLog`, keep the current single-value
       behaviour until Task 5. Map each new array parameter with
-      the generic `firstParam[T ~string](v *[]T) string` (the `cache`, `filter` and `source` items are
+      the generic `firstParam` (type parameter `T ~string`, argument `v *[]T`, result `string`; the `cache`, `filter` and `source` items are
       generated enum types), which returns the trimmed first value or `""`,
       and fill the new record fields with empty values.
 - [ ] Create `web/src/lib/preferences.ts`:
@@ -2428,8 +2428,7 @@ fn record_hit(ctx: &WorkerCtx, policy: &EffectivePolicy, hit: ListHit, allowed: 
 
 - [ ] Run
       `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --test attribution'` and expect FAIL: it
-      does not compile, with `struct ListHit does not have a field named offset`, `cannot find function
-  view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
+      does not compile, with `struct ListHit does not have a field named offset`, `cannot find function view_with` and `expected tuple struct or tuple variant, found unit variant FilterDecision::Allowed`.
 - [ ] Implement:
   - **`engine/src/filter/index.rs`:**
     - `for_each_match(name_wire, visit: impl FnMut(u32, u8) -> bool)` passes the level's start
@@ -4215,8 +4214,7 @@ Interfaces: the headings `## Access control`, `## Engine logs and metrics` and `
       `scripts/pc-format.sh docs/operations.md` and
       `scripts/dev-exec.sh 'go test ./deploy/deploytest -run "TestOperationsDoc|TestHelpTopicsReferenceOperationsDoc" -count=1'`,
       and expect `TestOperationsDoc` PASS. `TestHelpTopicsReferenceOperationsDoc` also needs M11's
-      `## AI` section (M11 Task 31); until that lands it fails on `ai.md names missing
-      docs/operations.md heading "AI"` and on nothing else.
+      `## AI` section (M11 Task 31); until that lands it fails on `ai.md names missing docs/operations.md heading "AI"` and on nothing else.
 - [ ] Report the paths. Commit message: `docs: operations guide for M6`.
 
 ## Task 24: Navigation shell: Forwarding & recursion, Filtering group, help routes, document titles
@@ -5037,88 +5035,17 @@ Interfaces: none produced. This task consumes every earlier test id.
       temporarily add `<Input id="gate-probe" />` to `web/src/pages/AuditPage.tsx`, run
       `cd web && pnpm run lint`, expect FAIL with `control "gate-probe" has no help entry`, then remove
       the probe.
-- [ ] Create `web/e2e/screens/29-help.spec.ts`:
-
-  ```ts
-  import { test, expect, env, login } from "../fixtures";
-
-  const samples: [string, string][] = [
-    ["/settings", "settings-strategy"],
-    ["/resolution", "upstream-add"],
-    ["/access-control", "authacl-input"],
-    ["/filtering", "list-url"],
-    ["/query-log", "querylog-name"],
-    ["/users", "user-add"],
-  ];
-
-  test("help tips open on hover and focus and link to help pages", async ({
-    page,
-  }) => {
-    await login(
-      page,
-      env("NEXORA_E2E_ADMIN_USER"),
-      env("NEXORA_E2E_ADMIN_PASSWORD"),
-    );
-    for (const [path, id] of samples) {
-      await page.goto(path);
-      const tip = page.getByTestId(`help-${id}`).first();
-      if (!(await tip.isVisible())) {
-        // Dialog-only fields: open the page's create dialog first.
-        await page
-          .getByTestId(id.replace(/-(url|input)$/, "-add"))
-          .first()
-          .click();
-      }
-      await tip.hover();
-      await expect(page.getByRole("tooltip")).toBeVisible();
-      await page.mouse.move(0, 0);
-      await tip.focus();
-      await expect(page.getByRole("tooltip")).toBeVisible();
-      await expect(tip).toHaveAttribute("aria-describedby", `help-text-${id}`);
-      await page.keyboard.press("Escape");
-    }
-    await page.goto("/settings");
-    await page.getByTestId("help-settings-strategy").hover();
-    await page
-      .getByRole("tooltip")
-      .getByRole("link", { name: "Learn more" })
-      .click();
-    await expect(page).toHaveURL(/\/help\/resolution#strategy$/);
-    await expect(page.locator("#strategy")).toBeInViewport();
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate((t) => {
-        document.documentElement.classList.toggle("dark", t === "dark");
-      }, theme);
-      await page.setViewportSize({ width: 400, height: 800 });
-      await page.goto("/help/filtering#allowlist");
-      await expect(
-        page.getByRole("heading", { name: /Allowlist/i }),
-      ).toBeVisible();
-      const overflow = await page.evaluate(
-        () => document.documentElement.scrollWidth > window.innerWidth,
-      );
-      expect(overflow).toBe(false);
-    }
-    await page.getByTestId("nav-help").scrollIntoViewIfNeeded();
-    await page.goto("/help");
-    for (const t of [
-      "Forwarding & recursion",
-      "DNSSEC",
-      "Filtering",
-      "Authoritative zones",
-      "Fleet",
-      "Access control",
-      "Users and API tokens",
-      "Query log and observability",
-    ]) {
-      await expect(page.getByRole("link", { name: t })).toBeVisible();
-    }
-  });
-  ```
-
-  Replace the sample ids with ones present on the page without a dialog wherever
-  `node scripts/check-help.mjs --all` shows a page-level control. The spec's rule is one sample per
-  page group, reachable in at most one click.
+- [ ] Create `web/e2e/screens/29-help.spec.ts` (as built; the file is the reference). Samples, one per
+      page group, page-level where the page has a control: `/settings` `settings-strategy`, `/resolution`
+      `upstreams-col-position`, `/access-control` `authacl-input`, `/filtering` `allowlist-input`, `/zones`
+      `zones-col-serial`, `/engines` `engines-col-status`, `/query-log` `querylog-name`, `/users`
+      `user-username` (dialog opened with `user-add`), `/ai/forecasts` `ai-forecasts-kind`. For each: hover
+      shows the tooltip; moving the pointer away (in steps, so Radix's hover grace area ends) hides it;
+      blur then focus shows it again (a dialog may already have focused the tip); `aria-describedby` is
+      `help-text-<id>`. Then the Settings strategy "Learn more" link lands on `/help/resolution#strategy`
+      in the viewport; `/help/filtering#allowlist` at 400 px in light and dark (the class is set after
+      navigation and asserted) has no horizontal overflow; `nav-help` opens `/help` and the topic index
+      (`help-topics`) lists all nine topics including AI.
 
   Create `web/e2e/screens/35-page-headers.spec.ts`:
 

@@ -1,12 +1,20 @@
 package e2e
 
+import (
+	"encoding/json"
+
+	"github.com/piwi3910/nexora/e2e/harness"
+)
+
 func init() { registerGUISeed(seedAIAssistant) }
 
 // seedAIAssistant scripts the configuration assistant answer 54-ai-assistant.spec.ts plans with: one
 // createPolicyGroup action the spec reviews, applies and then finds on /policies. The last scripted
-// response repeats, so this one entry answers every turn the spec takes.
+// response repeats, so this one entry answers every turn the spec takes. The answer is held until the
+// spec has seen the task in progress and releases it through NEXORA_E2E_AI_CONTROL_URL, so the
+// "Thinking" status never races the fake model.
 func seedAIAssistant(s guiSeedEnv) {
-	s.AI.ScriptJSON(s.T, "config_assistant", map[string]any{
+	plan, err := json.Marshal(map[string]any{
 		"reply":   "I will create guest-wifi-gui.",
 		"summary": "Create guest-wifi-gui",
 		"actions": []any{map[string]any{
@@ -16,4 +24,10 @@ func seedAIAssistant(s guiSeedEnv) {
 			"explanation":  "New group",
 		}},
 	})
+	if err != nil {
+		s.T.Fatal(err)
+	}
+	s.AI.Script(s.T, "config_assistant", harness.OpenAIResponse{Content: string(plan), Hold: true,
+		PromptTokens: 120, CompletionTokens: 80, ReasoningTokens: 40})
+	s.Vars["NEXORA_E2E_AI_CONTROL_URL"] = s.AI.ControlURL()
 }

@@ -15,13 +15,15 @@ type OpenAIFixture struct {
 }
 
 // OpenAIResponse is one scripted chat completion answer. FinishReason defaults to "stop" and
-// Status to 200; a non-200 Status answers {"error":{"message":Content}}.
+// Status to 200; a non-200 Status answers {"error":{"message":Content}}. A Hold response waits until
+// Release for its feature (use it where a test must observe the task before the model answers).
 type OpenAIResponse struct {
 	Content          string `json:"content"`
 	Reasoning        string `json:"reasoning"`
 	FinishReason     string `json:"finish_reason"`
 	Status           int    `json:"status"`
 	DelayMS          int    `json:"delay_ms"`
+	Hold             bool   `json:"hold"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
 	ReasoningTokens  int    `json:"reasoning_tokens"`
@@ -46,6 +48,16 @@ func (e *Env) StartOpenAIFixture() *OpenAIFixture {
 
 func (f *OpenAIFixture) control() string {
 	return strings.TrimSuffix(f.URL, "/v1") + "/control"
+}
+
+// ControlURL is the fixture's control endpoint, for Playwright specs that release held responses
+// with POST <ControlURL>/release/<feature>.
+func (f *OpenAIFixture) ControlURL() string { return f.control() }
+
+// Release lets feature's held responses answer, now and until Reset.
+func (f *OpenAIFixture) Release(t *testing.T, feature string) {
+	t.Helper()
+	fixtureCall(t, http.MethodPost, f.control()+"/release/"+url.PathEscape(feature), nil, nil)
 }
 
 // Script replaces feature's response queue with rs; the last response repeats.

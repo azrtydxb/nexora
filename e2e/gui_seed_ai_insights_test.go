@@ -42,6 +42,7 @@ func seedAIInsights(s guiSeedEnv) {
 
 	s.Vars["NEXORA_E2E_AI_ANOMALY"] = "dns_tunneling:10.0.1.45"
 	s.Vars["NEXORA_E2E_AI_ANOMALY_CLIENT"] = "10.0.1.45"
+	s.Vars["NEXORA_E2E_AI_ANOMALY_OPEN"] = "nxdomain_burst:10.0.2.77"
 	s.Vars["NEXORA_E2E_AI_INSIGHT"] = "servfail_spike:gui-engine"
 	s.Vars["NEXORA_E2E_AI_INSIGHT_DISMISS"] = "upstream_degraded:fixture"
 }

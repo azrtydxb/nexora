@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --noEmit",
-    "lint": "eslint . && node scripts/check-permissions.mjs && node scripts/check-help.mjs",
+    "lint": "eslint . && node scripts/check-permissions.mjs && node scripts/check-help.mjs --all",
     "gen:api": "openapi-typescript ../mgmt/api/openapi.yaml -o src/api/schema.d.ts",
     "e2e": "playwright test"
   },

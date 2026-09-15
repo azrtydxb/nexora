@@ -22,6 +22,7 @@ type openAIResponse struct {
 	FinishReason     string `json:"finish_reason"`
 	Status           int    `json:"status"`
 	DelayMS          int    `json:"delay_ms"`
+	Hold             bool   `json:"hold"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
 	ReasoningTokens  int    `json:"reasoning_tokens"`
@@ -41,10 +42,11 @@ type openAIRequest struct {
 
 // openAIServer is a scripted fake OpenAI-compatible chat completions endpoint. Each feature (the
 // `nexora-feature: <f>` line the management plane puts first in the system prompt) has its own
-// response queue; the last response repeats.
+// response queue; the last response repeats. A held response waits until the feature is released.
 type openAIServer struct {
 	mu       sync.Mutex
 	scripts  map[string][]openAIResponse
+	released map[string]chan struct{} // closed by POST /control/release/{feature}
 	requests []openAIRequest
 }
 
@@ -71,10 +73,11 @@ func runOpenAI(args []string) (func(), string, error) {
 }
 
 func newOpenAIHandler() http.Handler {
-	s := &openAIServer{scripts: map[string][]openAIResponse{}}
+	s := &openAIServer{scripts: map[string][]openAIResponse{}, released: map[string]chan struct{}{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.chat)
 	mux.HandleFunc("PUT /control/script/{feature}", s.script)
+	mux.HandleFunc("POST /control/release/{feature}", s.release)
 	mux.HandleFunc("GET /control/requests", s.listRequests)
 	mux.HandleFunc("POST /control/reset", s.reset)
 	return mux
@@ -116,6 +119,7 @@ func (s *openAIServer) chat(w http.ResponseWriter, r *http.Request) {
 	s.requests = append(s.requests, rec)
 	queue := s.scripts[rec.Feature]
 	var resp openAIResponse
+	released := s.releasedLocked(rec.Feature)
 	ok := len(queue) > 0
 	if ok {
 		resp = queue[0]
@@ -128,6 +132,13 @@ func (s *openAIServer) chat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		openAIError(w, http.StatusInternalServerError, "no script for feature "+rec.Feature)
 		return
+	}
+	if resp.Hold {
+		select {
+		case <-released:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	if resp.DelayMS > 0 {
 		select {
@@ -212,6 +223,29 @@ func (s *openAIServer) script(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// releasedLocked returns the channel closed when feature is released; s.mu must be held.
+func (s *openAIServer) releasedLocked(feature string) chan struct{} {
+	c, ok := s.released[feature]
+	if !ok {
+		c = make(chan struct{})
+		s.released[feature] = c
+	}
+	return c
+}
+
+// release lets the feature's held responses answer, now and until Reset.
+func (s *openAIServer) release(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	c := s.releasedLocked(r.PathValue("feature"))
+	select {
+	case <-c:
+	default:
+		close(c)
+	}
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *openAIServer) listRequests(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	out := append([]openAIRequest{}, s.requests...)
@@ -222,6 +256,7 @@ func (s *openAIServer) listRequests(w http.ResponseWriter, _ *http.Request) {
 func (s *openAIServer) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	s.scripts = map[string][]openAIResponse{}
+	s.released = map[string]chan struct{}{}
 	s.requests = nil
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)

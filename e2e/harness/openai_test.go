@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piwi3910/nexora/e2e/harness"
 )
@@ -54,5 +55,43 @@ func TestOpenAIFixtureHarness(t *testing.T) {
 	fx.Reset(t)
 	if got := fx.Requests(t); len(got) != 0 {
 		t.Fatalf("after reset: %+v", got)
+	}
+}
+
+// Catches a held response that answers before Release (a spec asserting the in-progress state would
+// race the model again) and a Release that does not let held and later requests through.
+func TestOpenAIFixtureHoldsUntilReleased(t *testing.T) {
+	fx := harness.New(t).StartOpenAIFixture()
+	fx.Script(t, "held", harness.OpenAIResponse{Content: "late", Hold: true})
+	chat := func() <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			body := `{"model":"fake-qwen","messages":[{"role":"system","content":"nexora-feature: held"}]}`
+			resp, err := http.Post(fx.URL+"/chat/completions", "application/json", strings.NewReader(body))
+			if err != nil {
+				done <- 0
+				return
+			}
+			resp.Body.Close()
+			done <- resp.StatusCode
+		}()
+		return done
+	}
+	first := chat()
+	select {
+	case code := <-first:
+		t.Fatalf("held response answered before Release: %d", code)
+	case <-time.After(500 * time.Millisecond):
+	}
+	fx.Release(t, "held")
+	for i, c := range []<-chan int{first, chat()} {
+		select {
+		case code := <-c:
+			if code != http.StatusOK {
+				t.Fatalf("request %d after Release: status %d", i, code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("request %d still held after Release", i)
+		}
 	}
 }
