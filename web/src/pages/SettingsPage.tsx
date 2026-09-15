@@ -18,6 +18,7 @@ import {
   StatusDot,
 } from "@/components/common";
 import { PageHeader } from "@/components/layout/AppShell";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -66,6 +67,7 @@ type Form = Record<NumberKey, string> & {
   strategy: Settings["strategy"];
   block_mode: Settings["block_mode"];
   otlp_endpoint: string;
+  parallel_max: string;
 };
 
 function toForm(s: Settings): Form {
@@ -73,6 +75,7 @@ function toForm(s: Settings): Form {
     strategy: s.strategy,
     block_mode: s.block_mode,
     otlp_endpoint: s.otlp_endpoint,
+    parallel_max: String(s.parallel_max ?? 0),
   } as Form;
   for (const k of numberKeys) f[k] = String(s[k]);
   return f;
@@ -190,6 +193,7 @@ function SettingsForm({ settings }: { settings: Settings }) {
         strategy: form.strategy,
         block_mode: form.block_mode,
         otlp_endpoint: form.otlp_endpoint.trim(),
+        parallel_max: Number(form.parallel_max),
       };
       for (const k of numberKeys) body[k] = Number(form[k]);
       return unwrap(await api.PUT("/resolver-settings", { body }));
@@ -242,9 +246,47 @@ function SettingsForm({ settings }: { settings: Settings }) {
                     Ordered (first healthy)
                   </SelectItem>
                   <SelectItem value="fastest">Fastest (lowest RTT)</SelectItem>
+                  <SelectItem
+                    value="parallel"
+                    data-testid="settings-strategy-parallel"
+                  >
+                    Parallel (race upstreams)
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </Field>
+            {form.strategy === "parallel" && (
+              <>
+                <Field
+                  label="Parallel upstreams"
+                  htmlFor="settings-parallel-max"
+                  hint="0 races every healthy upstream (at most 8)."
+                >
+                  {/* No max attribute: the server's 0-8 message is the one shown. */}
+                  <Input
+                    id="settings-parallel-max"
+                    data-testid="settings-parallel-max"
+                    type="number"
+                    min={0}
+                    step={1}
+                    required
+                    value={form.parallel_max}
+                    onChange={(e) => set("parallel_max", e.target.value)}
+                  />
+                </Field>
+                <Alert
+                  data-testid="settings-parallel-warning"
+                  className="border-warning/40 sm:col-span-2 xl:col-span-3"
+                >
+                  <AlertDescription>
+                    Each uncached query goes to every upstream in the race at
+                    once, multiplying upstream load; some public resolvers
+                    rate-limit. Every raced provider sees the query, which
+                    matters for privacy.
+                  </AlertDescription>
+                </Alert>
+              </>
+            )}
           </Group>
 
           <Group
