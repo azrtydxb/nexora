@@ -1186,11 +1186,12 @@ Rendered objects: `Cluster.spec.affinity`, `spec.primaryUpdateStrategy: unsuperv
 `bootstrap.recovery` and `externalClusters`. The ScheduledBackup is named `<clusterName>-scheduled`.
 Mgmt env `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume `bootstrap-token`.
 
-- [ ] Before editing any chart file, capture the golden render in the dev pod:
-      `scripts/dev-exec.sh 'helm template nexora deploy/helm/nexora --namespace nexora -f deploy/kw/values-kw.yaml --api-versions monitoring.coreos.com/v1 --set image.tag=golden > deploy/deploytest/testdata/kw-render.golden.yaml'`,
-      then copy the file back to the laptop (`kubectl cp` from the pod, or rerun the same command on
-      the laptop with `helm` and confirm `diff` shows no difference).
-- [ ] Create `deploy/deploytest/helm_cnpg_test.go`:
+- [x] Before editing any chart file, capture the golden render in the dev pod:
+      `scripts/dev-exec.sh 'helm template nexora deploy/helm/nexora --namespace nexora -f deploy/kw/values-kw.yaml --api-versions monitoring.coreos.com/v1 --set image.tag=golden' > deploy/deploytest/testdata/kw-render.golden.yaml`,
+      writing the file on the laptop (redirect the command's stdout there; a file written only in the pod is
+      removed by the next `dev-sync.sh --delete`). Do not regenerate it with the laptop's `helm`: Helm 4.1
+      emits different blank lines between documents than the pod's Helm 4.3, and the test runs in the pod.
+- [x] Create `deploy/deploytest/helm_cnpg_test.go`:
   ```go
   package deploytest
 
@@ -1357,10 +1358,12 @@ Mgmt env `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, volume
   Run `scripts/dev-exec.sh 'go test ./deploy/deploytest -run "TestHelmKwRenderUnchanged|TestHelmCNPG|TestHelmBootstrapToken" -count=1'`.
   Expect PASS for `TestHelmKwRenderUnchanged` and FAIL for the other four (for example
   `antiAffinity = <nil>, want true`).
-- [ ] Add the values from Interfaces to `values.yaml` and their schema to `values.schema.json`:
+- [x] Add the values from Interfaces to `values.yaml` and their schema to `values.schema.json`:
       enums for `antiAffinity` and `primaryUpdateMethod`; `schedule` pattern
-      `^\\S+( \\S+){5}$`; `postgresql.parameters` as an object of strings.
-- [ ] Edit `templates/database-cnpg.yaml`:
+      `^\\S+( \\S+){5}$`; `postgresql.parameters` as an object of scalars
+      (`string`, `number` or `boolean`, because `--set ...max_connections=200` parses as a number; the
+      template always renders them as quoted strings).
+- [x] Edit `templates/database-cnpg.yaml`:
   - Always render `affinity: { enablePodAntiAffinity: true, topologyKey: kubernetes.io/hostname,
 podAntiAffinityType: <antiAffinity> }`, `primaryUpdateStrategy: unsupervised`,
     `primaryUpdateMethod`, `resources` (when non-empty) and `postgresql.parameters` (when non-empty,
@@ -1383,17 +1386,20 @@ podAntiAffinityType: <antiAffinity> }`, `primaryUpdateStrategy: unsupervised`,
     `owner: nexora`, `recoveryTarget.targetTime` when set) instead of `initdb`. Render
     `externalClusters: [{ name: backup-source, barmanObjectStore: { ... } }]` from the recovery values,
     each empty field falling back to `backup.*`, with
-    `required "database.cnpg.recovery.sourceServerName is required when database.cnpg.recovery.enabled"`.
+    `required "database.cnpg.recovery.sourceServerName is required when database.cnpg.recovery.enabled"`
+    (checked first), then `required` on the effective `destinationPath` and
+    `s3Credentials.existingSecret`. The object-store stanza shared by `backup` and `externalClusters`
+    is the `define "nexora.cnpgObjectStore"` at the top of the template.
     Fail with
     `database.cnpg.recovery.sourceServerName equals the backup serverName on the same destinationPath: the restored cluster would archive into the backup it restores from; set database.cnpg.backup.serverName`
     when backup is enabled, the effective paths are equal and the server names are equal.
-  - Add the comment
-    `# debt: in-tree barmanObjectStore (deprecated since CNPG 1.26, present in kw's 1.29.1); move to the Barman Cloud plugin when a CNPG release removes the field or the plugin is installed on kw.`
-- [ ] Edit `templates/mgmt-deployment.yaml`: with `mgmt.bootstrapToken.existingSecret`, add env
+  - Add the template comment (`{{- /* ... */}}`, so it stays out of the rendered output)
+    `debt: in-tree barmanObjectStore (deprecated since CNPG 1.26, present in kw's 1.29.1); move to the Barman Cloud plugin when a CNPG release removes the field or the plugin is installed on kw.`
+- [x] Edit `templates/mgmt-deployment.yaml`: with `mgmt.bootstrapToken.existingSecret`, add env
       `NEXORA_BOOTSTRAP_TOKEN_FILE=/etc/nexora/bootstrap-token/token`, the mount
       `{ name: bootstrap-token, mountPath: /etc/nexora/bootstrap-token, readOnly: true }` and the volume
       `secret: { secretName: <value>, defaultMode: 0440 }`.
-- [ ] Add to `ci/lint-values.yaml`:
+- [x] Add to `ci/lint-values.yaml`:
   ```yaml
   cnpg:
     backup:
