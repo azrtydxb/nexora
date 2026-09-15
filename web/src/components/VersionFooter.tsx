@@ -59,15 +59,23 @@ function CommitSuffix({
   );
 }
 
+/** Two build stamps differ; an unstamped one (empty) never counts as a mismatch. */
+function differs(a: string | undefined, b: string): boolean {
+  return !!a && !!b && a !== b;
+}
+
 /**
  * The sidebar footer: the running version with a details popover and, when the management plane
- * reports a different commit than this GUI build, a reload hint. On narrow screens the footer text
- * is hidden and `VersionInfoButton` in the top strip opens the same details.
+ * reports a different commit or version than this GUI build, a reload hint. Both stamps come from
+ * the same image build, so either one differing means the loaded GUI is older than the server;
+ * a GUI bundle built without a commit stamp is still caught by its version. On narrow screens the
+ * footer text is hidden and `VersionInfoButton` in the top strip opens the same details.
  */
 export function VersionFooter() {
   const q = useVersion();
   const v = q.data;
-  const stale = !!v?.commit && !!gui.commit && v.commit !== gui.commit;
+  const stale =
+    differs(v?.commit, gui.commit) || differs(v?.version, gui.version);
   return (
     <div
       className={cn(

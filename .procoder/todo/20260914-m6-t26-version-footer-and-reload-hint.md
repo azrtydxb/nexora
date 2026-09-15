@@ -33,3 +33,17 @@ tests pass in the dev pod and the change is committed.
   `version-footer-matches-health` is not run here (needs the kw deployment; Task 34).
 - Not committed (lead commits).
 
+
+## Follow-up (2026-09-15): 34-version failed in the full run
+
+Root cause: the hint compared only commits, and `web/vite.config.ts` stamps `__NEXORA_COMMIT__` from
+`NEXORA_COMMIT`, which `make e2e-build` does not set (the T26 evidence run set it by hand). With an
+empty GUI commit the mismatch test was always false, so `version-reload-hint` never rendered.
+`VersionFooter` now treats a differing version as a mismatch too (both stamps come from the same
+image build; an unstamped, empty stamp still never counts), so the spec's mocked `v9.9.9` against the
+GUI build's `dev` shows the hint on an unstamped build as well.
+
+Evidence (private pod copy `/work/qlfix`): full `TestGUICoverage` ->
+`✓ 34-version.spec.ts › sidebar shows the version, details and the reload hint on a mismatch (3.0s)`;
+red before the change in the same tree (`getByTestId('version-reload-hint')` element(s) not found).
+`cd web && pnpm run typecheck && pnpm run lint` -> clean, `permission parity: 138 operations match`.

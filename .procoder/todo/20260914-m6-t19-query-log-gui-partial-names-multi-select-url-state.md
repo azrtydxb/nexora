@@ -40,3 +40,18 @@ All pod runs used a private copy (`/work/t19`: HEAD + this task's files, own `CA
 - `cd web && pnpm run typecheck && pnpm run lint` (pod copy and shared tree): typecheck clean,
   `permission parity: 138 operations match`, `check-help: 0 controls on 0 pages have help`.
 - `gofmt -l e2e` empty, `go vet ./e2e` ok; prettier `--check` clean on the changed web files.
+
+## Follow-up (2026-09-15): 26-querylog-reason flake in the full run
+
+Root cause: the engine exports query log batches best-effort (`engine/src/telemetry/otlp.rs`
+`export_batch`) — a batch whose management channel is unavailable, or whose export times out, is
+counted in `export_dropped` and never retried. The seed queried the allowlisted name exactly once,
+right after the allowlist config apply, so a dropped batch left the spec with no row to filter by
+`source=allowlist` ("No queries match these filters."). `e2e/gui_seed_querylog_test.go` now re-queries
+until the record is in the query log with its allowlist attribution (GET /query-log?source=allowlist).
+
+Evidence (private pod copy `/work/qlfix`, own `CARGO_TARGET_DIR`/`bin`, deleted afterwards):
+`NEXORA_E2E_BIN_DIR=/work/qlfix/bin go test ./e2e -run TestGUICoverage -count=1 -timeout 45m` ->
+`✓ 10-query-log`, `✓ 23-querylog-category`, `✓ 25-querylog-filters`, `✓ 26-querylog-reason`,
+`✓ 52-ai-querylog`, `✓ 34-version`; `48 passed`, the 2 failures are 60-ai-viewer (another agent's
+in-progress M11 work).
