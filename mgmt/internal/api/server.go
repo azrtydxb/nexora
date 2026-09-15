@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -18,6 +19,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/ai/proposal"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
+	"github.com/piwi3910/nexora/mgmt/internal/config"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
@@ -61,11 +63,18 @@ type Deps struct {
 	EngineLogs        EngineLogReader       // nil: getEngineLogs answers 501 engine_unsupported
 	AIDisabledReason  string                // "" when AI is on; getAiStatus reports it
 	AI                *AIRuntime            // nil while AI is off: AI operations answer 503 ai_disabled
+	MCP               http.Handler          // nil: no /mcp endpoint
 }
 
-// AIRuntime holds the AI collaborators of the handlers; later M11 tasks add its fields.
+// AIRuntime holds the AI collaborators of the handlers while AI is on.
 type AIRuntime struct {
-	Proposals *proposal.Validator
+	Service       *ai.Service
+	Tasks         *ai.Tasks
+	Proposals     *proposal.Validator
+	Config        config.AIConfig
+	InstanceStart time.Time
+	TaskKinds     map[ai.TaskKind]bool // registered task kinds; a missing kind answers 503 feature_disabled
+	Agents        map[string]bool      // registered agents; one missing is reported disabled and cannot run
 }
 
 type handlers struct {
@@ -129,6 +138,9 @@ func newHandlers(d Deps) (*handlers, http.Handler) {
 	})
 	if d.Metrics != nil {
 		r.Handle("/metrics", d.Metrics)
+	}
+	if d.MCP != nil {
+		r.Handle("/mcp", d.MCP)
 	}
 	r.Handle("/*", webui.Handler())
 	h.root = r

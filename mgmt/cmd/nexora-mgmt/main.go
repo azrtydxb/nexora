@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
+	"github.com/piwi3910/nexora/mgmt/internal/ai/proposal"
 	"github.com/piwi3910/nexora/mgmt/internal/api"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/blocklist"
@@ -358,6 +359,11 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		builtinLog = querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)
 		queryLog = builtinLog
 	}
+	aiRuntime, aiDisabledReason, err := startAI(ctx, aiDeps{Cfg: cfg, Store: st, QueryLog: queryLog, Catalog: cat, Build: build,
+		Validator: &proposal.Validator{Store: st, PublicURL: cfg.PublicURL}, InstanceID: instanceID}, reg)
+	if err != nil {
+		return fmt.Errorf("AI: %w", err)
+	}
 	httpSrv := &http.Server{
 		Handler: api.NewHandler(api.Deps{
 			Store: st, Auth: authSvc, OIDC: auth.NewOIDC(cfg.OIDC, cfg.PublicURL, st), CA: ca, Build: build,
@@ -365,7 +371,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 			Metrics: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), HTTPMetrics: api.NewMetrics(reg),
 			RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
 			Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
-			EngineLogs: logs,
+			EngineLogs: logs, AIDisabledReason: aiDisabledReason, AI: aiRuntime,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
