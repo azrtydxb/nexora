@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { useUpdateAiFinding, type AiFinding } from "@/api/ai";
 import { ErrorAlert, formatAgo } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
@@ -11,13 +13,18 @@ const severityClass: Record<AiFinding["severity"], string> = {
   critical: "border-destructive/40 text-destructive",
 };
 
-/** One anomaly or insight; operators acknowledge or dismiss an open one. */
+/**
+ * One anomaly or insight; operators acknowledge or dismiss an open one. `children` is the
+ * kind-specific detail the insights page renders under the description.
+ */
 export function FindingCard({
   finding,
   canEdit,
+  children,
 }: {
   finding: AiFinding;
   canEdit: boolean;
+  children?: ReactNode;
 }) {
   const update = useUpdateAiFinding();
   const open = finding.status === "open";
@@ -51,6 +58,7 @@ export function FindingCard({
       {finding.description && (
         <p className="text-sm break-words">{finding.description}</p>
       )}
+      {children}
       <ErrorAlert error={update.error} />
       {canEdit && open && (
         <div className="flex flex-wrap gap-2">

@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { useAiEnabled } from "@/api/ai";
 import { api, unwrap, type Schemas } from "@/api/client";
 import {
   type DashboardRange,
@@ -22,6 +23,7 @@ import {
   useDashboardTop,
 } from "@/api/dashboard";
 import type { Engine } from "@/api/fleet";
+import { DashboardAiCard } from "@/components/ai/DashboardAiCard";
 import { ErrorAlert, MessageRow, StatusDot } from "@/components/common";
 import { EngineStatusBadge, engineStatuses } from "@/components/fleet";
 import { HelpTip } from "@/components/HelpTip";
@@ -146,6 +148,7 @@ export function DashboardPage() {
     : "1h";
   // Auto refresh is a URL parameter too, so a paused view survives a reload or a shared link.
   const live = params.get("refresh") !== "off";
+  const aiOn = useAiEnabled();
 
   function update(key: string, value: string | null) {
     const next = new URLSearchParams(params);
@@ -224,6 +227,7 @@ export function DashboardPage() {
         prefix="Could not load the dashboard"
         className="mb-4"
       />
+      {aiOn && <DashboardAiCard />}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
           label="Queries per second"
