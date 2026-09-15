@@ -28,6 +28,8 @@ pub struct Rec {
     pub source: String,
     pub rule: String,
     pub rpz_zone: String,
+    pub filter: String,
+    pub cache: String,
 }
 
 #[derive(Clone, Default)]
@@ -59,6 +61,8 @@ impl LogsService for Sink {
                     "nexora.filter.source" => &mut rec.source,
                     "nexora.filter.rule" => &mut rec.rule,
                     "nexora.rpz_zone" => &mut rec.rpz_zone,
+                    "nexora.filter" => &mut rec.filter,
+                    "nexora.cache" => &mut rec.cache,
                     _ => continue,
                 };
                 *field = v.clone();
@@ -75,6 +79,8 @@ pub struct RigOptions<'a> {
     pub rewrites: &'a [(&'a str, &'a str, &'a str)],
     /// An RPZ zone file (with its SOA) served as zone `rpz.attr.`, id [`RPZ_ZONE_ID`].
     pub rpz_file: Option<&'a str>,
+    /// `(list id, allow, names)` global filter lists.
+    pub lists: &'a [(&'a str, bool, &'a [&'a str])],
 }
 
 pub struct Rig {
@@ -154,6 +160,27 @@ impl Rig {
             })
             .into_iter()
             .collect();
+        let (mut blocklist_refs, mut allowlist_refs) = (Vec::new(), Vec::new());
+        for (i, (id, allow, names)) in opts.lists.iter().enumerate() {
+            let z = zstd::encode_all(names.join("\n").as_bytes(), 3).unwrap();
+            let sha = hex::encode(sha2::Sha256::digest(&z));
+            std::fs::write(dir.join(&sha), &z).unwrap();
+            let r = FilterListRef {
+                list_id: (*id).into(),
+                category: String::new(),
+                position: 1_000_000 + i as u32,
+                blob: Some(BlobRef {
+                    sha256: sha,
+                    size: z.len() as u64,
+                    name: (*id).into(),
+                }),
+            };
+            if *allow {
+                allowlist_refs.push(r);
+            } else {
+                blocklist_refs.push(r);
+            }
+        }
         let rules = opts
             .rewrites
             .iter()
@@ -192,7 +219,19 @@ impl Rig {
                 ..Default::default()
             }],
             acl_allow_cidrs: vec!["127.0.0.0/8".into()],
-            filter: Some(FilterConfig::default()),
+            filter: Some(FilterConfig {
+                blocklists: blocklist_refs
+                    .iter()
+                    .filter_map(|r| r.blob.clone())
+                    .collect(),
+                allowlists: allowlist_refs
+                    .iter()
+                    .filter_map(|r| r.blob.clone())
+                    .collect(),
+                blocklist_refs,
+                allowlist_refs,
+                ..Default::default()
+            }),
             telemetry: Some(TelemetryConfig {
                 otlp_endpoint: format!("http://{otlp}"),
                 ..Default::default()

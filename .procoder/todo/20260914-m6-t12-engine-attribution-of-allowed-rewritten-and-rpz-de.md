@@ -40,3 +40,9 @@ tests pass in the dev pod and the change is committed.
   `--- PASS: TestQueryLogCategoryAttribution (25.96s)` (builtin and opensearch).
 - `cargo clippy --locked -p nexora-engine --all-targets -- -D warnings`: clean. `rustfmt --edition 2024`
   on the changed files.
+- Follow-up fix (found by Task 19): the miss path dropped fast-path attribution (an allowlisted
+  name's first, uncached query logged filter "none"). `MissJob` now carries the fast path's
+  `QueryRecord`. Red: `allowlisted_cache_miss_keeps_its_filter_attribution` failed with
+  `left: ("miss", "none", "", "")`. Green: `--test attribution` `ok. 3 passed`, `--test hot_path_alloc`
+  `ok. 2 passed`, `--test telemetry_export` `ok. 10 passed`; server_pipeline, rpz_pipeline,
+  policy_pipeline, inflight ok; clippy `-D warnings` clean; `cargo fmt --check` clean; `go vet ./e2e` ok.

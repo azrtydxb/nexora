@@ -252,8 +252,9 @@ pub struct MissJob {
     pub limit: usize,
     pub opt: Option<ReplyOpt>,
     pub started: std::time::Instant,
-    pub filter_us: u32,
-    pub cache_us: u32,
+    /// The fast path's record so far (policy group, filter, RPZ and stage timings), completed and
+    /// logged by the miss path.
+    pub rec: QueryRecord,
     /// An RPZ query-phase decision that needs resolution; such misses bypass in-flight
     /// coalescing and the cache.
     pub rpz: RpzPending,
@@ -529,8 +530,7 @@ pub fn handle_packet(
                     limit,
                     opt,
                     started: scope.started,
-                    filter_us: rec.filter_us,
-                    cache_us: 0,
+                    rec,
                     rpz: pending,
                 });
             }
@@ -562,8 +562,7 @@ pub fn handle_packet(
         limit,
         opt,
         started: scope.started,
-        filter_us: rec.filter_us,
-        cache_us: rec.cache_us,
+        rec,
         rpz: RpzPending::None,
     })
 }
@@ -610,10 +609,9 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
         started: job.started,
     };
     let (policy, group) = rt.policy.select(job.client.ip());
-    let mut rec = scope.record(q.key, q.qtype);
+    // The fast path's attribution (filter, policy group, RPZ passthru) carries over.
+    let mut rec = job.rec;
     rec.policy_group = group.unwrap_or(NO_POLICY_GROUP);
-    rec.filter_us = job.filter_us;
-    rec.cache_us = job.cache_us;
     rec.cache = CacheOutcome::Miss;
     rec.upstream_start_us = micros(job.started.elapsed());
     let upstream_started = Instant::now();

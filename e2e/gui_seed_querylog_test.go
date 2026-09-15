@@ -32,13 +32,8 @@ func seedQueryLog(s guiSeedEnv) {
 		return firstA(harness.MustQuery(s.T, s.Engine.DNS, probe, dns.TypeA, harness.QueryOpts{})) == "0.0.0.0"
 	}, "malware category blocks again")
 	name := "www.allow.malware.gui.test."
-	// debt: the engine drops the allowlist attribution of a cache miss (resolve_miss starts a fresh
-	// record), so the second, cached answer is the one logged with its reason. Revisit when the
-	// miss path carries the fast path's filter decision.
-	for range 2 {
-		if a := firstA(harness.MustQuery(s.T, s.Engine.DNS, name, dns.TypeA, harness.QueryOpts{})); a != "192.0.2.1" {
-			s.T.Fatalf("allowlisted %s answered %q", name, a)
-		}
+	if a := firstA(harness.MustQuery(s.T, s.Engine.DNS, name, dns.TypeA, harness.QueryOpts{})); a != "192.0.2.1" {
+		s.T.Fatalf("allowlisted %s answered %q", name, a)
 	}
 	s.Vars["NEXORA_E2E_ALLOW_QUERY_NAME"] = strings.TrimSuffix(name, ".")
 

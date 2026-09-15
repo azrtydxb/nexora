@@ -46,6 +46,7 @@ fn rewrite_and_rpz_attribution_in_query_records() {
         rpz_file: Some(
             "$TTL 60\n@ SOA ns.rpz.attr. hostmaster.rpz.attr. 1 60 60 86400 60\nblocked.attr.test CNAME .\n",
         ),
+        ..Default::default()
     });
     rig.query_a("rw.attr.test.");
     rig.query_a("deep.x.wild.attr.test.");
@@ -68,5 +69,60 @@ fn rewrite_and_rpz_attribution_in_query_records() {
     assert_eq!(
         (rpz.source.as_str(), rpz.rpz_zone.as_str()),
         ("rpz", rig.rpz_zone_id())
+    );
+}
+
+#[test]
+fn allowlisted_cache_miss_keeps_its_filter_attribution() {
+    // Catches: the miss path starting a fresh query record, logging the first (uncached) answer of
+    // an allowlisted name as filter "none" with no source or rule.
+    let rig = pipeline::Rig::start(pipeline::RigOptions {
+        lists: &[
+            ("block-1", false, &["gate.attr.test"]),
+            ("allow-1", true, &["ok.gate.attr.test"]),
+        ],
+        ..Default::default()
+    });
+    // The filter index may build after the snapshot applies: wait until the block list blocks.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut probes = 0;
+    loop {
+        probes += 1;
+        let probe = format!("p{probes}.gate.attr.test.");
+        let upstream = rig
+            .query_a(&probe)
+            .answers
+            .iter()
+            .any(|r| r.data.to_string() == "192.0.2.1");
+        if !upstream {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "block list never applied"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let answer = rig.query_a("www.ok.gate.attr.test.");
+    assert!(
+        answer
+            .answers
+            .iter()
+            .any(|r| r.data.to_string() == "192.0.2.1"),
+        "allowlisted name resolved upstream: {answer:?}"
+    );
+    let recs = rig.records(probes + 1);
+    let rec = recs
+        .iter()
+        .find(|r| r.name == "www.ok.gate.attr.test.")
+        .unwrap_or_else(|| panic!("record missing: {recs:?}"));
+    assert_eq!(
+        (
+            rec.cache.as_str(),
+            rec.filter.as_str(),
+            rec.source.as_str(),
+            rec.rule.as_str()
+        ),
+        ("miss", "allowed", "allowlist", "ok.gate.attr.test")
     );
 }
