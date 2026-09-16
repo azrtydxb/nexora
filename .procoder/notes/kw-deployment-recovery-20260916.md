@@ -1,5 +1,15 @@
 # kw deployment recovery (2026-09-16)
 
+## Fix deployed and verified
+
+- Committed the connection lifecycle and strict AI acceptance fixes as `4b99d80`; deployed through `scripts/kw-deploy.sh` successfully, Helm revision 24.
+- Verified both management pods and both engine pods Ready on `sha-4b99d80`. Both active engines report connected to live management instances and applied version 1120 after acceptance.
+- During build and rollout, 2540 sampled queries to the two DNS addresses passed, zero failed. Each probe required a NOERROR response with an A answer, one attempt and a one-second timeout. Evidence: `/tmp/nexora-deploy-4b99d80.6rFFNi/dns.log` and `deploy.log`.
+- Post-deploy strict `scripts/kw-acceptance.sh` passed all five top-level tests in 154.531s, including AI token/invalid-output assertions, engine topology, certificate rotation, filter budgets and encrypted DNS. Evidence: `/tmp/nexora-acceptance-4b99d80.log`.
+- No recovery restart was needed after this rollout. This verifies the new release, not a definitive attribution of the earlier incident. Broader milestone closure still requires its remaining suite/governance evidence.
+
+## Earlier recovery and pre-deploy verification
+
 - Release revision 23 runs `sha-19c08e6`; verified both management pods and both engine pods Ready with that image tag.
 - Post-deploy acceptance exposed `master-13` with a null `connected_instance` despite fresh `last_seen_at` and applied version 1005. This was not simply a rollout delay. Certificate expiry was not established as a cause.
 - Rolled only `deployment/nexora-mgmt`; DNS engine pods were not restarted. Both engines then had live management instance references. During recovery, 234 sampled DNS queries to 192.168.10.136/139 passed, none failed (local evidence `/tmp/nexora-recovery.xhxcN7/dns.log`); this is not proof about every production query.
