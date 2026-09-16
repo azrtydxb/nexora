@@ -194,6 +194,18 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 				// them; a failed release is diagnosed separately under its lock.
 				return fmt.Errorf("Helm stage %s failed; lock retained, diagnose Helm status before recovery", stage.Name)
 			}
+			// Helm can report readiness while the old surge pod is still
+			// draining. Wait only for the known replaced target pod to vanish;
+			// do not retry or suppress any DNS/management health failure.
+			for _, previous := range observed.Pods {
+				if previous.Workload != stage.RollingWorkload || previous.Image == image {
+					continue
+				}
+				args := []string{"--context", config.Context, "-n", "nexora", "--request-timeout=130s", "wait", "--for=delete", "pod/" + previous.Name, "--timeout=120s"}
+				if _, err := execute(stageCtx, commandSpec{Program: "kubectl", Args: args}); err != nil {
+					return fmt.Errorf("old target pod did not finish draining; lock retained")
+				}
+			}
 			return stageCtx.Err()
 		},
 	}

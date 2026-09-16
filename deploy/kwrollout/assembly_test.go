@@ -19,7 +19,7 @@ import (
 // the production assembly, lock protocol, actual Helm renderer, pod/identity and
 // EndpointSlice readers, enrolment CAS, management gate and remote DNS evidence.
 func TestAssembledRuntimeMigration(t *testing.T) {
-	for _, mode := range []string{"success", "support-failure", "bootstrap-failure", "helm-failure", "ownership-loss", "dns-failure", "identity-drift", "cancel"} {
+	for _, mode := range []string{"success", "drain-failure", "support-failure", "bootstrap-failure", "helm-failure", "ownership-loss", "dns-failure", "identity-drift", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -128,6 +128,15 @@ func TestAssembledRuntimeMigration(t *testing.T) {
 						return nil, fmt.Errorf("missing explicit context")
 					}
 					args := command.Args[5:]
+					if args[0] == "wait" {
+						if !slices.Contains(args, "--for=delete") || !slices.Contains(args, "--timeout=120s") {
+							return nil, fmt.Errorf("unbounded or incorrect drain wait")
+						}
+						if mode == "drain-failure" {
+							return nil, errors.New("old pod still draining")
+						}
+						return nil, nil
+					}
 					if command.Args[3] == "nexora-dev" {
 						var probes []DNSProbe
 						if err := json.Unmarshal(command.Input, &probes); err != nil {
