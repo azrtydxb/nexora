@@ -4,7 +4,8 @@ Namespace `nexora` on the kw cluster (context `kw`). Nexora itself is the Helm r
 `deploy/helm/nexora` with `values-kw.yaml` plus `values-pairs.yaml`; supporting services (CNPG,
 OpenSearch, collector, block list, BIND primary) are plain manifests here. The guarded workflow
 upgrades an existing healthy kw installation; it refuses fresh installs and legacy resource adoption.
-The four-engine target below is implemented but not yet deployed/accepted; live evidence is recorded
+The four-engine topology is deployed as `sha-809cf3a` (Helm revision 35); strict acceptance passed.
+Forced member-failure testing remains outstanding. Live evidence is recorded
 in `.procoder/notes/kw-rollout-integration.md`. Use:
 
 ```sh
@@ -333,8 +334,8 @@ engines are down, reach it by address (the ingress is 192.168.10.120).
 
 ## Known limits
 
-- Four-engine migration and controlled live failover acceptance are not yet recorded as passed.
-  The live fleet remains two engines until the guarded migration succeeds.
+- Four-engine migration and strict product acceptance passed on `sha-809cf3a`; controlled forced
+  member-failure testing remains outstanding. Successful samples do not prove zero-loss failover.
 - Engine state is node-local hostPath. a/b preserve `/var/lib/nexora/nexora-engine`; c/d use separate
   paths. Removing state and a pod re-enrols it under a new identity and fails the rollout binding gate.
 - kube-vip (ARP) holds `192.168.10.136` and `192.168.10.139` each on one control-plane node; with

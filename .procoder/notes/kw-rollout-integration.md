@@ -1,6 +1,34 @@
 # kw guarded rollout integration
 
-## Status
+## Current outcome
+
+Production is now `sha-809cf3a`, Helm revision 35: four Ready engines, two complete paired VIP
+endpoint sets, all controllers OnDelete. Strict acceptance passed in 459.272s:
+AI 42.92s, filtering 152.15s, full product 9.17s, M4 61.74s and smoke 193.27s.
+Evidence: `/tmp/nexora-acceptance-809cf3a/acceptance.log` and `acceptance.exit` (0).
+Post-acceptance read-only paired preflight passed in `/tmp/nexora-postacceptance-809cf3a.log`.
+Forced individual-member failure testing remains outstanding; recurring propagation root cause
+is not established as fixed by this acceptance pass.
+
+Manual recovery used UID/resourceVersion/protocol/owner CAS after preflight, terminal Helm status
+and absence of active deployment clients. No expiry or automatic takeover was introduced.
+Commit `4503ec5` corrected Helm's waiter and allowed healthy previously-created partners to stay
+frozen through resumed cutover; selected/final gates still require target images. Its rollout
+activated both pairs but stopped after a because Helm returned with its old surge pod draining.
+Commit `809cf3a` added a bounded old-target-pod deletion wait, not DNS/health retries, with an
+assembled failure-retains-lock test. Linux race/chart suites passed (`/tmp/nexora-drain-linux.log`).
+
+The `809cf3a` rollout verified a/b/c/d serially and the final frozen fleet. Bootstrap then briefly
+left one engine at applied/target 1233 versus latest 1234, so the workflow correctly exited 1 and
+retained its lock. Subsequent paired preflight and the entire strict acceptance suite passed;
+the lock was manually CAS-released only after another successful preflight and quiescence check.
+This was a recovered deployment, not a zero-exit unattended workflow.
+
+Logs: `/tmp/nexora-deploy-4503ec5/deploy.log` (320 DNS samples, no recorded query errors),
+`/tmp/nexora-deploy-809cf3a/deploy.log` (836 samples, no recorded query errors). Finite samples
+are not proof of zero loss. The final bootstrap propagation wait remains a workflow issue.
+
+## First attempt (historical)
 
 Committed as `7ce4bed`; the first production attempt stopped at Helm revision 26 (failed).
 Four engines are Ready, connected and current, but VIP selectors remain legacy: a/b still serve
