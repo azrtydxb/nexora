@@ -1,3 +1,34 @@
+## GUI clarity fixes and kw deployment
+
+Requested: fix query-log columns overflowing, improve AI response formatting, make the dashboard health score intuitive (10 healthy, 0 poor), and finish the pending profile alignment, AI Run now buttons and unmeasured upstream RTT presentation.
+
+- Finish, test, commit and deploy the discussed fixes to kw with DNS continuity probes and post-deploy acceptance.
+- Hold for an interactive review before deployment.
+
+**Answer:** Continue all these fixes, then deploy and test while the user is away. This includes changing the insight API score to `max(0, 10 - 3 × critical - warning)` over open insights, with clear loading/error states. Rollout risk scores are separate and unchanged. Do not change recursive/forwarding mode merely to populate RTTs. Split-horizon DNS stays a separate planning effort; Pi-hole parity gaps remain excluded.
+
+## Pi-hole feature parity: out of product scope
+
+The comparison in `.procoder/notes/pihole-feature-gap-analysis.md` identified missing or partial Pi-hole features and suggested possible priorities.
+
+- Add selected parity features to Nexora's roadmap.
+- Keep all identified gaps out of scope because they do not fit this product.
+
+**Answer:** Do not add any of the identified Pi-hole gaps; they are not for this product. Retain the comparison as research only, with no backlog items or implementation work arising from it. This does not change the separate split-horizon DNS planning decision or the pending profile alignment fix.
+
+## Split-horizon DNS scope
+
+Requested: different answers for the same zone based on request source, such as private addresses for internal clients and public addresses for external clients. Existing zone query ACLs control access, not different record sets.
+
+- Recommended: zone views selected by explicit IPv4/IPv6 client CIDRs, longest-prefix match, with the existing zone as the default view. Each view has a complete record set; no implicit fallback of missing internal records to the default. Include GUI/API configuration, view-safe caching and query-log attribution. Specify DNSSEC, transfers and dynamic-update isolation before implementation. Use the source IP actually observed by the engine; do not trust arbitrary forwarded headers or EDNS Client Subnet.
+- Alternative: individual record overrides selected through existing client policy groups, with shared-record fallback semantics defined explicitly.
+
+**Answer (2026-09-16):** Yes — write the spec and implementation plan for the zone-view approach. This approves planning, not implementation or a production configuration change.
+
+The first draft proposed unsigned primary views only, with split-view DNSSEC and secondary zones deferred. The user was offered that limited scope or including both in the first release.
+
+**Scope answer (2026-09-16):** “include all” — include signed/unsigned primary views, split-view DNSSEC and signed/unsigned secondary views in the first release. No DNSSEC/secondary deferral. Expand `.procoder/specs/nexora-split-dns.md` and `.procoder/plans/nexora-split-dns.md` accordingly; this remains a planning decision, not authorization to change production. Detailed key/trust and replication designs remain subject to architecture review.
+
 ## Commit and deploy the kw connection-state fix (2026-09-16)
 
 kw is recovered on `sha-19c08e6`. The local lifecycle-lock fix and stricter AI acceptance checks pass the dev-pod management suite, control race tests, helper tests, and strict acceptance against the existing deployment. The new server binary has not been deployed. The laptop-wide procoder test report failed; scoped Linux dev-pod verification is recorded in `.procoder/notes/kw-deployment-recovery-20260916.md`.
