@@ -148,7 +148,11 @@ function Agents({ agents }: { agents: AiStatus["agents"] }) {
             <TableHead className="h-10">Last run</TableHead>
             <TableHead className="h-10">Outcome</TableHead>
             <TableHead className="h-10">Next run</TableHead>
-            {canRun && <TableHead className="h-10 w-24" />}
+            {canRun && (
+              <TableHead className="h-10 w-32">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            )}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -188,10 +192,11 @@ function Agents({ agents }: { agents: AiStatus["agents"] }) {
                 {a.enabled && a.next_run_at ? formatAgo(a.next_run_at) : "—"}
               </TableCell>
               {canRun && (
-                <TableCell className="py-2.5 text-right">
+                <TableCell className="py-2.5 text-right whitespace-nowrap">
                   <Button
                     size="sm"
                     variant="outline"
+                    className="h-8 min-w-24 gap-1.5 whitespace-nowrap"
                     data-testid="ai-agent-run"
                     disabled={!a.enabled || run.isPending}
                     onClick={() => {
@@ -201,8 +206,8 @@ function Agents({ agents }: { agents: AiStatus["agents"] }) {
                       });
                     }}
                   >
-                    <Play className="mr-1 h-3.5 w-3.5" />
-                    Run now
+                    <Play aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                    <span>Run now</span>
                   </Button>
                   {requested === a.name && (
                     <div

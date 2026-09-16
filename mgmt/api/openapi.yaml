@@ -708,17 +708,23 @@ components:
         upstreams:
           type: array
           items:
-            {
-              type: object,
-              required: [name, up_engines, total_engines, rtt_ms],
-              properties:
-                {
-                  name: { type: string },
-                  up_engines: { type: integer },
-                  total_engines: { type: integer },
-                  rtt_ms: { type: number },
-                },
-            }
+            type: object
+            required:
+              - name
+              - up_engines
+              - unmeasured_engines
+              - total_engines
+              - rtt_ms
+            properties:
+              name: { type: string }
+              up_engines:
+                type: integer
+                description: Engines reporting up with a successful RTT sample.
+              unmeasured_engines:
+                type: integer
+                description: Engines not marked down but without a successful RTT sample.
+              total_engines: { type: integer }
+              rtt_ms: { type: number }
         series:
           type: array
           items:
@@ -2490,7 +2496,11 @@ components:
         insights:
           { type: array, items: { $ref: "#/components/schemas/AiFinding" } }
         summary: { type: string }
-        score: { type: integer, minimum: 0, maximum: 10 }
+        score:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: "AI insight health: max(0, 10 - 3 * open critical insights - open warning insights). 10 is healthy; 0 is poor. Not a live availability check."
         generated_at: { type: [string, "null"], format: date-time }
     AiProposalAction:
       type: object

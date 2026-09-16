@@ -20,7 +20,7 @@ const severityClass: Record<AiFinding["severity"], string> = {
 };
 
 /**
- * The dashboard's AI summary: the fleet insight score (0 is quiet, 10 needs attention), the one-line
+ * The dashboard's AI summary: the insight health score (10 is healthy, 0 is poor), the one-line
  * summary and the three most severe open insights. Rendered only while AI is on.
  */
 export function DashboardAiCard() {
@@ -42,9 +42,13 @@ export function DashboardAiCard() {
         </h2>
         <div className="flex items-center gap-3">
           <span className="text-sm">
-            Score{" "}
+            AI health{" "}
             <span data-testid="ai-score" className="font-medium tabular-nums">
-              {q.data?.score ?? 0}/10
+              {q.isError
+                ? "Unavailable"
+                : q.data
+                  ? `${q.data.score}/10`
+                  : "Loading…"}
             </span>
           </span>
           <Link
@@ -56,6 +60,10 @@ export function DashboardAiCard() {
           </Link>
         </div>
       </div>
+      <p className="text-muted-foreground text-xs">
+        10 is healthy; 0 is poor. Based on open AI insights, not a live
+        availability check.
+      </p>
       <ErrorAlert error={q.error} prefix="Could not load the AI insights" />
       {q.data && (
         <p className="text-muted-foreground text-sm">

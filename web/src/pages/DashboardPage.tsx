@@ -336,6 +336,10 @@ export function DashboardPage() {
         <Card className="min-w-0 overflow-hidden">
           <div className="px-5 pt-5 pb-3">
             <h2 className="text-sm font-semibold">Upstream health</h2>
+            <p className="text-muted-foreground mt-1 text-xs">
+              RTT comes from answered queries, not active probes. In recursive
+              mode, configured forwarders may remain unmeasured.
+            </p>
           </div>
           <Table>
             <TableHeader>
@@ -367,7 +371,8 @@ export function DashboardPage() {
                   <TableCell className="py-2.5">
                     <StatusDot
                       tone={
-                        u.total_engines === 0
+                        u.total_engines === 0 ||
+                        u.unmeasured_engines === u.total_engines
                           ? "muted"
                           : u.up_engines === u.total_engines
                             ? "success"
@@ -376,8 +381,17 @@ export function DashboardPage() {
                               : "warning"
                       }
                     >
-                      {u.up_engines} / {u.total_engines} engines
+                      {u.unmeasured_engines === u.total_engines &&
+                      u.total_engines > 0
+                        ? "Not measured"
+                        : `${u.up_engines} / ${u.total_engines} engines`}
                     </StatusDot>
+                    {u.unmeasured_engines > 0 &&
+                      u.unmeasured_engines < u.total_engines && (
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          {u.unmeasured_engines} unmeasured
+                        </p>
+                      )}
                   </TableCell>
                   <TableCell className="py-2.5 pr-5 text-right tabular-nums">
                     {u.rtt_ms > 0 ? `${u.rtt_ms.toFixed(1)} ms` : "—"}

@@ -123,13 +123,16 @@ func TestInsightScore(t *testing.T) {
 		}
 		return out
 	}
-	if got := insight.Score(open("critical", "warning")); got != 4 {
-		t.Fatalf("one critical and one warning = %d, want 4", got)
+	if got := insight.Score(open()); got != 10 {
+		t.Fatalf("no insights = %d, want 10", got)
 	}
-	if got := insight.Score(open("critical", "critical", "critical", "critical", "critical")); got != 10 {
-		t.Fatalf("five criticals = %d, want 10", got)
+	if got := insight.Score(open("critical", "warning")); got != 6 {
+		t.Fatalf("one critical and one warning = %d, want 6", got)
 	}
-	if got := insight.Score(open("info")); got != 0 {
-		t.Fatalf("info = %d, want 0", got)
+	if got := insight.Score(open("critical", "critical", "critical", "critical", "critical")); got != 0 {
+		t.Fatalf("five criticals = %d, want 0", got)
+	}
+	if got := insight.Score(open("info")); got != 10 {
+		t.Fatalf("info = %d, want 10", got)
 	}
 }

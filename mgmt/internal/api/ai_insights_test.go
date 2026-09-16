@@ -15,7 +15,7 @@ func TestGetAiInsights(t *testing.T) {
 	ctx := context.Background()
 
 	var got api.AiInsights
-	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 0 ||
+	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 10 ||
 		got.Summary != "No active insights." || len(got.Insights) != 0 || got.GeneratedAt != nil {
 		t.Fatalf("empty insights = %d %+v", code, got)
 	}
@@ -33,7 +33,7 @@ func TestGetAiInsights(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 4 ||
+	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 6 ||
 		got.Summary != "2 active insight(s) across the fleet." || len(got.Insights) != 2 || got.GeneratedAt == nil || !got.GeneratedAt.Equal(now) {
 		t.Fatalf("insights = %d %+v", code, got)
 	}
@@ -42,7 +42,7 @@ func TestGetAiInsights(t *testing.T) {
 	if _, err := env.st.Pool.Exec(ctx, "update ai_findings set status = 'acknowledged' where candidate_id = 'servfail_spike:edge-a'"); err != nil {
 		t.Fatal(err)
 	}
-	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 1 || len(got.Insights) != 2 {
+	if code := viewer.do(http.MethodGet, "/ai/insights", nil, &got); code != 200 || got.Score != 9 || len(got.Insights) != 2 {
 		t.Fatalf("with an acknowledged insight = %d %+v", code, got)
 	}
 

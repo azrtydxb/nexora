@@ -212,7 +212,7 @@ series and rollup, top lists, engine metrics and version endpoint.
     under the same change and 5-minute rules as S-4. It returns insights with title, description,
     engines, possible causes with confidence and supporting candidate ids, and recommended actions.
   - `getAiInsights` returns open insights, a one-line summary and a **health score 0–10** computed
-    deterministically: `min(10, 3 × critical + 1 × warning)`. The score is correct without the model.
+    deterministically: `max(0, 10 - 3 × critical - warning)` over open insights. 10 is healthy and 0 is poor. The score is correct without the model; it is not a live availability check.
   - Insights are findings of kind `insight`, with the same acknowledge and dismiss.
 - [S-6] (#45) Filter and policy recommendations (`filter_recommendations`, `NEXORA_AI_FILTER_RECOMMENDATIONS_INTERVAL`, 6 h).
   - Aggregates over the last 24 h per policy group (global included) and engine group:
@@ -902,7 +902,7 @@ Other data:
   on every tick, or real traffic is not detected.
 
 - [ ] [S-5] `TestInsightDetectors` seeds `engine_stats` for two engines with a SERVFAIL spike and an
-      upstream RTT rise and asserts both candidates. `TestInsightScore` asserts the score is 4 for one
+      upstream RTT rise and asserts both candidates. `TestInsightScore` asserts the score is 6 for one
       critical and one warning without any model call. `TestDashboardInsightCorrelation` (fake
       provider) stores one insight citing both candidate ids and rejects an answer citing an unknown id.
       Fails if the score depends on the model or correlations cite unknown signals.

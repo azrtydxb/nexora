@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
+import Markdown from "react-markdown";
 
 import { useAiStatus, useAiTask, useStartAiQueryLogSearch } from "@/api/ai";
 import type { Schemas } from "@/api/client";
@@ -14,6 +15,17 @@ import { Label } from "@/components/ui/label";
 type Result = Schemas["AiQueryLogSearchResult"];
 
 const maxQuestion = 500;
+
+/** Render model prose without raw HTML or remote images. */
+function ResponseText({ children }: { children: string }) {
+  return (
+    <div className="space-y-3 leading-relaxed [overflow-wrap:anywhere] [&_a]:text-primary [&_a]:underline [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:whitespace-pre-line [&_pre]:overflow-x-auto [&_ul]:list-disc [&_ul]:pl-5">
+      <Markdown skipHtml disallowedElements={["img"]}>
+        {children}
+      </Markdown>
+    </div>
+  );
+}
 
 /**
  * Asks the query log a question in plain language. The model's filters become the page's filters
@@ -94,29 +106,48 @@ export function QueryLogAsk({
       </div>
 
       {result && (
-        <div className="mt-3 space-y-2 text-sm">
-          <p data-testid="querylog-ai-summary">{result.summary}</p>
-          <p
-            className="text-muted-foreground"
-            data-testid="querylog-ai-explanation"
-          >
-            {result.explanation}
-          </p>
-          {result.suggestions.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {result.suggestions.map((s) => (
-                <Button
-                  key={s}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="querylog-ai-suggestion"
-                  onClick={() => setQuestion(s)}
-                >
-                  {s}
-                </Button>
-              ))}
+        <div className="mt-4 min-w-0 space-y-5 border-t pt-4 text-sm">
+          <section className="max-w-prose space-y-2">
+            <h3 className="font-semibold">Summary</h3>
+            <div data-testid="querylog-ai-summary">
+              <ResponseText>{result.summary}</ResponseText>
             </div>
+          </section>
+          <section className="max-w-prose space-y-2">
+            <h3 className="font-semibold">Search interpretation</h3>
+            <div
+              className="text-muted-foreground"
+              data-testid="querylog-ai-explanation"
+            >
+              <ResponseText>{result.explanation}</ResponseText>
+            </div>
+          </section>
+          {result.suggestions.length > 0 && (
+            <section className="max-w-3xl space-y-2">
+              <h3 className="font-semibold">Suggested follow-ups</h3>
+              <ul className="space-y-2">
+                {result.suggestions.map((s) => (
+                  <li key={s}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-auto min-h-9 w-full justify-start gap-2 py-2 text-left leading-relaxed whitespace-normal"
+                      data-testid="querylog-ai-suggestion"
+                      onClick={() => setQuestion(s)}
+                    >
+                      <ArrowRight
+                        aria-hidden="true"
+                        className="h-4 w-4 shrink-0"
+                      />
+                      <span className="min-w-0 [overflow-wrap:anywhere]">
+                        {s}
+                      </span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </div>
       )}

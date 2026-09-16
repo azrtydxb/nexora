@@ -30,7 +30,8 @@ const (
 	certificateCritical                           = 3 * 24 * time.Hour
 )
 
-// Score is min(10, 3 × critical + 1 × warning) over the given (open) insights.
+// Score is the health score: 10 is healthy, with 3 points deducted per critical
+// and 1 per warning insight, floored at 0. The input contains only open insights.
 func Score(open []finding.Finding) int {
 	score := 0
 	for _, f := range open {
@@ -41,7 +42,7 @@ func Score(open []finding.Finding) int {
 			score++
 		}
 	}
-	return min(10, score)
+	return max(0, 10-score)
 }
 
 // Detect returns the insight candidates at now: the last 15 minutes against the previous 24 hours for

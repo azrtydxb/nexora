@@ -218,14 +218,16 @@ func (h *handlers) GetDashboard(ctx context.Context, _ GetDashboardRequestObject
 	out := Dashboard{QueriesTotal: int64(d.QueriesTotal), BlockedTotal: int64(d.BlockedTotal), Qps: float32(d.QPS),
 		CacheHitRatio: float32(d.CacheHitRatio), EnginesTotal: d.EnginesTotal, EnginesConnected: d.EnginesConnected}
 	out.Upstreams = make([]struct {
-		Name         string  `json:"name"`
-		RttMs        float32 `json:"rtt_ms"`
-		TotalEngines int     `json:"total_engines"`
-		UpEngines    int     `json:"up_engines"`
+		Name              string  `json:"name"`
+		RttMs             float32 `json:"rtt_ms"`
+		TotalEngines      int     `json:"total_engines"`
+		UnmeasuredEngines int     `json:"unmeasured_engines"`
+		UpEngines         int     `json:"up_engines"`
 	}, len(d.Upstreams))
 	for i, u := range d.Upstreams {
 		out.Upstreams[i].Name, out.Upstreams[i].RttMs = u.Name, float32(u.RTTMs)
 		out.Upstreams[i].TotalEngines, out.Upstreams[i].UpEngines = u.TotalEngines, u.UpEngines
+		out.Upstreams[i].UnmeasuredEngines = u.UnmeasuredEngines
 	}
 	out.Series = make([]struct {
 		At  time.Time `json:"at"`

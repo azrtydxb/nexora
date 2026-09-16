@@ -2299,7 +2299,7 @@ Interfaces:
 const Kind = "insight"
 const Name = "dashboard_insights"
 func Detect(ctx context.Context, q store.PolicyQuerier, now time.Time) ([]finding.Candidate, error)
-func Score(open []finding.Finding) int // min(10, 3*critical + 1*warning) over open insights
+func Score(open []finding.Finding) int // max(0, 10 - 3*critical - warning); 10 is healthy
 type Agent struct{ Store *store.Store; Service *ai.Service; MinLLMInterval time.Duration; Now func() time.Time }
 func (a *Agent) Name() string // "dashboard_insights"
 func (a *Agent) Run(ctx context.Context, run *ai.Run) error
@@ -2376,9 +2376,9 @@ the cited candidates' `engine` detail.
   - `generated_at` = the newest `last_seen`, `null` without insights.
 
   Create `mgmt/internal/api/ai_insights_test.go` with `TestGetAiInsights`. It covers:
-  - no insights → score 0 and `generated_at` null;
-  - one critical and one warning insight → score 4 and the summary text, with an anomaly not counted;
-  - an acknowledged critical still listed → score 1;
+  - no insights → score 10 and `generated_at` null;
+  - one critical and one warning insight → score 6 and the summary text, with an anomaly not counted;
+  - an acknowledged critical still listed → score 9;
   - `Deps.AI` nil → 503.
 
   Run `scripts/dev-exec.sh 'go test ./mgmt/internal/ai/insight ./mgmt/internal/api -run "Insight" -count=1'`
@@ -3590,6 +3590,7 @@ Interfaces:
   `web-build`, so both runs used a private tree in the dev pod made from `git archive HEAD` plus
   this task's files (deleted afterwards), with the shared prebuilt `CARGO_TARGET_DIR=/work/target`
   (no engine source changes).
+
 - [ ] Report the paths. Commit message: `M11 T28: rollout risk GUI`.
 
 ## Task 29: Threat check dialog and list classification GUI
@@ -3637,10 +3638,10 @@ Interfaces:
   The spec requests `startAiThreatCheck`, `getAiTask` and `getAiFilterListClassification`.
 
 - [x] Run the Task 24 commands. Expect FAIL, implement, and expect specs 57 and 04 to PASS.
-  As built: both runs used a private copy of HEAD plus this task's files in the dev pod (deleted
-  afterwards). Spec 04 caught that `getAiFilterListClassification` answers `"breakdown": null` for a
-  never-classified list (Task 19's handler appends to a nil slice), which crashed the Details card;
-  `ListClassification` falls back to `[]` under a `debt:` note until the handler sends an array.
+      As built: both runs used a private copy of HEAD plus this task's files in the dev pod (deleted
+      afterwards). Spec 04 caught that `getAiFilterListClassification` answers `"breakdown": null` for a
+      never-classified list (Task 19's handler appends to a nil slice), which crashed the Details card;
+      `ListClassification` falls back to `[]` under a `debt:` note until the handler sends an array.
 - [ ] Report the paths. Commit message: `M11 T29: threat check and list classification GUI`.
 
 ## Task 30: RPZ suggestions GUI

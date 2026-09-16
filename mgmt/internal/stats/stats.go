@@ -66,9 +66,9 @@ type DashboardData struct {
 
 // UpstreamHealth aggregates one upstream across the engines reporting it.
 type UpstreamHealth struct {
-	Name                    string
-	UpEngines, TotalEngines int
-	RTTMs                   float64
+	Name                                       string
+	UpEngines, TotalEngines, UnmeasuredEngines int
+	RTTMs                                      float64
 }
 
 // Point is the fleet QPS of one 30 s bucket.
@@ -137,8 +137,12 @@ func Dashboard(ctx context.Context, st *store.Store) (DashboardData, error) {
 			}
 			h.TotalEngines++
 			if u.Up {
-				h.UpEngines++
-				rttSum[u.Name] += float64(u.RttUs) / 1000
+				if u.RttUs == 0 {
+					h.UnmeasuredEngines++
+				} else {
+					h.UpEngines++
+					rttSum[u.Name] += float64(u.RttUs) / 1000
+				}
 			}
 		}
 		type acc struct {

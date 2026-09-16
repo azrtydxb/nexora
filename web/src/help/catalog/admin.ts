@@ -232,12 +232,12 @@ export const adminHelp: HelpArea = {
       anchor: "dashboard",
     },
     "dashboard-col-up-on": {
-      text: "How many resolvers last reported this upstream as healthy, out of those that use it.",
+      text: "Resolvers reporting this upstream up with a successful response sample, out of all reporting resolvers. Unmeasured resolvers are not counted as healthy.",
       topic: "resolution",
       anchor: "upstreams",
     },
     "dashboard-col-rtt": {
-      text: "The upstream's measured round-trip time, averaged over the resolvers that report it healthy.",
+      text: "Round-trip time from answered queries, averaged only over resolvers reporting up with a measured RTT. No active probes are sent. A dash means no usable measurement; recursive mode may not use configured forwarders.",
       topic: "resolution",
       anchor: "upstreams",
     },

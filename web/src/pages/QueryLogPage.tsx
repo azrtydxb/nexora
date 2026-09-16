@@ -447,10 +447,39 @@ export function QueryLogPage() {
         />
       )}
 
-      <Card className="overflow-hidden">
-        <Table
-          className={cn(q.isFetching && q.isPlaceholderData && "opacity-60")}
+      <Card className="min-w-0 overflow-hidden">
+        <p
+          id="querylog-scroll-hint"
+          className="text-muted-foreground border-b px-4 py-2 text-xs"
         >
+          On smaller screens, scroll the table horizontally to see every column.
+          Expand a row for full details.
+        </p>
+        <Table
+          containerProps={{
+            role: "region",
+            "aria-label": "DNS query log",
+            "aria-describedby": "querylog-scroll-hint",
+            tabIndex: 0,
+          }}
+          className={cn(
+            "min-w-[72rem] table-fixed",
+            q.isFetching && q.isPlaceholderData && "opacity-60",
+          )}
+        >
+          <colgroup>
+            <col className="w-10" />
+            <col className="w-28" />
+            <col className="w-40" />
+            <col />
+            <col className="w-20" />
+            <col className="w-24" />
+            <col className="w-20" />
+            <col className="w-28" />
+            <col />
+            <col className="w-28" />
+            <col className="w-24" />
+          </colgroup>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="h-10 w-8">
@@ -577,7 +606,12 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
             {formatTimestamp(new Date(r.time), prefs)}
           </time>
         </TableCell>
-        <TableCell className="py-2 font-mono text-[13px]">{r.client}</TableCell>
+        <TableCell
+          className="truncate py-2 font-mono text-[13px]"
+          title={r.client}
+        >
+          {r.client}
+        </TableCell>
         <TableCell
           className="max-w-[28rem] truncate py-2 font-mono text-[13px]"
           title={r.name}
@@ -625,7 +659,10 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
             reason
           )}
         </TableCell>
-        <TableCell className="py-2 whitespace-nowrap">
+        <TableCell
+          className="truncate py-2 whitespace-nowrap"
+          title={r.upstream}
+        >
           {r.upstream || <span className="text-muted-foreground">—</span>}
         </TableCell>
         <TableCell className="py-2 text-right whitespace-nowrap tabular-nums">
@@ -637,8 +674,11 @@ function RecordRow({ r }: { r: QueryLogRecord }) {
           <TableCell colSpan={columns} className="py-3">
             <dl
               data-testid="querylog-detail"
-              className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px] sm:grid-cols-[auto_1fr_auto_1fr]"
+              className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px] sm:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]"
             >
+              <Detail label="Name">{r.name}</Detail>
+              <Detail label="Client">{r.client}</Detail>
+              <Detail label="Reason">{reason}</Detail>
               <Detail label="Rule">{r.rule}</Detail>
               <Detail label="List">
                 {[r.list_name, r.list_id && `(${r.list_id})`]

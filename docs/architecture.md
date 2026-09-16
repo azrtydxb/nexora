@@ -1019,7 +1019,7 @@ rows (kind `anomaly` | `insight`, status `open|acknowledged|dismissed|resolved`,
 `info|warning|critical`, unique per kind and candidate id while open or acknowledged). Without a model
 answer the detector's description is stored with `explained: false`; a candidate undetected for 30 min
 is `resolved`, and a dismissed one is not raised again for 24 h unless its severity rises. The insight
-health score is computed by code: `min(10, 3 × critical + 1 × warning)`. Upstream predictions and
+health score is computed by code: `max(0, 10 - 3 × critical - warning)` over open insights: 10 is healthy, 0 is poor. It is not a live availability check. Upstream predictions and
 capacity forecasts are `ai_forecasts` rows (kind `upstream` | `capacity`) with `generated_at` and
 `valid_until = generated_at + interval`; trends, slopes and exhaustion dates are computed by code, too
 few points give `insufficient_data` without a model call, and a recommended change becomes a proposal.

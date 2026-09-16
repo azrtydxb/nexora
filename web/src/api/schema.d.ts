@@ -2062,7 +2062,10 @@ export interface components {
       engines_connected: number;
       upstreams: {
         name: string;
+        /** @description Engines reporting up with a successful RTT sample. */
         up_engines: number;
+        /** @description Engines not marked down but without a successful RTT sample. */
+        unmeasured_engines: number;
         total_engines: number;
         rtt_ms: number;
       }[];
@@ -3251,6 +3254,7 @@ export interface components {
     AiInsights: {
       insights: components["schemas"]["AiFinding"][];
       summary: string;
+      /** @description AI insight health: max(0, 10 - 3 * open critical insights - open warning insights). 10 is healthy; 0 is poor. Not a live availability check. */
       score: number;
       /** Format: date-time */
       generated_at: string | null;
