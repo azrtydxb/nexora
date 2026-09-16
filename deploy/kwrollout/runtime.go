@@ -183,7 +183,11 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 			stageCtx, cancel := context.WithTimeout(ctx, 16*time.Minute)
 			defer cancel()
 			args := append([]string{"upgrade", "nexora", chart}, helmArgs(stage)...)
-			args = append(args, "--force-conflicts", "--wait", "--timeout", "15m")
+			// Helm 4's watcher insists that even OnDelete DaemonSets have
+			// updated pods. Legacy readiness respects intentionally frozen
+			// partners; our subsequent gates still require the selected image,
+			// exact endpoints, persisted identity, management/config and DNS.
+			args = append(args, "--force-conflicts", "--wait=legacy", "--timeout", "15m")
 			config.Report("applying guarded Helm stage: " + stage.Name)
 			if _, err := execute(stageCtx, commandSpec{Program: "helm", Args: args}); err != nil {
 				// Helm diagnostics can include Secret manifests. Never forward

@@ -83,6 +83,9 @@ func TestAssembledRuntimeMigration(t *testing.T) {
 					if command.Args[0] != "upgrade" {
 						return nil, fmt.Errorf("unexpected Helm command")
 					}
+					if !slices.Contains(command.Args, "--wait=legacy") {
+						return nil, fmt.Errorf("Helm watcher would wait for intentionally frozen OnDelete pods")
+					}
 					if store.obj == nil || store.obj.Data["owner"] == "" {
 						return nil, fmt.Errorf("Helm without lock")
 					}

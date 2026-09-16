@@ -2,9 +2,25 @@
 
 ## Status
 
-Implemented and integrated, not yet committed or deployed. Production remains the two-engine
-`sha-55dcf46` release; prior strict acceptance remains red. No production resources were changed
-in this integration session. Four-engine live failover and full acceptance remain outstanding.
+Committed as `7ce4bed`; the first production attempt stopped at Helm revision 26 (failed).
+Four engines are Ready, connected and current, but VIP selectors remain legacy: a/b still serve
+on their original `sha-55dcf46` pods; c/d and management run `sha-7ce4bed`. All engine controllers
+are OnDelete. The non-expiring deployment lock is retained. Pair cutover, live failover and full
+acceptance remain outstanding. Do not treat four Ready engines as completed VIP protection.
+
+Helm 4.1.1's default watcher timed out after 15 minutes, insisting on Updated 1/1 for the deliberately
+frozen a/b DaemonSets. Its stored release description confirms Updated 0/1 for both. The candidate
+fix uses `--wait=legacy`, preserving subsequent selected-image and fleet health gates. Assembly
+regression failed before the fix (`/tmp/nexora-wait-mode-red.log`); Linux race/chart suites passed
+22.496s/4.715s afterward (`/tmp/nexora-wait-mode-linux.log`). The fix is not yet deployed.
+
+Attempt evidence: `/tmp/nexora-deploy-7ce4bed/deploy.log`, exit 1. All 3,680 recorded DNS samples
+have empty query errors; cancellation also produced an incomplete remote-monitor evidence error,
+so this is not a successful monitoring run or a zero-loss claim. Read-only preflight passed again
+in `/tmp/nexora-after-frozen-timeout.log`. Process inspection found no remaining deployment/Helm
+client, and Helm status is terminal failed; no lock release or recovery mutation has been made.
+Recovery must recheck quiescence and exact state, then explicitly release ownership using CAS,
+never automatic expiry/takeover.
 
 ## Executable workflow
 

@@ -202,7 +202,9 @@ func runStages(ctx context.Context, pairs []Pair, s steps) error {
 		return err
 	}
 	if legacy {
-		if err := health(Gate{Name: "new", Required: all, Desired: added}); err != nil {
+		// Resumed partners may have an earlier image. Keep them frozen through
+		// cutover; serial replacement gates below verify every target image.
+		if err := health(Gate{Name: "new", Required: all}); err != nil {
 			return err
 		}
 		// A healthy partner is not protection while the VIP still excludes it.
@@ -220,7 +222,7 @@ func runStages(ctx context.Context, pairs []Pair, s steps) error {
 		if err := apply(Stage{Name: "paired"}); err != nil {
 			return err
 		}
-		if err := health(Gate{Name: "paired", Required: all, Desired: added, PairSelectors: true}); err != nil {
+		if err := health(Gate{Name: "paired", Required: all, PairSelectors: true}); err != nil {
 			return err
 		}
 	}

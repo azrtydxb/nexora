@@ -154,8 +154,8 @@ func TestMigrationRequiresServingPartnersBeforeRolling(t *testing.T) {
 		}
 		switch g.Name {
 		case "new", "paired":
-			if !reflect.DeepEqual(g.Desired, []string{"c", "d"}) {
-				t.Fatalf("new partners not verified: %+v", g)
+			if len(g.Desired) != 0 {
+				t.Fatalf("frozen resumed partners must not require replacement before cutover: %+v", g)
 			}
 		case "a", "b", "c", "d":
 			if !reflect.DeepEqual(g.Desired, []string{g.Name}) || !g.PairSelectors {
