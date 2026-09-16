@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,32 +25,42 @@ import (
 
 // kwPromValue queries Prometheus at NEXORA_KW_PROMETHEUS_URL and returns
 // the value (as a float64) for the given query. Returns 0 if the query
-// has no result (or an error that prevents querying).
+// has no result. Query and decoding errors fail the test.
 func kwPromValue(t *testing.T, q string) float64 {
 	t.Helper()
 	promURL := os.Getenv("NEXORA_KW_PROMETHEUS_URL")
 	if promURL == "" {
 		t.Skip("NEXORA_KW_PROMETHEUS_URL is not set")
 	}
-	resp, err := http.Get(promURL + "/api/v1/query?query=" + url.QueryEscape(q))
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Get(promURL + "/api/v1/query?query=" + url.QueryEscape(q))
 	if err != nil {
-		t.Logf("prom query %s failed: %v", q, err)
+		t.Fatalf("prom query %s failed: %v", q, err)
 		return 0
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("prom query %s: HTTP %d", q, resp.StatusCode)
+	}
 	var raw struct {
-		Data struct {
+		Status string `json:"status"`
+		Data   struct {
 			Result []struct {
 				Value []any `json:"value"` // [timestamp, value]
 			} `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		t.Logf("prom response decode %s failed: %v", q, err)
+		t.Fatalf("prom response decode %s failed: %v", q, err)
 		return 0
+	}
+	if raw.Status != "success" {
+		t.Fatalf("prom query %s: status %q", q, raw.Status)
 	}
 	if len(raw.Data.Result) == 0 {
 		return 0
+	}
+	if len(raw.Data.Result) != 1 || len(raw.Data.Result[0].Value) != 2 {
+		t.Fatalf("prom query %s: expected one timestamp/value pair", q)
 	}
 	val := raw.Data.Result[0].Value[1]
 	var v float64
@@ -56,13 +68,17 @@ func kwPromValue(t *testing.T, q string) float64 {
 	case float64:
 		v = f
 	case string:
-		if _, err := fmt.Sscanf(f, "%f", &v); err != nil {
-			t.Logf("prom value parse %s: %v", q, err)
+		v, err = strconv.ParseFloat(f, 64)
+		if err != nil {
+			t.Fatalf("prom value parse %s: %v", q, err)
 			return 0
 		}
 	default:
-		t.Logf("prom value unexpected type %T", val)
+		t.Fatalf("prom value unexpected type %T", val)
 		return 0
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		t.Fatalf("prom query %s: non-finite value %v", q, v)
 	}
 	return v
 }
@@ -93,6 +109,13 @@ func kwCreateAPIToken(t *testing.T, api *harness.API, role string) string {
 	return created.Token
 }
 
+type kwAITask struct {
+	ID           string `json:"id"`
+	Status       string `json:"status"`
+	ErrorCode    string `json:"error_code"`
+	ErrorMessage string `json:"error_message"`
+}
+
 // TestKwSmokeAI checks that the AI service is wired, that the model
 // responds, and that the MCP server serves tools. It is a kw-deployment
 // smoke test — it skips when NEXORA_KW_API_URL is not set.
@@ -112,16 +135,25 @@ func TestKwSmokeAI(t *testing.T) {
 		t.Fatalf("endpoint host %q is not a private address", st.EndpointHost)
 	}
 	invalidBefore := kwPromValue(t, `sum(nexora_mgmt_ai_requests_total{outcome="invalid_output"}) or vector(0)`)
-	var task struct{ ID, Status, ErrorCode, ErrorMessage string }
-	api.Must("POST", "/ai/query-log/search", map[string]string{"query": "blocked queries in the last hour"}, &task, 202)
+	var task kwAITask
+	attempts := 0
+	startSearch := func() {
+		task = kwAITask{}
+		attempts++
+		api.Must("POST", "/ai/query-log/search", map[string]string{"query": "blocked queries in the last hour"}, &task, 202)
+		if task.ID == "" {
+			t.Fatal("search task has no ID")
+		}
+	}
+	startSearch()
 	harness.Eventually(t, 300*time.Second, func() error {
 		api.Must("GET", "/ai/tasks/"+task.ID, nil, &task, 200)
 		if task.Status == "failed" {
-			if task.ErrorCode == "busy" || task.ErrorCode == "timeout" {
-				return fmt.Errorf("ai %s, retrying", task.ErrorCode)
-			}
-			if task.ErrorCode == "invalid_output" {
-				return fmt.Errorf("ai invalid_output, retrying")
+			if (task.ErrorCode == "busy" || task.ErrorCode == "timeout") && attempts < 3 {
+				t.Logf("search task %s failed: %s; submitting replacement", task.ID, task.ErrorCode)
+				time.Sleep(time.Second)
+				startSearch()
+				return errors.New("replacement search queued")
 			}
 			t.Fatalf("search task failed: code=%q msg=%q", task.ErrorCode, task.ErrorMessage)
 		}
@@ -130,33 +162,43 @@ func TestKwSmokeAI(t *testing.T) {
 		}
 		return nil
 	})
+	type agentStatus struct {
+		Agents []struct {
+			Name          string    `json:"name"`
+			LastOutcome   string    `json:"last_outcome"`
+			LastStartedAt time.Time `json:"last_started_at"`
+			Running       bool      `json:"running"`
+		} `json:"agents"`
+	}
+	var before agentStatus
+	api.Must("GET", "/ai/status", nil, &before, 200)
+	var previousRun time.Time
+	for _, a := range before.Agents {
+		if a.Name == "capacity_forecast" {
+			previousRun = a.LastStartedAt
+		}
+	}
 	api.Must("POST", "/ai/agents/capacity_forecast/run", nil, nil, 202)
 	harness.Eventually(t, 600*time.Second, func() error {
-		var s struct {
-			Agents []struct {
-				Name        string `json:"name"`
-				LastOutcome string `json:"last_outcome"`
-				Running     bool
-			}
-		}
+		var s agentStatus
 		api.Must("GET", "/ai/status", nil, &s, 200)
 		for _, a := range s.Agents {
-			if a.Name == "capacity_forecast" && !a.Running && (a.LastOutcome == "ok" || a.LastOutcome == "no_change") {
+			if a.Name == "capacity_forecast" && a.LastStartedAt.After(previousRun) && !a.Running && (a.LastOutcome == "ok" || a.LastOutcome == "no_change") {
 				return nil
 			}
 		}
 		return errors.New("capacity_forecast not finished")
 	})
 	if in := kwPromValue(t, `sum(nexora_mgmt_ai_tokens_total{kind="input"})`); in <= 0 {
-		t.Logf("no input tokens reported by the AI model (non-fatal)")
-	} else if r := kwPromValue(t, `sum(nexora_mgmt_ai_tokens_total{kind="reasoning"})`); r <= 0 {
-		t.Logf("no reasoning tokens reported by the AI model (non-fatal)")
+		t.Errorf("no input tokens reported by the AI model")
+	}
+	if r := kwPromValue(t, `sum(nexora_mgmt_ai_tokens_total{kind="reasoning"})`); r <= 0 {
+		t.Errorf("no reasoning tokens reported by the AI model")
 	}
 	if after := kwPromValue(t, `sum(nexora_mgmt_ai_requests_total{outcome="invalid_output"}) or vector(0)`); after > invalidBefore {
-		t.Logf("invalid_output grew from %v to %v (non-fatal: kw model may emit invalid output)", invalidBefore, after)
+		t.Errorf("invalid_output grew from %v to %v", invalidBefore, after)
 	}
 	token := kwCreateAPIToken(t, api, "viewer")
-	_ = token // the cleanup function revoked it; used for MCP auth below
 
 	caFile := os.Getenv("NEXORA_KW_API_CA_FILE")
 	apiRoots := certPool(t, caFile)
@@ -164,15 +206,17 @@ func TestKwSmokeAI(t *testing.T) {
 		os.Getenv("NEXORA_KW_API_URL")+"/mcp",
 		mcp.WithTokenProvider(mcp.TokenProviderFunc(func(context.Context) (string, error) { return token, nil })),
 		mcp.WithHTTPClientOpt(&http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: apiRoots}},
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: apiRoots, MinVersion: tls.VersionTLS12}},
 		}),
 	)
 	mcpClient := mcp.NewClient(mcpTransport)
 	defer mcpClient.Close()
-	if err := mcpClient.Initialize(context.Background()); err != nil {
+	mcpCtx, cancelMCP := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelMCP()
+	if err := mcpClient.Initialize(mcpCtx); err != nil {
 		t.Fatal(err)
 	}
-	if tools, err := mcp.Tools(context.Background(), mcpClient); err != nil || len(tools) == 0 {
+	if tools, err := mcp.Tools(mcpCtx, mcpClient); err != nil || len(tools) == 0 {
 		t.Fatalf("MCP tools: %d %v", len(tools), err)
 	}
 }

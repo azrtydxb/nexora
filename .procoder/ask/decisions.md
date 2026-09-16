@@ -1,3 +1,12 @@
+## Commit and deploy the kw connection-state fix (2026-09-16)
+
+kw is recovered on `sha-19c08e6`. The local lifecycle-lock fix and stricter AI acceptance checks pass the dev-pod management suite, control race tests, helper tests, and strict acceptance against the existing deployment. The new server binary has not been deployed. The laptop-wide procoder test report failed; scoped Linux dev-pod verification is recorded in `.procoder/notes/kw-deployment-recovery-20260916.md`.
+
+- Commit the fix, build and deploy to kw, then rerun acceptance with DNS probes.
+- Hold the tested changes for review; keep the recovered release running.
+
+**Answer (2026-09-16):** Yes — commit and deploy these fixes to kw, then verify acceptance with DNS probes.
+
 ## Engine language and base
 
 - Rust engine on hickory-proto codec, own server loop/cache/resolver (recommended)

@@ -119,27 +119,27 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	// Registered before connected_instance is set: a superseded stream of this engine on this
 	// instance that ends in between then leaves the connection to this stream.
 	sub := newSubscriber(id, hello.AppliedVersion)
-	s.hub.register(sub)
-	defer func() {
-		if !s.hub.unregister(sub) {
-			return
-		}
+	defer s.hub.unregisterConnection(sub, func() {
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if _, err := s.st.Pool.Exec(dctx, "update engines set connected_instance = null where id = $1 and connected_instance = $2", id, s.instanceID); err != nil {
 			slog.Warn("clear engine connection", "engine", id, "err", err)
 		}
-	}()
-	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "insert into instances(id) values ($1) on conflict do nothing", s.instanceID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `update engines set
+	})
+	err = s.hub.registerConnection(sub, func() error {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return s.st.InTx(ctx, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, "insert into instances(id) values ($1) on conflict do nothing", s.instanceID); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `update engines set
 			node_name = case when $2 ~ '^[a-z0-9-]{1,63}$' then $2 else node_name end,
 			engine_version = case when $3 <> '' then $3 else engine_version end,
 			connected_instance = $4, last_seen_at = now()
 			where id = $1`, id, hello.NodeName, hello.EngineVersion, s.instanceID)
-		return err
+			return err
+		})
 	})
 	if err != nil {
 		return grpcError(err)

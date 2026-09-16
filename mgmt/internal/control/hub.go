@@ -50,8 +50,11 @@ type Hub struct {
 
 	logs *LogBroker // set before Run (SetLogBroker); nil: replies stored by other instances are not read
 
-	mu   sync.Mutex
-	subs map[*subscriber]struct{}
+	// connectionMu serializes stream ownership changes and their database writes.
+	// Keep it separate from mu so broadcasts continue during database I/O.
+	connectionMu sync.Mutex
+	mu           sync.Mutex
+	subs         map[*subscriber]struct{}
 	// latest is each engine's most recently registered stream on this instance: a restarted engine
 	// can reconnect before the server notices that its previous stream is gone.
 	latest map[string]*subscriber
@@ -224,6 +227,23 @@ func (h *Hub) Connected() int {
 	return len(h.subs)
 }
 
+// registerConnection keeps a previous stream's cleanup from clearing this connection
+// between its in-memory registration and its database ownership write.
+func (h *Hub) registerConnection(s *subscriber, persist func() error) error {
+	h.connectionMu.Lock()
+	defer h.connectionMu.Unlock()
+	h.register(s)
+	return persist()
+}
+
+func (h *Hub) unregisterConnection(s *subscriber, clear func()) {
+	h.connectionMu.Lock()
+	defer h.connectionMu.Unlock()
+	if h.unregister(s) {
+		clear()
+	}
+}
+
 func (h *Hub) register(s *subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -267,10 +287,14 @@ func (h *Hub) listen(ctx context.Context) error {
 		return store.MapError(err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	for _, ch := range []string{ChannelRollout, ChannelEngineUpdated, ChannelEngineRevoked, ChannelEngineRotate, ChannelEngineLogs, ChannelEngineLogsDone} {
-		if _, err := conn.Exec(ctx, "listen "+ch); err != nil {
-			return store.MapError(err)
-		}
+	// LISTEN cannot bind identifiers. Keep the fixed subscription set literal.
+	if _, err := conn.Exec(ctx, `listen nexora_rollout;
+		listen nexora_engine_updated;
+		listen nexora_engine_revoked;
+		listen nexora_engine_rotate;
+		listen nexora_engine_logs;
+		listen nexora_engine_logs_done`); err != nil {
+		return store.MapError(err)
 	}
 	// Anything published while disconnected is picked up here.
 	h.pushAll(ctx)
