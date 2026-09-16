@@ -1,2 +1,4 @@
 # Helm templates are Go templates, not YAML.
 deploy/helm/*/templates/
+# Raw helm render golden — must match helm output byte-for-byte.
+deploy/deploytest/testdata/kw-render.golden.yaml
