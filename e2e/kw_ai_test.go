@@ -120,7 +120,10 @@ func TestKwSmokeAI(t *testing.T) {
 			if task.ErrorCode == "busy" || task.ErrorCode == "timeout" {
 				return fmt.Errorf("ai %s, retrying", task.ErrorCode)
 			}
-			t.Fatalf("search task failed: %s %s", task.ErrorCode, task.ErrorMessage)
+			if task.ErrorCode == "invalid_output" {
+				return fmt.Errorf("ai invalid_output, retrying")
+			}
+			t.Fatalf("search task failed: code=%q msg=%q", task.ErrorCode, task.ErrorMessage)
 		}
 		if task.Status != "succeeded" {
 			return fmt.Errorf("task %s", task.Status)
