@@ -1,0 +1,22 @@
+{{- if .Values.engine.enabled }}
+{{- include "nexora.validateFailover" . }}
+{{- range $g := .Values.engine.groups }}
+{{- $group := include "nexora.engineWorkload" (dict "root" $ "group" $g) }}
+{{- range $p := $g.failoverPairs | default list }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ printf "%s-%s" $group $p.name }}
+  labels:
+    {{- include "nexora.labels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-engine") | nindent 6 }}
+      nexora.io/engine-group: {{ $g.name }}
+      nexora.io/failover-pair: {{ $p.name }}
+{{- end }}
+{{- end }}
+{{- end }}

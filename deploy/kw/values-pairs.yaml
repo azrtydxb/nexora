@@ -1,0 +1,38 @@
+# Guarded four-engine topology overlay. Applied only by the paired rollout
+# workflow, on top of values-kw.yaml; do not apply directly with Helm.
+engine:
+  pairedRollout:
+    enabled: true
+    workload: ""
+    legacySelectors: false
+  groups:
+    - name: default
+      workloadName: nexora-engine
+      nodeNamePrefix: ""
+      joinTokenSecret: nexora-join-token
+      instances:
+        - { name: a, node: master-12 }
+        - { name: b, node: master-13 }
+        - name: c
+          node: master-11
+          stateDirName: nexora-engine-c
+          nodeNamePrefix: c-
+        - name: d
+          node: master-11
+          stateDirName: nexora-engine-d
+          nodeNamePrefix: d-
+      failoverPairs:
+        - name: dns136
+          members: [a, c]
+          service:
+            name: nexora-dns
+            type: LoadBalancer
+            loadBalancerIP: 192.168.10.136
+            externalTrafficPolicy: Local
+        - name: dns139
+          members: [b, d]
+          service:
+            name: nexora-dns-2
+            type: LoadBalancer
+            loadBalancerIP: 192.168.10.139
+            externalTrafficPolicy: Local

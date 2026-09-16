@@ -158,6 +158,10 @@ The chart is `deploy/helm/nexora`. Every value is validated by
 `deploy/helm/nexora/values.schema.json`; the defaults are in
 `deploy/helm/nexora/values.yaml`.
 
+The chart also has opt-in `engine.groups[].failoverPairs` for two-member, distinct-node DNS availability pairs. These require `engine.pairedRollout.enabled=true`: DaemonSets default to `OnDelete`, and only the full workload name in `engine.pairedRollout.workload` may roll automatically. Pair Services retain `externalTrafficPolicy: Local`; a pair-specific PodDisruptionBudget requires one available pod. Instances colocated across different pairs must have separate `stateDirName` values to avoid sharing identities. Both nodes in a pair must be eligible to announce the VIP.
+
+**Use `scripts/kw-deploy.sh` for the guarded kw migration; live rollout acceptance is still pending.** The executable workflow verifies management/configuration, persisted identities, node capacity/announcers, direct/VIP DNS and actual endpoints. It holds one non-expiring lock across supporting resources, serial Helm stages and bootstrap. PDBs do not serialize controller updates. Do not use ordinary Helm upgrades: existing pods initially lack pair labels. `engine.pairedRollout.legacySelectors=true` retains each pair's first member selector until UID-safe enrolment and candidate membership are verified. Failures retain the lock; no automatic takeover or partial-topology repair is permitted. Evidence: `.procoder/notes/kw-rollout-integration.md`.
+
 Prerequisites:
 
 - Kubernetes 1.28 or newer.
@@ -1890,31 +1894,39 @@ private CA, as on kw.
 
 kw is the project's lab cluster (arm64 k3s). The procedure, secrets and manual
 checks are in `deploy/kw/README.md`. `scripts/kw-deploy.sh` builds the images
-from a clean worktree of HEAD (tag `sha-<7>`), creates the secrets and installs
-the Helm release `nexora`; on a first install the management plane comes first,
-then `deploy/kw/bootstrap.sh` (idempotent API configuration, including the join
-token secret, and removal of the former engine group `edge-b`), then the
-engines. The release uses `deploy/kw/values-kw.yaml`:
+from a clean worktree of HEAD (tag `sha-<7>`), then upgrades the existing installation
+under a release-scoped lock and DNS monitor. Supporting manifests and bootstrap
+check the same owner before each Kubernetes/API call. Fresh installation and legacy
+resource adoption are refused by this upgrade-only path. The target uses
+`deploy/kw/values-kw.yaml` plus `deploy/kw/values-pairs.yaml`; raw Helm bypasses the
+required sequencing and must not be used.
 
 ```sh
-helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
+scripts/kw-preflight.sh
+scripts/kw-deploy.sh
+scripts/kw-preflight.sh --require-paired
 ```
+
+All four engines stay frozen by default. The orchestrator admits one named workload
+at a time after verifying its partner. On interruption, inspect the retained
+`nexora-deploy-lock`, Helm history/status and actual pod/endpoint identities before
+manual recovery; never clear ownership just because a client process timed out.
 
 `scripts/kw-acceptance.sh` runs
 `TestKwSmoke`, `TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories`
 from the dev pod against the live release. The admin password is in the secret `nexora-admin`
 (`kubectl --context kw -n nexora get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d`).
 
-| Component                                   | Address                                                                                                     |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| GUI and API                                 | `https://nexora.kw.watteel.lab` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                               |
-| Engine gRPC                                 | `192.168.10.135:9443`, in cluster `nexora-mgmt-grpc.nexora.svc.cluster.local:9443`                          |
-| DNS, engine `nexora-engine-a` (`master-12`) | `192.168.10.136` (`nexora-dns`): 53, DoT 853, DoH 443 `/dns-query`, DoQ 853; `externalTrafficPolicy: Local` |
-| DNS, engine `nexora-engine-b` (`master-13`) | `192.168.10.139` (`nexora-dns-2`), same ports; `externalTrafficPolicy: Local`                               |
-| Database                                    | CNPG cluster `nexora-db` (`deploy/kw/cnpg-cluster.yaml`), secret `nexora-db-app`                            |
-| Query logs                                  | OpenSearch in namespace `nexora` via `nexora-otelcol`                                                       |
-| Traces                                      | Jaeger `jaeger.observability:4317`                                                                          |
-| Metrics                                     | kube-prometheus-stack; ServiceMonitor and PrometheusRule in `monitoring` with `release: kps`                |
+| Component                                 | Address                                                                                                     |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| GUI and API                               | `https://nexora.kw.watteel.lab` (ingress class `nginx`, ClusterIssuer `cluster-ca`)                         |
+| Engine gRPC                               | `192.168.10.135:9443`, in cluster `nexora-mgmt-grpc.nexora.svc.cluster.local:9443`                          |
+| DNS target pair a/master-12 + c/master-11 | `192.168.10.136` (`nexora-dns`): 53, DoT 853, DoH 443 `/dns-query`, DoQ 853; `externalTrafficPolicy: Local` |
+| DNS target pair b/master-13 + d/master-11 | `192.168.10.139` (`nexora-dns-2`), same ports; `externalTrafficPolicy: Local`                               |
+| Database                                  | CNPG cluster `nexora-db` (`deploy/kw/cnpg-cluster.yaml`), secret `nexora-db-app`                            |
+| Query logs                                | OpenSearch in namespace `nexora` via `nexora-otelcol`                                                       |
+| Traces                                    | Jaeger `jaeger.observability:4317`                                                                          |
+| Metrics                                   | kube-prometheus-stack; ServiceMonitor and PrometheusRule in `monitoring` with `release: kps`                |
 
 kw runs recursive mode (from the root servers) with DNSSEC validation, including
 validation of forwarded answers.

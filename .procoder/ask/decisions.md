@@ -1,3 +1,12 @@
+## Four kw engines in two protected DNS failover pairs
+
+Requested: scale kw DNS engines while keeping only the existing LAN DNS addresses. The initial request for three engines was superseded by four engines: two behind 192.168.10.136 and two behind 192.168.10.139. Never deliberately upgrade both members of one pair together.
+
+- Implement four engines in two distinct-node pairs, with permanent Helm configuration, pair-aware disruption protection and a deployment sequence that verifies Ready, management connection, DNS answers and expected applied configuration before advancing to a partner.
+- Keep the existing two-engine topology.
+
+**Answer:** Implement the four-engine paired topology; no third IP. The user approved the described rollout safeguards with “ok do it”, and then requested continuing the previous GUI/deployment and control-plane verification work afterward. This does not authorize weakening acceptance tests or claiming zero-loss failover without measured evidence.
+
 ## GUI clarity fixes and kw deployment
 
 Requested: fix query-log columns overflowing, improve AI response formatting, make the dashboard health score intuitive (10 healthy, 0 poor), and finish the pending profile alignment, AI Run now buttons and unmeasured upstream RTT presentation.

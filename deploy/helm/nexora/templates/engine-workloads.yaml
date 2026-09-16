@@ -21,6 +21,8 @@
      the former group workload keeps that engine's identity. */}}
 {{- $group := include "nexora.engineWorkload" (dict "root" $root "group" $g) }}
 {{- $instance := .instance.name | default "" }}
+{{- $pair := include "nexora.failoverPairFor" (dict "group" $g "instance" $instance) }}
+{{- $stateName := .instance.stateDirName | default $group }}
 {{- $affinity := deepCopy ($g.nodeAffinity | default dict) }}
 {{- if $instance }}
 {{- $pin := dict "key" "kubernetes.io/hostname" "operator" "In" "values" (list (required (printf "engine.groups[%s].instances[%s].node is required" $g.name $instance) .instance.node)) }}
@@ -60,8 +62,12 @@ spec:
     rollingUpdate: { maxSurge: {{ $rolling.maxSurge }}, maxUnavailable: {{ $rolling.maxUnavailable }} }
   {{- else }}
   updateStrategy:
+    {{- if and $e.pairedRollout.enabled (ne $e.pairedRollout.workload $workload) }}
+    type: OnDelete
+    {{- else }}
     type: RollingUpdate
     rollingUpdate: { maxSurge: {{ $rolling.maxSurge }}, maxUnavailable: {{ $rolling.maxUnavailable }} }
+    {{- end }}
   {{- end }}
   selector:
     matchLabels:
@@ -75,6 +81,9 @@ spec:
       labels:
         {{- include "nexora.labels" (dict "root" $root "name" "nexora-engine") | nindent 8 }}
         nexora.io/engine-group: {{ $g.name }}
+        {{- with $pair }}
+        nexora.io/failover-pair: {{ . }}
+        {{- end }}
         {{- with $instance }}
         nexora.io/engine-instance: {{ . }}
         {{- end }}
@@ -134,7 +143,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             # A stable name per node and group, so a restarted pod keeps its engine identity.
             - name: NEXORA_ENGINE_NODE_NAME
-              value: {{ printf "%s$(K8S_NODE_NAME)" ($g.nodeNamePrefix | default "") | quote }}
+              value: {{ printf "%s$(K8S_NODE_NAME)" (.instance.nodeNamePrefix | default ($g.nodeNamePrefix | default "")) | quote }}
           ports:
             - { name: dns-udp, containerPort: {{ $e.ports.dns }}, protocol: UDP }
             - { name: dns-tcp, containerPort: {{ $e.ports.dns }}, protocol: TCP }
@@ -175,7 +184,7 @@ spec:
             defaultMode: 0440
         - name: state
           {{- if eq $e.stateDir.type "hostPath" }}
-          hostPath: { path: {{ printf "%s/%s" (trimSuffix "/" $e.stateDir.hostPathPrefix) $group }}, type: DirectoryOrCreate }
+          hostPath: { path: {{ printf "%s/%s" (trimSuffix "/" $e.stateDir.hostPathPrefix) $stateName }}, type: DirectoryOrCreate }
           {{- else }}
           emptyDir: {}
           {{- end }}

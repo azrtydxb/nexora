@@ -108,6 +108,12 @@ database:
 engine:
   enabled: true
   kind: DaemonSet # DaemonSet | Deployment
+  # Opt-in pair upgrades: freeze all DaemonSets except the named workload.
+  # PDBs alone do not constrain DaemonSet rolling updates.
+  pairedRollout:
+    enabled: false
+    workload: ""
+    legacySelectors: false # migration only: retain each pair's first member selector
   managementURL: "" # default https://<prefix>-mgmt-grpc.<namespace>.svc.cluster.local:9443
   workers: 2
   initImage: busybox:1.37
@@ -153,7 +159,10 @@ engine:
       # group service and extraServices render only when set.
       #   instances:
       #     - { name: a, node: node-1, service: { name: dns-a, loadBalancerIP: 192.0.2.1 } }
+      # Instances may override stateDirName and nodeNamePrefix to isolate colocated identities.
       instances: []
+      # failoverPairs: [{ name: dns-a, members: [a, c], service: { name: dns-a, loadBalancerIP: 192.0.2.1 } }]
+      failoverPairs: []
 
 # An OpenTelemetry Collector for engine query logs, traces and metrics. Off by default; when on and
 # mgmt.otlpEndpoint is empty, mgmt (and through it the engines) sends OTLP to it.

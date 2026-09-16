@@ -214,6 +214,15 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "kind": { "enum": ["DaemonSet", "Deployment"] },
+        "pairedRollout": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "workload": { "type": "string" },
+            "legacySelectors": { "type": "boolean" }
+          }
+        },
         "managementURL": { "type": "string" },
         "workers": { "type": "integer", "minimum": 0 },
         "initImage": { "type": "string", "minLength": 1 },
@@ -271,6 +280,38 @@
                   "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                 }
               },
+              "failoverPairs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "members", "service"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9])?$"
+                    },
+                    "members": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "uniqueItems": true,
+                      "items": { "type": "string" }
+                    },
+                    "service": {
+                      "type": "object",
+                      "required": ["name", "loadBalancerIP"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": { "type": "string", "minLength": 1 },
+                        "loadBalancerIP": { "type": "string", "minLength": 1 },
+                        "type": { "enum": ["LoadBalancer"] },
+                        "externalTrafficPolicy": { "enum": ["Local"] }
+                      }
+                    }
+                  }
+                }
+              },
               "instances": {
                 "type": "array",
                 "description": "One engine per entry pinned to one node, each with an optional Service selecting only it.",
@@ -284,6 +325,14 @@
                       "pattern": "^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9])?$"
                     },
                     "node": { "type": "string", "minLength": 1 },
+                    "stateDirName": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+                    },
+                    "nodeNamePrefix": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9-]*$"
+                    },
                     "service": {
                       "type": "object",
                       "required": ["name"],

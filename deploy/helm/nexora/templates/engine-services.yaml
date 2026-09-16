@@ -30,6 +30,15 @@ spec:
 {{- $all = append $all (dict "svc" . "instance" $i.name) }}
 {{- end }}
 {{- end }}
+{{- range $p := $g.failoverPairs | default list }}
+{{- $instance := "" }}
+{{- $pair := $p.name }}
+{{- if $.Values.engine.pairedRollout.legacySelectors }}
+{{- $instance = first $p.members }}
+{{- $pair = "" }}
+{{- end }}
+{{- $all = append $all (dict "svc" $p.service "instance" $instance "pair" $pair) }}
+{{- end }}
 {{- range $entry := $all }}
 {{- $svc := $entry.svc }}
 {{- $type := $svc.type | default ($main.type | default "LoadBalancer") }}
@@ -57,6 +66,9 @@ spec:
   selector:
     {{- include "nexora.selectorLabels" (dict "root" $ "name" "nexora-engine") | nindent 4 }}
     nexora.io/engine-group: {{ $g.name }}
+    {{- with $entry.pair }}
+    nexora.io/failover-pair: {{ . }}
+    {{- end }}
     {{- with $entry.instance }}
     nexora.io/engine-instance: {{ . }}
     {{- end }}

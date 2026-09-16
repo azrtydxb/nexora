@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -47,8 +46,8 @@ func kwQueryLogEngines(t *testing.T, api *harness.API, name string, want int) ma
 	return ids
 }
 
-// TestKwFullProduct checks the M5 fleet on kw: two engines of the default group, each named after its
-// Kubernetes node and the only engine behind one DNS address (.136, .139); certificate rotation
+// TestKwFullProduct checks four default-group engines in disjoint DNS pairs behind
+// the existing .136/.139 addresses; unique persistent engine names; certificate rotation
 // while that engine keeps answering; and the fleet metrics and alerts. It changes no configuration
 // clients see: kw serves real clients, so it neither pauses rollouts nor pushes test configuration.
 // Engine-group-scoped configuration and canary rollouts with rollback and resume are proven by the
@@ -73,11 +72,14 @@ func TestKwFullProduct(t *testing.T) {
 	}
 
 	t.Run("topology", func(t *testing.T) {
-		nodeName := regexp.MustCompile(`^(master|worker)-[0-9]+$`)
+		if env.engines != 4 {
+			t.Fatalf("paired kw acceptance requires four engines, got %d", env.engines)
+		}
+		expectedNames := map[string]bool{"master-12": true, "master-13": true, "c-master-11": true, "d-master-11": true}
 		perNode := map[string]int{}
 		for _, e := range engines {
-			if !nodeName.MatchString(e.NodeName) {
-				t.Errorf("engine %s is not named after its Kubernetes node", e.NodeName)
+			if !expectedNames[e.NodeName] {
+				t.Errorf("unexpected engine identity name %s", e.NodeName)
 			}
 			if e.EngineGroupName != "default" {
 				t.Errorf("engine %s is in engine group %s, want default", e.NodeName, e.EngineGroupName)
@@ -89,18 +91,19 @@ func TestKwFullProduct(t *testing.T) {
 				t.Errorf("node %s has %d engine records; a restarted pod enrolled again", node, n)
 			}
 		}
-		// deploy/kw/bootstrap.sh prunes engines that no longer run, so every record is a running engine.
+		// The approved fleet has four records, not one per Kubernetes node.
+		// Bootstrap must not prune c/d just because their names have prefixes.
 		if len(connectedIDs) != env.engines || len(engines) != env.engines {
 			t.Fatalf("%d engine records, %d connected, want %d (the scheduled engine pods)", len(engines), len(connectedIDs), env.engines)
 		}
 	})
 
-	t.Run("each-dns-address-has-its-own-engine", func(t *testing.T) {
+	t.Run("each-dns-address-selects-only-its-pair", func(t *testing.T) {
 		if env.secondDNSAddr == "" {
 			t.Fatal("NEXORA_KW_DNS_ADDR_2 is required (printed by scripts/kw-deploy.sh)")
 		}
 		const queries = 4
-		byAddr := map[string]string{}
+		byAddr := map[string]map[string]int{}
 		for _, addr := range []string{env.dnsAddr, env.secondDNSAddr} {
 			name := kwUniqueName("kw-address")
 			for range queries {
@@ -109,18 +112,28 @@ func TestKwFullProduct(t *testing.T) {
 				}
 			}
 			ids := kwQueryLogEngines(t, api, name, queries)
-			if len(ids) != 1 {
-				t.Fatalf("%s was answered by engines %v, want exactly one engine behind the address", addr, ids)
+			if len(ids) < 1 || len(ids) > 2 {
+				t.Fatalf("%s was answered by engines %v, want only its two-member pair", addr, ids)
+			}
+			allowed := map[string]bool{"master-12": true, "c-master-11": true}
+			if addr == env.secondDNSAddr {
+				allowed = map[string]bool{"master-13": true, "d-master-11": true}
 			}
 			for id := range ids {
-				if _, ok := connectedIDs[id]; !ok {
-					t.Fatalf("%s was answered by engine %s, not a connected engine", addr, id)
+				engine, ok := connectedIDs[id]
+				if !ok || !allowed[engine.NodeName] {
+					t.Fatalf("%s was answered by foreign or disconnected engine %s", addr, id)
 				}
-				byAddr[addr] = id
 			}
+			// Local traffic policy may select only the announcing node. The
+			// scripted preflight separately verifies both actual EndpointSlices;
+			// finite queries cannot prove that a dormant partner is reachable.
+			byAddr[addr] = ids
 		}
-		if byAddr[env.dnsAddr] == byAddr[env.secondDNSAddr] {
-			t.Fatalf("%s and %s are both served by engine %s, want different engines", env.dnsAddr, env.secondDNSAddr, byAddr[env.dnsAddr])
+		for id := range byAddr[env.dnsAddr] {
+			if _, shared := byAddr[env.secondDNSAddr][id]; shared {
+				t.Fatalf("DNS addresses shared engine %s", id)
+			}
 		}
 	})
 

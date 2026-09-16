@@ -3,9 +3,8 @@
 # the smoke-test block list, forward mode with DNSSEC validation, the smoke-test RPZ zone, the M4
 # authoritative demo (TSIG key, signed primary nexora-demo.kw., secondary bind-demo.kw.), the join
 # token of the default engine group (Secret nexora-join-token), and the catalog filter categories
-# malware, phishing, ads-tracking and crypto-mining. It removes the former engine group edge-b and
-# engines that no longer run. Idempotent; scripts/kw-deploy.sh runs it after the release (and, on a
-# first install, before the engines too).
+# malware, phishing, ads-tracking and crypto-mining. It removes the former engine group edge-b.
+# Requires the parent deployment guard; scripts/kw-deploy.sh invokes it under the retained lock.
 #
 # The admin credentials live only in the Secret nexora-admin (keys username, password), created
 # here with a random password on the first run. Read the password with:
@@ -14,7 +13,10 @@ set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
 ns=nexora
 api="${NEXORA_KW_API_URL:-https://nexora.kw.watteel.lab}"
-k() { kubectl --context "$ctx" -n "$ns" "$@"; }
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+guard() { "$root/scripts/kw-guard.sh"; }
+guard
+k() { guard && kubectl --context "$ctx" -n "$ns" "$@"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 jar="$tmp/cookies"
@@ -26,10 +28,9 @@ for _ in $(seq 60); do
 	[ -s "$tmp/ingress-ca.crt" ] && break
 	sleep 2
 done
-# Right after a mgmt rollout the ingress still routes some requests to terminating pods (502/503
-# after health already answered): curl retries those. Every bootstrap step checks existing state
-# first, so a retried request that did reach a backend is harmless on the next run.
-curl() { command curl --cacert "$tmp/ingress-ca.crt" --retry 10 --retry-delay 2 "$@"; }
+# Every API attempt rechecks the live parent's ownership. Do not silently retry
+# failed mutations: an ambiguous response must stop and retain the lock.
+curl() { guard && command curl --cacert "$tmp/ingress-ca.crt" --max-time 30 "$@"; }
 
 if ! k get secret nexora-admin >/dev/null 2>&1; then
 	k create secret generic nexora-admin --from-literal=username=admin \
@@ -214,16 +215,7 @@ if [ -n "$edge" ]; then
 fi
 k delete secret nexora-join-token-edge-b --ignore-not-found
 
-# Engines that no longer run: disconnected engines named after a node without a running engine pod
-# (pre-M5 pod-named engines, and the nodes kw stopped running engines on). A connected engine, or one
-# on a node with a running engine pod (briefly disconnected by a restart), is kept. Skipped while no
-# engine pod runs (first install).
-nodes=$(k get pods -l app.kubernetes.io/name=nexora-engine --field-selector=status.phase=Running \
-	-o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort -u | jq -R . | jq -sc .)
-if [ "$nodes" != "[]" ]; then
-	call "$api/api/v1/engines" |
-		jq -r --argjson nodes "$nodes" '.[] | select(.connected | not) | select(.node_name as $n | $nodes | index($n) == null) | .id' |
-		while read -r id; do
-			call -X DELETE "$api/api/v1/engines/$id" >/dev/null && echo "removed engine $id that no longer runs"
-		done
-fi
+# Never delete identities by comparing management node_name to Kubernetes node
+# names: c-master-11 and d-master-11 are distinct valid identities on master-11,
+# including while disconnected during replacement. Stale identity removal is a
+# separate operator action after persisted UUID/workload verification.

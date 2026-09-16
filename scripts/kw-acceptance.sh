@@ -7,6 +7,9 @@
 set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
 run="${1:-TestKwSmoke|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI}"
+# Kubernetes endpoint membership and independent persisted UUID bindings must
+# pass before API/query-log acceptance; observing only one VIP backend is not HA.
+"$(dirname "$0")/kw-preflight.sh" --require-paired
 k() { kubectl --context "$ctx" -n nexora "$@"; }
 pod() { kubectl --context "$ctx" -n nexora-dev exec -i deploy/toolbox -c toolbox -- sh -c "$1"; }
 k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-ca.crt'
@@ -15,6 +18,10 @@ k get secret nexora-admin -o jsonpath='{.data.password}' | base64 -d | pod 'umas
 
 engines=$(k get daemonsets -l app.kubernetes.io/name=nexora-engine -o jsonpath='{range .items[*]}{.status.desiredNumberScheduled}{"\n"}{end}' |
 	awk '{n += $1} END {print n + 0}')
+[ "$engines" = 4 ] || {
+	echo "paired acceptance requires four scheduled engines" >&2
+	exit 1
+}
 engine_ip=$(k get pods -l app.kubernetes.io/name=nexora-engine,nexora.io/engine-instance=a --field-selector=status.phase=Running \
 	-o jsonpath='{.items[0].status.podIP}')
 
