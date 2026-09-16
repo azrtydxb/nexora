@@ -22,6 +22,11 @@ mgmt:
         url: "http://opensearch.nexora.svc.cluster.local:9200",
         index: "nexora-querylog-*",
       }
+  ai:
+    existingSecret: nexora-ai
+  mcp:
+    enabled: true
+    readOnly: true
   grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
   ingress:
     enabled: true

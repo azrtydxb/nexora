@@ -262,3 +262,12 @@ No certificate on the cluster uses an external domain; all are issued by the int
 - Leave them on kw.local for now; the user handles the other projects
 
 **Answer (2026-09-15):** The stopgap patches were correct; a permanent fix is needed — every one of them changes at source and everything migrates to `kw.watteel.lab` (`kw.local` is removed and doesn't resolve anymore).
+
+## Next: M9/M11 kw deploy (build+acceptance) with `scripts/kw-deploy.sh` from HEAD
+
+The migration is live, but the cluster still runs `sha-96962cc` — M9 and M11 code (392 files) merged to main has not been deployed. M9 T12 and M11 T32 are open tasks with the kw deploy step pending. The deploy also needs M11 T32's not-yet-written `e2e/kw_ai_test.go`, `values-kw` ai settings, and the acceptance test run. `nexora-ai` secrets exist in both `nexora` and `nexora-dev`.
+
+- Take it on now: write `kw_ai_test.go` + ai settings, run `kw-deploy.sh` from HEAD (build two images, rolling deploy, DNS probe), run `kw-acceptance.sh` (~1 hour of builds + tests); the roadmap mandates deploy after each milestone.
+- Defer: leave the open todo items for a dedicated deploy session; the migration is complete and the cluster runs stable on `sha-96962cc`.
+
+**Answer (2026-09-15):** Take it on now — full M9+M11 kw deploy, `kw-deploy.sh` from HEAD, acceptance suite.

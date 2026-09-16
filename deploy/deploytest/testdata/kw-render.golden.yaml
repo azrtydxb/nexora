@@ -578,8 +578,15 @@ spec:
             - { name: NEXORA_DNS_TLS_KEY_FILE, value: /etc/nexora/dns-tls/tls.key }
             - name: NEXORA_DNS_TLS_RELOAD_INTERVAL
               value: "30s"
+            # The Secret is the only source of the AI endpoint, model and API key.
+            - name: NEXORA_AI_BASE_URL
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: base-url, optional: true } }
+            - name: NEXORA_AI_MODEL
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: model, optional: true } }
+            - name: NEXORA_AI_API_KEY
+              valueFrom: { secretKeyRef: { name: nexora-ai, key: api-key, optional: true } }
             - name: NEXORA_MCP_ENABLED
-              value: "false"
+              value: "true"
             - name: NEXORA_MCP_READ_ONLY
               value: "true"
             - name: NEXORA_TRUSTED_PROXY_CIDRS

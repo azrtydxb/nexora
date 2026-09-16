@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct, TestKwFilterCategories)
+# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct, TestKwFilterCategories, TestKwSmokeAI)
 # in the dev pod against the live deployment.
 # TestKwFilterCategories writes per-engine filter index memory and decision time to
 # /work/kw-filter-categories.json in the toolbox pod.
 #   scripts/kw-acceptance.sh [go test -run pattern]   # default 'TestKwSmoke|TestKwFullProduct|TestKwFilterCategories'
 set -euo pipefail
 ctx="${NEXORA_KW_CONTEXT:-kw}"
-run="${1:-TestKwSmoke|TestKwFullProduct|TestKwFilterCategories}"
+run="${1:-TestKwSmoke|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI}"
 k() { kubectl --context "$ctx" -n nexora "$@"; }
 pod() { kubectl --context "$ctx" -n nexora-dev exec -i deploy/toolbox -c toolbox -- sh -c "$1"; }
 k get secret nexora-ca -o jsonpath='{.data.ca\.crt}' | base64 -d | pod 'cat > /work/kw-ca.crt'
