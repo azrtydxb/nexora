@@ -131,8 +131,9 @@ func TestKwSmokeAI(t *testing.T) {
 	harness.Eventually(t, 600*time.Second, func() error {
 		var s struct {
 			Agents []struct {
-				Name, LastOutcome string `json:"last_outcome"`
-				Running           bool
+				Name        string `json:"name"`
+				LastOutcome string `json:"last_outcome"`
+				Running     bool
 			}
 		}
 		api.Must("GET", "/ai/status", nil, &s, 200)
