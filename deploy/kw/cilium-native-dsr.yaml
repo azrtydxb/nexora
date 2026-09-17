@@ -1,0 +1,16 @@
+# Cilium 1.19.4 overlay for the kw DEVELOPMENT cluster, not Nexora chart values.
+# Apply over the saved existing Cilium values, never over empty defaults.
+# Keep existing Services on SNAT; DSR requires explicit per-Service opt-in.
+routingMode: native
+autoDirectNodeRoutes: true
+ipv4NativeRoutingCIDR: 10.42.0.0/16
+loadBalancer:
+  mode: snat
+  dsrDispatch: opt
+bpf:
+  lbModeAnnotation: true
+# Manually replace one agent at a time and verify actual datapath health.
+rollOutCiliumPods: false
+updateStrategy:
+  type: OnDelete
+  rollingUpdate: null

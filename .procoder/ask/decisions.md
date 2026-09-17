@@ -1,3 +1,23 @@
+## kw development network changes and disruptive verification
+
+**Answer:** The user corrected the environment classification: kw is development;
+there is no production environment in this work. “You can do whatever is needed”,
+followed by “do it”, authorizes necessary cluster/CNI changes and disruptive tests
+for the current forwarding/failover work, superseding the isolated-only restriction
+below. No further production-change approval is needed. Preserve persistent data,
+secrets, the two existing DNS VIPs, client attribution, rollback access and honest
+acceptance results. Recover the retained lock only after quiescence/state checks.
+Historical notes saying “production” refer to this same dev cluster.
+
+## Source-preserving cross-node DNS forwarding feasibility
+
+Abrupt engine-a removal produced a TCP refusal on `.136`. Read-only diagnosis confirms Local-policy external forwarding uses only the announcing node's local member, and kube-vip withdrew the address before the other node acquired it. Cilium currently uses VXLAN and SNAT; blindly changing to Cluster policy risks losing client IPs. Evidence: `.procoder/notes/kw-member-failure.md`.
+
+- Recommended: investigate and test a source-preserving cross-node forwarding design in isolation, including DSR feasibility and all five DNS transports. No production CNI changes under this approval; return with supported configuration, measured behavior and blast-radius review before any cluster-wide change.
+- Hold network redesign and retain current paired deployment with abrupt failover acceptance explicitly red.
+
+**Answer:** The user approved the isolated source-preserving forwarding/DSR feasibility test with “do it”. This does not relax acceptance, add a production VIP, authorize production CNI changes, or release the retained deployment lock. Return with supported configuration, measured behavior and blast-radius review before any production change.
+
 ## Four kw engines in two protected DNS failover pairs
 
 Requested: scale kw DNS engines while keeping only the existing LAN DNS addresses. The initial request for three engines was superseded by four engines: two behind 192.168.10.136 and two behind 192.168.10.139. Never deliberately upgrade both members of one pair together.
