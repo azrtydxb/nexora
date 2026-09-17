@@ -19,6 +19,8 @@ guard
 k() { guard && kubectl --context "$ctx" -n "$ns" "$@"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 jar="$tmp/cookies"
 
 # The ingress certificate comes from cert-manager's cluster-ca, which also stores its CA in the
@@ -61,6 +63,11 @@ else
 		curl -fsS -c "$jar" -H 'Content-Type: application/json' -d @- "$api/api/v1/auth/login" >/dev/null
 fi
 call() { curl -fsS -b "$jar" -H 'Content-Type: application/json' "$@"; }
+
+# Pin identities before configuration writes; the parent retains the workload binding.
+# shellcheck source=deploy/kwrollout/bootstrap-convergence.sh
+source "$root/deploy/kwrollout/bootstrap-convergence.sh"
+bootstrap_pin_engines
 
 if [ "$(call "$api/api/v1/upstreams" | jq length)" = "0" ]; then
 	call -d '{"name":"cloudflare","protocol":"udp","address":"1.1.1.1:53","timeout_ms":500,"enabled":true,"position":0}' "$api/api/v1/upstreams" >/dev/null
@@ -219,3 +226,6 @@ k delete secret nexora-join-token-edge-b --ignore-not-found
 # names: c-master-11 and d-master-11 are distinct valid identities on master-11,
 # including while disconnected during replacement. Stale identity removal is a
 # separate operator action after persisted UUID/workload verification.
+
+# Await only this bootstrap's configuration propagation before the strict final gate.
+bootstrap_wait_convergence

@@ -92,3 +92,80 @@ func TestBuildValuesPendingGroupsAndTag(t *testing.T) {
 		t.Fatalf("dev operator without tag: %v", err)
 	}
 }
+
+func TestAIAndMCPValuesDefaultsAndOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name, mgmt, enabled, readOnly, secret string
+	}{
+		{"omitted", "{}", "false", "true", ""},
+		{"empty", "{ai: {}, mcp: {}}", "false", "true", ""},
+		{"enabled-default-read-only", "{mcp: {enabled: true}}", "true", "true", ""},
+		{"explicit-false", "{mcp: {enabled: false, readOnly: false}}", "false", "false", ""},
+		{"enabled-writable", "{ai: {existingSecret: test-ai}, mcp: {enabled: true, readOnly: false}}", "true", "false", "test-ai"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var spec v1alpha1.NexoraInstallationSpec
+			if err := yaml.UnmarshalStrict([]byte("mgmt: "+tc.mgmt), &spec); err != nil {
+				t.Fatal(err)
+			}
+			copied := spec.DeepCopy()
+			if spec.Mgmt.MCP.Enabled != nil && copied.Mgmt.MCP.Enabled == spec.Mgmt.MCP.Enabled {
+				t.Fatal("deepcopy aliases enabled")
+			}
+			if spec.Mgmt.MCP.ReadOnly != nil && copied.Mgmt.MCP.ReadOnly == spec.Mgmt.MCP.ReadOnly {
+				t.Fatal("deepcopy aliases readOnly")
+			}
+			vals, err := render.BuildValues(*copied, render.Injected{Tag: "test", CASecret: "ca"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mgmt := vals.Map["mgmt"].(map[string]any)
+			mcp, _ := mgmt["mcp"].(map[string]any)
+			for key, ptr := range map[string]*bool{"enabled": spec.Mgmt.MCP.Enabled, "readOnly": spec.Mgmt.MCP.ReadOnly} {
+				value, present := mcp[key]
+				if ptr == nil && present || ptr != nil && (!present || value != *ptr) {
+					t.Fatalf("%s = %v (present %v), input %v", key, value, present, ptr)
+				}
+			}
+			if tc.secret == "" {
+				if _, ok := mgmt["ai"]; ok {
+					t.Fatal("unset AI overrides chart default")
+				}
+			}
+			objs, err := load(t).Render(target, vals.Map)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var env []any
+			for _, obj := range objs {
+				if obj.GetKind() == "Deployment" && obj.GetName() == "nexora-mgmt" {
+					containers := obj.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)
+					env = containers[0].(map[string]any)["env"].([]any)
+				}
+			}
+			got := map[string]map[string]any{}
+			for _, item := range env {
+				e := item.(map[string]any)
+				got[e["name"].(string)] = e
+			}
+			for name, want := range map[string]string{"NEXORA_MCP_ENABLED": tc.enabled, "NEXORA_MCP_READ_ONLY": tc.readOnly} {
+				if got[name]["value"] != want {
+					t.Errorf("%s = %v, want %s", name, got[name], want)
+				}
+			}
+			for name, key := range map[string]string{"NEXORA_AI_BASE_URL": "base-url", "NEXORA_AI_MODEL": "model", "NEXORA_AI_API_KEY": "api-key"} {
+				e, present := got[name]
+				if tc.secret == "" {
+					if present {
+						t.Errorf("unexpected %s", name)
+					}
+					continue
+				}
+				want := map[string]any{"name": name, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": tc.secret, "key": key, "optional": true}}}
+				if !reflect.DeepEqual(e, want) {
+					t.Errorf("%s = %v, want %v", name, e, want)
+				}
+			}
+		})
+	}
+}

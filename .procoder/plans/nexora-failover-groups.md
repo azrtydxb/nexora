@@ -2,6 +2,8 @@
 
 Specification: `../specs/nexora-failover-groups.md`. Status: implementation authorized;
 no API/UI/datapath completion claimed. Keep the existing kw VXLAN recovery state.
+Remaining work is allocated in [the sprint plan](nexora-failover-sprints.md), with
+cross-host/HA gates before migration and explicit bootstrap/control-plane work.
 
 ## T1 — prove dedicated transparent forwarding
 

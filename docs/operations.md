@@ -422,6 +422,12 @@ upgrades or deletes them, so apply `deploy/operator/crds/` with
 
 ### A NexoraInstallation and its engine groups
 
+`spec.mgmt.ai.existingSecret` names an existing Secret in the installation namespace
+with optional `base-url`, `model`, and `api-key` keys; credentials stay in the Secret.
+`spec.mgmt.mcp.enabled` and `spec.mgmt.mcp.readOnly` map directly to chart values.
+Omitting them preserves the chart defaults (`false` and `true`, respectively);
+explicit `false` is preserved for either setting.
+
 The spec uses the chart's value names (`image`, `imagePullSecrets`, `mgmt`,
 `database`, `engine`, `otelCollector`, `metrics`). A field left out takes the
 default from `deploy/helm/nexora/values.yaml`: the CRD sets no defaults of its
@@ -933,6 +939,19 @@ and refuses those features.
   that installation its own token (or partition).
 
 ## Upgrade
+
+Engine connection ownership fencing requires **all management replicas to be
+upgraded**. Mixed old/new binaries do not enforce fencing: old binaries ignore
+the connection session token and can overwrite the current owner’s state.
+Acceptance testing must start only after every management replica runs the new
+binary and old management processes have stopped. Applying the migration alone
+is insufficient.
+
+The current fencing covers engine status, stats persistence, certificate renewal,
+and TLS status writes. It does not fence forwarded NOTIFY refresh requests,
+forwarded dynamic UPDATE zone mutations, or delivery of pending log replies
+from superseded streams. Those paths can still produce effects after a reconnect;
+an all-replica upgrade is necessary but does not close these remaining gaps.
 
 1. Back up PostgreSQL, the CA and the KEK (next section).
 2. `helm upgrade` with the new `image.tag` (Compose: change `NEXORA_TAG` and

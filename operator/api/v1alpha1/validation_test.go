@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -42,8 +43,36 @@ func TestInstallationCRDValidation(t *testing.T) {
 	} {
 		in := loadInstallation(t, p)
 		in.Namespace, in.Name = "default", "valid-"+string(rune('a'+i))
+		want := in.DeepCopy()
 		if err := c.Create(ctx, in); err != nil {
 			t.Fatalf("valid %s refused: %v", p, err)
+		}
+		// Fetch persisted fixtures so schema pruning cannot silently discard chart settings.
+		var got v1alpha1.NexoraInstallation
+		if err := c.Get(ctx, client.ObjectKeyFromObject(in), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.Spec.Mgmt.AI, want.Spec.Mgmt.AI) || !reflect.DeepEqual(got.Spec.Mgmt.MCP, want.Spec.Mgmt.MCP) {
+			t.Fatalf("AI/MCP fields changed on persistence: got %+v/%+v, want %+v/%+v", got.Spec.Mgmt.AI, got.Spec.Mgmt.MCP, want.Spec.Mgmt.AI, want.Spec.Mgmt.MCP)
+		}
+	}
+	for _, enabled := range []bool{false, true} {
+		in := &v1alpha1.NexoraInstallation{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "mcp-false"}}
+		if enabled {
+			in.Name = "mcp-true"
+		}
+		readOnly := false
+		in.Spec.Mgmt.MCP = v1alpha1.MCPSpec{Enabled: &enabled, ReadOnly: &readOnly}
+		want := in.Spec.Mgmt.MCP.DeepCopy()
+		if err := c.Create(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		var got v1alpha1.NexoraInstallation
+		if err := c.Get(ctx, client.ObjectKeyFromObject(in), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.Spec.Mgmt.MCP, *want) {
+			t.Fatalf("explicit MCP booleans changed: %+v", got.Spec.Mgmt.MCP)
 		}
 	}
 	base := func(name string) *v1alpha1.NexoraInstallation {

@@ -14,12 +14,18 @@ import (
 // RecordM3 upserts the engine's latest DNSSEC and RPZ status from s. Reports for RPZ zones that
 // no longer exist (or ids that are not UUIDs) are skipped.
 func RecordM3(ctx context.Context, st *store.Store, engineID string, s *controlv1.Stats) error {
+	return RecordM3WithQuerier(ctx, st.Pool, engineID, s)
+}
+
+// RecordM3WithQuerier persists using the supplied connection, including an ownership-fenced transaction.
+// It does not acquire another pool connection or commit the caller's transaction.
+func RecordM3WithQuerier(ctx context.Context, q store.PolicyQuerier, engineID string, s *controlv1.Stats) error {
 	if s.Dnssec != nil {
 		raw, err := protojson.Marshal(s.Dnssec)
 		if err != nil {
 			return err
 		}
-		if _, err := st.Pool.Exec(ctx, `insert into engine_dnssec_status(engine_id, stats, reported_at) values ($1, $2, now())
+		if _, err := q.Exec(ctx, `insert into engine_dnssec_status(engine_id, stats, reported_at) values ($1, $2, now())
 			on conflict (engine_id) do update set stats = excluded.stats, reported_at = excluded.reported_at`, engineID, raw); err != nil {
 			return store.MapError(err)
 		}
@@ -34,7 +40,7 @@ func RecordM3(ctx context.Context, st *store.Store, engineID string, s *controlv
 			t := time.Unix(z.LastSuccessUnix, 0).UTC()
 			lastSuccess = &t
 		}
-		if _, err := st.Pool.Exec(ctx, `insert into engine_rpz_status(engine_id, rpz_zone_id, serial, records, skipped, hits,
+		if _, err := q.Exec(ctx, `insert into engine_rpz_status(engine_id, rpz_zone_id, serial, records, skipped, hits,
 			last_success_at, last_error, stale, reported_at)
 			select $1, $2, $3, $4, $5, $6, $7, $8, $9, now() where exists (select 1 from rpz_zones where id = $2)
 			on conflict (engine_id, rpz_zone_id) do update set serial = excluded.serial, records = excluded.records,

@@ -63,6 +63,12 @@ type PDBSpec struct {
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
 }
 
+// MCPSpec is values `mgmt.mcp`. Unset fields use chart defaults: disabled and read-only.
+type MCPSpec struct {
+	Enabled  *bool `json:"enabled,omitempty"`
+	ReadOnly *bool `json:"readOnly,omitempty"`
+}
+
 // MgmtSpec is values `mgmt` without `bootstrapToken`, which the operator injects.
 type MgmtSpec struct {
 	Replicas          *int32                       `json:"replicas,omitempty"`
@@ -74,6 +80,8 @@ type MgmtSpec struct {
 	OtlpEndpoint      string                       `json:"otlpEndpoint,omitempty"`
 	CA                SecretRef                    `json:"ca,omitempty"`
 	KEK               SecretRef                    `json:"kek,omitempty"`
+	AI                SecretRef                    `json:"ai,omitempty"`
+	MCP               MCPSpec                      `json:"mcp,omitempty"`
 	DNSTLS            DNSTLSSpec                   `json:"dnsTLS,omitempty"`
 	Querylog          QuerylogSpec                 `json:"querylog,omitempty"`
 	ExtraEnv          []corev1.EnvVar              `json:"extraEnv,omitempty"`

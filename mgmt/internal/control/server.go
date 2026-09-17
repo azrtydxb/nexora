@@ -36,8 +36,10 @@ var (
 type Server struct {
 	controlv1.UnimplementedEngineControlServer
 
-	// OnStats, when set, receives every Stats message.
-	OnStats func(ctx context.Context, engineID string, s *controlv1.Stats)
+	// OnStats receives Stats from the owning stream under an engine row lock.
+	// It must use tx for all persistence, finish synchronously, and return errors.
+	// The callback may be retried with the transaction; it must not commit tx.
+	OnStats func(ctx context.Context, tx pgx.Tx, engineID string, s *controlv1.Stats) error
 	// OnNotify, when set, receives every NOTIFY an engine accepted for a secondary zone; an error
 	// (NOTIFY ignored) is logged and the stream continues.
 	OnNotify func(ctx context.Context, engineID string, ev *controlv1.NotifyReceived) error
@@ -111,18 +113,11 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	if hello.EngineId != "" && hello.EngineId != id {
 		return status.Error(codes.PermissionDenied, "Hello engine_id does not match the client certificate")
 	}
-	// The engine connected with this certificate: an earlier one is no longer needed (a renewed
-	// certificate replaces the old one only once it has proven to work).
-	if err := fleet.SupersedeOlderCertificates(ctx, s.st.Pool, uuid.MustParse(id), serial); err != nil {
-		return grpcError(err)
-	}
-	// Registered before connected_instance is set: a superseded stream of this engine on this
-	// instance that ends in between then leaves the connection to this stream.
 	sub := newSubscriber(id, hello.AppliedVersion)
 	defer s.hub.unregisterConnection(sub, func() {
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		if _, err := s.st.Pool.Exec(dctx, "update engines set connected_instance = null where id = $1 and connected_instance = $2", id, s.instanceID); err != nil {
+		if _, err := s.st.Pool.Exec(dctx, "update engines set connected_instance = null, connection_session = null where id = $1 and connection_session = $2", id, sub.sessionID); err != nil {
 			slog.Warn("clear engine connection", "engine", id, "err", err)
 		}
 	})
@@ -136,9 +131,21 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 			_, err := tx.Exec(ctx, `update engines set
 			node_name = case when $2 ~ '^[a-z0-9-]{1,63}$' then $2 else node_name end,
 			engine_version = case when $3 <> '' then $3 else engine_version end,
-			connected_instance = $4, last_seen_at = now()
-			where id = $1`, id, hello.NodeName, hello.EngineVersion, s.instanceID)
-			return err
+			connected_instance = $4, connection_session = $5, last_seen_at = now()
+			where id = $1`, id, hello.NodeName, hello.EngineVersion, s.instanceID, sub.sessionID)
+			if err != nil {
+				return err
+			}
+			// Authentication may have raced a newer certificate or revocation while
+			// this claim waited for the engine lock. Recheck before committing.
+			if err := fleet.CheckCertificate(ctx, tx, sub.id, serial); err != nil {
+				if errors.Is(err, fleet.ErrUnknownEngine) || errors.Is(err, fleet.ErrCertificateRevoked) {
+					return status.Error(codes.PermissionDenied, err.Error())
+				}
+				return err
+			}
+			// Serialize certificate supersession with the stream ownership claim.
+			return fleet.SupersedeOlderCertificates(ctx, tx, sub.id, serial)
 		})
 	})
 	if err != nil {
@@ -170,7 +177,7 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 	offerTarget(sub, t, ks)
 	clearKeyMaterial(ks.km)
 	if t.Version > 0 && hello.AppliedVersion > t.Version {
-		if _, err := s.st.Pool.Exec(ctx, "update engines set version_ahead = true where id = $1", id); err != nil {
+		if err := s.writeConnection(ctx, "update engines set version_ahead = true where id = $1 and connection_session = $2", id, sub.sessionID); err != nil {
 			return grpcError(err)
 		}
 		sub.send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_VersionAhead{VersionAhead: &controlv1.VersionAhead{ServerVersion: t.Version}}})
@@ -263,26 +270,34 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 		switch m := msg.Msg.(type) {
 		case *controlv1.EngineMessage_Applied:
 			sub.observe(m.Applied.Version)
-			_, err = s.st.Pool.Exec(ctx, `update engines set applied_version = $2, persist_error = $3, version_ahead = false,
+			err = s.writeConnection(ctx, `update engines set applied_version = $2, persist_error = $3, version_ahead = false,
 				rejected_reason = case when rejected_version <= $2 then '' else rejected_reason end,
 				rejected_version = case when rejected_version <= $2 then null else rejected_version end,
 				last_seen_at = now()
-				where id = $1`, sub.engineID, int64(m.Applied.Version), m.Applied.PersistError)
+				where id = $1 and connection_session = $4`, sub.engineID, int64(m.Applied.Version), m.Applied.PersistError, sub.sessionID)
 			if err == nil {
 				err = s.notifyRollout(ctx, sub)
 			}
 		case *controlv1.EngineMessage_Rejected:
 			sub.observe(m.Rejected.Version)
-			_, err = s.st.Pool.Exec(ctx, "update engines set rejected_version = $2, rejected_reason = $3, last_seen_at = now() where id = $1",
-				sub.engineID, int64(m.Rejected.Version), m.Rejected.Reason)
+			err = s.writeConnection(ctx, "update engines set rejected_version = $2, rejected_reason = $3, last_seen_at = now() where id = $1 and connection_session = $4",
+				sub.engineID, int64(m.Rejected.Version), m.Rejected.Reason, sub.sessionID)
 			if err == nil {
 				err = s.notifyRollout(ctx, sub)
 			}
 		case *controlv1.EngineMessage_Stats:
-			_, err = s.st.Pool.Exec(ctx, "update engines set last_seen_at = now() where id = $1", sub.engineID)
-			if s.OnStats != nil {
-				s.OnStats(ctx, sub.engineID, m.Stats)
-			}
+			// Bound persistence while sharing the ownership transaction with the callback.
+			statsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err = s.withConnection(statsCtx, sub, func(tx pgx.Tx) error {
+				if _, err := tx.Exec(statsCtx, "update engines set last_seen_at = now() where id = $1", sub.engineID); err != nil {
+					return err
+				}
+				if s.OnStats != nil {
+					return s.OnStats(statsCtx, tx, sub.engineID, m.Stats)
+				}
+				return nil
+			})
+			cancel()
 		case *controlv1.EngineMessage_NotifyReceived:
 			if s.OnNotify != nil {
 				ev := m.NotifyReceived
@@ -301,10 +316,12 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 			}
 		case *controlv1.EngineMessage_TlsMaterialResult:
 			res := m.TlsMaterialResult
-			s.dnsTLS.Result(sub.engineID, res)
 			slog.Info("dns tls result", "engine", sub.engineID, "fingerprint", res.FingerprintSha256, "applied", res.Applied, "error", res.Error)
-			err = store.UpsertEngineTLSState(ctx, s.st.Pool, store.EngineTLSState{
-				EngineID: uuid.MustParse(sub.engineID), Fingerprint: res.FingerprintSha256, Applied: res.Applied, Error: res.Error,
+			err = s.withConnection(ctx, sub, func(tx pgx.Tx) error {
+				s.dnsTLS.Result(sub.engineID, res)
+				return store.UpsertEngineTLSState(ctx, tx, store.EngineTLSState{
+					EngineID: uuid.MustParse(sub.engineID), Fingerprint: res.FingerprintSha256, Applied: res.Applied, Error: res.Error,
+				})
 			})
 		default:
 			err = status.Error(codes.InvalidArgument, "unexpected message")
@@ -465,11 +482,11 @@ func (s *Server) renew(ctx context.Context, sub *subscriber, req *controlv1.Cert
 	var der []byte
 	var limited bool
 	var signErr error
-	err = s.st.InTx(ctx, func(tx pgx.Tx) error {
+	err = s.withConnection(ctx, sub, func(tx pgx.Tx) error {
 		var live, recent bool
 		if err := tx.QueryRow(ctx, `select revoked_at is null and deleted_at is null,
 			cert_renewed_at is not null and cert_renewed_at > now() - make_interval(secs => $2)
-			from engines where id = $1 for update`, sub.id, renewInterval.Seconds()).Scan(&live, &recent); err != nil {
+			from engines where id = $1`, sub.id, renewInterval.Seconds()).Scan(&live, &recent); err != nil {
 			return err
 		}
 		if !live {

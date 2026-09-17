@@ -63,9 +63,10 @@ type Hub struct {
 // subscriber is one connected engine stream. out holds at most one pending message; a newer
 // snapshot replaces an unsent older one.
 type subscriber struct {
-	engineID string
-	id       uuid.UUID
-	out      chan *controlv1.ServerMessage
+	engineID  string
+	sessionID uuid.UUID // unique per stream, including reconnects to this instance
+	id        uuid.UUID
+	out       chan *controlv1.ServerMessage
 	// control carries certificate messages (RenewCertificate); nothing replaces a queued one.
 	control chan *controlv1.ServerMessage
 	// revoked is closed once when the engine is revoked; Connect then ends the stream.
@@ -102,7 +103,7 @@ const (
 )
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
-	return &subscriber{engineID: engineID, id: uuid.MustParse(engineID), version: applied, out: make(chan *controlv1.ServerMessage, 1),
+	return &subscriber{engineID: engineID, sessionID: uuid.New(), id: uuid.MustParse(engineID), version: applied, out: make(chan *controlv1.ServerMessage, 1),
 		control: make(chan *controlv1.ServerMessage, 4), revoked: make(chan struct{}),
 		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1),
 		results: make(chan *controlv1.ServerMessage, resultsQueue), updateSlots: make(chan struct{}, maxInflightUpdates),

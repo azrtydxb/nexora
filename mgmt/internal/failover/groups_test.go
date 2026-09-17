@@ -78,7 +78,9 @@ func TestPersistence(t *testing.T) {
 		ids[i] = storetest.InsertEngine(t, st, n, store.DefaultEngineGroupID)
 	}
 	var before, after string
-	const inventory = `select jsonb_agg(to_jsonb(e) order by id)::text from engines e`
+	// Migration 01301 adds a nullable stream token; compare all pre-existing
+	// engine fields, not the additive schema key, across the full migration chain.
+	const inventory = `select jsonb_agg(to_jsonb(e) - 'connection_session' order by id)::text from engines e`
 	if err := st.Pool.QueryRow(ctx, inventory).Scan(&before); err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,8 @@ spec:
     grpcServerNames: [nexora-mgmt-grpc.nexora.svc]
     otlpEndpoint: http://nexora-otelcol.nexora.svc.cluster.local:4317
     dnsTLS: { existingSecret: nexora-dns-tls, reloadInterval: 30s }
+    ai: { existingSecret: nexora-ai }
+    mcp: { enabled: true, readOnly: true }
     querylog:
       backend: opensearch
       opensearch:

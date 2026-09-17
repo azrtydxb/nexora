@@ -447,9 +447,11 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	)
 	controlServer := control.NewServer(st, ca, hub, instanceID, dnsTLS)
 	controlServer.EngineCertTTL = cfg.EngineCertTTL
-	controlServer.OnStats = func(ctx context.Context, engineID string, s *controlv1.Stats) {
-		_ = stats.Record(ctx, st, engineID, s)
-		_ = stats.RecordM3(ctx, st, engineID, s)
+	controlServer.OnStats = func(ctx context.Context, tx pgx.Tx, engineID string, s *controlv1.Stats) error {
+		if err := stats.RecordWithQuerier(ctx, tx, engineID, s); err != nil {
+			return err
+		}
+		return stats.RecordM3WithQuerier(ctx, tx, engineID, s)
 	}
 	controlServer.OnNotify = func(ctx context.Context, _ string, ev *controlv1.NotifyReceived) error {
 		return scheduler.Notify(ctx, ev.Zone, ev.Source)

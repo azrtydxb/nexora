@@ -760,6 +760,12 @@ spec:
                 description: MgmtSpec is values `mgmt` without `bootstrapToken`, which
                   the operator injects.
                 properties:
+                  ai:
+                    description: SecretRef names an existing Secret.
+                    properties:
+                      existingSecret:
+                        type: string
+                    type: object
                   ca:
                     description: SecretRef names an existing Secret.
                     properties:
@@ -3051,6 +3057,15 @@ spec:
                     properties:
                       existingSecret:
                         type: string
+                    type: object
+                  mcp:
+                    description: 'MCPSpec is values `mgmt.mcp`. Unset fields use chart
+                      defaults: disabled and read-only.'
+                    properties:
+                      enabled:
+                        type: boolean
+                      readOnly:
+                        type: boolean
                     type: object
                   otlpEndpoint:
                     type: string
