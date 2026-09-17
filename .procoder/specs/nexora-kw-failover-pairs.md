@@ -1,5 +1,11 @@
 # kw DNS failover pairs
 
+> Historical deployed topology contract. The dedicated-frontend architecture in
+> `nexora-failover-groups.md` supersedes the Local-Service/announcer-placement
+> requirements below. Preserve the pair membership, identities, policy and rollout
+> safeguards during migration; do not treat this note as evidence of completed
+> migration or permission to weaken source-address verification.
+
 ## Goal
 
 Run four engines behind the existing two DNS addresses, with two disjoint, distinct-node pairs. Planned upgrades must not deliberately replace both members of a pair concurrently. The user's approval is recorded in `.procoder/ask/decisions.md`.

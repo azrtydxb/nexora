@@ -1,3 +1,16 @@
+## First-class failover groups with transparent load balancing
+
+**Answer:** The user approved implementation: each failover group owns one stable
+frontend IP and two engines behind a redundant dedicated load-balancer layer.
+Forwarding must preserve actual client source IPs, not replace them with the LB
+address or rely only on forwarded metadata. Initial kw groups keep `.136` for A/C
+and `.139` for B/D. Group membership, health and coordinated upgrades are separate
+from DNS policy groups. Cover UDP/TCP DNS, DoT, DoH and DoQ. Decouple frontend
+ownership from engine failure; also test LB failure. This supersedes pursuing a
+cluster-wide Cilium migration as the implementation strategy. Dedicated transparent
+forwarding still needs explicit return-path and network validation; do not claim
+it is configuration-free or already implemented.
+
 ## kw development network changes and disruptive verification
 
 **Answer:** The user corrected the environment classification: kw is development;
