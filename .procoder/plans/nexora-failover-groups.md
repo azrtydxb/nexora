@@ -26,6 +26,18 @@ separate desired/observed state. Keep policy engine groups unchanged. Add tests
 for invalid/reused identities, address collisions, same-node members and stale
 writes; migrations preserve existing engines/configuration.
 
+Progress: desired-state persistence and observation projection are implemented in
+`mgmt/internal/failover/` and migration `01300_failover_groups.sql`. Database
+constraints enforce exactly two members and unique cross-group membership; writes
+use generation checks and preserve the frontend IP. Admission rejects unknown,
+revoked/deleted and same-reported-node members and conservatively requires the same
+policy engine group. No observation writer or delete operation is exposed: safe
+frontend withdrawal/fencing must precede deletion/reuse. Actual node placement and
+live policy/config equivalence remain adapter gates; reported node names alone do
+not establish failure domains. The initial accepted address family is IPv4 only.
+T2 is not closed; API/UI and operational integration remain absent. See
+`../notes/failover-model.md` for verification and review boundaries.
+
 ## T3 — API and UI
 
 Files: `mgmt/internal/api/`, `mgmt/api/openapi.yaml`, generated API clients,
