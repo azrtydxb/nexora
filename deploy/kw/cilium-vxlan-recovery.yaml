@@ -1,0 +1,15 @@
+# Current kw dev Cilium 1.19.4 recovery overlay, over existing cluster values.
+# Preserve IPAM, Services and BPF state. Agents require explicit serial rollout.
+routingMode: tunnel
+tunnelProtocol: vxlan
+autoDirectNodeRoutes: false
+ipv4NativeRoutingCIDR: ""
+loadBalancer:
+  mode: snat
+  dsrDispatch: ""
+bpf:
+  lbModeAnnotation: false
+rollOutCiliumPods: false
+updateStrategy:
+  type: OnDelete
+  rollingUpdate: null

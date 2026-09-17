@@ -45,5 +45,59 @@ zero-loss or complete failover claim is made by this configuration change.
 
 ## Current result
 
-Prepared and rendered; deployment result pending. Raw evidence directory:
-`/tmp/nexora-kw-network/`. No acceptance closure is implied.
+**Attempted, failed verification, and restored on 2026-09-17.** Native-routing
+cutover is not accepted. Cilium is now revision **10**, all eight agents verified
+`Network: Tunnel [vxlan]` with successful status commands. Agents remain OnDelete;
+`deploy/kw/cilium-vxlan-recovery.yaml` records that recovery configuration. Nexora
+remains revision 35, image `sha-809cf3a`; no engine or DNS Service was changed.
+
+Sequence and observations:
+
+1. After paired preflight/quiescence checks, manually CAS-transferred the retained
+   lock from the failed member test to a fresh network-session owner. The patch
+   tested UID, resourceVersion, protocol and exact old owner. Ownership remains
+   retained, not released; the snapshot and new owner are in the private evidence
+   directory.
+2. Cilium revision 6 failed on Helm 4 server-side field conflicts with the original
+   `cilium` manager. Verified routing/strategy were still unchanged. Explicit
+   `--server-side=false` used the client-side Helm update path for revision 7;
+   no force ownership or object replacement was used.
+3. Converted only workers 21, 22 and 23, one at a time. Workers 21/22 passed paired
+   preflight. After deleting worker-23's agent, the temporary runner stopped on
+   an empty replacement-pod list (JSONPath indexed element zero too early).
+   Replacement subsequently became Ready with native routing. An independent
+   paired preflight then **failed** toolbox UDP DNS to `.136` with a deadline.
+   Toolbox is on worker-23; laptop VIP queries still returned the expected answer.
+   This exposes a mixed-mode pod-path failure; exact dropped-packet location was
+   not established. No other worker or master was converted.
+4. Restored the saved VXLAN configuration while preserving OnDelete, then restored
+   worker-23's agent. Monitoring captured a real laptop UDP `.136` timeout at
+   `2026-09-17T10:29:12.381065+04:00`, lasting `2.000992291s`; recovery progression
+   stopped. The exact cause of that transient is unproven. After renewed status
+   and paired recovery checks passed, explicitly restored workers 22 and 21.
+   Each passed paired preflight. This was recovery, not retrying the failed
+   migration to declare it green.
+5. Final paired preflight passed; all eight Cilium agents report VXLAN. The
+   non-Running/non-Succeeded pod inventory matches the before snapshot. Full
+   product acceptance and abrupt-failure tests were not rerun.
+
+Raw evidence directory: `/tmp/nexora-kw-network/`. Key files:
+`migration-ssa-conflict.log`, `migration-native.log`,
+`migration-native-dns.log`, `preflight-worker23.log`, `restore-agents.log`,
+`restore23-dns.log`, `preflight-restore23.log`, `restore-remaining.log`,
+`preflight-final.log`, `final-<node>.log`, and `config-final.json`.
+Cancellation-generated terminal DNS samples are retained separately from the
+actual two-second timeout; neither is relabelled a successful sample.
+
+Verification: the Linux toolbox race suite passed (`kwrollout` 24.673s,
+`deploytest` 6.951s); both candidate/recovery Helm renders passed. The full laptop
+`procoder test` remains red (231 Go failures and Rust `libc::mmsghdr`).
+Adversarial finding: the isolated homogeneous native lab did not validate a live
+mixed VXLAN/native migration, and the initial readiness poll mishandled an empty
+list. Recovery polling handled an empty list without weakening DNS checks.
+
+Next work is a revised migration procedure with mixed-mode packet capture or an
+explicit bounded dev maintenance cutover, plus real five-transport DSR attribution
+and failover measurements. The user already authorized necessary dev disruption;
+this is an engineering gap, not an approval blocker. Do not reapply the experimental
+overlay using the failed serial procedure. Bootstrap convergence remains pending.

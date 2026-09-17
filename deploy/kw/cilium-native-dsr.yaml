@@ -1,3 +1,5 @@
+# EXPERIMENTAL: serial live conversion failed pod-to-VIP DNS and was rolled back.
+# Do not reapply without a revised migration/verification procedure.
 # Cilium 1.19.4 overlay for the kw DEVELOPMENT cluster, not Nexora chart values.
 # Apply over the saved existing Cilium values, never over empty defaults.
 # Keep existing Services on SNAT; DSR requires explicit per-Service opt-in.
