@@ -1,12 +1,21 @@
 # Remaining failover work — sprint plan
 
 Status: proposed sprint allocation, not an activated Procoder sprint.
-Baseline: `f4544a0` (harness) and `39f1b50` (desired-state model).
+Baseline: `504a006` (integrated eligibility, bootstrap convergence, session ownership
+and operator regression fixes; includes the earlier harness and desired-state model).
 Scope: finish the approved transparent failover groups and the rollout/control-plane
 work needed to deploy and accept them. Parent: `nexora-failover-groups.md`, T1–T6.
 No `.procoder/sprints/` or backlog exists at this checkpoint; existing standalone
 M9 T12 and M11 T32 tasks remain open. Formal opening, pulling and closing belong
 to the human-invoked `/procoder:` workflow; this document does not change those states.
+
+## Wave 2 execution checkpoint
+
+See `../notes/wave2-integration.md` for integrated M10/operator and expanded
+control-ownership test evidence, plus the two-host DR fixture's 40 verified flows.
+The actual-engine attachment and cross-host negative controls remain open; the
+Sprint 1 network gate has **not** passed. Later HA/lifecycle/API/UI/migration
+sprints remain dependency-gated. No formal sprint/milestone closure is implied.
 
 ## Baseline: do not schedule completed work again
 
@@ -18,9 +27,33 @@ to the human-invoked `/procoder:` workflow; this document does not change those 
   B/D, serial guarded rollout, Cilium VXLAN. Revalidate live inventory before any
   mutation; this planning session makes no live-state claim beyond prior evidence.
 - Prior strict product acceptance passed, but abrupt engine-a failover remains RED.
-  Bootstrap did not finish unattended; cross-instance ownership is unresolved.
-- Full laptop suite remains RED (233 Go failures, Rust `mmsghdr`); scoped Linux
+  Unattended live bootstrap remains unverified; bounded convergence is now
+  implemented/tested. Session ownership is partially fenced; see CP-02 below.
+- Full laptop suite remains RED (235 Go failures, Rust `mmsghdr`); scoped Linux
   results are green. Neither result is a substitute for a final full supported-suite run.
+
+## Refresh at 504a006 — implementation is not acceptance
+
+Evidence: `.procoder/notes/parallel-integration.md` records parent-run supported
+Linux management/rollout/chart, control/stats/failover race and operator envtest
+passes. The earlier engine baseline passed before those patches. These are scoped
+results, not a fresh full engine/web/e2e/release pass. Current inventory and exact
+branch integration order: `.procoder/notes/completion-wave2.md`.
+
+| Story    | Implemented/tested at baseline or in this audit                                                                           | Still required                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| FG-01    | Same-host fixture and tuple verifier                                                                                      | Cross-host actual engines, policy attribution and return-path/cleanup proof; wave2 work is pending integration, not accepted here |
+| FG-02    | Pure fail-closed placement/config eligibility and tests landed                                                            | Trusted observation adapter, real identity/node/config/freshness evidence                                                         |
+| FG-03    | Historical notes/test reviewed and copied in this audit; failure-test safety regressions pass locally                     | Parent review/integration, supported Linux race rerun and complete baseline; no live disruption rerun                             |
+| FG-04–08 | Desired-state reservations and conservative status only                                                                   | Owned platform reconciler, independent HA/dataplane fencing, lifecycle/deletion, API and GUI                                      |
+| CP-01    | Fixed-target bounded bootstrap acknowledgement wait and negative tests landed                                             | Unattended immutable-SHA deployment acceptance without retries/manual rescue                                                      |
+| CP-02    | UUID session migration; DB fencing of disconnect/ACK/rejection/stats/TLS/renewal/hello landed with race/negative evidence | Stale NOTIFY/UPDATE callbacks, pending logs and remaining memory effects; upgrade every management replica, then full acceptance  |
+| FG-09–10 | Guarded paired rollout already exists                                                                                     | Dedicated frontend chart and staged cutover/rollback after all prerequisite gates                                                 |
+| FG-11–12 | Historical strict product pass and abrupt engine-a failure RED preserved                                                  | Full failure matrix and release acceptance; no formal closure                                                                     |
+
+M8 (`3fb09b9` plus dirty work) and M10 (`d0009ce`) contain substantial code absent
+from main. Review and integrate that work; do not rebuild it from main-only absence.
+Preserve the M8 dirty worktree and `nexora-merge` unfinished M10 merge.
 
 ## Capacity and execution policy
 
@@ -66,9 +99,10 @@ closed. Record capability/privilege requirements and cleanup, including failures
 
 Files: `mgmt/internal/failover/`, `deploy/kwrollout/`, `deploy/failover/`.
 
-Steps: define trusted persistent-ID-to-pod/node binding, freshness, effective
-configuration comparison and reason codes; distinguish admission, desired state
-and observed eligibility. Implement pure validation/state tests before adapters.
+Remaining steps (pure validator is implemented/tested): wire trusted persistent
+identity-to-pod/node binding, freshness, effective configuration comparison and
+reason codes; retain the distinction between admission, desired state and observed
+eligibility. Exercise the implemented pure validation/state tests through adapters.
 
 Exit: prefixed/self-reported names cannot prove node separation; same physical node,
 unknown identity, stale report, revoked identity and mismatched applied policy/config
@@ -81,7 +115,8 @@ Files: outstanding `deploy/kwrollout/failure_live_test.go`,
 `.procoder/notes/kw-member-failure.md`, `.procoder/notes/kw-dsr-feasibility.md`,
 `scripts/dev-exec.sh`, relevant test/documentation files.
 
-Steps: review and separately commit historical untracked evidence/harness; reproduce
+Steps: parent reviews/integrates the historical evidence and hardened harness copied
+by wave2 audit; preserve the original main untracked copies. Reproduce
 full supported Linux test baseline; classify laptop failures versus code defects.
 Do not rewrite raw Linux Helm goldens to make the laptop green.
 
@@ -156,9 +191,10 @@ configured membership or Ready pods alone never produce a healthy frontend label
 
 Depends: no network dependency; required before Sprint 4 live deployment.
 Files: `deploy/kw/bootstrap.sh`, `deploy/kwrollout/`, bootstrap/script tests.
-Reproduce the expected/applied version lag and implement bounded control-plane
-convergence against an explicitly tracked target, including target changes and
-cancellation. Exit: delayed acknowledgements converge; permanently stale/rejected
+Implemented/tested at `504a006`: bounded control-plane convergence against a
+fixed published target, pinned existing identities, target changes and cancellation.
+Remaining: parent-run unattended live deployment convergence.
+Exit: delayed acknowledgements converge; permanently stale/rejected
 configuration fails at the deadline and retains the lock. Never retry or hide DNS
 failures. Distinguish waiting for acknowledgement from republishing configuration.
 
@@ -166,7 +202,10 @@ failures. Distinguish waiting for acknowledgement from republishing configuratio
 
 Depends: no network dependency. Files: `mgmt/internal/control/`,
 `mgmt/internal/store/`, multi-instance integration tests.
-Reproduce overlapping/reconnecting streams across management instances and prove
+Partial implementation/test evidence at `504a006`: per-stream UUID database
+ownership and transactional stats fencing, including reused instance IDs and
+red/green stale ACK regression. Remaining callbacks/logs/in-memory effects and
+all-replica upgrade acceptance are explicit gaps. Prove
 that late disconnects, stale heartbeats and configuration acknowledgements cannot
 clobber a newer owner. Implement the demonstrated root-cause fix, not another
 process-local mutex. Exit: regression is red without the fix and green with it;

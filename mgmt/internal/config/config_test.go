@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestLoadValidation(t *testing.T) {
 	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x/y", "NEXORA_CA_CERT_FILE": "/c", "NEXORA_CA_KEY_FILE": "/k"}
 	for name, mutate := range map[string]func(m map[string]string){
 		"missing db":          func(m map[string]string) { delete(m, "NEXORA_DATABASE_URL") },
-		"bad backend":         func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "loki" },
+		"bad backend":         func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "elastic" },
 		"opensearch no url":   func(m map[string]string) { m["NEXORA_QUERYLOG_BACKEND"] = "opensearch" },
 		"bad cookies":         func(m map[string]string) { m["NEXORA_SECURE_COOKIES"] = "maybe" },
 		"oidc no client":      func(m map[string]string) { m["NEXORA_OIDC_ISSUER"] = "https://idp" },
@@ -96,5 +97,43 @@ func TestConfigBootstrapToken(t *testing.T) {
 	m["NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL"] = "500ms"
 	if _, err := config.Load(env(m)); err == nil || !strings.Contains(err.Error(), "NEXORA_BOOTSTRAP_TOKEN_RELOAD_INTERVAL") {
 		t.Fatalf("500ms interval: %v", err)
+	}
+}
+
+func TestLoadQueryLogBackends(t *testing.T) {
+	base := map[string]string{"NEXORA_DATABASE_URL": "postgres://x", "NEXORA_CA_CERT_FILE": "c", "NEXORA_CA_KEY_FILE": "k"}
+	load := func(extra map[string]string) (config.Config, error) {
+		m := maps.Clone(base)
+		maps.Copy(m, extra)
+		return config.Load(env(m))
+	}
+	c, err := load(map[string]string{"NEXORA_QUERYLOG_BACKEND": "clickhouse", "NEXORA_CLICKHOUSE_URL": "http://ch:8123/"})
+	if err != nil || c.ClickHouse.URL != "http://ch:8123" || c.ClickHouse.Database != "nexora" || c.ClickHouse.Table != "querylog" || c.ClickHouse.Username != "default" {
+		t.Fatalf("clickhouse defaults: %+v %v", c.ClickHouse, err)
+	}
+	c, err = load(map[string]string{"NEXORA_QUERYLOG_BACKEND": "loki", "NEXORA_LOKI_URL": "http://loki:3100/", "NEXORA_LOKI_TENANT": "t1"})
+	if err != nil || c.Loki.URL != "http://loki:3100" || c.Loki.Selector != `{service_name="nexora-engine"}` || c.Loki.Lookback != 168*time.Hour || c.Loki.Tenant != "t1" {
+		t.Fatalf("loki defaults: %+v %v", c.Loki, err)
+	}
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "clickhouse"}, "NEXORA_CLICKHOUSE_URL is required when NEXORA_QUERYLOG_BACKEND=clickhouse"},
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "loki"}, "NEXORA_LOKI_URL is required when NEXORA_QUERYLOG_BACKEND=loki"},
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "loki", "NEXORA_LOKI_URL": "http://l", "NEXORA_LOKI_SELECTOR": `service_name="x"`}, "NEXORA_LOKI_SELECTOR must be a LogQL stream selector in braces"},
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "loki", "NEXORA_LOKI_URL": "http://l", "NEXORA_LOKI_LOOKBACK": "30m"}, "NEXORA_LOKI_LOOKBACK must be a duration between 1h and 721h"},
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "loki", "NEXORA_LOKI_URL": "http://l", "NEXORA_LOKI_LOOKBACK": "800h"}, "NEXORA_LOKI_LOOKBACK must be a duration between 1h and 721h"},
+		{map[string]string{"NEXORA_QUERYLOG_BACKEND": "elastic"}, "NEXORA_QUERYLOG_BACKEND must be builtin, opensearch, clickhouse or loki"},
+	} {
+		if _, err := load(tc.env); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v -> %v, want %q", tc.env, err, tc.want)
+		}
+	}
+	if c, err := load(nil); err != nil || c.QueryLogBackend != "builtin" {
+		t.Fatalf("builtin default unchanged: %v %v", c.QueryLogBackend, err)
+	}
+	if _, err := load(map[string]string{"NEXORA_QUERYLOG_BACKEND": "opensearch", "NEXORA_OPENSEARCH_URL": "http://os"}); err != nil {
+		t.Fatalf("opensearch unchanged: %v", err)
 	}
 }

@@ -79,7 +79,8 @@ func (s *Scheduler) listen(ctx context.Context) error {
 		return store.MapError(err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	if _, err := conn.Exec(ctx, "LISTEN "+zone.RefreshChannel); err != nil {
+	// Static SQL identifier matching zone.RefreshChannel; LISTEN has no value parameters.
+	if _, err := conn.Exec(ctx, "LISTEN nexora_zone_refresh"); err != nil {
 		return store.MapError(err)
 	}
 	for {
@@ -177,6 +178,12 @@ func (s *Scheduler) refreshLocked(ctx context.Context, id uuid.UUID) error {
 // Notify handles a NOTIFY for zoneName forwarded by an engine from source ("ip:port"): when source
 // is one of the secondary zone's primaries, the zone is refreshed now.
 func (s *Scheduler) Notify(ctx context.Context, zoneName, source string) error {
+	return s.Store.InTx(ctx, func(tx pgx.Tx) error { return s.NotifyTx(ctx, tx, zoneName, source) })
+}
+
+// NotifyTx schedules a refresh using the caller's transaction. No transfer IO is
+// performed here; the scheduler observes the notification only after commit.
+func (s *Scheduler) NotifyTx(ctx context.Context, tx pgx.Tx, zoneName, source string) error {
 	host, _, err := net.SplitHostPort(source)
 	if err != nil {
 		NotifyIgnored.Inc()
@@ -189,7 +196,7 @@ func (s *Scheduler) Notify(ctx context.Context, zoneName, source string) error {
 	}
 	var id uuid.UUID
 	var raw []byte
-	err = s.Store.Pool.QueryRow(ctx, "SELECT id, primaries FROM zones WHERE name = $1 AND kind = 'secondary'", dns.CanonicalName(zoneName)).Scan(&id, &raw)
+	err = tx.QueryRow(ctx, "SELECT id, primaries FROM zones WHERE name = $1 AND kind = 'secondary' FOR UPDATE", dns.CanonicalName(zoneName)).Scan(&id, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		NotifyIgnored.Inc()
 		return fmt.Errorf("NOTIFY for %q: no such secondary zone", zoneName)
@@ -203,7 +210,7 @@ func (s *Scheduler) Notify(ctx context.Context, zoneName, source string) error {
 	}
 	for _, p := range primaries {
 		if ap, err := netip.ParseAddrPort(p.Address); err == nil && ap.Addr().Unmap() == ip.Unmap() {
-			return zone.RequestRefresh(ctx, s.Store.Pool, id, "notify")
+			return zone.RequestRefresh(ctx, tx, id, "notify")
 		}
 	}
 	NotifyIgnored.Inc()

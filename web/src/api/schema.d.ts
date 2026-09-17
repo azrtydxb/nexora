@@ -2047,6 +2047,7 @@ export interface components {
       } | null;
     };
     QueryLogPage: {
+      /** @description builtin, opensearch, clickhouse or loki */
       backend: string;
       records: components["schemas"]["QueryLogRecord"][];
       next_cursor: string;

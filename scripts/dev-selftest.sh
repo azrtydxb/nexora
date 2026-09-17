@@ -32,6 +32,16 @@ command -v dnsperf >/dev/null || {
 	echo "MISSING: dnsperf"
 	fail=1
 }
+check clickhouse --version
+clickhouse --version 2>/dev/null | grep -q '26\.8\.4\.11' || {
+	echo "WRONG or MISSING clickhouse (want 26.8.4.11)"
+	fail=1
+}
+check loki --version
+loki --version 2>/dev/null | grep -q 'version 3\.6\.7' || {
+	echo "WRONG or MISSING loki (want 3.6.7)"
+	fail=1
+}
 check cargo fuzz --help
 check rsync --version
 [ -d /work ] && [ -w /work ] || {

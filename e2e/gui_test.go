@@ -109,17 +109,12 @@ func TestGUICoverage(t *testing.T) {
 }
 
 func TestQueryLogBackends(t *testing.T) {
-	for _, backend := range []string{"builtin", "opensearch"} {
+	for _, backend := range []string{"builtin", "opensearch", "clickhouse", "loki"} {
 		t.Run(backend, func(t *testing.T) {
 			env := harness.New(t)
 			pg := env.StartPostgres()
 			ca := env.InitCA()
-			opts := harness.MgmtOptions{QueryLogBackend: backend}
-			if backend == "opensearch" {
-				col := env.StartOtelcol(harness.OtelcolConfig{OpenSearchURL: harness.OpenSearchURL(t), DebugFile: env.Dir + "/otel.jsonl"})
-				opts.OpenSearchURL = harness.OpenSearchURL(t)
-				opts.OTLPEndpoint = "http://" + col.OTLPGRPC
-			}
+			opts := queryLogMgmtOptions(t, env, backend)
 			mgmt := env.StartMgmt(pg, ca, opts)
 			api := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
 			api.DisableForwardedValidation() // fixture upstreams serve unsigned data under the real root anchor
@@ -203,6 +198,30 @@ func TestQueryLogBackends(t *testing.T) {
 				if c := count("qtype=MX"); c != 1 {
 					t.Fatalf("single value: %d", c)
 				}
+			})
+			t.Run("dashboard-top", func(t *testing.T) {
+				n := strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10)
+				for i := 0; i < 5; i++ {
+					harness.MustQuery(t, eng.DNS, "dt-"+n+".test.", dns.TypeA, harness.QueryOpts{})
+				}
+				harness.MustQuery(t, eng.DNS, "dt-other-"+n+".test.", dns.TypeA, harness.QueryOpts{})
+				harness.MustQuery(t, eng.DNS, "dt-other-"+n+".test.", dns.TypeA, harness.QueryOpts{})
+				var top struct {
+					Available bool `json:"available"`
+					Domains   []struct {
+						Key   string `json:"key"`
+						Count int64  `json:"count"`
+					} `json:"domains"`
+				}
+				harness.EventuallyTrue(t, 60*time.Second, func() bool {
+					api.Must("GET", "/dashboard/top?range=15m&limit=50", nil, &top, 200)
+					for _, d := range top.Domains {
+						if d.Key == "dt-"+n+".test." && d.Count == 5 {
+							return top.Available
+						}
+					}
+					return false
+				}, "dashboard top counts dt-<n> five times")
 			})
 		})
 	}

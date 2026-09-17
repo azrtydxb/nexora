@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,13 @@ import (
 type OtelcolConfig struct {
 	OpenSearchURL, JaegerOTLP string
 	DebugFile                 string
+	OpenSearchIndex           string // default "nexora-querylog-v2"
+	ClickHouseNative          string // host:port of the native protocol; "" omits the exporter
+	ClickHouseDatabase        string // default "nexora"
+	ClickHouseTable           string // default "querylog"
+	ClickHouseUser            string
+	ClickHousePassword        string
+	LokiURL                   string // base URL, e.g. http://127.0.0.1:3100; "" omits the exporter
 }
 
 // Otelcol is a running otelcol-contrib. OTLPGRPC is its OTLP gRPC receiver host:port.
@@ -38,6 +46,13 @@ processors:
           - set(attributes["nexora.filter.result"], attributes["nexora.filter"]) where attributes["nexora.filter"] != nil
           - delete_key(attributes, "nexora.filter")
 {{- end}}
+{{- if .LokiURL}}
+  transform/loki:
+    log_statements:
+      - context: log
+        statements:
+          - set(log.body, Concat([log.attributes["client.address"], log.attributes["dns.question.name"], log.attributes["dns.question.type"], log.attributes["nexora.transport"], log.attributes["nexora.engine.id"]], " "))
+{{- end}}
 exporters:
   debug: { verbosity: basic }
 {{- if .DebugFile}}
@@ -47,8 +62,24 @@ exporters:
   opensearch:
     http:
       { endpoint: "{{.OpenSearchURL}}", tls: { insecure_skip_verify: true } }
-    logs_index: "nexora-querylog-v2"
+    logs_index: "{{.OpenSearchIndex}}"
     logs_index_time_format: "yyyy.MM.dd"
+{{- end}}
+{{- if .ClickHouseNative}}
+  clickhouse:
+    endpoint: "tcp://{{.ClickHouseNative}}"
+    database: "{{.ClickHouseDatabase}}"
+    logs_table_name: "{{.ClickHouseTable}}"
+    username: "{{.ClickHouseUser}}"
+    password: "{{.ClickHousePassword}}"
+    create_schema: false
+    timeout: 5s
+    retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 5s, max_elapsed_time: 60s }
+{{- end}}
+{{- if .LokiURL}}
+  otlphttp/loki:
+    endpoint: "{{.LokiURL}}/otlp"
+    tls: { insecure: true }
 {{- end}}
 {{- if .JaegerOTLP}}
   otlp/jaeger:
@@ -72,6 +103,17 @@ service:
         exporters: [opensearch],
       }
 {{- end}}
+{{- if .ClickHouseNative}}
+    logs/clickhouse: { receivers: [otlp], processors: [batch], exporters: [clickhouse] }
+{{- end}}
+{{- if .LokiURL}}
+    logs/loki:
+      {
+        receivers: [otlp],
+        processors: [batch, transform/loki],
+        exporters: [otlphttp/loki],
+      }
+{{- end}}
     traces:
       {
         receivers: [otlp],
@@ -80,6 +122,21 @@ service:
       }
     metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
 `))
+
+// RenderOtelcolConfig renders the collector config for cfg with the OTLP gRPC receiver on grpc.
+func RenderOtelcolConfig(cfg OtelcolConfig, grpc string) ([]byte, error) {
+	cfg.OpenSearchIndex = cmp.Or(cfg.OpenSearchIndex, "nexora-querylog-v2")
+	cfg.ClickHouseDatabase = cmp.Or(cfg.ClickHouseDatabase, "nexora")
+	cfg.ClickHouseTable = cmp.Or(cfg.ClickHouseTable, "querylog")
+	var buf bytes.Buffer
+	if err := otelcolTemplate.Execute(&buf, struct {
+		OtelcolConfig
+		GRPC string
+	}{cfg, grpc}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // StartOtelcol writes a collector config for cfg and starts otelcol-contrib, waiting until it
 // reports ready and its OTLP gRPC port accepts connections. The collector cannot report a port-0
@@ -93,14 +150,11 @@ func (e *Env) StartOtelcol(cfg OtelcolConfig) *Otelcol {
 	o := &Otelcol{ConfigPath: filepath.Join(dir, "config.yaml")}
 	for attempt := 1; ; attempt++ {
 		o.OTLPGRPC = fmt.Sprintf("127.0.0.1:%d", e.FreePort())
-		var buf bytes.Buffer
-		if err := otelcolTemplate.Execute(&buf, struct {
-			OtelcolConfig
-			GRPC string
-		}{cfg, o.OTLPGRPC}); err != nil {
+		raw, err := RenderOtelcolConfig(cfg, o.OTLPGRPC)
+		if err != nil {
 			e.T.Fatal(err)
 		}
-		if err := os.WriteFile(o.ConfigPath, buf.Bytes(), 0o600); err != nil {
+		if err := os.WriteFile(o.ConfigPath, raw, 0o600); err != nil {
 			e.T.Fatal(err)
 		}
 		if o.start(e, attempt < portAttempts) {

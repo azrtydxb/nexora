@@ -2,7 +2,7 @@
 
 Namespace `nexora` on the kw cluster (context `kw`). Nexora itself is the Helm release `nexora` from
 `deploy/helm/nexora` with `values-kw.yaml` plus `values-pairs.yaml`; supporting services (CNPG,
-OpenSearch, collector, block list, BIND primary) are plain manifests here. The guarded workflow
+OpenSearch, ClickHouse, collector, block list, BIND primary) are plain manifests here. The guarded workflow
 upgrades an existing healthy kw installation; it refuses fresh installs and legacy resource adoption.
 The four-engine topology is deployed as `sha-809cf3a` (Helm revision 35); strict acceptance passed.
 Forced member-failure testing remains outstanding. Live evidence is recorded
@@ -15,7 +15,8 @@ scripts/kw-acceptance.sh
 ```
 
 `kw-deploy.sh` builds and pushes `nexora-engine` and `nexora-mgmt` from a clean worktree of HEAD
-(`scripts/build-image.sh`, which stamps the tag into both binaries), applies the manifests here,
+(`scripts/build-image.sh`, which stamps the tag into both binaries), applies the manifests here
+(including the ClickHouse schema and its separate reader/writer credentials),
 requires the existing CA, key-encryption key, demo TSIG key and DNS TLS secrets, removes the label
 `nexora.io/engine-group` of the former engine group `edge-b` from `worker-24` and `worker-25`, and
 upgrades the release in serial stages. One non-expiring `nexora-deploy-lock` ConfigMap covers
@@ -47,9 +48,13 @@ kubectl --context kw -n nexora get secret nexora-db-app -o jsonpath='{.data.uri}
 
 `scripts/kw-acceptance.sh [run pattern]` copies the Nexora CA (verifies the DNS TLS certificate), the
 cluster CA (verifies the ingress; the pod does not trust it) and the admin password into the dev pod
-(`/work/kw-ca.crt`, `/work/kw-cluster-ca.crt`, `/work/kw-admin-password`), and runs `TestKwSmoke`,
-`TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories` (default pattern
-`TestKwSmoke|TestKwFullProduct|TestKwFilterCategories`) in the dev pod with the whole environment set.
+(`/work/kw-ca.crt`, `/work/kw-cluster-ca.crt`, `/work/kw-admin-password`) and the ClickHouse reader
+password (`/work/kw-clickhouse-password`) into the dev pod, and runs `TestKwSmoke`, `TestKwSmokeM4`,
+`TestKwFullProduct`, `TestKwSmokeAI`, `TestKwFilterCategories` (`./e2e`) and `TestKwQueryLogBackends`
+(`./mgmt/internal/querylog/e2e`, which may import the internal adapters) one package at a time
+(default pattern `TestKwSmoke|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI|TestKwQueryLogBackends`) in the
+dev pod with the whole environment set, including `NEXORA_KW_OPENSEARCH_URL`,
+`NEXORA_KW_CLICKHOUSE_URL`, `NEXORA_KW_CLICKHOUSE_PASSWORD_FILE` and `NEXORA_KW_LOKI_URL`.
 
 `TestKwSmokeM4` creates a primary zone `smoke-<unix time>.nexora-smoke.test.`, checks the
 authoritative answer (AA), an AXFR over the TCP LoadBalancer and online signing (RRSIG after
@@ -80,8 +85,9 @@ Manual checks: `delv @192.168.10.136 dnssec-failed.org` fails (bogus, SERVFAIL, 
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `namespace.yaml`    | Namespace `nexora`                                                                                                                                                                                                 |
 | `opensearch.yaml`   | StatefulSet/Service `opensearch` (query-log backend)                                                                                                                                                               |
+| `clickhouse.yaml`   | ConfigMap `clickhouse-config`, StatefulSet/Service `clickhouse` (ClickHouse query-log backend, users `nexora_writer`/`nexora_reader`)                                                                              |
 | `cnpg-cluster.yaml` | CNPG Cluster `nexora-db` (app secret `nexora-db-app`, key `uri`)                                                                                                                                                   |
-| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, traces to `jaeger.observability.svc:4317`                                                                                                                                    |
+| `otelcol.yaml`      | `nexora-otelcol`: logs to OpenSearch, ClickHouse and Loki, traces to `jaeger.observability.svc:4317`                                                                                                               |
 | `blocklist.yaml`    | `nexora-blocklist`: static block list for the smoke test                                                                                                                                                           |
 | `values-kw.yaml`    | Helm release `nexora` (`deploy/helm/nexora`): `nexora-mgmt` (2 replicas), DaemonSets `nexora-engine-a` and `nexora-engine-b`, DNS LoadBalancers, gRPC LoadBalancer, TLS Ingress, ServiceMonitor and PrometheusRule |
 | `values-pairs.yaml` | Guarded overlay: four engines, two VIP pairs, isolated c/d state and frozen-by-default controllers                                                                                                                 |
@@ -239,6 +245,9 @@ replacement CA/KEK material to get past the gate. Certificate rotation is a sepa
 - `nexora-join-token` (`join-token`), by `bootstrap.sh` from `POST /api/v1/join-tokens`
   (engine group `default`, valid one year, reusable by every engine pod).
 - `nexora-db-app` is generated by CNPG.
+- `nexora-clickhouse` (`writer-password`, `reader-password`: 32 random bytes each, base64), by
+  `scripts/kw-deploy.sh`; the ClickHouse users `nexora_writer` (collector) and `nexora_reader` read
+  them from the environment (`from_env` in `users.d/nexora.xml`).
 
 ## Key storage and HSMs
 
@@ -310,6 +319,24 @@ kubectl --context kw -n nexora exec <engine pod> -c engine -- cat /sys/fs/cgroup
 ```
 
 The GUI query log (Query log, filter `blocked`) shows the category of each blocked name.
+
+## Query-log backends
+
+The collector fans every query-log record out to three destinations: OpenSearch (pipeline `logs`, read
+by the console; the kw management plane stays on `opensearch`), ClickHouse (pipeline `logs/clickhouse`
+into `nexora.querylog` from `deploy/clickhouse/querylog.sql`, 7-day TTL, written as `nexora_writer`
+and read as `nexora_reader`, both passwords in Secret `nexora-clickhouse` keys `writer-password` and
+`reader-password`, generated once by `kw-deploy.sh`; the grants live in the users' XML because XML
+users cannot receive SQL `GRANT`) and the shared Loki in `monitoring` (pipeline `logs/loki` to
+`http://loki.monitoring.svc:3100/otlp`, 168 h retention; nothing in `monitoring` is changed).
+The ClickHouse and Loki exporters each queue up to 5,000 batches and retry for up to 5 minutes.
+`TestKwQueryLogBackends` sends 20 fresh queries over `192.168.10.136` and `192.168.10.139` and checks
+that all three backends return the same records, and the same top names and clients over a settled
+ten-minute window. Read the reader password with:
+
+```sh
+kubectl --context kw -n nexora get secret nexora-clickhouse -o jsonpath='{.data.reader-password}' | base64 -d
+```
 
 ## Resolution settings
 

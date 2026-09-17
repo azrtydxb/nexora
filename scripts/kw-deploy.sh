@@ -94,6 +94,32 @@ for secret in nexora-ca nexora-kek nexora-demo-tsig nexora-dns-tls nexora-join-t
 done
 guard
 kubectl --context "$ctx" apply -f "$kw/namespace.yaml"
+# ClickHouse query-log backend (M10): passwords generated once (only in the temporary directory and the
+# Secret, never on a command line), schema applied idempotently.
+# Only an authoritative NotFound permits first-time credential creation. Transport/RBAC
+# errors fail closed; never rotate credentials for an existing ClickHouse workload.
+ch_secret=$(k get secret nexora-clickhouse --ignore-not-found -o name)
+if [ -z "$ch_secret" ]; then
+	ch_existing=$(k get statefulset clickhouse --ignore-not-found -o name)
+	ch_data=$(k get pvc data-clickhouse-0 --ignore-not-found -o name)
+	if [ -n "$ch_existing" ] || [ -n "$ch_data" ]; then
+		echo "required existing Secret nexora-clickhouse unavailable; restore it before upgrading" >&2
+		exit 1
+	fi
+	(
+		umask 077
+		openssl rand -base64 32 | tr -d '\n' >"$tmp/ch-writer"
+		openssl rand -base64 32 | tr -d '\n' >"$tmp/ch-reader"
+		k create secret generic nexora-clickhouse --from-file=writer-password="$tmp/ch-writer" \
+			--from-file=reader-password="$tmp/ch-reader"
+	)
+	rm -f "$tmp/ch-writer" "$tmp/ch-reader"
+fi
+k apply -f "$kw/clickhouse.yaml"
+ch_sha=$(shasum -a 256 "$kw/clickhouse.yaml" | cut -c1-16)
+k patch statefulset clickhouse -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"nexora.io/config-sha\":\"$ch_sha\"}}}}}"
+k rollout status statefulset/clickhouse --timeout=5m
+k exec -i clickhouse-0 -c clickhouse -- clickhouse client --multiquery <"$root/deploy/clickhouse/querylog.sql"
 k apply -f "$kw/opensearch.yaml" -f "$kw/cnpg-cluster.yaml" -f "$kw/otelcol.yaml" -f "$kw/blocklist.yaml"
 # A changed collector ConfigMap does not restart the pod: stamp its hash into the pod template, so the
 # collector (e.g. the nexora-querylog-v2 rename) is live before any engine of the new release sends records.

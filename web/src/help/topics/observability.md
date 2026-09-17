@@ -8,7 +8,9 @@ Engines send a record of every query to the query log without slowing answers; w
 records are dropped instead. The built-in backend keeps the newest records in memory on each management
 instance, only for its own engines, and loses them on restart, so it suits single-instance installs.
 With OpenSearch, engines send their records through an OpenTelemetry Collector and every instance
-searches the same indices. Each record shows why a query was blocked, allowed, rewritten or refused.
+searches the same indices. ClickHouse and Loki work the same way: the collector writes to them and
+every instance reads from them. Loki limits how many series one query may return, so a top list over
+many names is split into several smaller queries. Each record shows why a query was blocked, allowed, rewritten or refused.
 
 The name filter matches part of a name, ignoring case and a trailing dot, so "tube" finds youtube.com.
 The client filter needs the exact address. Filters that take several values match any of them, and

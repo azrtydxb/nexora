@@ -56,8 +56,14 @@ var errNoChange = errors.New("update changes nothing")
 
 // Apply applies req forwarded by engineID and returns the DNS response code for the client.
 func (a *Applier) Apply(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult {
+	return a.ApplyFenced(ctx, engineID, req, nil)
+}
+
+// ApplyFenced checks stream ownership inside the zone mutation transaction, after
+// read-only preparation. The fence and all zone/audit/snapshot writes share tx.
+func (a *Applier) ApplyFenced(ctx context.Context, engineID string, req *controlv1.UpdateRequest, fence func(pgx.Tx) error) *controlv1.UpdateResult {
 	res := &controlv1.UpdateResult{RequestId: req.RequestId}
-	err := a.apply(ctx, engineID, req)
+	err := a.apply(ctx, engineID, req, fence)
 	var re *rcodeError
 	switch {
 	case err == nil, errors.Is(err, errNoChange):
@@ -75,7 +81,7 @@ func (a *Applier) Apply(ctx context.Context, engineID string, req *controlv1.Upd
 	return res
 }
 
-func (a *Applier) apply(ctx context.Context, engineID string, req *controlv1.UpdateRequest) error {
+func (a *Applier) apply(ctx context.Context, engineID string, req *controlv1.UpdateRequest, fence func(pgx.Tx) error) error {
 	if len(req.Message) > maxMessage {
 		return fail(dns.RcodeFormatError, "message too large")
 	}
@@ -107,7 +113,7 @@ func (a *Applier) apply(ctx context.Context, engineID string, req *controlv1.Upd
 		}
 	}
 	actor := auth.Actor{Type: "system", ID: "tsig:" + keyName + "@" + engineID, Name: "tsig:" + keyName}
-	_, err = a.Zones.Mutate(ctx, z.ID, func(tx pgx.Tx, locked *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
+	_, err = a.Zones.MutateFenced(ctx, z.ID, fence, func(tx pgx.Tx, locked *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
 		opts := zone.RebuildOptions{}
 		if locked.Kind != "primary" {
 			return "", nil, nil, opts, fail(dns.RcodeRefused, "zone %s is a secondary zone", locked.Name)

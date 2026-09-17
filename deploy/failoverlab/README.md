@@ -56,3 +56,9 @@ payload equivalence. These are small fixture TXT answers, not actual Nexora poli
 attribution, large DNSSEC responses or MTU coverage. There is no cross-host
 attachment, frontend election/fencing, engine admission/drain, LB failure test or
 live migration here. Those gates remain required before deployment/acceptance.
+
+## Cross-host opt-in extension
+
+See [crosshost/README.md](crosshost/README.md) for the separate two-host,
+two-group namespace VXLAN harness, offline plan validation, parent-operated
+commands and explicit remaining gates. The same-host commands above are unchanged.

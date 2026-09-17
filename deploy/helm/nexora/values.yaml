@@ -29,11 +29,25 @@ mgmt:
     enabled: false # serve the Model Context Protocol at /mcp on the HTTP listener
     readOnly: true # expose only read-only MCP tools
   querylog:
-    backend: builtin # builtin | opensearch
+    backend: builtin # builtin | opensearch | clickhouse | loki
     builtinCapacity: 200000
     opensearch:
       url: ""
       index: nexora-querylog-*
+    # Credentials come only from an existing Secret, mounted at /etc/nexora/querylog/password.
+    clickhouse:
+      url: ""
+      database: nexora
+      table: querylog
+      username: default
+      passwordSecret: { name: "", key: password }
+    loki:
+      url: ""
+      selector: '{service_name="nexora-engine"}'
+      tenant: ""
+      username: ""
+      passwordSecret: { name: "", key: password }
+      lookback: 168h
   extraEnv: []
   extraVolumes: []
   extraVolumeMounts: []

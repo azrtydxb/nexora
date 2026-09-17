@@ -508,8 +508,19 @@ func (s *Service) DeleteZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 // fn, bumps the zone revision, rebuilds the served zone and publishes a config version whose
 // audit row carries fn's action, before and after (after defaults to the resulting zone).
 func (s *Service) Mutate(ctx context.Context, zoneID uuid.UUID, fn func(tx pgx.Tx, z *Zone) (auditAction string, before, after any, opts RebuildOptions, err error), actor auth.Actor) (*Zone, error) {
+	return s.MutateFenced(ctx, zoneID, nil, fn, actor)
+}
+
+// MutateFenced invokes fence in the mutation transaction before locking the zone.
+// The fence must only use tx and is rerun on transaction retries.
+func (s *Service) MutateFenced(ctx context.Context, zoneID uuid.UUID, fence func(pgx.Tx) error, fn func(tx pgx.Tx, z *Zone) (auditAction string, before, after any, opts RebuildOptions, err error), actor auth.Actor) (*Zone, error) {
 	var out *Zone
 	_, err := snapshot.Mutate(ctx, s.Store, s.Build, actor, func(tx pgx.Tx) (auth.Change, error) {
+		if fence != nil {
+			if err := fence(tx); err != nil {
+				return auth.Change{}, err
+			}
+		}
 		z, err := loadZone(ctx, tx, zoneID, true)
 		if err != nil {
 			return auth.Change{}, err

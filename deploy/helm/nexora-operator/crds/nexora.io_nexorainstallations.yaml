@@ -3085,10 +3085,62 @@ spec:
                         enum:
                         - builtin
                         - opensearch
+                        - clickhouse
+                        - loki
                         type: string
                       builtinCapacity:
                         format: int32
                         type: integer
+                      clickhouse:
+                        description: ClickHouseSpec is values `mgmt.querylog.clickhouse`.
+                        properties:
+                          database:
+                            minLength: 1
+                            type: string
+                          passwordSecret:
+                            description: QuerylogPasswordSecret names a key in an
+                              existing Secret; credentials are never inline.
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                type: string
+                            type: object
+                          table:
+                            minLength: 1
+                            type: string
+                          url:
+                            type: string
+                          username:
+                            type: string
+                        type: object
+                      loki:
+                        description: LokiSpec is values `mgmt.querylog.loki`.
+                        properties:
+                          lookback:
+                            minLength: 1
+                            type: string
+                          passwordSecret:
+                            description: QuerylogPasswordSecret names a key in an
+                              existing Secret; credentials are never inline.
+                            properties:
+                              key:
+                                minLength: 1
+                                type: string
+                              name:
+                                type: string
+                            type: object
+                          selector:
+                            minLength: 1
+                            type: string
+                          tenant:
+                            type: string
+                          url:
+                            type: string
+                          username:
+                            type: string
+                        type: object
                       opensearch:
                         default: {}
                         description: OpensearchSpec is values `mgmt.querylog.opensearch`.
@@ -3104,6 +3156,13 @@ spec:
                       rule: '!has(self.backend) || self.backend != ''opensearch''
                         || (has(self.opensearch.url) && size(self.opensearch.url)
                         > 0)'
+                    - message: mgmt.querylog.clickhouse.url is required when mgmt.querylog.backend=clickhouse
+                      rule: '!has(self.backend) || self.backend != ''clickhouse''
+                        || (has(self.clickhouse) && has(self.clickhouse.url) && size(self.clickhouse.url)
+                        > 0)'
+                    - message: mgmt.querylog.loki.url is required when mgmt.querylog.backend=loki
+                      rule: '!has(self.backend) || self.backend != ''loki'' || (has(self.loki)
+                        && has(self.loki.url) && size(self.loki.url) > 0)'
                   replicas:
                     format: int32
                     type: integer

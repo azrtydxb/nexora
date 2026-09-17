@@ -155,3 +155,44 @@ func TestShellPhasesRefuseMissingGuardBeforeCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestSupportClickHouseCredentialsFailClosed(t *testing.T) {
+	guard, err := newMutationGuard(context.Background(), func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.close()
+	for _, mode := range []string{"lookup-error", "missing-existing-secret", "orphaned-data", "pvc-lookup-error"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "unexpected")
+			lookup, workload, pvc := "exit 0", "exit 0", "exit 0"
+			switch mode {
+			case "lookup-error":
+				lookup = "exit 1"
+			case "missing-existing-secret":
+				workload = "echo statefulset.apps/clickhouse; exit 0"
+			case "orphaned-data":
+				pvc = "echo persistentvolumeclaim/data-clickhouse-0; exit 0"
+			case "pvc-lookup-error":
+				pvc = "exit 1"
+			}
+			stub := "#!/bin/sh\ncase \"$*\" in\n*'get secret nexora-clickhouse '*) " + lookup + ";;\n*'get secret '*) exit 0;;\n*'namespace.yaml') exit 0;;\n*'get statefulset clickhouse '*) " + workload + ";;\n*'get pvc data-clickhouse-0 '*) " + pvc + ";;\nesac\necho unexpected >> '" + log + "'\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(stub), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "../../scripts/kw-deploy.sh", "--skip-build", "--tag", "sha-1234567")
+			cmd.Env = guardEnvironment(os.Environ(), map[string]string{"PATH": dir + string(os.PathListSeparator) + os.Getenv("PATH"), "NEXORA_KW_DEPLOY_PHASE": "support", "NEXORA_KW_GUARD_SOCKET": guard.path})
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("unsafe support phase succeeded: %s", out)
+			}
+			if (mode == "missing-existing-secret" || mode == "orphaned-data") && !strings.Contains(string(out), "restore it before upgrading") {
+				t.Fatalf("missing recovery instruction: %s", out)
+			}
+			if _, err := os.Stat(log); !os.IsNotExist(err) {
+				t.Fatal("mutation attempted after failed ClickHouse credential check")
+			}
+		})
+	}
+}

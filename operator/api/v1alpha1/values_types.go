@@ -32,14 +32,48 @@ type OpensearchSpec struct {
 	Index string `json:"index,omitempty"`
 }
 
+// QuerylogPasswordSecret names a key in an existing Secret; credentials are never inline.
+type QuerylogPasswordSecret struct {
+	Name string `json:"name,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key,omitempty"`
+}
+
+// ClickHouseSpec is values `mgmt.querylog.clickhouse`.
+type ClickHouseSpec struct {
+	URL string `json:"url,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Database string `json:"database,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Table          string                 `json:"table,omitempty"`
+	Username       string                 `json:"username,omitempty"`
+	PasswordSecret QuerylogPasswordSecret `json:"passwordSecret,omitempty"`
+}
+
+// LokiSpec is values `mgmt.querylog.loki`.
+type LokiSpec struct {
+	URL string `json:"url,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Selector       string                 `json:"selector,omitempty"`
+	Tenant         string                 `json:"tenant,omitempty"`
+	Username       string                 `json:"username,omitempty"`
+	PasswordSecret QuerylogPasswordSecret `json:"passwordSecret,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	Lookback string `json:"lookback,omitempty"`
+}
+
 // QuerylogSpec is values `mgmt.querylog`.
 // +kubebuilder:validation:XValidation:rule="!has(self.backend) || self.backend != 'opensearch' || (has(self.opensearch.url) && size(self.opensearch.url) > 0)",message="mgmt.querylog.opensearch.url is required when mgmt.querylog.backend=opensearch"
+// +kubebuilder:validation:XValidation:rule="!has(self.backend) || self.backend != 'clickhouse' || (has(self.clickhouse) && has(self.clickhouse.url) && size(self.clickhouse.url) > 0)",message="mgmt.querylog.clickhouse.url is required when mgmt.querylog.backend=clickhouse"
+// +kubebuilder:validation:XValidation:rule="!has(self.backend) || self.backend != 'loki' || (has(self.loki) && has(self.loki.url) && size(self.loki.url) > 0)",message="mgmt.querylog.loki.url is required when mgmt.querylog.backend=loki"
 type QuerylogSpec struct {
-	// +kubebuilder:validation:Enum=builtin;opensearch
+	// +kubebuilder:validation:Enum=builtin;opensearch;clickhouse;loki
 	Backend         string `json:"backend,omitempty"`
 	BuiltinCapacity *int32 `json:"builtinCapacity,omitempty"`
 	// +kubebuilder:default={}
 	Opensearch OpensearchSpec `json:"opensearch,omitempty"`
+	ClickHouse ClickHouseSpec `json:"clickhouse,omitempty"`
+	Loki       LokiSpec       `json:"loki,omitempty"`
 }
 
 // LoadBalancerSpec is values `mgmt.grpcLoadBalancer`.

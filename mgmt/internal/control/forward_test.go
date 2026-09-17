@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/miekg/dns"
 
 	"github.com/piwi3910/nexora/e2e/harness"
@@ -17,11 +18,11 @@ func TestNotifyAndUpdateAreForwardedWithoutBlockingTheStream(t *testing.T) {
 	notified := make(chan *controlv1.NotifyReceived, 1)
 	release := make(chan struct{})
 	f := setupServers(t, 1, nil, func(s *control.Server) {
-		s.OnNotify = func(_ context.Context, _ string, ev *controlv1.NotifyReceived) error {
+		s.OnNotify = func(_ context.Context, _ pgx.Tx, _ string, ev *controlv1.NotifyReceived) error {
 			notified <- ev
 			return nil
 		}
-		s.OnUpdate = func(ctx context.Context, _ string, req *controlv1.UpdateRequest) *controlv1.UpdateResult {
+		s.OnUpdate = func(ctx context.Context, _ string, req *controlv1.UpdateRequest, _ func(pgx.Tx) error) *controlv1.UpdateResult {
 			if req.Zone == "slow.test." {
 				select {
 				case <-release:

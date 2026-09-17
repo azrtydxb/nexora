@@ -92,29 +92,40 @@ flowchart LR
 `nexora-mgmt serve` reads only environment variables
 (`mgmt/internal/config/config.go`). File-based secrets are passed as paths.
 
-| Variable                                                                                     | Default                   | Notes                                                                                         |
-| -------------------------------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `NEXORA_DATABASE_URL`                                                                        | required                  | PostgreSQL connection URL                                                                     |
-| `NEXORA_CA_CERT_FILE`, `NEXORA_CA_KEY_FILE`                                                  | required                  | the engine CA (`nexora-mgmt ca init`)                                                         |
-| `NEXORA_HTTP_LISTEN`                                                                         | `:8080`                   |                                                                                               |
-| `NEXORA_GRPC_LISTEN`                                                                         | `:9443`                   |                                                                                               |
-| `NEXORA_GRPC_SERVER_NAMES`                                                                   | empty                     | comma-separated names and IPs for the gRPC server certificate; must include what engines dial |
-| `NEXORA_PUBLIC_URL`                                                                          | empty                     | external GUI URL, used for OIDC redirects (`<url>/api/v1/auth/oidc/callback`)                 |
-| `NEXORA_SECURE_COOKIES`                                                                      | `true`                    | set `false` only for plain-HTTP test setups                                                   |
-| `NEXORA_QUERYLOG_BACKEND`                                                                    | `builtin`                 | `builtin` or `opensearch`                                                                     |
-| `NEXORA_QUERYLOG_BUILTIN_CAPACITY`                                                           | `200000`                  | records kept in memory per instance                                                           |
-| `NEXORA_OPENSEARCH_URL`, `_INDEX`, `_USERNAME`, `_PASSWORD_FILE`                             | index `nexora-querylog-*` | URL required with `opensearch`                                                                |
-| `NEXORA_OTLP_ENDPOINT`                                                                       | empty                     | OTLP gRPC endpoint handed to engines when the resolver settings and engine group set none     |
-| `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`                                        | empty                     | DoT/DoH/DoQ certificate pushed to engines; both or neither                                    |
-| `NEXORA_DNS_TLS_RELOAD_INTERVAL`                                                             | `30s`                     | minimum `1s`                                                                                  |
-| `NEXORA_KEK_FILE`                                                                            | empty                     | base64 of 32 random bytes; see [Key storage](#key-storage)                                    |
-| `NEXORA_PKCS11_MODULE`, `_TOKEN_LABEL`, `_PIN_FILE`                                          | empty                     | all three or none                                                                             |
-| `NEXORA_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET_FILE`, `_ADMIN_GROUP`, `_OPERATOR_GROUP` | empty                     | client id and secret file required when the issuer is set                                     |
-| `NEXORA_ENGINE_CERT_TTL`                                                                     | `2160h` (90 days)         | lifetime of issued engine certificates, minimum `30s`                                         |
-| `NEXORA_ROLLOUT_TICK`                                                                        | `1s`                      | rollout controller tick, `100ms` to `1m`                                                      |
-| `NEXORA_CATALOG_MIRROR`                                                                      | empty                     | base URL serving every catalog source at `<base>/<source key>` (air-gapped, tests); adds none |
-| `NEXORA_REPOSITORY_URL`                                                                      | empty                     | https URL of the source repository; the GUI links the build commit to `<url>/commit/<sha>`    |
-| `NEXORA_TRUSTED_PROXY_CIDRS`                                                                 | empty                     | reverse proxies whose `X-Forwarded-For` is believed when throttling failed logins             |
+| Variable                                                                                     | Default                          | Notes                                                                                               |
+| -------------------------------------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `NEXORA_DATABASE_URL`                                                                        | required                         | PostgreSQL connection URL                                                                           |
+| `NEXORA_CA_CERT_FILE`, `NEXORA_CA_KEY_FILE`                                                  | required                         | the engine CA (`nexora-mgmt ca init`)                                                               |
+| `NEXORA_HTTP_LISTEN`                                                                         | `:8080`                          |                                                                                                     |
+| `NEXORA_GRPC_LISTEN`                                                                         | `:9443`                          |                                                                                                     |
+| `NEXORA_GRPC_SERVER_NAMES`                                                                   | empty                            | comma-separated names and IPs for the gRPC server certificate; must include what engines dial       |
+| `NEXORA_PUBLIC_URL`                                                                          | empty                            | external GUI URL, used for OIDC redirects (`<url>/api/v1/auth/oidc/callback`)                       |
+| `NEXORA_SECURE_COOKIES`                                                                      | `true`                           | set `false` only for plain-HTTP test setups                                                         |
+| `NEXORA_QUERYLOG_BACKEND`                                                                    | `builtin`                        | `builtin`, `opensearch`, `clickhouse` or `loki`                                                     |
+| `NEXORA_QUERYLOG_BUILTIN_CAPACITY`                                                           | `200000`                         | records kept in memory per instance                                                                 |
+| `NEXORA_OPENSEARCH_URL`, `_INDEX`, `_USERNAME`, `_PASSWORD_FILE`                             | index `nexora-querylog-*`        | URL required with `opensearch`                                                                      |
+| `NEXORA_CLICKHOUSE_URL`                                                                      | empty                            | ClickHouse HTTP interface, e.g. `http://clickhouse:8123`; required with `clickhouse`                |
+| `NEXORA_CLICKHOUSE_DATABASE`                                                                 | `nexora`                         | database holding the query-log table                                                                |
+| `NEXORA_CLICKHOUSE_TABLE`                                                                    | `querylog`                       | query-log table; a plain identifier                                                                 |
+| `NEXORA_CLICKHOUSE_USERNAME`                                                                 | `default`                        | ClickHouse user; give it SELECT only                                                                |
+| `NEXORA_CLICKHOUSE_PASSWORD_FILE`                                                            | empty                            | file holding that user's password; empty sends none                                                 |
+| `NEXORA_LOKI_URL`                                                                            | empty                            | Loki base URL, e.g. `http://loki:3100`; required with `loki`                                        |
+| `NEXORA_LOKI_SELECTOR`                                                                       | `{service_name="nexora-engine"}` | LogQL stream selector of the engine records, in braces                                              |
+| `NEXORA_LOKI_TENANT`                                                                         | empty                            | sent as `X-Scope-OrgID`; empty sends no header                                                      |
+| `NEXORA_LOKI_USERNAME`                                                                       | empty                            | basic auth user; empty sends no credentials                                                         |
+| `NEXORA_LOKI_PASSWORD_FILE`                                                                  | empty                            | file holding the basic auth password                                                                |
+| `NEXORA_LOKI_LOOKBACK`                                                                       | `168h`                           | search and top list window when no start time is given, `1h` to `721h` (checked with every backend) |
+| `NEXORA_OTLP_ENDPOINT`                                                                       | empty                            | OTLP gRPC endpoint handed to engines when the resolver settings and engine group set none           |
+| `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`                                        | empty                            | DoT/DoH/DoQ certificate pushed to engines; both or neither                                          |
+| `NEXORA_DNS_TLS_RELOAD_INTERVAL`                                                             | `30s`                            | minimum `1s`                                                                                        |
+| `NEXORA_KEK_FILE`                                                                            | empty                            | base64 of 32 random bytes; see [Key storage](#key-storage)                                          |
+| `NEXORA_PKCS11_MODULE`, `_TOKEN_LABEL`, `_PIN_FILE`                                          | empty                            | all three or none                                                                                   |
+| `NEXORA_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET_FILE`, `_ADMIN_GROUP`, `_OPERATOR_GROUP` | empty                            | client id and secret file required when the issuer is set                                           |
+| `NEXORA_ENGINE_CERT_TTL`                                                                     | `2160h` (90 days)                | lifetime of issued engine certificates, minimum `30s`                                               |
+| `NEXORA_ROLLOUT_TICK`                                                                        | `1s`                             | rollout controller tick, `100ms` to `1m`                                                            |
+| `NEXORA_CATALOG_MIRROR`                                                                      | empty                            | base URL serving every catalog source at `<base>/<source key>` (air-gapped, tests); adds none       |
+| `NEXORA_REPOSITORY_URL`                                                                      | empty                            | https URL of the source repository; the GUI links the build commit to `<url>/commit/<sha>`          |
+| `NEXORA_TRUSTED_PROXY_CIDRS`                                                                 | empty                            | reverse proxies whose `X-Forwarded-For` is believed when throttling failed logins                   |
 
 Subcommands (`nexora-mgmt` with no arguments prints the usage):
 
@@ -1446,6 +1457,111 @@ Other useful signals: `nexora_mgmt_filter_list_stale == 1`,
   `nexora-querylog-YYYY.MM.DD`; the management plane searches
   `NEXORA_OPENSEARCH_INDEX` (default `nexora-querylog-*`). `deploy/kw/otelcol.yaml`
   is a working collector configuration (logs to OpenSearch, traces to Jaeger).
+- **ClickHouse** (`clickhouse`): engines send OTLP logs to the collector, whose
+  `clickhouse` exporter inserts them into a table Nexora defines; the
+  management plane only reads it, over the HTTP interface.
+  - Apply `deploy/clickhouse/querylog.sql` before starting the exporter. It is
+    idempotent, so re-running it is safe:
+    `clickhouse client --multiquery --queries-file deploy/clickhouse/querylog.sql`.
+    Then create an insert-only user for the collector and a select-only user
+    for the management plane:
+
+    ```sql
+    CREATE USER IF NOT EXISTS nexora_writer IDENTIFIED WITH sha256_password BY '<writer password>';
+    GRANT INSERT ON nexora.querylog TO nexora_writer;
+    CREATE USER IF NOT EXISTS nexora_reader IDENTIFIED WITH sha256_password BY '<reader password>';
+    GRANT SELECT ON nexora.querylog TO nexora_reader;
+    ```
+
+  - Collector exporter (native protocol, collector-contrib 0.160.0). The
+    exporter must not create the table, because the Nexora table adds a row id
+    and the typed columns the management plane reads:
+
+    ```yaml
+    exporters:
+      clickhouse:
+        endpoint: "tcp://clickhouse:9000"
+        database: nexora
+        logs_table_name: querylog
+        username: nexora_writer
+        password: ${env:CLICKHOUSE_WRITER_PASSWORD}
+        create_schema: false
+    service:
+      pipelines:
+        logs/clickhouse:
+          { receivers: [otlp], processors: [batch], exporters: [clickhouse] }
+    ```
+
+    The pipeline needs no `transform/querylog`: the table reads the filter
+    result from either attribute name.
+
+  - Management plane: `NEXORA_CLICKHOUSE_URL` (the HTTP port, 8123 by default),
+    `NEXORA_CLICKHOUSE_USERNAME=nexora_reader` and
+    `NEXORA_CLICKHOUSE_PASSWORD_FILE`; `NEXORA_CLICKHOUSE_DATABASE` and
+    `NEXORA_CLICKHOUSE_TABLE` only when they differ from `nexora.querylog`.
+    Searches and top lists time out after 5 seconds. Top lists are exact
+    counts. A missing table logs `apply deploy/clickhouse/querylog.sql`, and a
+    rejected password logs `check NEXORA_CLICKHOUSE_PASSWORD_FILE`.
+  - Retention is the table's 7-day TTL (`TTL toDateTime(Timestamp) + INTERVAL 7 DAY`,
+    expired parts dropped whole). Edit it in the SQL before the first apply:
+    re-applying the file does not change an existing table.
+  - Schema upgrades ship as new SQL files with their own upgrade note; apply
+    them by hand.
+- **Loki** (`loki`): the collector sends OTLP logs to Loki's native OTLP
+  endpoint, and the management plane reads them through the Loki HTTP API.
+  - Loki 3.x with `allow_structured_metadata: true` in `limits_config`; older
+    Loki or structured metadata off rejects the push (the collector logs it)
+    and searches return nothing. Every engine attribute becomes structured
+    metadata with dots replaced by `_` (`dns_question_name`), and
+    `service_name` is the only index label.
+  - Collector: an `otlphttp` exporter to `<loki>/otlp` with a `transform/loki`
+    processor that sets the log body to the client, name, type, transport and
+    engine, so Loki does not drop two clients' identical names:
+
+    ```yaml
+    processors:
+      transform/loki:
+        log_statements:
+          - context: log
+            statements:
+              - set(log.body, Concat([log.attributes["client.address"], log.attributes["dns.question.name"], log.attributes["dns.question.type"], log.attributes["nexora.transport"], log.attributes["nexora.engine.id"]], " "))
+    exporters:
+      otlphttp/loki:
+        endpoint: "http://loki:3100/otlp"
+    service:
+      pipelines:
+        logs/loki:
+          {
+            receivers: [otlp],
+            processors: [batch, transform/loki],
+            exporters: [otlphttp/loki],
+          }
+    ```
+
+  - Management plane: `NEXORA_LOKI_URL`; `NEXORA_LOKI_SELECTOR` when the
+    records are not in `{service_name="nexora-engine"}`; `NEXORA_LOKI_TENANT`
+    for a multi-tenant Loki (sent as `X-Scope-OrgID`);
+    `NEXORA_LOKI_USERNAME` and `NEXORA_LOKI_PASSWORD_FILE` for basic auth; and
+    `NEXORA_LOKI_LOOKBACK` (default `168h`), the window searched and counted
+    when no start time is given. Searches time out after 5 seconds and top
+    lists after 15.
+  - Top lists run two instant metric queries (`topk`, then every key reaching
+    the k-th count), which keeps ties exact. When Loki refuses them for its
+    `max_query_series` limit (500 by default), both queries rerun over 37
+    partitions of the key, at most 6 at a time: names by their first
+    character after an optional `www.` (0-9, a-z, or none of these), clients
+    and categories by their last character, ignoring a trailing dot. A partition still over the
+    limit shows the top lists as unavailable and logs
+    `loki series limit: raise max_query_series`; raise `max_query_series` for
+    the tenant.
+  - Identical queries from one client, with the same type, transport and
+    engine, in one microsecond collapse into one record: Loki keeps one entry
+    per timestamp and line.
+- **Choosing a backend**: `builtin` for a single management instance without
+  retention; OpenSearch for full-text search, at the cost of a heavy cluster;
+  ClickHouse for large volume with exact top lists over the whole 7 days;
+  Loki when a Grafana stack with Loki already runs, adding no stateful
+  service.
 - **OTLP endpoint** for engines: the group's `otlp_endpoint`, else the
   resolver settings' `otlp_endpoint` (`/settings`, `PUT /api/v1/resolver-settings`),
   else `NEXORA_OTLP_ENDPOINT`. Engines push OTLP metrics every 15 seconds and
@@ -1973,8 +2089,16 @@ validation of forwarded answers.
   held in memory, so DoT/DoH/DoQ handshakes fail
   (`nexora_tls_handshakes_total{result="no_certificate"}`) and TSIG-signed
   transfers, updates and RPZ transfers cannot run until it reconnects.
-- **Built-in query log** is in memory and per instance; use OpenSearch for more
-  than one mgmt replica or for retention.
+- **Built-in query log** is in memory and per instance; use OpenSearch,
+  ClickHouse or Loki for more than one mgmt replica or for retention.
+- **Loki collapses identical queries**: two queries with the same client, name,
+  type, transport and engine in the same microsecond are stored as one record.
+- **Loki top lists and `max_query_series`**: past the series limit, top lists
+  fall back to per-partition queries; a partition still over the limit shows
+  the top lists as unavailable until `max_query_series` is raised.
+- **ClickHouse schema changes are manual**: `deploy/clickhouse/querylog.sql`
+  only creates missing objects, so retention edits and upgrades to an existing
+  table are applied by hand.
 - **Engine logs hold only the last 2,000 lines per engine** and are lost on
   restart; ship them off the engine if you need history.
 - **The query log name filter scans every term of a day's OpenSearch index**;

@@ -19,6 +19,8 @@ type Config struct {
 	QueryLogBackend                                            string
 	QueryLogBuiltinCapacity                                    int
 	OpenSearch                                                 OpenSearchConfig
+	ClickHouse                                                 ClickHouseConfig
+	Loki                                                       LokiConfig
 	OTLPEndpoint                                               string
 	// DNS serving certificate (DoT, DoH, DoQ) pushed to engines; both files or neither.
 	DNSTLSCertFile, DNSTLSKeyFile string
@@ -59,6 +61,17 @@ type OpenSearchConfig struct {
 	URL, Index, Username, PasswordFile string
 }
 
+// ClickHouseConfig configures the ClickHouse query-log backend (HTTP interface).
+type ClickHouseConfig struct {
+	URL, Database, Table, Username, PasswordFile string
+}
+
+// LokiConfig configures the Loki query-log backend.
+type LokiConfig struct {
+	URL, Selector, Tenant, Username, PasswordFile string
+	Lookback                                      time.Duration
+}
+
 // Load reads the configuration through getenv (os.Getenv in production).
 func Load(getenv func(string) string) (Config, error) {
 	get := func(key, def string) string {
@@ -97,6 +110,20 @@ func Load(getenv func(string) string) (Config, error) {
 			Username:     getenv("NEXORA_OPENSEARCH_USERNAME"),
 			PasswordFile: getenv("NEXORA_OPENSEARCH_PASSWORD_FILE"),
 		},
+		ClickHouse: ClickHouseConfig{
+			URL:          strings.TrimRight(getenv("NEXORA_CLICKHOUSE_URL"), "/"),
+			Database:     get("NEXORA_CLICKHOUSE_DATABASE", "nexora"),
+			Table:        get("NEXORA_CLICKHOUSE_TABLE", "querylog"),
+			Username:     get("NEXORA_CLICKHOUSE_USERNAME", "default"),
+			PasswordFile: getenv("NEXORA_CLICKHOUSE_PASSWORD_FILE"),
+		},
+		Loki: LokiConfig{
+			URL:          strings.TrimRight(getenv("NEXORA_LOKI_URL"), "/"),
+			Selector:     strings.TrimSpace(get("NEXORA_LOKI_SELECTOR", `{service_name="nexora-engine"}`)),
+			Tenant:       getenv("NEXORA_LOKI_TENANT"),
+			Username:     getenv("NEXORA_LOKI_USERNAME"),
+			PasswordFile: getenv("NEXORA_LOKI_PASSWORD_FILE"),
+		},
 	}
 	for _, req := range []struct{ key, val string }{
 		{"NEXORA_DATABASE_URL", c.DatabaseURL},
@@ -128,9 +155,25 @@ func Load(getenv func(string) string) (Config, error) {
 		if c.OpenSearch.URL == "" {
 			return Config{}, fmt.Errorf("NEXORA_OPENSEARCH_URL is required when NEXORA_QUERYLOG_BACKEND=opensearch")
 		}
+	case "clickhouse":
+		if c.ClickHouse.URL == "" {
+			return Config{}, fmt.Errorf("NEXORA_CLICKHOUSE_URL is required when NEXORA_QUERYLOG_BACKEND=clickhouse")
+		}
+	case "loki":
+		if c.Loki.URL == "" {
+			return Config{}, fmt.Errorf("NEXORA_LOKI_URL is required when NEXORA_QUERYLOG_BACKEND=loki")
+		}
+		if !strings.HasPrefix(c.Loki.Selector, "{") || !strings.HasSuffix(c.Loki.Selector, "}") {
+			return Config{}, fmt.Errorf("NEXORA_LOKI_SELECTOR must be a LogQL stream selector in braces, got %q", c.Loki.Selector)
+		}
 	default:
-		return Config{}, fmt.Errorf("NEXORA_QUERYLOG_BACKEND must be builtin or opensearch, got %q", c.QueryLogBackend)
+		return Config{}, fmt.Errorf("NEXORA_QUERYLOG_BACKEND must be builtin, opensearch, clickhouse or loki, got %q", c.QueryLogBackend)
 	}
+	lookback, err := time.ParseDuration(get("NEXORA_LOKI_LOOKBACK", "168h"))
+	if err != nil || lookback < time.Hour || lookback > 721*time.Hour {
+		return Config{}, fmt.Errorf("NEXORA_LOKI_LOOKBACK must be a duration between 1h and 721h")
+	}
+	c.Loki.Lookback = lookback
 	if (c.DNSTLSCertFile == "") != (c.DNSTLSKeyFile == "") {
 		return Config{}, fmt.Errorf("NEXORA_DNS_TLS_CERT_FILE and NEXORA_DNS_TLS_KEY_FILE must be set together")
 	}

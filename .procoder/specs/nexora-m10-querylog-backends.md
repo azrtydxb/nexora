@@ -109,9 +109,13 @@ cases.
   2. `sum by (<label>) (count_over_time(...)) >= c` gives every candidate. The adapter sorts by count
      descending, then key ascending, and cuts at k.
   - **Series-limit fallback:** when Loki answers either step with its series-limit error (HTTP 400
-    containing `maximum of series`), both steps are rerun per partition of the key.
-    - There are 37 partitions: the last alphanumeric character of the key (0–9, a–z, case-insensitive,
-      ignoring a trailing dot), plus "none".
+    containing `maximum number of series`, or `maximum of series` in older Loki), both steps are
+    rerun per partition of the key.
+    - There are 37 partitions: 36 for the characters 0–9 and a–z (case-insensitive), plus "none".
+    - Names are partitioned by their first character after one optional leading `www.`, so real
+      traffic (`.com.` names) spreads over partitions. Clients and categories are partitioned by
+      their last character, ignoring a trailing dot (IPv4 clients share their first digits, not
+      their last).
     - At most 6 partition queries run concurrently.
     - The global threshold is the k-th largest count across the partitions' step-1 results.
     - The results are merged the same way as step 2.
@@ -401,8 +405,10 @@ cases.
   - `Filters` applies to `Filter` as in Search.
   - On Loki, a window with no records returns an empty list: step 1 is empty, so step 2 is skipped.
 - **Loki partitions:**
-  - Keys ending in a non-alphanumeric character, or empty after the trailing dot is removed, fall in
-    the "none" partition.
+  - Names that are empty, `www.` alone, or start (after `www.`) with a non-alphanumeric character
+    (the root `.`, `_dmarc.`) fall in the "none" partition; IDN names (`xn--`) fall in `x`.
+  - Clients and categories ending in a non-alphanumeric character, or empty after the trailing dot is
+    removed, fall in the "none" partition.
   - The partition regexes cover every string exactly once.
   - IPv6 client keys end in a hex digit or `:`.
 - **Loki dedupe:** two records with equal nanosecond, client, name, type, transport and engine
@@ -489,7 +495,7 @@ cases.
 - [ ] [S-4] [S-5] [S-6] [S-7] [S-11] `TestQueryLogConformanceLoki` (e2e) starts Loki 3.6.7 from the
       toolbox with kw's `limits_config` and sends the dataset through `otelcol-contrib` with
       `otlphttp/loki` and `transform/loki`. Every subtest passes. A second run, `top-partitioned`,
-      restarts Loki with `MaxQuerySeries: 3`: it first asserts that a plain
+      restarts Loki with `MaxQuerySeries: 5`: it first asserts that a plain
       `sum by (dns_question_name)` query gets the series-limit error, then asserts `Top` still equals
       the reference. Fails if Loki diverges on any subtest, the fallback is not exercised, or the
       same-microsecond `tie-<run>` records collapse.
@@ -503,8 +509,10 @@ cases.
   - `TestLokiTopPartitionFallback` makes the fake answer the series-limit 400 for unpartitioned
     queries, then asserts merged partition results equal the unpartitioned expectation and at most 6
     concurrent requests.
-  - `TestLokiPartitionsCoverEveryKey` checks 10,000 random keys, including empty, trailing-dot,
-    uppercase, IPv6 and non-ASCII keys, and requires each to match exactly one partition regex.
+  - `TestLokiPartitionsCoverEveryKey` checks sample names (`www.`, digits, `_` labels, IDN `xn--`,
+    the root `.`) against their expected partition, and 10,000 random keys (a third behind `www.`,
+    plus empty, trailing-dot, uppercase, IPv6 and non-ASCII keys) for both partition schemes, and
+    requires each to match exactly one partition regex.
   - `TestLokiErrors` asserts that a closed server, 503 and 429 are `ErrBackendUnavailable`, a parse
     error 400 is not, and a partition still over the limit is `ErrBackendUnavailable`.
 

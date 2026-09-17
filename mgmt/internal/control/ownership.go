@@ -29,6 +29,18 @@ func (s *Server) writeConnection(ctx context.Context, query string, args ...any)
 // can deadlock when every pool slot is occupied by an ownership transaction.
 func (s *Server) withConnection(ctx context.Context, sub *subscriber, write func(pgx.Tx) error) error {
 	return s.st.InTx(ctx, func(tx pgx.Tx) error {
+		if err := s.connectionFence(ctx, sub)(tx); err != nil {
+			return err
+		}
+		return write(tx)
+	})
+}
+
+// connectionFence locks ownership in the caller's mutation transaction. The caller
+// must use this transaction for all writes, never commit it in the fence, and do
+// no external network IO while holding it. It must invoke the fence on retries.
+func (s *Server) connectionFence(ctx context.Context, sub *subscriber) func(pgx.Tx) error {
+	return func(tx pgx.Tx) error {
 		var id string
 		err := tx.QueryRow(ctx, `select id::text from engines
    where id = $1 and connection_session = $2 for no key update`, sub.id, sub.sessionID).Scan(&id)
@@ -38,6 +50,6 @@ func (s *Server) withConnection(ctx context.Context, sub *subscriber, write func
 		if err != nil {
 			return err
 		}
-		return write(tx)
-	})
+		return nil
+	}
 }

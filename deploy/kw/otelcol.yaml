@@ -1,5 +1,7 @@
-# OpenTelemetry Collector: engine query-log records to OpenSearch (read back by nexora-mgmt),
-# traces to the cluster Jaeger in namespace observability.
+# OpenTelemetry Collector: engine query-log records fan out to three destinations: OpenSearch (read
+# back by nexora-mgmt), ClickHouse (nexora.querylog in deploy/kw/clickhouse.yaml, as nexora_writer)
+# and the shared Loki in namespace monitoring (native OTLP endpoint); traces to the cluster Jaeger in
+# namespace observability.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,18 +23,43 @@ data:
             statements:
               - set(attributes["nexora.filter.result"], attributes["nexora.filter"]) where attributes["nexora.filter"] != nil
               - delete_key(attributes, "nexora.filter")
+      # Loki drops entries of one stream with equal timestamp and line: make the line the record's
+      # identifying attributes (the attributes themselves arrive as structured metadata).
+      transform/loki:
+        log_statements:
+          - context: log
+            statements:
+              - set(log.body, Concat([log.attributes["client.address"], log.attributes["dns.question.name"], log.attributes["dns.question.type"], log.attributes["nexora.transport"], log.attributes["nexora.engine.id"]], " "))
     exporters:
       debug: { verbosity: basic }
       opensearch:
         http: { endpoint: "http://opensearch.nexora.svc.cluster.local:9200" }
         logs_index: nexora-querylog-v2
         logs_index_time_format: "yyyy.MM.dd"
+      # The table is Nexora's (deploy/clickhouse/querylog.sql, applied by scripts/kw-deploy.sh).
+      clickhouse:
+        endpoint: "tcp://clickhouse.nexora.svc.cluster.local:9000"
+        database: nexora
+        logs_table_name: querylog
+        username: nexora_writer
+        password: "${env:CLICKHOUSE_WRITER_PASSWORD}"
+        create_schema: false
+        timeout: 5s
+        sending_queue: { enabled: true, queue_size: 5000 }
+        retry_on_failure: { enabled: true, max_elapsed_time: 300s }
+      otlphttp/loki:
+        endpoint: "http://loki.monitoring.svc:3100/otlp"
+        tls: { insecure: true }
+        sending_queue: { enabled: true, queue_size: 5000 }
+        retry_on_failure: { enabled: true, max_elapsed_time: 300s }
       otlp/jaeger:
         endpoint: "jaeger.observability.svc:4317"
         tls: { insecure: true }
     service:
       pipelines:
         logs: { receivers: [otlp], processors: [batch, transform/querylog], exporters: [opensearch] }
+        logs/clickhouse: { receivers: [otlp], processors: [batch], exporters: [clickhouse] }
+        logs/loki: { receivers: [otlp], processors: [batch, transform/loki], exporters: [otlphttp/loki] }
         traces: { receivers: [otlp], processors: [batch], exporters: [otlp/jaeger] }
         metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
 ---
@@ -60,6 +87,13 @@ spec:
         - name: otelcol
           image: 192.168.10.131/otel/opentelemetry-collector-contrib:0.160.0
           args: ["--config=/conf/config.yaml"]
+          env:
+            - name: CLICKHOUSE_WRITER_PASSWORD
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: nexora-clickhouse, key: writer-password },
+                }
           ports: [{ name: otlp-grpc, containerPort: 4317 }]
           readinessProbe: { tcpSocket: { port: otlp-grpc }, periodSeconds: 5 }
           resources:

@@ -4,6 +4,11 @@
 {{- $prefix := include "nexora.prefix" . }}
 {{- $m := .Values.mgmt }}
 {{- $otlp := include "nexora.otlpEndpoint" . }}
+{{- /* The query-log password Secret of the selected backend; opensearch and builtin have none. */}}
+{{- $qlSecret := dict }}
+{{- if has $m.querylog.backend (list "clickhouse" "loki") }}
+{{- $qlSecret = (get $m.querylog $m.querylog.backend).passwordSecret }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -76,6 +81,38 @@ spec:
             - name: NEXORA_OPENSEARCH_INDEX
               value: {{ $m.querylog.opensearch.index | quote }}
             {{- end }}
+            {{- if eq $m.querylog.backend "clickhouse" }}
+            {{- with $m.querylog.clickhouse }}
+            - name: NEXORA_CLICKHOUSE_URL
+              value: {{ required "mgmt.querylog.clickhouse.url is required when mgmt.querylog.backend=clickhouse" .url | quote }}
+            - name: NEXORA_CLICKHOUSE_DATABASE
+              value: {{ .database | quote }}
+            - name: NEXORA_CLICKHOUSE_TABLE
+              value: {{ .table | quote }}
+            - name: NEXORA_CLICKHOUSE_USERNAME
+              value: {{ .username | quote }}
+            {{- if .passwordSecret.name }}
+            - { name: NEXORA_CLICKHOUSE_PASSWORD_FILE, value: /etc/nexora/querylog/password }
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if eq $m.querylog.backend "loki" }}
+            {{- with $m.querylog.loki }}
+            - name: NEXORA_LOKI_URL
+              value: {{ required "mgmt.querylog.loki.url is required when mgmt.querylog.backend=loki" .url | quote }}
+            - name: NEXORA_LOKI_SELECTOR
+              value: {{ .selector | quote }}
+            - name: NEXORA_LOKI_TENANT
+              value: {{ .tenant | quote }}
+            - name: NEXORA_LOKI_USERNAME
+              value: {{ .username | quote }}
+            - name: NEXORA_LOKI_LOOKBACK
+              value: {{ .lookback | quote }}
+            {{- if .passwordSecret.name }}
+            - { name: NEXORA_LOKI_PASSWORD_FILE, value: /etc/nexora/querylog/password }
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- with $otlp }}
             - name: NEXORA_OTLP_ENDPOINT
               value: {{ . | quote }}
@@ -133,6 +170,9 @@ spec:
             {{- if $m.dnsTLS.existingSecret }}
             - { name: dns-tls, mountPath: /etc/nexora/dns-tls, readOnly: true }
             {{- end }}
+            {{- if $qlSecret.name }}
+            - { name: querylog-password, mountPath: /etc/nexora/querylog, readOnly: true }
+            {{- end }}
             {{- with $m.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -152,6 +192,14 @@ spec:
         {{- with $m.dnsTLS.existingSecret }}
         - name: dns-tls
           secret: { secretName: {{ . }}, defaultMode: 0440 }
+        {{- end }}
+        {{- if $qlSecret.name }}
+        - name: querylog-password
+          secret:
+            secretName: {{ $qlSecret.name }}
+            defaultMode: 0440
+            items:
+              - { key: {{ required "the query-log passwordSecret.key must not be empty" $qlSecret.key | quote }}, path: password }
         {{- end }}
         {{- with $m.extraVolumes }}
         {{- toYaml . | nindent 8 }}

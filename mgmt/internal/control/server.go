@@ -40,12 +40,14 @@ type Server struct {
 	// It must use tx for all persistence, finish synchronously, and return errors.
 	// The callback may be retried with the transaction; it must not commit tx.
 	OnStats func(ctx context.Context, tx pgx.Tx, engineID string, s *controlv1.Stats) error
-	// OnNotify, when set, receives every NOTIFY an engine accepted for a secondary zone; an error
-	// (NOTIFY ignored) is logged and the stream continues.
-	OnNotify func(ctx context.Context, engineID string, ev *controlv1.NotifyReceived) error
+	// OnNotify schedules a refresh in the ownership transaction. Use tx for all
+	// persistence; no nested pool acquisition, network IO, or application state in memory.
+	OnNotify func(ctx context.Context, tx pgx.Tx, engineID string, ev *controlv1.NotifyReceived) error
 	// OnUpdate, when set, applies a dynamic update an engine forwarded. It runs outside the receive
-	// loop with a 4 s context; without it every update is answered NOTIMP.
-	OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest) *controlv1.UpdateResult
+	// loop with a 4 s context; without it every update is answered NOTIMP. The callback
+	// MUST call fence in its mutation transaction before writing, on every retry.
+	// Preparation may use the pool before that transaction; no network IO under the fence.
+	OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest, fence func(pgx.Tx) error) *controlv1.UpdateResult
 	// EngineCertTTL is the lifetime of issued engine certificates (0: pki.EngineCertValidity).
 	EngineCertTTL time.Duration
 
@@ -157,7 +159,16 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		return err
 	}
 
-	tlsCh := s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
+	var tlsCh <-chan *controlv1.TlsMaterial
+	err = s.withConnection(ctx, sub, func(tx pgx.Tx) error {
+		tlsCh = s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
+		return nil
+	})
+	if err != nil {
+		s.dnsTLS.Unregister(id, tlsCh)
+		return grpcError(err)
+	}
+	sub.tlsCh = tlsCh
 	defer s.dnsTLS.Unregister(id, tlsCh)
 	// A revocation notified between authenticate and register reached no subscriber: check again.
 	if err := s.checkCertificate(ctx, id, serial); err != nil {
@@ -301,8 +312,14 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 		case *controlv1.EngineMessage_NotifyReceived:
 			if s.OnNotify != nil {
 				ev := m.NotifyReceived
-				if nerr := s.OnNotify(ctx, sub.engineID, ev); nerr != nil {
-					slog.Info("notify not acted on", "engine", sub.engineID, "zone", ev.Zone, "source", ev.Source, "err", nerr)
+				nctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err = s.withConnection(nctx, sub, func(tx pgx.Tx) error {
+					return s.OnNotify(nctx, tx, sub.engineID, ev)
+				})
+				cancel()
+				if err != nil && status.Code(err) != codes.Aborted {
+					slog.Info("notify not acted on", "engine", sub.engineID, "zone", ev.Zone, "source", ev.Source, "err", err)
+					err = nil
 				}
 			}
 		case *controlv1.EngineMessage_UpdateRequest:
@@ -312,17 +329,26 @@ func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_Con
 		case *controlv1.EngineMessage_LogBatch:
 			// Only a reply to a request sent on this stream is handed on.
 			if s.logs != nil && sub.takeLogRequest(m.LogBatch.RequestId) {
-				s.logs.Deliver(ctx, m.LogBatch)
+				lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err = s.withConnection(lctx, sub, func(tx pgx.Tx) error {
+					return s.logs.DeliverTx(lctx, tx, m.LogBatch)
+				})
+				cancel()
+				if err == nil {
+					s.logs.Done(m.LogBatch.RequestId)
+				}
 			}
 		case *controlv1.EngineMessage_TlsMaterialResult:
 			res := m.TlsMaterialResult
 			slog.Info("dns tls result", "engine", sub.engineID, "fingerprint", res.FingerprintSha256, "applied", res.Applied, "error", res.Error)
 			err = s.withConnection(ctx, sub, func(tx pgx.Tx) error {
-				s.dnsTLS.Result(sub.engineID, res)
 				return store.UpsertEngineTLSState(ctx, tx, store.EngineTLSState{
 					EngineID: uuid.MustParse(sub.engineID), Fingerprint: res.FingerprintSha256, Applied: res.Applied, Error: res.Error,
 				})
 			})
+			if err == nil {
+				s.dnsTLS.ResultFor(sub.engineID, sub.tlsCh, res)
+			}
 		default:
 			err = status.Error(codes.InvalidArgument, "unexpected message")
 		}
@@ -376,7 +402,7 @@ func (s *Server) update(ctx context.Context, sub *subscriber, req *controlv1.Upd
 		defer func() { <-sub.updateSlots }()
 		uctx, cancel := context.WithTimeout(ctx, updateTimeout)
 		defer cancel()
-		res := s.OnUpdate(uctx, sub.engineID, req)
+		res := s.OnUpdate(uctx, sub.engineID, req, s.connectionFence(uctx, sub))
 		if res == nil {
 			reply(dns.RcodeServerFailure, "")
 			return

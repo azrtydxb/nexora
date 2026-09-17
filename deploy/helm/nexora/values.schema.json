@@ -63,13 +63,48 @@
         "querylog": {
           "type": "object",
           "properties": {
-            "backend": { "enum": ["builtin", "opensearch"] },
+            "backend": {
+              "enum": ["builtin", "opensearch", "clickhouse", "loki"]
+            },
             "builtinCapacity": { "type": "integer", "minimum": 1 },
             "opensearch": {
               "type": "object",
               "properties": {
                 "url": { "type": "string" },
                 "index": { "type": "string" }
+              }
+            },
+            "clickhouse": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "database": { "type": "string", "minLength": 1 },
+                "table": { "type": "string", "minLength": 1 },
+                "username": { "type": "string" },
+                "passwordSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            },
+            "loki": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "selector": { "type": "string", "minLength": 1 },
+                "tenant": { "type": "string" },
+                "username": { "type": "string" },
+                "passwordSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string", "minLength": 1 }
+                  }
+                },
+                "lookback": { "type": "string", "minLength": 1 }
               }
             }
           }

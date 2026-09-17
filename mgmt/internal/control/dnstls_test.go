@@ -62,3 +62,19 @@ func TestDNSTLSFanoutPushesOnlyWhenFingerprintDiffers(t *testing.T) {
 		t.Fatalf("reconnected engine b got %v, want dd", m)
 	}
 }
+
+func TestDNSTLSDelayedResultCannotChangeReplacement(t *testing.T) {
+	f := control.NewDNSTLSFanout()
+	old := f.Register("engine", "old")
+	current := f.Register("engine", "current")
+	f.ResultFor("engine", old, &controlv1.TlsMaterialResult{Applied: true, FingerprintSha256: "next"})
+	f.Set(&pki.DNSTLSMaterial{FingerprintSHA256: "next"})
+	if m := pending(current); m == nil || m.FingerprintSha256 != "next" {
+		t.Fatal("stale result suppressed current stream's material")
+	}
+	f.ResultFor("engine", current, &controlv1.TlsMaterialResult{Applied: true, FingerprintSha256: "next"})
+	f.Set(&pki.DNSTLSMaterial{FingerprintSHA256: "next"})
+	if pending(current) != nil {
+		t.Fatal("current result was not recorded")
+	}
+}

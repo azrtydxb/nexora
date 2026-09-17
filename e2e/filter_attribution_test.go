@@ -65,19 +65,13 @@ type attributedRecord struct {
 }
 
 func TestQueryLogCategoryAttribution(t *testing.T) {
-	for _, backend := range []string{"builtin", "opensearch"} {
+	for _, backend := range []string{"builtin", "opensearch", "clickhouse", "loki"} {
 		t.Run(backend, func(t *testing.T) {
 			// The decision reason names below are fixed, and the OpenSearch index is shared with earlier
 			// runs whose lists no longer exist: those lookups only consider this run's records.
 			since := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
 			s := startCategoryStack(t, "attr-"+backend, func(env *harness.Env) harness.MgmtOptions {
-				o := harness.MgmtOptions{QueryLogBackend: backend}
-				if backend == "opensearch" {
-					col := env.StartOtelcol(harness.OtelcolConfig{OpenSearchURL: harness.OpenSearchURL(t), DebugFile: env.Dir + "/otel.jsonl"})
-					o.OpenSearchURL = harness.OpenSearchURL(t)
-					o.OTLPEndpoint = "http://" + col.OTLPGRPC
-				}
-				return o
+				return queryLogMgmtOptions(t, env, backend)
 			})
 			casino := strings.TrimSuffix(harness.UniqueName("casino"), ".")
 			both := strings.TrimSuffix(harness.UniqueName("both"), ".")

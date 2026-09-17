@@ -87,3 +87,13 @@ func (f *DNSTLSFanout) queue(e *tlsEngine) {
 		FingerprintSha256:   f.current.FingerprintSHA256,
 	}
 }
+
+// ResultFor applies a committed result only to the registration that received it.
+// A delayed result must not change a replacement stream's in-memory fingerprint.
+func (f *DNSTLSFanout) ResultFor(engineID string, ch <-chan *controlv1.TlsMaterial, r *controlv1.TlsMaterialResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e, ok := f.engines[engineID]; ok && e.ch == ch && r.Applied {
+		e.fingerprint = r.FingerprintSha256
+	}
+}

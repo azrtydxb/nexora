@@ -7,13 +7,15 @@ ARG NODE_VERSION=26.7.0
 ARG BUF_VERSION=1.73.0
 ARG OTELCOL_VERSION=0.160.0
 ARG HELM_VERSION=4.3.0
+ARG CLICKHOUSE_VERSION=26.8.4.11
+ARG LOKI_VERSION=3.6.7
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       postgresql postgresql-contrib \
       dnsperf bind9 bind9-dnsutils knot-dnsutils ldnsutils \
       softhsm2 opensc libsofthsm2 \
       protobuf-compiler libprotobuf-dev clang lld cmake pkg-config libssl-dev \
-      rsync jq curl ca-certificates git procps iproute2 less vim-tiny sudo \
+      rsync jq curl unzip ca-certificates git procps iproute2 less vim-tiny sudo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz | tar -C /usr/local -xz \
@@ -21,7 +23,11 @@ RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz | tar -C /us
  && npm install -g pnpm@10 \
  && curl -fsSL -o /usr/local/bin/buf https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-aarch64 && chmod +x /usr/local/bin/buf \
  && curl -fsSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_VERSION}/otelcol-contrib_${OTELCOL_VERSION}_linux_arm64.tar.gz | tar -C /usr/local/bin -xz otelcol-contrib \
- && curl -fsSL https://get.helm.sh/helm-v${HELM_VERSION}-linux-arm64.tar.gz | tar -C /usr/local/bin --strip-components=1 -xz linux-arm64/helm
+ && curl -fsSL https://get.helm.sh/helm-v${HELM_VERSION}-linux-arm64.tar.gz | tar -C /usr/local/bin --strip-components=1 -xz linux-arm64/helm \
+ && curl -fsSL https://github.com/ClickHouse/ClickHouse/releases/download/v${CLICKHOUSE_VERSION}-lts/clickhouse-common-static-${CLICKHOUSE_VERSION}-arm64.tgz \
+      | tar -xz --strip-components=3 -C /usr/local/bin clickhouse-common-static-${CLICKHOUSE_VERSION}/usr/bin/clickhouse \
+ && curl -fsSL -o /tmp/loki.zip https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/loki-linux-arm64.zip \
+ && unzip -p /tmp/loki.zip loki-linux-arm64 > /usr/local/bin/loki && chmod +x /usr/local/bin/loki && rm /tmp/loki.zip
 
 ENV PATH=/usr/local/go/bin:/root/go/bin:/usr/local/cargo/bin:/usr/lib/postgresql/17/bin:$PATH \
     CARGO_TARGET_DIR=/work/target \
@@ -38,5 +44,8 @@ RUN rustup component add clippy rustfmt \
  && npx -y playwright@1.63.0 install --with-deps chromium \
  && useradd -m -s /bin/bash dev
 
+# Default to an unprivileged user; the dedicated development pod explicitly
+# opts into root for namespace and PostgreSQL fixture orchestration.
+USER dev
 WORKDIR /work/nexora
 CMD ["sleep", "infinity"]

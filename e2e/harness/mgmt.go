@@ -41,9 +41,12 @@ func (e *Env) InitCA() *CA {
 // MgmtOptions configures StartMgmt.
 type MgmtOptions struct {
 	QueryLogBackend, OpenSearchURL, OTLPEndpoint string
-	OIDC                                         *OIDCFixture
-	OIDCAdminGroup, OIDCOperatorGroup            string
-	ExtraEnv                                     []string
+	// ClickHouseURL (HTTP interface, read as nexora_reader with ClickHousePasswordFile) and LokiURL
+	// configure the M10 query-log backends.
+	ClickHouseURL, ClickHousePasswordFile, LokiURL string
+	OIDC                                           *OIDCFixture
+	OIDCAdminGroup, OIDCOperatorGroup              string
+	ExtraEnv                                       []string
 	// DNSTLS issues a DNS serving certificate (dns.nexora.test, 127.0.0.1) from the CA into
 	// <env dir>/dnstls and points the instance at it with a 1 s reload interval.
 	DNSTLS bool
@@ -100,6 +103,15 @@ func (e *Env) StartMgmt(pg *Postgres, ca *CA, o MgmtOptions) *Mgmt {
 	}
 	if o.OpenSearchURL != "" {
 		env = append(env, "NEXORA_OPENSEARCH_URL="+o.OpenSearchURL)
+	}
+	if o.ClickHouseURL != "" {
+		env = append(env, "NEXORA_CLICKHOUSE_URL="+o.ClickHouseURL, "NEXORA_CLICKHOUSE_USERNAME=nexora_reader")
+		if o.ClickHousePasswordFile != "" {
+			env = append(env, "NEXORA_CLICKHOUSE_PASSWORD_FILE="+o.ClickHousePasswordFile)
+		}
+	}
+	if o.LokiURL != "" {
+		env = append(env, "NEXORA_LOKI_URL="+o.LokiURL)
 	}
 	if o.OTLPEndpoint != "" {
 		env = append(env, "NEXORA_OTLP_ENDPOINT="+o.OTLPEndpoint)

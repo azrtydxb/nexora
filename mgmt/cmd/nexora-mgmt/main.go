@@ -334,7 +334,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	instanceID := control.NewInstanceID()
 	go control.RunInstanceHeartbeat(ctx, st, instanceID)
-	build := snapshot.BuildConfig{QueryLogToManagement: cfg.QueryLogBackend == "builtin", DefaultOTLPEndpoint: cfg.OTLPEndpoint}
+	build := snapshot.BuildConfig{QueryLogToManagement: queryLogToManagement(cfg), DefaultOTLPEndpoint: cfg.OTLPEndpoint}
 	if _, err := snapshot.EnsureInitial(ctx, st, build); err != nil {
 		return err
 	}
@@ -398,15 +398,9 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if cfg.DNSTLSCertFile != "" {
 		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)
 	}
-	var queryLog querylog.Backend
-	var builtinLog *querylog.Builtin
-	if cfg.QueryLogBackend == "opensearch" {
-		if queryLog, err = querylog.NewOpenSearch(cfg.OpenSearch); err != nil {
-			return err
-		}
-	} else {
-		builtinLog = querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)
-		queryLog = builtinLog
+	queryLog, builtinLog, err := buildQueryLog(cfg)
+	if err != nil {
+		return err
 	}
 	aiRuntime, aiDisabledReason, err := startAI(ctx, aiDeps{Cfg: cfg, Store: st, QueryLog: queryLog, Catalog: cat, Build: build,
 		Validator: &proposal.Validator{Store: st, PublicURL: cfg.PublicURL}, InstanceID: instanceID}, reg)
@@ -453,10 +447,10 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		}
 		return stats.RecordM3WithQuerier(ctx, tx, engineID, s)
 	}
-	controlServer.OnNotify = func(ctx context.Context, _ string, ev *controlv1.NotifyReceived) error {
-		return scheduler.Notify(ctx, ev.Zone, ev.Source)
+	controlServer.OnNotify = func(ctx context.Context, tx pgx.Tx, _ string, ev *controlv1.NotifyReceived) error {
+		return scheduler.NotifyTx(ctx, tx, ev.Zone, ev.Source)
 	}
-	controlServer.OnUpdate = (&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).Apply
+	controlServer.OnUpdate = (&dynupdate.Applier{Zones: zones, TSIG: tsigKeys, Now: time.Now, TSIGCheck: true}).ApplyFenced
 	controlServer.SetLogBroker(logs)
 	controlv1.RegisterEngineControlServer(srv, controlServer)
 	if builtinLog != nil {
@@ -494,3 +488,28 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	}
 	return nil
 }
+
+// buildQueryLog returns the query-log backend cfg selects; builtin is non-nil only for the builtin
+// backend, which also receives engine logs over OTLP gRPC.
+func buildQueryLog(cfg config.Config) (backend querylog.Backend, builtin *querylog.Builtin, err error) {
+	switch cfg.QueryLogBackend {
+	case "builtin":
+		builtin = querylog.NewBuiltin(cfg.QueryLogBuiltinCapacity)
+		return builtin, builtin, nil
+	case "opensearch":
+		backend, err = querylog.NewOpenSearch(cfg.OpenSearch)
+	case "clickhouse":
+		backend, err = querylog.NewClickHouse(cfg.ClickHouse)
+	case "loki":
+		backend, err = querylog.NewLoki(cfg.Loki)
+	default:
+		return nil, nil, fmt.Errorf("unknown query-log backend %q", cfg.QueryLogBackend)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return backend, nil, nil
+}
+
+// queryLogToManagement reports whether engines send their query logs to the management plane.
+func queryLogToManagement(cfg config.Config) bool { return cfg.QueryLogBackend == "builtin" }

@@ -41,7 +41,7 @@ e2e-build: $(if $(wildcard web/package.json),web-build,webui-placeholder)
 	if [ -d bench/cmd/perfgate ]; then go build -o $(BIN)/perfgate ./bench/cmd/perfgate; fi
 
 e2e: e2e-build
-	NEXORA_E2E_BIN_DIR=$(BIN) go test -count=1 -timeout 60m ./e2e/...
+	NEXORA_E2E_BIN_DIR=$(BIN) go test -count=1 -timeout 60m ./e2e/... ./mgmt/internal/querylog/e2e/...
 
 lint: webui-placeholder
 	cargo fmt --all -- --check

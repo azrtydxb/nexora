@@ -54,7 +54,7 @@ mgmt/                                   Go management plane (module root is repo
   internal/api                          oapi-codegen strict server + handlers
   internal/blocklist                    list fetcher/parser
   internal/catalog                      embedded filter category catalog (catalog.yaml) and its sync into filter_lists
-  internal/querylog                     query-log backends (builtin OTLP receiver, OpenSearch)
+  internal/querylog                     query-log backends (builtin OTLP receiver, OpenSearch, ClickHouse, Loki; querylogtest: conformance suite)
   internal/stats                        engine stats samples
   internal/rollout                      (M5) staged rollout state machine, creation, controller
   internal/fleet                        (M5) engine groups, engine views and targets, join tokens,
@@ -443,11 +443,18 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   issued from the CA at start), `NEXORA_PUBLIC_URL`, `NEXORA_SECURE_COOKIES`
   (`true`), `NEXORA_OIDC_ISSUER`, `NEXORA_OIDC_CLIENT_ID`,
   `NEXORA_OIDC_CLIENT_SECRET_FILE`, `NEXORA_OIDC_ADMIN_GROUP`,
-  `NEXORA_OIDC_OPERATOR_GROUP`, `NEXORA_QUERYLOG_BACKEND` (`builtin` |
-  `opensearch`), `NEXORA_QUERYLOG_BUILTIN_CAPACITY` (`200000`),
+  `NEXORA_OIDC_OPERATOR_GROUP`, `NEXORA_QUERYLOG_BUILTIN_CAPACITY` (`200000`),
   `NEXORA_OPENSEARCH_URL`, `NEXORA_OPENSEARCH_INDEX`
   (`nexora-querylog-*`), `NEXORA_OPENSEARCH_USERNAME`,
-  `NEXORA_OPENSEARCH_PASSWORD_FILE`, `NEXORA_OTLP_ENDPOINT`,
+  `NEXORA_OPENSEARCH_PASSWORD_FILE`, `NEXORA_QUERYLOG_BACKEND` (`builtin` |
+  `opensearch` | `clickhouse` | `loki`; default `builtin`), M10:
+  `NEXORA_CLICKHOUSE_URL` (required for `clickhouse`), `NEXORA_CLICKHOUSE_DATABASE`
+  (`nexora`), `NEXORA_CLICKHOUSE_TABLE` (`querylog`), `NEXORA_CLICKHOUSE_USERNAME`
+  (`default`), `NEXORA_CLICKHOUSE_PASSWORD_FILE`, `NEXORA_LOKI_URL` (required for
+  `loki`), `NEXORA_LOKI_SELECTOR` (`{service_name="nexora-engine"}`), `NEXORA_LOKI_TENANT`
+  (sent as `X-Scope-OrgID`; empty sends none), `NEXORA_LOKI_USERNAME`,
+  `NEXORA_LOKI_PASSWORD_FILE`, `NEXORA_LOKI_LOOKBACK` (`168h`, 1h to 721h),
+  `NEXORA_OTLP_ENDPOINT`,
   `NEXORA_DNS_TLS_CERT_FILE`, `NEXORA_DNS_TLS_KEY_FILE`,
   `NEXORA_DNS_TLS_RELOAD_INTERVAL` (`30s`) (M2; the DNS serving certificate
   for DoT/DoH/DoQ, pushed to engines, never stored in PostgreSQL),
@@ -525,6 +532,22 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   because OpenSearch cannot map `nexora.filter` as both a value and the parent
   of `nexora.filter.category`) and writes `nexora-querylog-v2-YYYY.MM.DD`; the
   adapter matches the `filter` parameter on either field.
+- M10 query-log backends. ClickHouse: the collector's `clickhouse` exporter (native protocol,
+  `create_schema: false`) writes into the Nexora-owned table `nexora.querylog` from
+  `deploy/clickhouse/querylog.sql` (the exporter's v0.160.0 log columns, a `RowID UUID` tiebreaker,
+  `MATERIALIZED` typed columns for every attribute the adapter reads, `ngrambf_v1` and
+  `bloom_filter` skip indexes, 7-day TTL with `ttl_only_drop_parts`). The adapter reads over the
+  HTTP interface as `nexora_reader`, every user value a typed query parameter, ordered
+  `Timestamp DESC, RowID ASC` with the cursor `[timestamp_ns, rowid]`. Loki: the collector's
+  `otlphttp/loki` exporter sends to `<loki>/otlp` after `transform/loki` sets the body to
+  `client name type transport engine_id` (Loki drops equal lines at one timestamp); attributes
+  become structured metadata with `.` replaced by `_`. The adapter queries `query_range` backward
+  with label-filter stages, orders by timestamp then a SHA-256 tiebreak key of line and sorted
+  metadata (the cursor), and computes Top in two instant-query steps (`topk` for the k-th count,
+  then every key at or above it) with a 37-partition rerun when Loki answers its series-limit
+  error. Both adapters implement `Topper`. `mgmt/internal/querylog/querylogtest` is the
+  conformance contract: every backend must return the same pages (millisecond sequence and
+  record multiset) and Top lists as a `Builtin` reference fed the same dataset.
 - M6: engine logs are read through `pg_notify('nexora_engine_logs', request)`; the instance
   holding the engine's stream sends `LogRequest` and stores the `LogBatch` in the unlogged table
   `engine_log_replies` (notify `nexora_engine_logs_done`). `engine_stats_rollup` keeps the newest
@@ -559,7 +582,10 @@ The build is embedded into `nexora-mgmt`.
   `nexora-fixture`, `postgres` via `initdb`/`pg_ctl` into a temp dir,
   `otelcol-contrib`) on random free ports inside the dev pod. External shared
   services for tests come from environment variables:
-  `NEXORA_E2E_OPENSEARCH_URL`, `NEXORA_E2E_JAEGER_QUERY_URL`.
+  `NEXORA_E2E_OPENSEARCH_URL`, `NEXORA_E2E_JAEGER_QUERY_URL`. ClickHouse and Loki
+  (M10) run as local processes from the toolbox binaries `clickhouse` (26.8.4.11) and `loki`
+  (3.6.7); the harness collector config gains the ClickHouse and Loki exporters and a per-test
+  OpenSearch index.
 - Binaries come from `NEXORA_E2E_BIN_DIR` (default `target/release` and
   `bin/`), built by `make e2e-build`.
 - Every test that asserts "does not happen" first asserts the positive path in
@@ -911,6 +937,12 @@ join token secret `nexora-join-token`) and removes the former engine group
 `edge-b` (removed 2026-09-14) and engines that no longer run. Acceptance:
 `scripts/kw-acceptance.sh` runs `TestKwSmoke` (which includes `TestKwSmokeM4`),
 `TestKwFullProduct` and `TestKwFilterCategories`.
+
+M10 adds `deploy/kw/clickhouse.yaml` (StatefulSet/Service `clickhouse`, users `nexora_writer` for
+INSERT and `nexora_reader` for SELECT, passwords from Secret `nexora-clickhouse`), and the
+collector fans query logs out to three pipelines: `logs` (OpenSearch), `logs/clickhouse` and
+`logs/loki` (the shared Loki `loki.monitoring.svc:3100`, unchanged). The kw management plane stays
+on `opensearch`; `TestKwQueryLogBackends` proves ClickHouse and Loki against live traffic.
 
 ## AI (M11)
 

@@ -677,7 +677,11 @@ components:
       required: [backend, records, next_cursor]
       properties:
         {
-          backend: { type: string },
+          backend:
+            {
+              type: string,
+              description: "builtin, opensearch, clickhouse or loki",
+            },
           records:
             {
               type: array,

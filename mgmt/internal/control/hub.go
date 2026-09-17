@@ -63,6 +63,7 @@ type Hub struct {
 // subscriber is one connected engine stream. out holds at most one pending message; a newer
 // snapshot replaces an unsent older one.
 type subscriber struct {
+	tlsCh     <-chan *controlv1.TlsMaterial // registration identity; set before receive starts
 	engineID  string
 	sessionID uuid.UUID // unique per stream, including reconnects to this instance
 	id        uuid.UUID

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/proto"
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
@@ -41,8 +42,8 @@ type logNote struct {
 }
 
 // LogBroker reads engine log ring buffers through whichever instance holds the engine's stream:
-// the request goes out as a notification, the reply comes back in process (same instance) or
-// through engine_log_replies and ChannelEngineLogsDone.
+// requests go out as notifications; replies use engine_log_replies and a
+// post-commit local wake or ChannelEngineLogsDone.
 type LogBroker struct {
 	st *store.Store
 
@@ -113,28 +114,24 @@ func (b *LogBroker) Read(ctx context.Context, engineID uuid.UUID, req *controlv1
 	return batch, nil
 }
 
-// Deliver hands an engine's reply to the waiting request: directly when it waits on this
-// instance, otherwise through engine_log_replies and ChannelEngineLogsDone. Errors are logged.
-func (b *LogBroker) Deliver(ctx context.Context, batch *controlv1.LogBatch) {
-	if b.wake(batch.RequestId, batch) {
-		return
-	}
+// DeliverTx persists a reply and its notification atomically in the stream's
+// ownership transaction. Even local waiters read committed data from the table.
+func (b *LogBroker) DeliverTx(ctx context.Context, tx pgx.Tx, batch *controlv1.LogBatch) error {
 	if _, err := uuid.Parse(batch.RequestId); err != nil {
-		return
+		return nil
 	}
 	raw, err := proto.Marshal(batch)
-	if err == nil {
-		_, err = b.st.Pool.Exec(ctx, "insert into engine_log_replies(request_id, batch) values ($1, $2) on conflict do nothing", batch.RequestId, raw)
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		_, err = b.st.Pool.Exec(ctx, "delete from engine_log_replies where created_at < now() - interval '60 seconds'")
+	if _, err = tx.Exec(ctx, "insert into engine_log_replies(request_id, batch) values ($1, $2) on conflict do nothing", batch.RequestId, raw); err != nil {
+		return err
 	}
-	if err == nil {
-		_, err = b.st.Pool.Exec(ctx, "select pg_notify($1, $2)", ChannelEngineLogsDone, batch.RequestId)
+	if _, err = tx.Exec(ctx, "delete from engine_log_replies where created_at < now() - interval '60 seconds'"); err != nil {
+		return err
 	}
-	if err != nil && ctx.Err() == nil {
-		slog.Warn("engine log reply not handed over", "request", batch.RequestId, "err", err)
-	}
+	_, err = tx.Exec(ctx, "select pg_notify($1, $2)", ChannelEngineLogsDone, batch.RequestId)
+	return err
 }
 
 // Done wakes a request of this instance whose reply was stored in engine_log_replies.

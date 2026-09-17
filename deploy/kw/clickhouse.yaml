@@ -1,0 +1,127 @@
+# Single-node ClickHouse for the ClickHouse query-log backend (M10; cluster-internal only, no TLS).
+# The collector writes nexora.querylog (deploy/clickhouse/querylog.sql, applied by scripts/kw-deploy.sh
+# as the loopback-only default user) as nexora_writer; readers use nexora_reader. Both passwords come
+# from Secret nexora-clickhouse (writer-password, reader-password), created by scripts/kw-deploy.sh.
+# Users defined in XML cannot receive SQL GRANT, so their grants live in users.d/nexora.xml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-config
+  namespace: nexora
+data:
+  # mounted as /etc/clickhouse-server/config.d/nexora.xml
+  config.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+      <logger>
+        <level>warning</level>
+        <console>1</console>
+      </logger>
+      <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+    </clickhouse>
+  # mounted as /etc/clickhouse-server/users.d/nexora.xml
+  users.xml: |
+    <clickhouse>
+      <profiles>
+        <!-- readonly 2: no writes, but settings may change (typed query parameters need that) -->
+        <nexora_reader>
+          <readonly>2</readonly>
+        </nexora_reader>
+      </profiles>
+      <users>
+        <default>
+          <networks replace="replace">
+            <ip>::1</ip>
+            <ip>127.0.0.1</ip>
+          </networks>
+          <access_management>1</access_management>
+        </default>
+        <nexora_writer>
+          <password from_env="CLICKHOUSE_WRITER_PASSWORD"/>
+          <networks><ip>::/0</ip></networks>
+          <profile>default</profile>
+          <quota>default</quota>
+          <grants><query>GRANT INSERT ON nexora.querylog</query></grants>
+        </nexora_writer>
+        <nexora_reader>
+          <password from_env="CLICKHOUSE_READER_PASSWORD"/>
+          <networks><ip>::/0</ip></networks>
+          <profile>nexora_reader</profile>
+          <quota>default</quota>
+          <grants><query>GRANT SELECT ON nexora.querylog</query></grants>
+        </nexora_reader>
+      </users>
+    </clickhouse>
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: nexora
+  labels: { app.kubernetes.io/name: clickhouse }
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: clickhouse }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: clickhouse }
+    spec:
+      securityContext: { fsGroup: 101 } # the server runs as uid/gid 101; the volume is root-owned
+      containers:
+        - name: clickhouse
+          image: 192.168.10.131/clickhouse/clickhouse-server:26.8.4.11
+          env:
+            - name: CLICKHOUSE_WRITER_PASSWORD
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: nexora-clickhouse, key: writer-password },
+                }
+            - name: CLICKHOUSE_READER_PASSWORD
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: nexora-clickhouse, key: reader-password },
+                }
+          ports:
+            - { name: http, containerPort: 8123 }
+            - { name: native, containerPort: 9000 }
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "2", memory: 3Gi }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/nexora.xml
+              subPath: config.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/nexora.xml
+              subPath: users.xml
+              readOnly: true
+            - { name: data, mountPath: /var/lib/clickhouse }
+      volumes:
+        - name: config
+          configMap: { name: clickhouse-config }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single
+        resources:
+          requests: { storage: 20Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: nexora
+spec:
+  selector: { app.kubernetes.io/name: clickhouse }
+  ports:
+    - { name: http, port: 8123, targetPort: 8123 }
+    - { name: native, port: 9000, targetPort: 9000 }
