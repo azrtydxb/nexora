@@ -1,6 +1,8 @@
 # Opt-in two-host transport fixture
 
-This is executable laboratory code, **not actual Nexora policy evidence**.
+This is executable laboratory code. Echo results are **not actual Nexora policy
+evidence**. The new opt-in [real-engine acceptance target](REAL_ENGINE.md) is
+implemented, with Linux/cross-host execution pending parent validation.
 Two-host DR tuple verification passed on kw workers 21/22; failed setup/checksum
 experiments and pending controls are recorded in
 `.procoder/notes/wave2-integration.md`. Parent alone runs live experiments.
@@ -111,7 +113,8 @@ Use new run IDs and evidence directories for each independent control. Repeat
 the procedure with `--mode snat` on **both** hosts: all five transports must fail
 with the explicit observed `.12` (left) or `.13` (right) source mismatch; timeout/TLS failures are red.
 `--mode duplicate` deliberately enables backend VIP ARP replies and requires
-iputils arping to observe the frontend MAC plus an extra responder in each group.
+iputils arping to observe exactly the frontend and both assigned backend MACs
+in each group; a random extra responder is a failure.
 Normal DR/SNAT runs require exactly the frontend MAC. Duplicate mode runs no DNS
 probes and must never be passed to the positive verifier. Foreign VNI and malformed
 frame controls are offline unit tests; hostile live packet injection/cross-group
@@ -135,21 +138,13 @@ both hosts stop; evidence contains no copied key.
 
 ## Remaining gates
 
-Actual engine attachment is **not implemented**. Inspected `engine/src/main.rs`
-launches `nexora-engine --config /absolute/engine.toml`; `bootstrap.rs` accepts
-strict TOML with `state_dir`, `standalone_snapshot`, `standalone_blob_dir`, explicit
-five-transport listeners and paired TLS files. `snapshot.rs` reads a protobuf
-`ConfigSnapshot` and validates version/cache/ACL/blob integrity. A TOML-only echo
-substitution would not be a valid engine fixture. A follow-up needs a generated,
-validated disposable snapshot, distinct client policies, query-log attribution,
-isolated state and a response verifier that understands those policies. Existing
-probe TXT source echoes cannot provide that evidence. No production identities,
-join tokens, management URLs or state directories belong in that fixture.
-
-Linux execution, PMTU/fragmentation/large DNSSEC, source-selected multi-route
-return, independent host-identity attestation, sustained cross-group leakage,
-frontend HA/fencing, failure/session continuity and performance remain unresolved.
-This change neither closes FG-01 nor authorizes cluster attachment or migration.
+The [real-engine target](REAL_ENGINE.md) provides disposable standalone engine,
+source policy, actual OTLP, five-transport tuples and large signed/UDP-truncation
+acceptance. It has not been executed on Linux/cross-host in wave3 here. Echo
+results remain separate. Managed control-stream continuity, arbitrary PMTU and
+fragmentation, multi-route return, independent host attestation, sustained
+isolation, frontend HA/fencing, session continuity and performance remain gates.
+FG-01 stays open; no production adapter, LANVIP or migration is claimed.
 
 Offline checks:
 

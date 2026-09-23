@@ -52,7 +52,8 @@ def flows(text):
     return result
 
 
-def verify(path):
+def verify(path, backend="echo"):
+    require(backend in ("echo", "engine"), "unknown backend verifier")
     captures = {n: flows((path / f"packets-{n}.txt").read_text()) for n in "abcd"}
     for n in "abcd":
         log = (path / f"capture-{n}.log").read_text()
@@ -64,7 +65,10 @@ def verify(path):
     backends = captures["a"] | captures["b"]
     requests = {f for f in clients if f[3] == VIP}
     received = {f for f in backends if f[3] == VIP}
-    require(len(requests) == 20, f"expected 20 distinct flows, got {len(requests)}")
+    count = 40 if backend == "engine" else 20
+    require(
+        len(requests) == count, f"expected {count} distinct flows, got {len(requests)}"
+    )
     require(
         requests == received,
         f"source/destination tuple mismatch: {requests ^ received}",
@@ -73,8 +77,8 @@ def verify(path):
         for proto, port in SERVICES:
             require(
                 sum(f[0] == proto and f[1] == client and f[4] == port for f in requests)
-                == 2,
-                f"missing two {proto}/{port} flows from {client}",
+                == (4 if backend == "engine" else 2),
+                f"missing expected {proto}/{port} flows from {client}",
             )
     reverse = {(proto, dst, dp, src, sp) for proto, src, sp, dst, dp in requests}
     require(
@@ -90,7 +94,22 @@ def verify(path):
         ),
         "a flow reached both backends",
     )
-    for n in "ab":
+    if backend == "engine":
+        for n in "ab":
+            for client in CLIENTS:
+                for proto, port in SERVICES:
+                    require(
+                        sum(
+                            f[0] == proto
+                            and f[1] == client
+                            and f[3] == VIP
+                            and f[4] == port
+                            for f in captures[n]
+                        )
+                        == 2,
+                        f"{n}: missing engine client/transport tuple coverage",
+                    )
+    for n in "ab" if backend == "echo" else "":
         peers = PEER.findall((path / f"backend-{n}.log").read_text())
         require(len(peers) == 10, f"{n}: expected ten backend queries")
         require({p[2] for p in peers} == set(TRANSPORT), f"{n}: missing transport")
@@ -100,7 +119,11 @@ def verify(path):
                 ip in CLIENTS and (proto, ip, port, VIP, service) in captures[n],
                 f"{n}: backend socket identity missing from capture",
             )
-    return "PASS: 20 exact bidirectional tuples; two clients; both backends served all five transports."
+    return f"PASS: {count} exact bidirectional tuples; two clients." + (
+        " Both echo backends served all five transports."
+        if backend == "echo"
+        else " Engine attribution requires OTLP verification."
+    )
 
 
 if __name__ == "__main__":

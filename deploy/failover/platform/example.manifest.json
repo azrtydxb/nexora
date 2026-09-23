@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "uid": "group-uid-136",
+  "run": "example-only",
+  "group": "dns136",
+  "vip": "192.168.10.136",
+  "services": [
+    {
+      "protocol": "udp",
+      "port": 53
+    },
+    {
+      "protocol": "tcp",
+      "port": 53
+    },
+    {
+      "protocol": "tcp",
+      "port": 853
+    },
+    {
+      "protocol": "tcp",
+      "port": 443
+    },
+    {
+      "protocol": "udp",
+      "port": 853
+    }
+  ],
+  "backends": [
+    {
+      "slot": "A",
+      "engine_uid": "persistent-a",
+      "address": "198.18.0.2"
+    },
+    {
+      "slot": "C",
+      "engine_uid": "persistent-c",
+      "address": "198.18.0.3"
+    }
+  ],
+  "attachments": [
+    {
+      "role": "frontend",
+      "namespace": "nx-test-1",
+      "inode": 101,
+      "link": "dr0",
+      "ifindex": 2,
+      "mac": "02:00:00:00:00:01",
+      "kind": "veth",
+      "address": "198.18.0.1/24",
+      "mtu": 1400,
+      "returns": []
+    },
+    {
+      "role": "A",
+      "namespace": "nx-test-2",
+      "inode": 102,
+      "link": "dr0",
+      "ifindex": 3,
+      "mac": "02:00:00:00:00:02",
+      "kind": "veth",
+      "address": "198.18.0.2/24",
+      "mtu": 1400,
+      "returns": [
+        {
+          "destination": "198.19.0.0/24",
+          "gateway": "198.18.0.254"
+        }
+      ]
+    },
+    {
+      "role": "C",
+      "namespace": "nx-test-3",
+      "inode": 103,
+      "link": "dr0",
+      "ifindex": 4,
+      "mac": "02:00:00:00:00:03",
+      "kind": "veth",
+      "address": "198.18.0.3/24",
+      "mtu": 1400,
+      "returns": [
+        {
+          "destination": "198.19.0.0/24",
+          "gateway": "198.18.0.254"
+        }
+      ]
+    }
+  ]
+}

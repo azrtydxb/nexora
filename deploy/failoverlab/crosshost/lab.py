@@ -2,6 +2,7 @@
 """Explicit local-only cross-host fixture. No SSH, host routes or host links."""
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import os
@@ -104,6 +105,39 @@ def relay(fd, port, vni, mtu):
                 channel.send(data)
 
 
+def check_arp(result, group, mode):
+    macs = set(re.findall(r"\[([0-9a-fA-F:]{17})\]", result.stdout.lower()))
+    frontend = "02:00:00:71:00:0" + group[-1]
+    expected = {frontend}
+    if mode == "duplicate":
+        expected.update(
+            "02:00:00:72:" + host + ":0" + group[-1] for host in ("00", "01")
+        )
+    require(
+        result.returncode == 0 and macs == expected,
+        f"ARP responders {macs}, expected exactly {expected}",
+    )
+
+
+def check_snat(result, transport, expected, observed):
+    records = [
+        json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")
+    ]
+    require(
+        result.returncode != 0
+        and records
+        == [
+            {
+                "control": "source-mismatch",
+                "transport": transport,
+                "observed": observed,
+                "expected": expected,
+            }
+        ],
+        "negative control failed for wrong reason: " + result.stdout,
+    )
+
+
 class Lab:
     def __init__(self, args, plan):
         self.args, self.plan = args, plan
@@ -112,6 +146,10 @@ class Lab:
         self.probed = False
         self.created_base = False
         self.command_log = None
+        self.engine = getattr(args, "engine", None)
+        if not isinstance(self.engine, str):
+            self.engine = None
+        self.engine_checks = []
 
     def cmd(self, *args):
         if self.command_log:
@@ -132,6 +170,9 @@ class Lab:
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 pass_fds=pass_fds,
+                env={
+                    k: v for k, v in os.environ.items() if not k.startswith("NEXORA_")
+                },
             )
         self.children.append(p)
         return p
@@ -148,12 +189,42 @@ class Lab:
             tools.append("iptables")
         for tool in tools:
             require(shutil.which(tool) is not None, f"missing required tool: {tool}")
+        if self.engine:
+            require(
+                os.getenv("FAILOVER_REAL_ENGINE_ENABLE") == "yes",
+                "FAILOVER_REAL_ENGINE_ENABLE=yes required",
+            )
+            require(
+                self.args.mode == "dr",
+                "real engine requires dr; controls use echo mode",
+            )
+            require(
+                Path(self.engine).is_absolute() and os.access(self.engine, os.X_OK),
+                "absolute engine executable required",
+            )
+        version = self.cmd("arping", "-V")
+        require("iputils" in version.lower(), "iputils arping required (not BusyBox)")
+        if self.args.mode == "snat":
+            self.cmd("iptables", "--version")
         self.base.mkdir(mode=0o700)  # Existing evidence is never reused.
         self.created_base = True
         self.command_log = open(self.base / "commands.jsonl", "w")
         (self.base / "plan.json").write_text(json.dumps(self.plan, indent=2))
         (self.base / "role").write_text(self.args.role)
         (self.base / "mode").write_text(self.args.mode)
+        (self.base / "backend").write_text("engine" if self.engine else "echo")
+        if self.engine:
+            (self.base / "engine-binary.json").write_text(
+                json.dumps(
+                    {
+                        "path": self.engine,
+                        "sha256": hashlib.sha256(
+                            Path(self.engine).read_bytes()
+                        ).hexdigest(),
+                        "version": self.cmd(self.engine, "--version"),
+                    }
+                )
+            )
         os.environ["FAILOVER_LAB_DIR"] = str(Path(self.args.tls).resolve())
         for name in ("cert.pem", "key.pem"):
             require((Path(self.args.tls) / name).is_file(), f"missing fixture {name}")
@@ -167,6 +238,12 @@ class Lab:
             self.plan["hosts"][self.args.role],
             self.plan["hosts"]["right" if left else "left"],
         )
+        if self.engine:
+            self.cmd(
+                self.args.probe,
+                "engine-trust-check",
+                str(Path(self.args.tls).resolve()),
+            )
         # Bind all exclusive host sockets BEFORE creating namespaces. No SO_REUSE*.
         for g in self.plan["groups"]:
             udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -326,10 +403,24 @@ class Lab:
                     "net.ipv4.conf.all.arp_announce=2",
                 )
                 if r in "ab":
+                    self.ip(
+                        ns,
+                        "link",
+                        "set",
+                        "eth0",
+                        "address",
+                        ("02:00:00:72:00:0" if left else "02:00:00:72:01:0")
+                        + g["name"][-1],
+                    )
                     self.ip(ns, "addr", "add", VIP + "/32", "dev", "lo")
                     if self.args.mode == "duplicate":
                         self.ns(ns, "sysctl", "-qw", "net.ipv4.conf.all.arp_ignore=0")
-                    self.spawn(ns, out / f"backend-{r}.log", self.args.probe, "serve")
+                    if self.engine:
+                        self.attach_engine(ns, prefix, out, g["name"], r)
+                    else:
+                        self.spawn(
+                            ns, out / f"backend-{r}.log", self.args.probe, "serve"
+                        )
                 elif self.args.mode == "snat":
                     lost = "198.18.0.12" if left else "198.18.0.13"
                     self.ip(ns, "addr", "add", lost + "/32", "dev", "eth0")
@@ -402,8 +493,93 @@ class Lab:
             for ns in [bridge, *(prefix + "-" + r for r in roles)]:
                 for kind in ("addr", "route", "neigh"):
                     (out / f"{ns}-{kind}.txt").write_text(self.ip(ns, kind, "show"))
-        time.sleep(1)  # Fixed startup grace; never repeats a failed probe.
+        time.sleep(1)  # Capture startup grace; no DNS acceptance request is retried.
         self.health()
+        if self.engine:
+            deadline = time.monotonic() + 10
+            while not all(
+                "READY " in (out / f"backend-{role}.log").read_text()
+                and "READY collector=" in (out / "collector.log").read_text()
+                for _, out, role in self.engine_checks
+            ):
+                self.health()
+                require(
+                    time.monotonic() < deadline,
+                    "engine/collector startup deadline exceeded",
+                )
+                time.sleep(0.1)
+            self.engine_ready()
+
+    def attach_engine(self, backend, prefix, out, group, role):
+        # A second, owned attachment carries telemetry/health independently of
+        # the DR segment. No host interface, route, default route or NAT.
+        management = prefix + "-mgmt"
+        self.cmd("ip", "netns", "add", management)
+        self.owned.append(management)
+        (self.base / "owned.json").write_text(json.dumps(self.owned))
+        self.ip(management, "link", "set", "lo", "up")
+        self.ip(
+            backend,
+            "link",
+            "add",
+            "mg0",
+            "type",
+            "veth",
+            "peer",
+            "name",
+            "mg0",
+            "netns",
+            management,
+        )
+        for ns, ip in ((backend, "198.19.1.1/30"), (management, "198.19.1.2/30")):
+            self.ip(ns, "addr", "add", ip, "dev", "mg0")
+            self.ip(ns, "link", "set", "mg0", "up")
+        material = out / "engine"
+        self.cmd(
+            self.args.probe,
+            "engine-prepare",
+            str(material),
+            str(Path(self.args.tls).resolve()),
+            group,
+            prefix + "-" + role,
+        )
+        self.spawn(
+            management,
+            out / "collector.log",
+            self.args.probe,
+            "engine-collect",
+            out / "querylog.jsonl",
+            str(Path(self.args.tls).resolve()),
+        )
+        self.spawn(
+            backend,
+            out / f"backend-{role}.log",
+            self.engine,
+            "--config",
+            material / "engine.toml",
+        )
+        self.engine_checks.append((management, out, role))
+
+    def engine_ready(self):
+        for management, out, role in self.engine_checks:
+            log = (out / f"backend-{role}.log").read_text()
+            require(
+                "nexora-engine: serving version 1" in log
+                and "READY udp=198.18.0.100:53 tcp=198.18.0.100:53 dot=198.18.0.100:853 doh=198.18.0.100:443 doq=198.18.0.100:853 metrics=198.19.1.1:9153"
+                in log
+                and "standalone TLS certificate" in log
+                and " installed" in log,
+                "engine snapshot/listeners/TLS not ready",
+            )
+            # Reads the real lifecycle endpoint over the independent attachment.
+            result = self.ns(
+                management,
+                sys.executable,
+                "-c",
+                "import urllib.request; r=urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://198.19.1.1:9153/ready', timeout=2); print(r.read().decode())",
+            )
+            require(result.strip() == "ready", "engine management health failed")
+            (out / "management-health.txt").write_text(result)
 
     def health(self):
         require(
@@ -459,6 +635,27 @@ class Lab:
                                     pending is None and self.probed,
                                     "finish requires completed probe",
                                 )
+                                if self.engine:
+                                    self.engine_ready()
+                                    for _, out, _ in self.engine_checks:
+                                        batches = [
+                                            json.loads(line)
+                                            for line in (out / "querylog.jsonl")
+                                            .read_text()
+                                            .splitlines()
+                                        ]
+                                        count = sum(
+                                            len(scope.get("logRecords", []))
+                                            for batch in batches
+                                            for resource in batch.get(
+                                                "resourceLogs", []
+                                            )
+                                            for scope in resource.get("scopeLogs", [])
+                                        )
+                                        require(
+                                            count == 20,
+                                            f"expected twenty persisted local engine logs before finish, got {count}",
+                                        )
                                 if self.args.role == "left":
                                     for g in self.plan["groups"]:
                                         ns = f"fx-{self.plan['run']}-{g['name']}-sw"
@@ -490,9 +687,9 @@ class Lab:
     def cleanup(self):
         errors = []
         for cap, out, r in self.captures:
-            if cap.poll() is None:
-                cap.send_signal(signal.SIGINT)
             try:
+                if cap.poll() is None:
+                    cap.send_signal(signal.SIGINT)
                 require(cap.wait(timeout=10) == 0, "capture failed")
                 (out / f"packets-{r}.txt").write_text(
                     self.cmd(
@@ -507,14 +704,21 @@ class Lab:
                 )
             except Exception as e:
                 errors.append(str(e))
+        captured = {cap for cap, _, _ in self.captures}
         for p in self.children:
-            if p.poll() is None:
-                p.terminate()
-                try:
-                    p.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                    p.wait()
+            try:
+                if p.poll() is not None and p not in captured:
+                    errors.append("owned fixture process exited before cleanup")
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait(timeout=5)
+                        errors.append("owned process required SIGKILL")
+            except Exception as e:
+                errors.append(str(e))
         for ns in reversed(self.owned):
             try:
                 self.cmd("ip", "netns", "del", ns)
@@ -535,6 +739,7 @@ def probes(base, probe, tls):
     p = validate(json.loads((base / "plan.json").read_text()))
     left = (base / "role").read_text() == "left"
     mode = (base / "mode").read_text()
+    engine = (base / "backend").exists() and (base / "backend").read_text() == "engine"
     os.environ["FAILOVER_LAB_DIR"] = str(Path(tls).resolve())
     for g in p["groups"]:
         ns = f"fx-{p['run']}-{g['name']}-{'c' if left else 'd'}"
@@ -550,8 +755,9 @@ def probes(base, probe, tls):
                     "-b",
                     "-I",
                     "eth0",
-                    "-c",
-                    "3",
+                    # With -c, iputils exits nonzero when duplicate replies
+                    # make received != sent. Use the bounded observation window
+                    # alone; validate responder MACs below in both modes.
                     "-w",
                     "4",
                     VIP,
@@ -562,18 +768,11 @@ def probes(base, probe, tls):
                 timeout=6,
             )
             log.write(result.stdout)
-            macs = set(re.findall(r"\[([0-9a-fA-F:]{17})\]", result.stdout.lower()))
-            expected_mac = "02:00:00:71:00:0" + g["name"][-1]
-            require(
-                result.returncode == 0 and expected_mac in macs,
-                "ARP control missing frontend reply",
-            )
+            check_arp(result, g["name"], mode)
             if mode == "duplicate":
-                require(len(macs) > 1, "duplicate advertisement was not detected")
                 continue
-            require(macs == {expected_mac}, "duplicate VIP advertisement detected")
         with open(base / g["name"] / "probe.log", "x") as log:
-            for _ in range(2 if mode == "dr" else 1):
+            for round_number in range((4 if engine else 2) if mode == "dr" else 1):
                 for transport in ("udp", "tcp", "dot", "doh", "doq"):
                     result = subprocess.run(
                         [
@@ -582,10 +781,13 @@ def probes(base, probe, tls):
                             "exec",
                             ns,
                             probe,
-                            "probe",
+                            ("engine-large" if round_number >= 2 else "engine-probe")
+                            if engine
+                            else "probe",
                             VIP,
                             expected,
                             transport,
+                            *([g["name"], f"r{round_number % 2}"] if engine else []),
                         ],
                         text=True,
                         stdout=subprocess.PIPE,
@@ -599,19 +801,16 @@ def probes(base, probe, tls):
                             result.returncode == 0, "failed probe: " + result.stdout
                         )
                     else:
-                        require(
-                            result.returncode != 0
-                            and re.search(
-                                transport
-                                + r" source mismatch:.*"
-                                + re.escape("198.18.0.12" if left else "198.18.0.13")
-                                + ".*expected "
-                                + re.escape(expected),
-                                result.stdout,
-                            ),
-                            "negative control failed for wrong reason: "
-                            + result.stdout,
+                        check_snat(
+                            result,
+                            transport,
+                            expected,
+                            "198.18.0.12" if left else "198.18.0.13",
                         )
+    if engine:
+        # Permit the bounded OTLP batch/export interval to persist the final
+        # records while the supervisor continues forwarding. No query retries.
+        time.sleep(3)
 
 
 def main():
@@ -630,6 +829,9 @@ def main():
     r.add_argument("--role", choices=["left", "right"], required=True)
     r.add_argument("--evidence", required=True)
     r.add_argument("--probe", required=True)
+    r.add_argument(
+        "--engine", help="absolute compiled nexora-engine; requires separate opt-in"
+    )
     r.add_argument("--ipvs", required=True)
     r.add_argument("--tls", required=True)
     r.add_argument("--mode", choices=["dr", "snat", "duplicate"], default="dr")

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"time"
@@ -138,7 +139,140 @@ func serve() {
 		}()
 	}
 }
-func probe(target, expected string, transports []string) {
+
+// exchangeProbe sends one original question and records the socket that carried it.
+func exchangeProbe(ctx context.Context, q *dns.Msg, transport, address, expected string, tc *tls.Config) (*dns.Msg, socketTuple, error) {
+	var r *dns.Msg
+	var tuple socketTuple
+	var err error
+	switch transport {
+	case "udp", "tcp", "dot":
+		network := transport
+		if transport == "dot" {
+			network = "tcp-tls"
+		}
+		dialer := &net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(expected)}}
+		if transport == "udp" {
+			dialer.LocalAddr = &net.UDPAddr{IP: net.ParseIP(expected)}
+		}
+		c := &dns.Client{Net: network, TLSConfig: tc, Timeout: 5 * time.Second, Dialer: dialer}
+		conn, e := c.DialContext(ctx, address)
+		err = e
+		if err == nil {
+			tuple, err = captureSocket(conn.LocalAddr(), conn.RemoteAddr())
+			if err == nil {
+				r, _, err = c.ExchangeWithConnContext(ctx, q, conn)
+			}
+			_ = conn.Close()
+		}
+	case "doh":
+		b, e := q.Pack()
+		if e != nil {
+			return nil, tuple, e
+		}
+		req, e := http.NewRequestWithContext(ctx, "POST", "https://"+address+"/dns-query", bytes.NewReader(b))
+		if e != nil {
+			return nil, tuple, e
+		}
+		req.Header.Set("Content-Type", "application/dns-message")
+		// Do not make the DNS POST replayable. A second GotConn cancels
+		// before another request can be sent, even for an HTTP/2 retry.
+		req.GetBody = nil
+		requestCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		connections := 0
+		var socketErr error
+		trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+			connections++
+			if connections != 1 || info.Reused {
+				socketErr = fmt.Errorf("DoH connection retry/reuse refused")
+				stop()
+				return
+			}
+			tuple, socketErr = captureSocket(info.Conn.LocalAddr(), info.Conn.RemoteAddr())
+			if socketErr != nil {
+				stop()
+			}
+		}}
+		req = req.WithContext(httptrace.WithClientTrace(requestCtx, trace))
+		tr := &http.Transport{TLSClientConfig: tc, ForceAttemptHTTP2: true, DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(expected)}}).DialContext}
+		defer tr.CloseIdleConnections()
+		client := &http.Client{Transport: tr, Timeout: 5 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, e := client.Do(req)
+		err = e
+		if socketErr != nil {
+			err = socketErr
+		}
+		if resp != nil {
+			defer resp.Body.Close()
+		}
+		if err == nil {
+			if resp.StatusCode != 200 || resp.ProtoMajor != 2 || resp.Header.Get("Content-Type") != "application/dns-message" {
+				return nil, tuple, fmt.Errorf("invalid DoH response: HTTP %d protocol %s", resp.StatusCode, resp.Proto)
+			}
+			b, err = io.ReadAll(io.LimitReader(resp.Body, 65536))
+			_ = resp.Body.Close()
+			if err == nil {
+				r = new(dns.Msg)
+				err = r.Unpack(b)
+			}
+			fmt.Printf("HTTP protocol=%s\n", resp.Proto)
+		}
+	case "doq":
+		qt := tc.Clone()
+		qt.NextProtos = []string{"doq"}
+		socket, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(expected)})
+		if e != nil {
+			return nil, tuple, e
+		}
+		defer socket.Close()
+		peer, e := net.ResolveUDPAddr("udp4", address)
+		if e != nil {
+			return nil, tuple, e
+		}
+		qtTransport := &quic.Transport{Conn: socket}
+		c, e := qtTransport.Dial(ctx, peer, qt, &quic.Config{})
+		err = e
+		if err == nil {
+			// This is the packet socket given to QUIC, not an echo or
+			// a newly dialed socket. The peer comes from the connection.
+			tuple, err = captureSocket(socket.LocalAddr(), c.RemoteAddr())
+			if err != nil {
+				_ = c.CloseWithError(0, "")
+				_ = qtTransport.Close()
+				return nil, tuple, err
+			}
+			st, e := c.OpenStreamSync(ctx)
+			err = e
+			if err == nil {
+				_ = st.SetDeadline(time.Now().Add(5 * time.Second))
+				b, e := q.Pack()
+				err = e
+				if err == nil {
+					err = framedWrite(st, b)
+				}
+				if err == nil {
+					err = st.Close()
+				}
+				if err == nil {
+					b, err = framedRead(st)
+				}
+				if err == nil {
+					r = new(dns.Msg)
+					err = r.Unpack(b)
+				}
+			}
+			_ = c.CloseWithError(0, "")
+		}
+		_ = qtTransport.Close()
+	default:
+		err = fmt.Errorf("unknown probe transport %q", transport)
+	}
+	return r, tuple, err
+}
+
+func probe(target, expected string, transports []string, engineName string, large bool) {
 	pem, err := os.ReadFile(filepath.Join(os.Getenv("FAILOVER_LAB_DIR"), "cert.pem"))
 	must(err)
 	roots := x509.NewCertPool()
@@ -151,82 +285,83 @@ func probe(target, expected string, transports []string) {
 		q := new(dns.Msg)
 		q.SetQuestion(transport+".dsr-lab.test.", dns.TypeTXT)
 		q.Id = 0
-		var r *dns.Msg
-		switch transport {
-		case "udp", "tcp", "dot":
-			network, port := transport, "53"
-			if transport == "dot" {
-				network = "tcp-tls"
-				port = "853"
-			}
-			c := &dns.Client{Net: network, TLSConfig: tc, Timeout: 5 * time.Second}
-			r, _, err = c.ExchangeContext(ctx, q, net.JoinHostPort(target, port))
-		case "doh":
-			b, e := q.Pack()
-			must(e)
-			req, e := http.NewRequestWithContext(ctx, "POST", "https://"+net.JoinHostPort(target, "443")+"/dns-query", bytes.NewReader(b))
-			must(e)
-			req.Header.Set("Content-Type", "application/dns-message")
-			tr := &http.Transport{TLSClientConfig: tc, ForceAttemptHTTP2: true}
-			client := &http.Client{Transport: tr, Timeout: 5 * time.Second,
-				CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-			resp, e := client.Do(req)
-			err = e
-			if err == nil {
-				if resp.StatusCode != 200 || resp.ProtoMajor != 2 || resp.Header.Get("Content-Type") != "application/dns-message" {
-					log.Fatalf("invalid DoH response: HTTP %d protocol %s", resp.StatusCode, resp.Proto)
-				}
-				b, err = io.ReadAll(io.LimitReader(resp.Body, 65536))
-				_ = resp.Body.Close()
-				if err == nil {
-					r = new(dns.Msg)
-					err = r.Unpack(b)
-				}
-				fmt.Printf("HTTP protocol=%s\n", resp.Proto)
-			}
-			tr.CloseIdleConnections()
-		case "doq":
-			qt := tc.Clone()
-			qt.NextProtos = []string{"doq"}
-			c, e := quic.DialAddr(ctx, net.JoinHostPort(target, "853"), qt, &quic.Config{})
-			err = e
-			if err == nil {
-				st, e := c.OpenStreamSync(ctx)
-				err = e
-				if err == nil {
-					_ = st.SetDeadline(time.Now().Add(5 * time.Second))
-					b, e := q.Pack()
-					err = e
-					if err == nil {
-						err = framedWrite(st, b)
-					}
-					if err == nil {
-						err = st.Close()
-					}
-					if err == nil {
-						b, err = framedRead(st)
-					}
-					if err == nil {
-						r = new(dns.Msg)
-						err = r.Unpack(b)
-					}
-				}
-				_ = c.CloseWithError(0, "")
+		if engineName != "" {
+			q.SetQuestion(transport+"."+engineName+".dsr-lab.test.", dns.TypeA)
+			q.Id = 0
+			if large {
+				q.SetQuestion(transport+"."+engineName+".mtu.test.", dns.TypeTXT)
+				q.Id = 0
+				q.SetEdns0(1232, true)
 			}
 		}
+		port := "53"
+		if transport == "dot" || transport == "doq" {
+			port = "853"
+		}
+		if transport == "doh" {
+			port = "443"
+		}
+		r, tuple, err := exchangeProbe(ctx, q, transport, net.JoinHostPort(target, port), expected, tc)
 		cancel()
 		must(err)
+		if large {
+			if r == nil || r.Id != q.Id || len(r.Question) != 1 || r.Question[0] != q.Question[0] {
+				log.Fatal("signed question mismatch")
+			}
+			must(checkSignedReply(r, transport, pem))
+			evidenceJSON(map[string]any{"transport": transport, "client": expected, "question": q.Question[0].Name, "question_type": dns.TypeToString[q.Question[0].Qtype], "socket": tuple, "signed": transport != "udp", "truncated": r.Truncated, "bytes": r.Len()})
+			continue
+		}
 		if r == nil || !r.Response || r.Id != q.Id || r.Truncated || r.Rcode != dns.RcodeSuccess || len(r.Question) != 1 || r.Question[0] != q.Question[0] || len(r.Answer) != 1 {
 			log.Fatalf("%s invalid reply", transport)
 		}
+		if engineName != "" {
+			if err := checkEngineReply(r, expected); err != nil {
+				log.Fatalf("%s: %v", transport, err)
+			}
+			evidenceJSON(map[string]any{"transport": transport, "client": expected, "question": q.Question[0].Name, "question_type": dns.TypeToString[q.Question[0].Qtype], "socket": tuple, "answer": r.Answer[0].(*dns.A).A.String()})
+			continue
+		}
 		txt, ok := r.Answer[0].(*dns.TXT)
 		if !ok || len(txt.Txt) != 1 || txt.Txt[0] != expected {
+			if ok && len(txt.Txt) == 1 {
+				evidenceJSON(map[string]string{"control": "source-mismatch", "transport": transport, "observed": txt.Txt[0], "expected": expected})
+			}
 			log.Fatalf("%s source mismatch: %v expected %s", transport, r.Answer, expected)
 		}
 		fmt.Printf("PASS transport=%s source=%s target=%s\n", transport, expected, target)
 	}
 }
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "engine-trust-check" {
+		must(checkLabTrust(os.Args[2]))
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "lab-tls" {
+		must(labTLS(os.Args[2]))
+		return
+	}
+	if len(os.Args) == 6 && os.Args[1] == "engine-prepare" {
+		must(prepareEngine(os.Args[2], os.Args[3], os.Args[4], os.Args[5]))
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "engine-collect" {
+		must(collectEngine(os.Args[2], os.Args[3]))
+		return
+	}
+	if len(os.Args) == 7 && (os.Args[1] == "engine-probe" || os.Args[1] == "engine-large") {
+		must(checkLabTrust(os.Getenv("FAILOVER_LAB_DIR")))
+		if os.Args[2] != "198.18.0.100" || (os.Args[3] != "198.18.0.10" && os.Args[3] != "198.18.0.11") || (os.Args[5] != "g1" && os.Args[5] != "g2") || (os.Args[6] != "r0" && os.Args[6] != "r1") {
+			log.Fatal("invalid engine probe contract")
+		}
+		switch os.Args[4] {
+		case "udp", "tcp", "dot", "doh", "doq":
+		default:
+			log.Fatal("unknown transport")
+		}
+		probe(os.Args[2], os.Args[3], []string{os.Args[4]}, os.Args[6]+"."+os.Args[5], os.Args[1] == "engine-large")
+		return
+	}
 	if os.Getenv("FAILOVER_LAB_DIR") == "" {
 		log.Fatal("FAILOVER_LAB_DIR is required")
 	}
@@ -244,7 +379,7 @@ func main() {
 				log.Fatal("unknown transport")
 			}
 		}
-		probe(os.Args[2], os.Args[3], transports)
+		probe(os.Args[2], os.Args[3], transports, "", false)
 		return
 	}
 	log.Fatal("usage: serve | probe target expected-client-ip [transport]")

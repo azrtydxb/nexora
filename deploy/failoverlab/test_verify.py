@@ -69,6 +69,24 @@ class VerificationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "socket identity"):
             verify(self.path)
 
+    def test_real_engine_packet_count_and_source_ports(self):
+        # Four original connections per client/transport, two per backend.
+        for n in "abcd":
+            path = self.path / f"packets-{n}.txt"
+            original = path.read_text()
+            import re
+
+            extra = re.sub(
+                r"\.(20[0-9]{3})(?=[: ])",
+                lambda m: "." + str(int(m[1]) + 1000),
+                original,
+            )
+            path.write_text(original + extra)
+        self.assertIn("40 exact", verify(self.path, "engine"))
+        self.mutate("packets-a.txt", ".21000", ".31000")
+        with self.assertRaisesRegex(ValueError, "tuple mismatch"):
+            verify(self.path, "engine")
+
 
 if __name__ == "__main__":
     unittest.main()

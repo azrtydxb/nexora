@@ -131,6 +131,60 @@ class PlanTests(unittest.TestCase):
             self.assertFalse(base.exists())
             self.assertEqual(instance.owned, [])
 
+    def test_duplicate_control_uses_deadline_not_reply_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / "plan.json").write_text(json.dumps(self.plan))
+            (base / "role").write_text("left")
+            (base / "mode").write_text("duplicate")
+            for group in self.plan["groups"]:
+                (base / group["name"]).mkdir()
+            replies = [
+                Mock(
+                    returncode=0,
+                    stdout=(
+                        f"reply [02:00:00:71:00:0{i}]\n"
+                        f"reply [02:00:00:72:00:0{i}]\n"
+                        f"reply [02:00:00:72:01:0{i}]\n"
+                    ),
+                )
+                for i in (1, 2)
+            ]
+            with (
+                patch.dict(lab.os.environ),
+                patch.object(lab.subprocess, "run", side_effect=replies) as run,
+            ):
+                lab.probes(base, "/probe", "/fixture-tls")
+            self.assertEqual(run.call_count, 2)
+            for call in run.call_args_list:
+                argv = call.args[0]
+                self.assertNotIn("-c", argv)
+                self.assertEqual(argv[argv.index("-w") + 1], "4")
+                self.assertEqual(call.kwargs["timeout"], 6)
+
+    def test_duplicate_control_requires_both_frontend_and_extra_responder(self):
+        for output in (
+            "reply [02:00:00:71:00:01]",
+            "reply [02:00:00:99:00:01]\nreply [02:00:00:99:00:02]",
+            "",
+        ):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as d:
+                base = Path(d)
+                (base / "plan.json").write_text(json.dumps(self.plan))
+                (base / "role").write_text("left")
+                (base / "mode").write_text("duplicate")
+                (base / "g1").mkdir()
+                with (
+                    patch.dict(lab.os.environ),
+                    patch.object(
+                        lab.subprocess,
+                        "run",
+                        return_value=Mock(returncode=0, stdout=output),
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    lab.probes(base, "/probe", "/fixture-tls")
+
     def test_no_probe_retry(self):
         args = Mock(evidence="/tmp/unused")
         instance = lab.Lab(args, self.plan)
@@ -141,3 +195,101 @@ class PlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ControlTests(unittest.TestCase):
+    def test_snat_requires_exact_observed_source(self):
+        good = {
+            "control": "source-mismatch",
+            "transport": "udp",
+            "expected": "198.18.0.10",
+            "observed": "198.18.0.12",
+        }
+        lab.check_snat(
+            Mock(returncode=1, stdout=json.dumps(good)),
+            "udp",
+            "198.18.0.10",
+            "198.18.0.12",
+        )
+        for output in (
+            "timeout",
+            "TLS failure",
+            json.dumps({**good, "observed": "198.18.0.120"}),
+            json.dumps({**good, "transport": "doq"}),
+            json.dumps(good) + "\n" + json.dumps(good),
+        ):
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                lab.check_snat(
+                    Mock(returncode=1, stdout=output),
+                    "udp",
+                    "198.18.0.10",
+                    "198.18.0.12",
+                )
+        with self.assertRaises(ValueError):
+            lab.check_snat(
+                Mock(returncode=0, stdout=json.dumps(good)),
+                "udp",
+                "198.18.0.10",
+                "198.18.0.12",
+            )
+
+    def test_duplicate_requires_known_backend_responders(self):
+        front = "[02:00:00:71:00:01]"
+        backends = "[02:00:00:72:00:01] [02:00:00:72:01:01]"
+        lab.check_arp(Mock(returncode=0, stdout=front), "g1", "dr")
+        lab.check_arp(Mock(returncode=0, stdout=front + backends), "g1", "duplicate")
+        for output in (front, front + "[aa:bb:cc:dd:ee:ff]", backends):
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                lab.check_arp(Mock(returncode=0, stdout=output), "g1", "duplicate")
+        with self.assertRaises(ValueError):
+            lab.check_arp(Mock(returncode=0, stdout=front + backends), "g1", "dr")
+
+    def test_child_cleanup_failure_still_deletes_owned_namespace(self):
+        with tempfile.TemporaryDirectory() as d:
+            instance = lab.Lab(Mock(evidence=d), {})
+            child = Mock()
+            child.poll.return_value = None
+            child.terminate.side_effect = OSError("cannot terminate")
+            instance.children = [child]
+            instance.owned = ["owned"]
+            instance.cmd = Mock()
+            with self.assertRaisesRegex(ValueError, "cannot terminate"):
+                instance.cleanup()
+            instance.cmd.assert_called_once_with("ip", "netns", "del", "owned")
+
+    def test_capture_signal_failure_still_deletes_owned_namespace(self):
+        with tempfile.TemporaryDirectory() as d:
+            instance = lab.Lab(Mock(evidence=d), {})
+            cap = Mock()
+            cap.poll.return_value = None
+            cap.send_signal.side_effect = OSError("capture signal failed")
+            instance.captures = [(cap, Path(d), "a")]
+            instance.children = [cap]
+            instance.owned = ["owned"]
+            instance.cmd = Mock()
+            with self.assertRaisesRegex(ValueError, "capture signal failed"):
+                instance.cleanup()
+            instance.cmd.assert_called_once_with("ip", "netns", "del", "owned")
+
+    def test_engine_optin_and_controls_refuse_before_mutation(self):
+        for enabled, mode in (("", "dr"), ("yes", "snat"), ("yes", "duplicate")):
+            with tempfile.TemporaryDirectory() as d:
+                instance = lab.Lab(
+                    Mock(evidence=d + "/new", engine="/bin/engine", mode=mode), {}
+                )
+                with (
+                    patch.object(lab.sys, "platform", "linux"),
+                    patch.object(lab.os, "geteuid", return_value=0),
+                    patch.object(
+                        lab.os,
+                        "getenv",
+                        side_effect=lambda k, enabled=enabled: (
+                            enabled if k == "FAILOVER_REAL_ENGINE_ENABLE" else "yes"
+                        ),
+                    ),
+                    patch.object(lab.shutil, "which", return_value="/bin/tool"),
+                ):
+                    with self.assertRaises(ValueError):
+                        instance.setup()
+                self.assertFalse(instance.base.exists())
+                self.assertEqual(instance.owned, [])

@@ -1,0 +1,7 @@
+*.bpf.o
+fence-driver
+policy-test
+__pycache__/
+.ruff_cache/
+.pytest_cache/
+*.dSYM/
