@@ -117,6 +117,42 @@ func (e *Env) FreePort() int {
 }
 
 // Bin returns the path of a built binary, looking in NEXORA_E2E_BIN_DIR, <repo>/bin,
+// SkipWithoutBin skips the test when name is not built or installed. Unit CI jobs do not run
+// `make e2e-build`, and the dev image does not always carry every external tool; the e2e job,
+// which builds them, still runs the test.
+func SkipWithoutBin(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if findBin(name) == "" {
+			t.Skipf("binary %s is not available here: run through make e2e", name)
+		}
+	}
+}
+
+// findBin returns the path of name, or "" when it is nowhere to be found.
+func findBin(name string) string {
+	var dirs []string
+	if d := os.Getenv("NEXORA_E2E_BIN_DIR"); d != "" {
+		dirs = append(dirs, d)
+	}
+	root := repoRoot()
+	dirs = append(dirs, filepath.Join(root, "bin"), filepath.Join(root, "target", "release"))
+	if d := os.Getenv("CARGO_TARGET_DIR"); d != "" {
+		dirs = append(dirs, filepath.Join(d, "release"))
+	}
+	for _, d := range dirs {
+		p := filepath.Join(d, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
 // <repo>/target/release, $CARGO_TARGET_DIR/release and finally $PATH (for tools such as
 // otelcol-contrib).
 func (e *Env) Bin(name string) string {

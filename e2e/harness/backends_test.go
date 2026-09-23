@@ -13,6 +13,8 @@ func TestHarnessStartsClickHouseAndLoki(t *testing.T) {
 	if os.Getenv(captureFatalEnv) == t.Name() {
 		captureFatal(t, missingBinary) // the child: runs the function and never returns
 	}
+	// The dev image carries both; a runner image that predates them skips rather than fails.
+	SkipWithoutBin(t, "clickhouse", "loki")
 	env := New(t)
 	ch := env.StartClickHouse()
 	pw, _ := os.ReadFile(ch.ReaderPasswordFile)

@@ -15,6 +15,7 @@ import (
 )
 
 func TestHarnessStandaloneEngineAnswersViaFixture(t *testing.T) {
+	harness.SkipWithoutBin(t, "nexora-engine", "nexora-fixture")
 	env := harness.New(t)
 	fx := env.StartDNSFixture()
 	eng := env.StartStandaloneEngine(harness.BaseSnapshot(1, harness.UDPUpstream("fx", fx.UDP)), nil)

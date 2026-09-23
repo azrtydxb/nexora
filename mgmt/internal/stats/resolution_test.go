@@ -61,10 +61,12 @@ func TestRecordM3UpsertsStatusAndSkipsUnknownZones(t *testing.T) {
 // Both DNSSEC and M8 ZONEMD reports must use the caller's fenced transaction.
 // A pool write here would survive rollback (and deadlock with a one-slot pool).
 func TestRecordM3ZonemdUsesCallerTransaction(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	st := storetest.New(t)
 	engine := storetest.InsertEngine(t, st, "zmd-tx", store.DefaultEngineGroupID)
+	// The budget covers the queries below only: starting PostgreSQL and migrating it takes
+	// most of 15s on a loaded CI runner under -race.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	var id uuid.UUID
 	if err := st.Pool.QueryRow(ctx, `insert into rpz_zones(name, position, source_type, primary_address) values ('zmd-tx.test.', 1, 'transfer', '127.0.0.1:53') returning id`).Scan(&id); err != nil {
 		t.Fatal(err)

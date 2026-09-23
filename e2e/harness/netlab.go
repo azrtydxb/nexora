@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -42,10 +43,19 @@ func RunInNetLab(t *testing.T) {
 	}
 	sc := bufio.NewScanner(out)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	var log []string
 	for sc.Scan() {
+		log = append(log, sc.Text())
 		t.Log(sc.Text())
 	}
 	if err := cmd.Wait(); err != nil {
+		// unshare itself refused: the container lacks the privileges the lab needs (CI runners
+		// have no CAP_SYS_ADMIN and no user namespaces). The dev pod does, and runs it there.
+		for _, l := range log {
+			if strings.Contains(l, "unshare failed") || strings.Contains(l, "Operation not permitted") {
+				t.Skipf("the network namespace lab needs privileges this container lacks: %s", l)
+			}
+		}
 		t.Fatalf("test inside the network namespace lab failed: %v", err)
 	}
 }
