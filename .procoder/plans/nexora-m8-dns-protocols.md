@@ -230,8 +230,8 @@ Copied from the spec (binding for every task):
   cluster interface." Rust unit tests use unicast fakes on 127.0.0.1.
 - Dependencies: Rust `odoh-rs = "=1.0.5"`; Go `github.com/cloudflare/circl v1.6.5` (e2e harness
   only); no new management plane dependency.
-- Numbering: proto 900–999; migrations `00900_zonemd.sql`, `00901_catalog_zones.sql`,
-  `00902_odoh.sql`, `00903_engine_group_mdns.sql`; Playwright `40-zonemd`, `41-catalog-zones`,
+- Numbering: proto 900–999; migrations `01302_zonemd.sql`, `01303_catalog_zones.sql`,
+  `01304_odoh.sql`, `01305_engine_group_mdns.sql`; Playwright `40-zonemd`, `41-catalog-zones`,
   `42-odoh`, `43-mdns`, `44-rpz-zonemd`. If M6 or M7 as built already took a number, use the next free
   one and record it in `docs/architecture.md`.
 - "M8 builds on M6 and M7 as committed. When they changed a file named here, the task adapts to the
@@ -292,6 +292,10 @@ Files:
   `engine/src/mdns/gateway.rs`, `engine/src/mdns/iface.rs`, `engine/src/mdns/reflector.rs`: created,
   each with its module doc comment only (`mod.rs` also declares the three submodules).
 - `engine/src/control.rs`: only the `ServerMessage` match arm for `OdohKeys`.
+- `engine/src/recursor/rpz/manager.rs`, `engine/src/recursor/rpz/transfer_tests.rs`,
+  `engine/src/snapshot_m3.rs`: only the new prost fields in existing struct literals
+  (`zonemd`/`zonemd_error` with a `debt:` comment naming Task 20; `zonemd_verify: 0`), so the engine
+  still builds.
 - `e2e/testdata/rfc8976/a1.zone`, `a2.zone`, `a3.zone`, `a1.hex`, `a2.hex`, `a3.hex`,
   `e2e/testdata/rfc8976/genhex/main.go`: created.
 - `docs/architecture.md`: the settled M8 design.
@@ -435,7 +439,9 @@ message OdohKey {
   - add every field, enum and message of the Interfaces block to the named messages, fields with a
     trailing `// M8` comment;
   - put the comment block `// M8 DNS protocols: fields added to existing messages use 900-999.`
-    above the new messages.
+    above the new messages (appended at the end of the file, after the M6 block, each marked
+    `// M8`). As built, `protoc` 3.21.12 regenerates only `control.pb.go`; `control_grpc.pb.go` is
+    unchanged (no new RPC).
 - [ ] Regenerate in the dev pod and copy back:
       `scripts/dev-exec.sh 'protoc -I proto --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative proto/nexora/control/v1/control.proto'`,
       then `kubectl --context kw -n nexora-dev exec deploy/toolbox -c toolbox -- tar -C /work/nexora -cf - gen/go | tar -xf -`.
@@ -454,9 +460,13 @@ message OdohKey {
       for `LogRequest` if Task 13 of M6 already replaced it: then add a separate
       `Some(ServerMsg::OdohKeys(_)) => {}` arm). Add the comment
       `// debt: ODoH keys are ignored until M8 Task 19 wires server::odoh::OdohState.`
+      As built: M6 handles `LogRequest`, so a separate `OdohKeys` arm was added. The new prost fields
+      also broke three existing struct literals (`recursor/rpz/manager.rs` status,
+      `recursor/rpz/transfer_tests.rs`, `snapshot_m3.rs`); they set the fields explicitly.
 - [ ] Create `e2e/testdata/rfc8976/a1.zone`, `a2.zone` and `a3.zone`:
   - the first line of each is `$ORIGIN example.`;
-  - then the zone text of RFC 8976 Appendix A.1, A.2 and A.3 verbatim, from
+  - then the zone text of RFC 8976 Appendix A.1, A.2 and A.3 verbatim (the RFC's three-space page
+    indent removed, so owner names start in column 1), from
     `https://www.rfc-editor.org/rfc/rfc8976.txt` (the indented zone lines only, without the section
     prose).
 - [ ] Create `e2e/testdata/rfc8976/genhex/main.go`:
@@ -630,7 +640,10 @@ Interfaces: produces for Tasks 14, 16, 17, 22 and 27–31:
   ```
   Use the permissions map name that `mgmt/internal/auth/permissions.go` exports (read it first; M6's
   `m6_contract_test.go` shows the pattern). Build `newM8TestServer` and its `do` helper from the
-  helpers `m6_contract_test.go` uses, in this file.
+  helpers `m6_contract_test.go` uses, in this file. As built: the map is `auth.Permissions` (roles
+  are strings, so the failure reads `role , want viewer`); `newM8TestServer` wraps `newAPI` and an
+  admin `client` from `api_test.go`, whose base URL already ends in `/api/v1`, so the test paths
+  start at `/catalog-zones`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run TestM8OperationsDeclared -count=1'`
       and expect FAIL: `listCatalogZones: role 0, want viewer`.
 - [ ] Add to `components/schemas` in `openapi.yaml`:
@@ -808,18 +821,27 @@ Interfaces: produces for Tasks 14, 16, 17, 22 and 27–31:
       }
   ```
   Write each in the file's full style (response `content`, `$ref: "#/components/responses/..."` for
-  errors, `security` as the neighbouring zone operations). A list response is
-  `{ type: object, required: [items], properties: { items: { type: array, items: CatalogZone } } }`,
-  as `listZones` returns. Add a `501` response to each operation, as M6's stubs did.
+  errors, `security` as the neighbouring zone operations). A list response has the shape `listZones`
+  returns; as built that is a plain array (`{ type: array, items: CatalogZone }`, Go
+  `ListCatalogZones200JSONResponse []CatalogZone`), not an `items` object. Add a `501` response to
+  each operation, as M6's stubs did. As built: catalog operations are tagged `zones`, ODoH operations
+  `settings`; the global `security` applies (no per-operation block, as for the zone operations);
+  the RPZ status item's `zonemd` is `{ type: string, enum: [off, absent, verified, failed] }`.
 - [ ] Add the seven operationIds with their roles to `mgmt/internal/auth/permissions.go` and
-      `web/src/auth/permissions.ts`.
+      `web/src/auth/permissions.ts` (as built: one `// M8 DNS protocols` block after the M11 AI block
+      in each).
 - [ ] Regenerate: `cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml` and
-      `cd web && pnpm run gen:api`.
+      `cd web && pnpm run gen:api`. As built, both ran in the dev pod
+      (`go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 ...`) and were copied back
+      with `kubectl ... tar`; `schema.d.ts` was then formatted with `scripts/pc-format.sh` (the committed
+      file uses two-space indent).
 - [ ] Add `CatalogZones CatalogZoneService`, `ODoH ODoHService` and both interfaces to `server.go`. Create `catalog_zones.go` and `odoh.go`, each implementing its
       operations as
       `return nil, apiError(http.StatusNotImplemented, "not_implemented", "catalog zones are not available")`
       when the service is nil, and delegating to the service otherwise. Use the error helper the M6
-      stubs used (read `engine_logs.go` at the M7 head).
+      stubs used (read `engine_logs.go` at the M7 head). As built: `apiError` is a struct, so the stubs
+      return `coded(http.StatusNotImplemented, "not_implemented", ...)` through
+      `h.catalogZones()`/`h.odoh()`; the actor is `PrincipalFrom(ctx).Actor()`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/api -run "TestM8OperationsDeclared|TestPermissionsCoverEveryOperation" -count=1 && go vet ./mgmt/...'`
       and `cd web && pnpm run typecheck`. Expect PASS.
 - [ ] Report the paths. The lead commits `M8 T2: OpenAPI contract, permissions, generated clients, stubs`.
@@ -828,8 +850,8 @@ Interfaces: produces for Tasks 14, 16, 17, 22 and 27–31:
 
 Files:
 
-- `mgmt/migrations/00900_zonemd.sql`, `00901_catalog_zones.sql`, `00902_odoh.sql`,
-  `00903_engine_group_mdns.sql`: created.
+- `mgmt/migrations/01302_zonemd.sql`, `01303_catalog_zones.sql`, `01304_odoh.sql`,
+  `01305_engine_group_mdns.sql`: created.
 - `mgmt/internal/zone/model.go`: new `Zone` and input fields, and the `Signer.SignZONEMD` method.
 - `mgmt/internal/zone/service.go`: the zone column list, `scanZone`, the new input columns in the
   insert and update statements, and the `CreateZoneInTx`/`DeleteZoneInTx` extraction (no behaviour
@@ -918,13 +940,16 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
   	if err := st.Pool.QueryRow(ctx, `select count(*) filter (where zonemd_generate), array_agg(distinct zonemd_verify) from zones`).Scan(&gen, &verify); err != nil {
   		t.Fatal(err)
   	}
-  	if gen != 0 || len(verify) != 1 || verify[0] != "if_present" {
-  		t.Fatalf("zones: generate=%d verify=%v", gen, verify)
-  	}
-  	var rpz string
-  	if err := st.Pool.QueryRow(ctx, `select zonemd_verify from rpz_zones`).Scan(&rpz); err != nil || rpz != "if_present" {
-  		t.Fatalf("rpz zonemd_verify %q: %v", rpz, err)
-  	}
+    if gen != 0 || len(verify) != 1 || verify[0] != "off" {
+        t.Fatalf("existing zones: generate=%d verify=%v, want 0 and [off]", gen, verify)
+    }
+    var rpz string
+    if err := st.Pool.QueryRow(ctx, `select zonemd_verify from rpz_zones`).Scan(&rpz); err != nil || rpz != "off" {
+        t.Fatalf("existing rpz zonemd_verify %q, want off: %v", rpz, err)
+    }
+    // As built, the test also inserts a secondary zone and an RPZ transfer zone after the migration
+    // and expects zonemd_verify=if_present on both, and sets zonemd_generate on the primary (positive
+    // path) before the secondary is refused.
   	var mdns int
   	if err := st.Pool.QueryRow(ctx, `select count(*) from engine_groups where mdns_enabled or mdns_reflect`).Scan(&mdns); err != nil || mdns != 0 {
   		t.Fatalf("mdns groups %d: %v", mdns, err)
@@ -944,8 +969,12 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
   ```
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/store -run TestM8MigrationKeepsBehaviour -count=1'`.
       Expect FAIL: `column "zonemd_generate" does not exist`. If the M7 head has migrations above
-      00899, stop and renumber as the Constraints say.
-- [ ] Create `mgmt/migrations/00900_zonemd.sql`:
+      00899, stop and renumber as the Constraints say. As built: the test expects `off` on existing
+      rows (the spec's lead decision; this plan's first draft wrongly expected `if_present`). Main
+      holds M11 migrations 01200-01207 but nothing in 01300-00999, so 01300-01303 do not clash and
+      keep their numbers; a database that already applied 01207 without them needs goose's
+      out-of-order handling (see the Task 3 report).
+- [ ] Create `mgmt/migrations/01302_zonemd.sql`:
   ```sql
   -- +goose Up
   ALTER TABLE zones
@@ -970,7 +999,7 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
   ALTER TABLE zones DROP CONSTRAINT zones_zonemd_generate_primary,
       DROP COLUMN zonemd_error, DROP COLUMN zonemd_status, DROP COLUMN zonemd_verify, DROP COLUMN zonemd_generate;
   ```
-- [ ] Create `mgmt/migrations/00901_catalog_zones.sql`:
+- [ ] Create `mgmt/migrations/01303_catalog_zones.sql`:
   ```sql
   -- +goose Up
   CREATE TABLE catalog_zones (
@@ -1001,7 +1030,7 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
   ALTER TABLE zones DROP COLUMN catalog_member_label, DROP COLUMN catalog_zone_id;
   DROP TABLE catalog_zones;
   ```
-- [ ] Create `mgmt/migrations/00902_odoh.sql`:
+- [ ] Create `mgmt/migrations/01304_odoh.sql`:
   ```sql
   -- +goose Up
   CREATE TABLE odoh_settings (
@@ -1029,7 +1058,7 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
   DROP TABLE odoh_keys;
   DROP TABLE odoh_settings;
   ```
-- [ ] Create `mgmt/migrations/00903_engine_group_mdns.sql`:
+- [ ] Create `mgmt/migrations/01305_engine_group_mdns.sql`:
   ```sql
   -- +goose Up
   ALTER TABLE engine_groups
@@ -1051,13 +1080,22 @@ func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, actor auth.Acto
       Interfaces order), and write the new input fields in the insert and update statements. Move the
       bodies of `CreateZone` and `DeleteZone` into `CreateZoneInTx` and `DeleteZoneInTx` (the public
       methods open the transaction, call them and publish as before). Add the `SignZONEMD`
-      pass-through to `dnssec/store.go`.
+      pass-through to `dnssec/store.go`. As built: `CreateZoneInTx` includes the input validation,
+      defaults an empty `ZonemdVerify` to `if_present`, and refuses an unknown mode or
+      `ZonemdGenerate` on a secondary with 400 `invalid_zone` (`UpdateZone` does the same for its
+      pointers); `DeleteZone` still loads the row and checks the revision, then `DeleteZoneInTx` deletes
+      (store.ErrNotFound when no row). Neither `InTx` method writes audit rows or publishes; the actor
+      parameter is for the caller.
 - [ ] Extend `fleet.EngineGroup`, `scanEngineGroup`, `CreateEngineGroup` and `UpdateEngineGroup` with
       the five mDNS columns. Extend `store.RPZZone`, `scanRPZZone`, `CreateRPZZone` and
-      `UpdateRPZZone` with `zonemd_verify` (empty input means `if_present`).
+      `UpdateRPZZone` with `zonemd_verify` (empty input means `if_present`). As built: an empty
+      `ZonemdVerify` means `if_present` on create but keeps the stored mode on update (so an existing
+      `off` zone is not switched by an update that does not send the field), and `MdnsTimeoutMS` 0 is
+      written as the default 500 on create and update (the API's defaults and the CLI's group create
+      do not set it yet).
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/store -run TestM8MigrationKeepsBehaviour -count=1 && go test ./mgmt/internal/zone ./mgmt/internal/fleet ./mgmt/internal/dnssec -count=1 && go vet ./mgmt/...'`
       and expect PASS.
-- [ ] Report the paths. The lead commits `M8 T3: migrations 00900-00903 and model fields`.
+- [ ] Report the paths. The lead commits `M8 T3: migrations 01300-01303 and model fields`.
 
 ## Task 4: ZONEMD digest and verification in the management plane
 
@@ -1078,7 +1116,7 @@ func Placeholder(origin string, serial, ttl uint32) *dns.ZONEMD
 func Apply(origin string, rrs []dns.RR) error // sets serial and SHA-384 digest of the apex ZONEMD (scheme 1, hash 1)
 ```
 
-- [ ] Create `mgmt/internal/zonemd/zonemd_test.go`:
+- [x] Create `mgmt/internal/zonemd/zonemd_test.go`:
   ```go
   package zonemd
 
@@ -1207,9 +1245,11 @@ func Apply(origin string, rrs []dns.RR) error // sets serial and SHA-384 digest 
   }
   ```
   In A.1 the second-to-last record is `ns1 A 203.0.113.63`; if the parser order differs, pick the `*dns.A` by type.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/zonemd -count=1'` and expect FAIL: the
+  As built, `TestDigestMatchesRFC8976AppendixA` also ends with `t.Logf("checked %d", checked)` so the
+  `-v` run shows the count.
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/zonemd -count=1'` and expect FAIL: the
       package does not compile (`undefined: Digest`).
-- [ ] Implement `zonemd.go`:
+- [x] Implement `zonemd.go`:
   - `canonical(origin string, rrs []dns.RR) ([][]byte, error)`:
     - keep RRs at or below origin (`dns.IsSubDomain`);
     - drop apex ZONEMD and apex RRSIG with `TypeCovered == dns.TypeZONEMD`;
@@ -1219,6 +1259,7 @@ func Apply(origin string, rrs []dns.RR) error // sets serial and SHA-384 digest 
       (SignerName), `*dns.MINFO`, `*dns.RP`, `*dns.AFSDB`, `*dns.RT`, `*dns.PX`, `*dns.KX`, `*dns.MB`,
       `*dns.MG`, `*dns.MR`, `*dns.MD`, `*dns.MF`);
     - pack with `dns.PackRR(c, buf, 0, nil, false)`;
+    - as built, the packed owner octets are also ASCII-lowercased (covers escaped letters);
     - sort by the RFC 4034 §6.1 owner key (labels reversed, each label's octets compared unsigned),
       then type, then RDATA octets (the packed bytes after the 10-octet fixed header following the
       owner);
@@ -1232,6 +1273,7 @@ func Apply(origin string, rrs []dns.RR) error // sets serial and SHA-384 digest 
     4. for each usable RR:
        - serial must equal the apex SOA serial;
        - scheme must be 1 and hash 1 or 2;
+       - as built, a zone with apex ZONEMD but no apex SOA fails with `no apex SOA`;
        - the digest length must be 48 or 64 and at least 12;
        - compute and compare with `hmac.Equal` on the decoded bytes;
     5. the first match gives `StatusVerified`;
@@ -1240,7 +1282,7 @@ func Apply(origin string, rrs []dns.RR) error // sets serial and SHA-384 digest 
   - `Placeholder` gives scheme 1, hash 1, 96 zero hex digits, class IN, and the given TTL.
   - `Apply` finds the apex ZONEMD (error when none), sets `Serial` from the apex SOA, and sets
     `Digest = hex(Digest(origin, rrs, HashSHA384))`.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/zonemd -count=1 -v'` and expect PASS with
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/zonemd -count=1 -v'` and expect PASS with
       `checked` 4.
 - [ ] Report the paths. The lead commits `M8 T4: ZONEMD digest and verification (Go)`.
 
@@ -1286,8 +1328,8 @@ pub fn verify(origin: &Name, records: &[Record], mode: VerifyMode) -> Verdict;
       }
 
       fn zonemd_rdata(r: &Record) -> Option<&[u8]> {
-          match r.data() {
-              RData::Unknown { rdata, .. } if u16::from(r.record_type()) == TYPE_ZONEMD => rdata.anything(),
+          match &r.data {
+              RData::Unknown { rdata, .. } if u16::from(r.record_type()) == TYPE_ZONEMD => Some(&rdata.anything),
               _ => None,
           }
       }
@@ -1300,7 +1342,7 @@ pub fn verify(origin: &Name, records: &[Record], mode: VerifyMode) -> Verdict;
               let rrs = vector(name);
               for r in &rrs {
                   let Some(rd) = zonemd_rdata(r) else { continue };
-                  if r.name() != &origin || rd[4] != SCHEME_SIMPLE || !(rd[5] == HASH_SHA384 || rd[5] == HASH_SHA512) {
+                  if r.name != origin || rd[4] != SCHEME_SIMPLE || !(rd[5] == HASH_SHA384 || rd[5] == HASH_SHA512) {
                       continue;
                   }
                   assert_eq!(digest(&origin, &rrs, rd[5]).unwrap(), rd[6..].to_vec(), "{name} hash {}", rd[5]);
@@ -1315,7 +1357,7 @@ pub fn verify(origin: &Name, records: &[Record], mode: VerifyMode) -> Verdict;
       fn verify_rules() {
           let origin = Name::from_ascii("example.").unwrap();
           let base = vector("a1");
-          let is_apex_zonemd = |r: &Record| u16::from(r.record_type()) == TYPE_ZONEMD && r.name() == &origin;
+          let is_apex_zonemd = |r: &Record| u16::from(r.record_type()) == TYPE_ZONEMD && r.name == origin;
           let with_apex = |f: &dyn Fn(&mut Vec<u8>)| -> Vec<Record> {
               base.iter()
                   .map(|r| {
@@ -1324,7 +1366,7 @@ pub fn verify(origin: &Name, records: &[Record], mode: VerifyMode) -> Verdict;
                       }
                       let mut rd = zonemd_rdata(r).unwrap().to_vec();
                       f(&mut rd);
-                      Record::from_rdata(r.name().clone(), r.ttl(), RData::Unknown {
+                      Record::from_rdata(r.name.clone(), r.ttl, RData::Unknown {
                           code: RecordType::Unknown(TYPE_ZONEMD),
                           rdata: hickory_proto::rr::rdata::NULL::with(rd),
                       })
@@ -1348,20 +1390,24 @@ pub fn verify(origin: &Name, records: &[Record], mode: VerifyMode) -> Verdict;
       }
   }
   ```
-  Use hickory-proto 0.26.3's names for `NULL::with` and `anything()` (read
-  `~/.cargo/registry/src/*/hickory-proto-0.26.3/src/rr/rdata/null.rs`). If hickory decodes type 63
-  into a dedicated variant, match that instead; the test data stays the same.
+  hickory-proto 0.26.3 exposes `Record` and `NULL` as public fields (`r.name`, `r.ttl`, `r.data`,
+  `rdata.anything`) and decodes type 63 as `RData::Unknown`. As built, the module also has
+  `opaque_rdata_names_are_lowercased`: DNAME, RP and AFSDB records (which hickory keeps opaque)
+  with uppercase RDATA names digest like their lowercase form, while a TXT case change does not.
 - [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib zonemd::tests'` and expect
       FAIL: it does not compile (`cannot find function digest`).
 - [ ] Implement:
   - `canonical(origin, records) -> Result<Vec<Vec<u8>>, String>`:
     - owners at or below origin (`origin.zone_of(name)`);
     - exclude apex type 63 and apex RRSIG covering 63;
-    - encode each record into a `Vec<u8>` with `BinEncoder::with_mode(&mut buf, EncodeMode::Signing)`,
-      owner `name.to_lowercase()` emitted uncompressed, then type, class, TTL, RDLENGTH and RDATA via
-      `record.data().emit`;
-    - sort by `(recursor::dnssec::denial::canonical_cmp(owner), type, rdata octets)`, keeping the
-      owner `Name` beside the bytes for the comparison;
+    - encode each record with `Record::emit` into a `BinEncoder` with `set_canonical_form(true)` and
+      `NameEncoding::UncompressedLowercase` (owner lowercased, RDATA names lowercased for the RFC 4034
+      §6.2 types hickory decodes; 0.26.3 has no `EncodeMode::Signing`);
+    - `RData::Unknown` records of the §6.2 types hickory keeps opaque (MD, MF, MB, MG, MR, MINFO, RP,
+      AFSDB, RT, PX, NXT, KX, A6, DNAME) get their uncompressed RDATA names lowercased in place;
+    - sort by `(owner labels lowercased and reversed as Vec<Vec<u8>>, type, rdata octets)`: the same
+      RFC 4034 §6.1 order as `canonical_cmp`, with the key computed once per record instead of
+      allocating on every comparison (RPZ zones can be large);
     - dedupe equal (owner, type, class, rdata).
   - `digest`: `sha2::Sha384` or `sha2::Sha512` over the concatenation.
   - `verify` follows the same steps as Task 4's `Verify`, with the same reason words (`serial`,
@@ -1409,8 +1455,15 @@ pub static COUNTERS: Counters;
       use std::time::{Duration, Instant};
       use tokio::net::UdpSocket;
 
-      /// Wire reply: header with `id`, the question of `query`, and one answer per `(name wire, type, class, ttl, rdata)`.
-      fn reply(id: u16, query: &[u8], answers: &[(Vec<u8>, u16, u16, u32, Vec<u8>)]) -> Vec<u8> {
+      /// The in-flight cap is process-wide: tests that query run one at a time, or
+      /// `inflight_cap_gives_busy` holding every slot would starve the others.
+      static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+      /// `(name wire, type, class, ttl, rdata)`
+      type WireAnswer = (Vec<u8>, u16, u16, u32, Vec<u8>);
+
+      /// Wire reply: header with `id`, the question of `query`, and one answer per `WireAnswer`.
+      fn reply(id: u16, query: &[u8], answers: &[WireAnswer]) -> Vec<u8> {
           let qend = 12 + query[12..].iter().position(|&b| b == 0).unwrap() + 1 + 4;
           let mut m = vec![(id >> 8) as u8, id as u8, 0x84, 0x00, 0, 1, 0, answers.len() as u8, 0, 0, 0, 0];
           m.extend_from_slice(&query[12..qend]);
@@ -1464,6 +1517,7 @@ pub static COUNTERS: Counters;
 
       #[tokio::test(flavor = "current_thread")]
       async fn reply_checks_and_ttl_cap() {
+          let _serial = SERIAL.lock().await;
           let group = responder(|q| {
               let id = u16::from_be_bytes([q[0], q[1]]);
               let name = wire("printer.local.");
@@ -1478,13 +1532,14 @@ pub static COUNTERS: Counters;
           let out = gateway(group, 500).query(&Name::from_ascii("printer.local.").unwrap(), RecordType::A).await;
           let Outcome::Answers(rrs) = out else { panic!("no answers") };
           assert_eq!(rrs.len(), 1, "only the matching owner and ID count: {rrs:?}");
-          assert_eq!(rrs[0].ttl(), TTL_CAP, "TTL capped at 10");
-          assert_eq!(u16::from(rrs[0].dns_class()), 1, "cache-flush bit cleared");
-          assert!(matches!(rrs[0].data(), RData::A(a) if a.0 == std::net::Ipv4Addr::new(10, 254, 0, 9)));
+          assert_eq!(rrs[0].ttl, TTL_CAP, "TTL capped at 10");
+          assert_eq!(u16::from(rrs[0].dns_class), 1, "cache-flush bit cleared");
+          assert!(matches!(&rrs[0].data, RData::A(a) if a.0 == std::net::Ipv4Addr::new(10, 254, 0, 9)));
       }
 
       #[tokio::test(flavor = "current_thread")]
       async fn first_answer_ends_unique_types() {
+          let _serial = SERIAL.lock().await;
           let group = responder(|q| {
               let id = u16::from_be_bytes([q[0], q[1]]);
               let qtype = u16::from_be_bytes([q[q.len() - 4], q[q.len() - 3]]);
@@ -1520,6 +1575,7 @@ pub static COUNTERS: Counters;
 
       #[tokio::test(flavor = "current_thread")]
       async fn inflight_cap_gives_busy() {
+          let _serial = SERIAL.lock().await;
           let group = responder(|_| vec![]).await;
           let gw = gateway(group, 200);
           let held: Vec<_> = (0..MAX_INFLIGHT).map(|_| InflightGuard::try_acquire().unwrap()).collect();
@@ -1545,7 +1601,9 @@ pub static COUNTERS: Counters;
   }
   ```
   `InflightGuard` is the RAII guard of the static in-flight counter (`try_acquire() -> Option<InflightGuard>`),
-  public within the crate.
+  public within the crate. (As built: hickory-proto 0.26.3 `Record` exposes `ttl`, `dns_class` and `data` as
+  fields, not accessors; the `SERIAL` lock keeps the parallel test threads from sharing the static cap; the
+  `WireAnswer` alias satisfies `clippy::type_complexity`.)
 - [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib mdns::'` and expect FAIL:
       it does not compile (`cannot find struct Gateway`).
 - [ ] Implement `iface.rs` with `nix::ifaddrs::getifaddrs()`:
@@ -1561,7 +1619,8 @@ pub static COUNTERS: Counters;
     1. `InflightGuard::try_acquire()`, or count `dropped` and return `Busy`;
     2. build the query with a random ID from `rand::rng()`, RD=0, one question, QU bit clear;
     3. per target, a socket2 socket bound to `bind`, `set_multicast_if_v4` or `set_multicast_if_v6`,
-       `set_multicast_ttl_v4(255)` or `set_multicast_hops_v6(255)`, `set_multicast_loop_v4(true)`,
+       `set_multicast_ttl_v4(255)` or `set_multicast_hops_v6(255)`, `set_multicast_loop_v4(true)` or
+       `set_multicast_loop_v6(true)`,
        non-blocking, turned into `tokio::net::UdpSocket`;
     4. send to `group`;
     5. read from every socket until the deadline (`tokio::time::timeout_at`);
@@ -1581,7 +1640,8 @@ pub static COUNTERS: Counters;
 
 ## Task 7: Engine ODoH codec and proxy core
 
-Files: `engine/src/server/odoh.rs`, `engine/Cargo.toml` (`odoh-rs = "=1.0.5"`), `Cargo.lock`
+Files: `engine/src/server/odoh.rs`, `engine/Cargo.toml` (`odoh-rs = "=1.0.5"`), `Cargo.lock`,
+`engine/src/upstream/doh.rs` (`pub(crate) fn resolve_pins()`, as built)
 Interfaces: produces for Task 19:
 
 ```rust
@@ -1621,9 +1681,11 @@ impl Counters { pub fn count(&self, role: &'static str, status: StatusCode); pub
 ```
 
 - [ ] Add `odoh-rs = "=1.0.5"` to `[dependencies]` in `engine/Cargo.toml` and run
-      `scripts/dev-exec.sh 'cargo update -p odoh-rs --precise 1.0.5 && cargo build --locked -p nexora-engine'`;
-      copy `Cargo.lock` back with the `kubectl ... tar` command of Task 1. Expect a clean build. If the
-      lock pulls a second `sha2` or `rand_core` major, record it in the report.
+      `scripts/dev-exec.sh 'cargo tree -p nexora-engine -i odoh-rs'` (as built: `cargo update -p odoh-rs`
+      fails with "did not match any packages" while the crate is not in the lock yet; an unlocked
+      `cargo tree` adds only the new entries); copy `Cargo.lock` back. Expect a clean build. If the
+      lock pulls a second `sha2` or `rand_core` major, record it in the report (as built: none; it
+      adds a second `thiserror` major, 1.0.69, and hpke 0.14.1 on `rand_core` 0.10).
 - [ ] Add to `engine/src/server/odoh.rs` this test module:
   ```rust
   #[cfg(test)]
@@ -1723,7 +1785,11 @@ impl Counters { pub fn count(&self, role: &'static str, status: StatusCode); pub
   }
   ```
   Adapt the `odoh_rs` import paths to the crate's re-exports (`src/lib.rs` of odoh-rs 1.0.5) and the
-  `OdohSecret` type path.
+  `OdohSecret` type path (as built: `odoh_rs::OdohSecret`, imported with the others). As built, the
+  module also holds `forward_relays_target_response_and_maps_failures` (a local TLS target that
+  checks the relayed headers and answers 307: relayed unfollowed with `received-status=307`; the
+  same target without its CA gives `tls_protocol_error`, a silent listener `connection_timeout`, a
+  closed port `destination_unavailable`) and `counters_render_by_role_and_status`.
 - [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib server::odoh::tests'` and
       expect FAIL: it does not compile (`cannot find struct Keyring`).
 - [ ] Implement:
@@ -1735,7 +1801,7 @@ impl Counters { pub fn count(&self, role: &'static str, status: StatusCode); pub
   - `configs` composes an `ObliviousDoHConfigs` of the keys with
     `publish_after_unix <= now < not_after_unix`, newest first; `None` when empty.
   - `open`:
-    1. parse `ObliviousDoHMessage`, else `Malformed`;
+    1. parse `ObliviousDoHMessage` (first octet 1 = query, no trailing octets), else `Malformed`;
     2. find a key by `msg.key_id()` among keys with `now < not_after_unix`, else `UnknownKey`;
     3. `decrypt_query`, else `Malformed`;
     4. keep the plaintext and secret.
@@ -1744,23 +1810,25 @@ impl Counters { pub fn count(&self, role: &'static str, status: StatusCode); pub
     - `None` when `!proxy_enabled`; error when enabled without targets;
     - parse each host as `name`, `name:port`, or `[v6]:port` (lowercase, port 1..=65535, default 443);
     - reject userinfo, `/`, `?` and `#`;
-    - build a `reqwest::Client` with `use_rustls_tls`, `http2_prior_knowledge` off,
+    - build a `reqwest::Client` with `tls_backend_preconfigured` (ALPN `h2`, `http/1.1`),
+      `http2_prior_knowledge` off, `no_proxy()`,
       `redirect(Policy::none())`, the target CA via `upstream::doh`'s `client_tls_config(ca_pem)`
       (empty: webpki roots) and the `NEXORA_DOH_RESOLVE` pins (reuse the parsing in
       `upstream/doh.rs`; move it into a `pub(crate) fn resolve_pins()` there only if it is not
       reachable, and list that file in the report);
-    - timeout `proxy_timeout_ms` (0 → 2,000).
+    - timeout `proxy_timeout_ms` (0 → 2,000; other values clamped to 100..=10,000).
   - `allowed` compares lowercase host and port.
-  - `parse_proxy_params` percent-decodes both values. `targetpath` must start with `/`. `targethost`
-    must parse as above.
+  - `parse_proxy_params` percent-decodes both values. `targetpath` must start with `/` and hold only
+    visible ASCII other than `#`. `targethost` must parse as above. A repeated parameter is an error.
   - `forward`:
     - POST `https://{host}:{port}{targetpath}` with `content-type` and `accept` set to
       `CONTENT_TYPE` and nothing else;
     - relay status and body with `content-type` from the target and
-      `Proxy-Status: nexora; received-status=<code>`;
+      `Proxy-Status: nexora; received-status=<code>` (hyper adds `content-length` framing; a target
+      body over `MAX_BODY` gets 502 `http_response_body_size`);
     - on error, `proxy_error(502, e)` with `connection_timeout` when `is_timeout()`,
-      `tls_protocol_error` when the error chain holds a rustls error, otherwise
-      `destination_unavailable`.
+      `tls_protocol_error` when the error chain holds a rustls error (nested `io::Error` payloads
+      are unwrapped through `get_ref`), otherwise `destination_unavailable`.
   - `COUNTERS` is a fixed array of `AtomicU64` keyed by role (`target`, `proxy`) and status class
     (200, 400, 401, 403, 404, 405, 413, 415, 502, 503, other).
 - [ ] Run `scripts/dev-exec.sh 'cargo test --locked -p nexora-engine --lib server::odoh::tests && cargo clippy --locked -p nexora-engine --all-targets -- -D warnings'`
@@ -1783,7 +1851,7 @@ func Build(catalog string, members []Member) []dns.RR // NS invalid., version TX
 func Parse(catalog string, rrs []dns.RR) ([]Member, error) // members sorted by label, or *BrokenError
 ```
 
-- [ ] Create `mgmt/internal/catzone/codec_test.go`:
+- [x] Create `mgmt/internal/catzone/codec_test.go`:
   ```go
   package catzone
 
@@ -1867,9 +1935,9 @@ func Parse(catalog string, rrs []dns.RR) ([]Member, error) // members sorted by 
   	}
   }
   ```
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/catzone -count=1'` and expect FAIL: the
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/catzone -count=1'` and expect FAIL: the
       package does not compile (`undefined: Label`).
-- [ ] Implement `codec.go`:
+- [x] Implement `codec.go`:
   - `Build`: sorted copy by label; records as in the test with TTL 0 and class IN.
   - `Parse`:
     - group records by lowercase owner;
@@ -1880,7 +1948,7 @@ func Parse(catalog string, rrs []dns.RR) ([]Member, error) // members sorted by 
     - the same target under two labels is broken;
     - everything else is ignored;
     - members sorted by label.
-- [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/catzone -count=1'` and expect PASS.
+- [x] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/catzone -count=1'` and expect PASS.
 - [ ] Report the paths. The lead commits `M8 T8: catalog zone codec`.
 
 ## Task 9: ODoH settings and keys in the management plane
@@ -2050,6 +2118,14 @@ func (k *Keys) Run(ctx context.Context, tick time.Duration) error
   - `Load` selects non-expired keys ordered `created_at desc`, unseals each, and computes the digest
     as the hub's `keySetDigest` does (SHA-256 of the deterministic encoding).
   - `Run` calls `Rotate(ctx, false)` every tick and logs errors without seeds.
+
+  As built: `Validate` returns the package's `*ValidationError{Field, Message}` (field names as the
+  API, e.g. `proxy_targets[0].host`); `UpdateSettings` also calls `Validate`; `Load` returns digest
+  `""` for an empty set, as `keySetDigest` does; `Run` returns nil when ctx ends. The test file also
+  holds `TestOdohSettingsRevision` (defaults, revision bump, IPv6 target round trip, stale revision
+  is `store.ErrConflict`). The `rotateOdohKeyScheduled` audit row is not written here (no task step
+  assigns it to Task 9).
+
 - [ ] Run `scripts/dev-exec.sh 'go test ./mgmt/internal/odoh -count=1 && go vet ./mgmt/internal/odoh'`
       and expect PASS.
 - [ ] Report the paths. The lead commits `M8 T9: ODoH settings and rotating sealed keys`.
@@ -2094,7 +2170,8 @@ The fixture subcommands:
   - answers each query whose question matches its records;
   - a query from a source port other than 5353 gets a unicast reply to the source, echoing ID and
     question, with the record TTLs as given and the cache-flush bit set for A, AAAA, SRV and TXT;
-  - a query from port 5353 gets a multicast response with ID 0 on IF;
+  - a query from port 5353 gets a multicast response with ID 0 and no question section (RFC 6762 §6)
+    on IF;
   - it prints `READY <IF address>`, logs `GOT <src> <qname> <qtype>` per query on stderr, and logs
     `ECHO` when it receives a response identical to one it sent.
 - `nexora-fixture mdns-query --interface IF --name N --type T --wait D [--legacy]`:
@@ -2164,12 +2241,18 @@ The fixture subcommands:
   - responses are built with miekg `dns.Msg`, and the cache-flush bit is set by OR-ing `0x8000` into
     `Hdr.Class` of each unique record;
   - `mdns-query` binds `0.0.0.0:5353` with `SO_REUSEADDR` (through `net.ListenConfig.Control`) unless
-    `--legacy`, sets `SetMulticastInterface`, and counts responses whose question matches.
+    `--legacy`, sets `SetMulticastInterface`, and counts responses whose question matches or, for a
+    multicast response without a question, that hold an answer for the name and type; it clears the
+    cache-flush bit before printing `ANSWER` lines.
+  - The responder disables multicast loopback so its own responses never read as `ECHO`; `StartIn`
+    waits for the `READY <address>` line with `WaitLog` (it is not `key=addr`, so not `WaitReady`).
 
   Register both in `main.go` and extend `usage`.
 
 - [ ] Run `scripts/dev-exec.sh 'make e2e-build && go test ./e2e/harness -run TestNetLabVethMulticast -count=1 -v'`
-      and expect PASS.
+      and expect PASS. (Only `nexora-fixture` is needed: in a shared pod,
+      `go build -o <private dir>/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture` and
+      `NEXORA_E2E_BIN_DIR=<private dir> go test ...` is equivalent.)
 - [ ] Report the paths. The lead commits `M8 T10: network namespace lab and mDNS fixture`.
 
 ## Task 11: Harness ODoH client
@@ -2252,6 +2335,9 @@ func ODoHRaw(ctx context.Context, hc *http.Client, url, contentType string, body
     - parse the plaintext and check the padding is all zero (RFC 9230 §6.2, §7).
   - Set `Content-Type` and `Accept` to `application/oblivious-dns-message`. Require that response
     content type before decrypting.
+  - As built: `ODoHQuery` rejects configs other than 0x0020/0x0001/0x0001 before sending;
+    `FetchODoHConfigs` returns the response and no configs (nil error) on a non-200 status; every
+    function reads the body in full and leaves a re-readable copy on `resp.Body`.
 - [ ] Run `scripts/dev-exec.sh 'go test ./e2e/harness -run TestODoHConfigParsingAndKeyID -count=1 && go vet ./e2e/harness'`
       and expect PASS. Run `go mod tidy` on the laptop and confirm only circl was added.
 - [ ] Report the paths. The lead commits `M8 T11: harness ODoH client (circl HPKE)`.

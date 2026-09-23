@@ -278,8 +278,8 @@ target and proxy roles; ZONEMD generate and verify; catalog producer and consume
     - `ServerMessage` `odoh_keys` (900).
   - New messages `MdnsConfig`, `OdohConfig`, `OdohProxyTarget`, `OdohKeys` and `OdohKey`, and enums
     `ZonemdVerify` and `ZonemdStatus`.
-  - Migrations: `00900_zonemd.sql`, `00901_catalog_zones.sql`, `00902_odoh.sql`,
-    `00903_engine_group_mdns.sql`.
+  - Migrations: `01302_zonemd.sql`, `01303_catalog_zones.sql`, `01304_odoh.sql`,
+    `01305_engine_group_mdns.sql`.
   - Playwright screen specs: `40-zonemd`, `41-catalog-zones`, `42-odoh`, `43-mdns` and
     `44-rpz-zonemd`.
 - [S-14] **Operations guide and kw proof.**

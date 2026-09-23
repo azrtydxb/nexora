@@ -1,3 +1,18 @@
+## Optional dnstap in the full-gap completion scope
+
+The wave4 audit found that the v1 observability specification mentions optional
+dnstap output, but no sink/configuration implementation or corresponding test was
+found. Prometheus and OTLP implementation do not establish dnstap support.
+
+- Include a disabled-by-default, bounded dnstap output with sink-down/drop-accounting
+  tests in the current approved completion work.
+- Explicitly exclude dnstap from this release while retaining Prometheus/OTLP;
+  record that scope decision rather than treating missing code as implemented.
+
+Awaiting the user's scope decision. Independent approved implementation continues.
+Existing explicit holds on DHCP, packages/tarballs and reference-hardware work,
+and the planning-only split-DNS scope, are not silently reversed by this question.
+
 ## First-class failover groups with transparent load balancing
 
 **Answer:** The user approved implementation: each failover group owns one stable
