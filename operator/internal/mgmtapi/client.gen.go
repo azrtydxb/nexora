@@ -275,6 +275,7 @@ type EngineGroup struct {
 	HealthWindowSeconds int                        `json:"health_window_seconds"`
 	Id                  openapi_types.UUID         `json:"id"`
 	MaxServfailRatio    float32                    `json:"max_servfail_ratio"`
+	Mdns                MdnsSettings               `json:"mdns"`
 	MinHealthQueries    int                        `json:"min_health_queries"`
 	Name                string                     `json:"name"`
 	OtlpEndpoint        string                     `json:"otlp_endpoint"`
@@ -304,6 +305,7 @@ type EngineGroupInput struct {
 	FilterIndexMaxBytes *int64                           `json:"filter_index_max_bytes,omitempty"`
 	HealthWindowSeconds *int                             `json:"health_window_seconds,omitempty"`
 	MaxServfailRatio    *float32                         `json:"max_servfail_ratio,omitempty"`
+	Mdns                *MdnsSettings                    `json:"mdns,omitempty"`
 	MinHealthQueries    *int                             `json:"min_health_queries,omitempty"`
 	Name                string                           `json:"name"`
 	OtlpEndpoint        *string                          `json:"otlp_endpoint,omitempty"`
@@ -329,6 +331,7 @@ type EngineGroupUpdate struct {
 	FilterIndexMaxBytes *int64                            `json:"filter_index_max_bytes,omitempty"`
 	HealthWindowSeconds *int                              `json:"health_window_seconds,omitempty"`
 	MaxServfailRatio    *float32                          `json:"max_servfail_ratio,omitempty"`
+	Mdns                *MdnsSettings                     `json:"mdns,omitempty"`
 	MinHealthQueries    *int                              `json:"min_health_queries,omitempty"`
 	Name                string                            `json:"name"`
 	OtlpEndpoint        *string                           `json:"otlp_endpoint,omitempty"`
@@ -400,6 +403,15 @@ type JoinTokenCreate struct {
 type JoinTokenCreated struct {
 	JoinToken JoinToken `json:"join_token"`
 	Token     string    `json:"token"`
+}
+
+// MdnsSettings defines model for MdnsSettings.
+type MdnsSettings struct {
+	Enabled           bool     `json:"enabled"`
+	Interfaces        []string `json:"interfaces"`
+	Reflect           bool     `json:"reflect"`
+	ReflectInterfaces []string `json:"reflect_interfaces"`
+	TimeoutMs         int      `json:"timeout_ms"`
 }
 
 // Rollout defines model for Rollout.
