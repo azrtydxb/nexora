@@ -20,7 +20,7 @@ jobs:
   parse_query:
     # The dev toolbox image carries the nightly toolchain, cargo-fuzz and protoc (deploy/dev/Dockerfile).
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2" }
     timeout-minutes: 80
     steps:
       - name: Install provisioned CI CA

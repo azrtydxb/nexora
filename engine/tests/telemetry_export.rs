@@ -427,7 +427,7 @@ fn unreachable_collector_drops_with_counter_and_never_blocks_push() {
         "push blocked: {:?}",
         start.elapsed()
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while shared.metrics.dropped(Signal::Logs) == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -499,7 +499,7 @@ fn failed_export_counts_every_record_of_the_batch() {
     }
     push(&shared.querylog, &shared.metrics, record(2));
     let _t = spawn_telemetry_thread(shared.clone());
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while (shared.metrics.dropped(Signal::Logs) < 10 || shared.metrics.dropped(Signal::Traces) < 4)
         && Instant::now() < deadline
     {
@@ -759,7 +759,9 @@ fn queue_query(shared: &Arc<Shared>, ctx: &nexora_engine::server::WorkerCtx, nam
 }
 
 fn exported(sink: &Sink, count: usize) -> Vec<std::collections::BTreeMap<String, String>> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // An upper bound for a loaded CI container, not an expected duration: the loop returns as
+    // soon as the records arrive (a few milliseconds on an idle machine).
+    let deadline = Instant::now() + Duration::from_secs(30);
     while sink.logs.load(Ordering::SeqCst) < count && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }

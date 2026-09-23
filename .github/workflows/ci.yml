@@ -23,7 +23,7 @@ jobs:
   engine:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 45
@@ -84,7 +84,7 @@ jobs:
   mgmt:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 45
@@ -155,7 +155,7 @@ jobs:
   operator:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 30
@@ -214,7 +214,7 @@ jobs:
   web:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 30
@@ -280,7 +280,7 @@ jobs:
   failover-contracts:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 15
@@ -348,7 +348,7 @@ jobs:
   e2e:
     runs-on: arc-azrtydxb
     container:
-      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 150
