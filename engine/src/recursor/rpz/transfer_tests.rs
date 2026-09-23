@@ -291,6 +291,7 @@ fn transfer_snapshot(primary: SocketAddr, tsig: bool) -> proto::ConfigSnapshot {
                         0
                     },
                     min_refresh_seconds: 1,
+                    zonemd_verify: 0,
                 },
             )),
             policy_override: 0,
@@ -380,6 +381,148 @@ async fn tsig_zone_waits_for_key_material_held_in_memory_only() {
             entry.display()
         );
     }
+}
+
+/// A primary whose zone (serial, records) the test swaps between refreshes.
+struct FakeRpzPrimary {
+    zone: Arc<Mutex<(u32, Vec<Record>)>>,
+    addr: SocketAddr,
+}
+
+impl FakeRpzPrimary {
+    async fn start(zone: (u32, Vec<Record>)) -> Self {
+        let zone = Arc::new(Mutex::new(zone));
+        let addr = primary(zone.clone(), None).await;
+        FakeRpzPrimary { zone, addr }
+    }
+    fn set(&self, zone: (u32, Vec<Record>)) {
+        *self.zone.lock().unwrap() = zone;
+    }
+}
+
+fn zonemd_rr(serial: u32, digest: &[u8]) -> Record {
+    let mut rd = serial.to_be_bytes().to_vec();
+    rd.extend_from_slice(&[crate::zonemd::SCHEME_SIMPLE, crate::zonemd::HASH_SHA384]);
+    rd.extend_from_slice(digest);
+    Record::from_rdata(
+        n("rpz.test."),
+        60,
+        RData::Unknown {
+            code: RecordType::Unknown(crate::zonemd::TYPE_ZONEMD),
+            rdata: hickory_proto::rr::rdata::NULL::with(rd),
+        },
+    )
+}
+
+/// The zone `primary` serves at `serial`: the blocks plus an apex ZONEMD whose digest covers this
+/// version (`valid`) or the previous one (serial - 1 without the last block: a stale digest).
+fn zone_with_zonemd(serial: u32, blocks: &[&str], valid: bool) -> (u32, Vec<Record>) {
+    let (digest_serial, digest_blocks) = if valid {
+        (serial, blocks)
+    } else {
+        (serial - 1, &blocks[..blocks.len() - 1])
+    };
+    let mut covered = vec![soa(digest_serial)];
+    covered.extend(digest_blocks.iter().map(|b| block(b)));
+    let digest =
+        crate::zonemd::digest(&n("rpz.test."), &covered, crate::zonemd::HASH_SHA384).unwrap();
+    let (_, mut records) = zone_without_zonemd(serial, blocks);
+    records.push(zonemd_rr(serial, &digest));
+    (serial, records)
+}
+
+fn zone_without_zonemd(serial: u32, blocks: &[&str]) -> (u32, Vec<Record>) {
+    (serial, blocks.iter().map(|b| block(b)).collect())
+}
+
+fn transfer_config(primary: SocketAddr, mode: proto::ZonemdVerify) -> Vec<RpzZoneConfig> {
+    let mut s = transfer_snapshot(primary, false);
+    if let Some(proto::rpz_zone::Source::Transfer(t)) = &mut s.rpz_zones[0].source {
+        t.zonemd_verify = mode as i32;
+    }
+    resolution(&s)
+}
+
+fn manager_with(dir: &std::path::Path, cfg: Vec<RpzZoneConfig>) -> RpzState {
+    let state = RpzState::new(Some(dir));
+    state.manager.apply_config(&state, &cfg);
+    state
+}
+
+fn blocks(state: &RpzState, qname: &str) -> bool {
+    use hickory_proto::serialize::binary::BinEncodable;
+    let wire = n(qname).to_lowercase().to_bytes().unwrap();
+    let client = std::net::IpAddr::from([192, 0, 2, 1]);
+    matches!(
+        state.set.load().check_query(&wire, client),
+        super::index::QueryPhase::Hit { .. }
+    )
+}
+
+// Catches: an RPZ transfer whose ZONEMD fails is served or persisted anyway, `required` accepting a
+// zone without ZONEMD, or the status not carrying the verdict.
+#[tokio::test(flavor = "current_thread")]
+async fn rpz_transfer_failing_zonemd_keeps_last_good() {
+    let dir = tempfile::tempdir().unwrap();
+    let primary = FakeRpzPrimary::start(zone_with_zonemd(1, &["bad.example"], true)).await;
+    let mgr = manager_with(
+        dir.path(),
+        transfer_config(primary.addr, proto::ZonemdVerify::IfPresent),
+    );
+    let _ = mgr.manager.refresh_now(&mgr, "z1").await;
+    let st = mgr.manager.status().remove(0);
+    assert_eq!(
+        (st.serial, st.zonemd),
+        (1, proto::ZonemdStatus::Verified as i32),
+        "{}",
+        st.last_error
+    );
+    assert!(blocks(&mgr, "bad.example."));
+    let persisted = std::fs::read(dir.path().join("rpz/z1.zone")).unwrap();
+
+    primary.set(zone_with_zonemd(
+        2,
+        &["bad.example", "worse.example"],
+        false,
+    ));
+    assert!(mgr.manager.refresh_now(&mgr, "z1").await.is_err());
+    let st = mgr.manager.status().remove(0);
+    assert_eq!(st.serial, 1, "the failing version is not applied");
+    assert_eq!(st.zonemd, proto::ZonemdStatus::Failed as i32);
+    assert!(
+        st.zonemd_error.contains("digest") || st.zonemd_error.contains("serial"),
+        "{}",
+        st.zonemd_error
+    );
+    assert!(st.last_error.contains("zonemd:"), "{}", st.last_error);
+    assert!(!blocks(&mgr, "worse.example."));
+    assert_eq!(
+        std::fs::read(dir.path().join("rpz/z1.zone")).unwrap(),
+        persisted,
+        "the last good copy is kept on disk"
+    );
+
+    let mgr = manager_with(
+        dir.path(),
+        transfer_config(primary.addr, proto::ZonemdVerify::Required),
+    );
+    primary.set(zone_without_zonemd(3, &["worse.example"]));
+    assert!(mgr.manager.refresh_now(&mgr, "z1").await.is_err());
+    assert!(
+        !blocks(&mgr, "worse.example."),
+        "required refuses a zone without ZONEMD"
+    );
+    assert!(blocks(&mgr, "bad.example."), "the persisted copy is served");
+    let mgr = manager_with(
+        dir.path(),
+        transfer_config(primary.addr, proto::ZonemdVerify::Off),
+    );
+    assert!(mgr.manager.refresh_now(&mgr, "z1").await.unwrap());
+    assert!(blocks(&mgr, "worse.example."), "off applies it");
+    assert_eq!(
+        mgr.manager.status()[0].zonemd,
+        proto::ZonemdStatus::Off as i32
+    );
 }
 
 fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {

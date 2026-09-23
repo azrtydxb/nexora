@@ -156,6 +156,8 @@ pub fn after_apply(shared: &Shared, rt: &Runtime) {
     let Some(handle) = shared.auth.control_runtime() else {
         return;
     };
+    // The mDNS reflector runs on the control runtime too; unchanged interfaces keep it running.
+    shared.mdns.sync(&rt.mdns, handle);
     if shared
         .auth
         .notified_version

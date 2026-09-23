@@ -44,6 +44,8 @@ fn record(rcode: u8) -> QueryRecord {
         rpz_action: 0,
         filter_list: NO_FILTER_LIST,
         filter_generation: 0,
+        filter_identity: None,
+        rpz_identity: None,
         filter_source: FilterSource::None,
         filter_rule_offset: NO_RULE,
         rewrite_wildcard: false,
@@ -59,6 +61,8 @@ struct Sink {
     spans: Arc<AtomicUsize>,
     /// Every `nexora.upstream` attribute of the exported log records, in arrival order.
     upstreams: Arc<parking_lot::Mutex<Vec<String>>>,
+    /// Full string attributes for publication-bound attribution regressions.
+    attributes: Arc<parking_lot::Mutex<Vec<std::collections::BTreeMap<String, String>>>>,
     /// How long each log export takes to answer.
     delay: Duration,
     /// Log exports in progress, and the most that ever overlapped.
@@ -92,6 +96,17 @@ impl LogsService for Sink {
                     _ => None,
                 }),
         );
+        self.attributes.lock().extend(records().map(|r| {
+            r.attributes
+                .iter()
+                .filter_map(|kv| match kv.value.as_ref()?.value.as_ref()? {
+                    opentelemetry_proto::tonic::common::v1::any_value::Value::StringValue(v) => {
+                        Some((kv.key.clone(), v.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }));
         self.logs.fetch_add(records().count(), Ordering::SeqCst);
         self.active.fetch_sub(1, Ordering::SeqCst);
         Ok(tonic::Response::new(ExportLogsServiceResponse::default()))
@@ -233,6 +248,45 @@ fn upstream_label_uses_the_runtime_that_answered() {
 
 #[test]
 fn slow_collector_does_not_drop_with_concurrent_exports() {
+    // Original M7 S-17/T9 criterion: 400 ms, 20,000 records, zero drops. Four concurrent
+    // exports have no throughput headroom at 10 batches/s; scheduling delays must use the
+    // existing bounded ring instead of evicting queued batches while it still has room.
+    let sink = Sink {
+        delay: Duration::from_millis(400),
+        ..Sink::default()
+    };
+    let (_rt, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    let _t = spawn_telemetry_thread(shared.clone());
+    for _ in 0..20 {
+        for _ in 0..1000 {
+            push(&shared.querylog, &shared.metrics, record(0));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while sink.logs.load(Ordering::SeqCst) + (shared.metrics.dropped(Signal::Logs) as usize)
+        < 20_000
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        shared.metrics.dropped(Signal::Logs),
+        0,
+        "logs dropped behind a 400 ms collector"
+    );
+    assert_eq!(sink.logs.load(Ordering::SeqCst), 20_000);
+    let peak = sink.peak.load(Ordering::SeqCst);
+    assert!(peak > 1, "exports never overlapped");
+    assert!(
+        peak <= nexora_engine::telemetry::otlp::MAX_INFLIGHT,
+        "export concurrency exceeded its bound: {peak}"
+    );
+}
+
+#[test]
+fn slow_collector_250ms_does_not_drop_with_concurrent_exports() {
     // 10 batches/s arrive. A 250 ms collector clears 4/s with one export at a time (the queue of 8
     // overflows within a few seconds) but 16/s with four concurrent exports, which leaves headroom
     // for a loaded CI host.
@@ -678,4 +732,371 @@ fn m6_parallel_strategy_maps_with_capped_max() {
         shared.runtime.load().upstreams.strategy,
         Strategy::Parallel { max: 8 }
     );
+}
+
+/// Exercise the actual worker decision capture; no exporter is running until after publication.
+fn queue_query(shared: &Arc<Shared>, ctx: &nexora_engine::server::WorkerCtx, name: &str) {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RecordType};
+    use hickory_proto::serialize::binary::BinEncodable;
+    use nexora_engine::server::{FastOutcome, handle_packet};
+    let mut query = Message::new(1, MessageType::Query, OpCode::Query);
+    query.metadata.recursion_desired = true;
+    query.add_query(Query::query(Name::from_ascii(name).unwrap(), RecordType::A));
+    let query = query.to_bytes().unwrap();
+    let mut out = [0; 1232];
+    assert!(matches!(
+        handle_packet(
+            ctx,
+            &shared.runtime.load(),
+            &query,
+            "127.0.0.1:53000".parse().unwrap(),
+            Transport::Udp,
+            &mut out,
+        ),
+        FastOutcome::Reply(_)
+    ));
+}
+
+fn exported(sink: &Sink, count: usize) -> Vec<std::collections::BTreeMap<String, String>> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while sink.logs.load(Ordering::SeqCst) < count && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(sink.logs.load(Ordering::SeqCst), count);
+    sink.attributes.lock().clone()
+}
+
+#[test]
+fn queued_rpz_identity_survives_reorder_remove_and_rebuild() {
+    use nexora_engine::recursor::rpz::{
+        index::{RpzSet, RpzZoneIndex},
+        parse::parse_rpz_text,
+    };
+    let sink = Sink::default();
+    let (_rt, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    // The common telemetry fixture has no ACL clients; allow the local query fixture explicitly.
+    let mut runtime = nexora_engine::runtime::Runtime::initial();
+    runtime.acl = nexora_engine::acl::Acl::any();
+    runtime.telemetry = shared.runtime.load().telemetry.clone();
+    shared.runtime.store(Arc::new(runtime));
+    let zone = |id: &str, serial: u32| {
+        let parsed = parse_rpz_text(
+            &hickory_proto::rr::Name::from_ascii("rpz.test.").unwrap(),
+            &format!("$TTL 60\n@ SOA ns h {serial} 60 60 60 60\nblocked.test CNAME .\n"),
+        )
+        .unwrap();
+        Arc::new(RpzZoneIndex::build(id, &parsed, 0))
+    };
+    let a = zone("original-zone", 1);
+    let b = zone("replacement-zone", 1);
+    let retired = Arc::downgrade(&a);
+    let ctx = nexora_engine::server::WorkerCtx::new(0, shared.clone());
+    shared
+        .recursor
+        .rpz
+        .publish(RpzSet::new(vec![a.clone(), b.clone()]));
+    queue_query(&shared, &ctx, "blocked.test.");
+    shared.recursor.rpz.publish(RpzSet::new(vec![b, a]));
+    queue_query(&shared, &ctx, "blocked.test.");
+    // A same-id rebuild must not retain either old rule index, nor affect earlier records.
+    shared
+        .recursor
+        .rpz
+        .publish(RpzSet::new(vec![zone("original-zone", 2)]));
+    queue_query(&shared, &ctx, "blocked.test.");
+    shared.recursor.rpz.publish(RpzSet::default());
+    assert!(
+        retired.upgrade().is_none(),
+        "query records pinned a retired RPZ index"
+    );
+    let _t = spawn_telemetry_thread(shared.clone());
+    let records = exported(&sink, 3);
+    let ids: Vec<_> = records
+        .iter()
+        .map(|r| r.get("nexora.rpz_zone").map(String::as_str))
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            Some("original-zone"),
+            Some("replacement-zone"),
+            Some("original-zone")
+        ]
+    );
+    assert!(
+        records
+            .iter()
+            .all(|r| r.get("nexora.filter.source").map(String::as_str) == Some("rpz"))
+    );
+    assert_eq!(shared.metrics.dropped(Signal::Logs), 0);
+}
+
+#[test]
+fn queued_list_identity_survives_rebuild_and_history_eviction() {
+    use nexora_engine::filter::index::{IndexOptions, ListInput, ListKind};
+    use nexora_engine::filter::{BlockReply, FilterIndex, PolicyTable};
+    use nexora_engine::runtime::Runtime;
+    let sink = Sink::default();
+    let (_rt, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    let settings = shared.runtime.load().telemetry.clone();
+    let ctx = nexora_engine::server::WorkerCtx::new(0, shared.clone());
+    let mut retired = Vec::new();
+    for (id, category) in [
+        ("original-list", "ads"),
+        ("replacement-list", "malware"),
+        ("original-list", "phishing"),
+    ] {
+        let index = Arc::new(
+            FilterIndex::build(
+                &[ListInput {
+                    id,
+                    category,
+                    category_slot: 1,
+                    kind: ListKind::Block,
+                    text: b"blocked.test\n",
+                }],
+                &IndexOptions::new(64 << 20),
+            )
+            .unwrap(),
+        );
+        retired.push(Arc::downgrade(&index));
+        let mut runtime = Runtime::initial();
+        runtime.acl = nexora_engine::acl::Acl::any();
+        runtime.telemetry = settings.clone();
+        runtime.policy = PolicyTable::global_only(
+            Arc::new(index.view(&[0], &[])),
+            BlockReply {
+                mode: nexora_engine::filter::BlockMode::NxDomain,
+                ttl: 60,
+            },
+        );
+        runtime.filter_index = index;
+        // The manually constructed fixture must not look like the empty snapshot's index key.
+        runtime.filter_key = format!("fixture:{id}:{category}");
+        shared.runtime.store(Arc::new(runtime));
+        // Second decision goes through the decision cache as well.
+        queue_query(&shared, &ctx, "blocked.test.");
+        queue_query(&shared, &ctx, "blocked.test.");
+    }
+    for version in 2..=12 {
+        apply_reordered(&shared, version, &["fixture"]);
+    }
+    assert!(
+        retired.iter().all(|w| w.upgrade().is_none()),
+        "query records pinned retired filter indexes"
+    );
+    let _t = spawn_telemetry_thread(shared.clone());
+    let records = exported(&sink, 6);
+    let expected = [
+        ("original-list", "ads"),
+        ("replacement-list", "malware"),
+        ("original-list", "phishing"),
+    ];
+    for (r, (id, category)) in records
+        .iter()
+        .zip(expected.into_iter().flat_map(|e| [e, e]))
+    {
+        assert_eq!(r.get("nexora.filter.list_id").map(String::as_str), Some(id));
+        assert_eq!(
+            r.get("nexora.filter.category").map(String::as_str),
+            Some(category)
+        );
+        assert_eq!(
+            r.get("nexora.filter.source").map(String::as_str),
+            Some("category")
+        );
+        assert_eq!(
+            r.get("nexora.filter.rule").map(String::as_str),
+            Some("blocked.test")
+        );
+    }
+    assert_eq!(shared.metrics.dropped(Signal::Logs), 0);
+}
+
+#[test]
+fn queued_allowlist_cname_and_response_identities_survive_publication() {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{
+        Name, RData, Record, RecordType,
+        rdata::{A, CNAME},
+    };
+    use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+    use nexora_engine::filter::index::{IndexOptions, ListInput, ListKind};
+    use nexora_engine::filter::{BlockReply, FilterIndex, PolicyTable};
+    use nexora_engine::recursor::rpz::{
+        index::{RpzSet, RpzZoneIndex},
+        parse::parse_rpz_text,
+    };
+    use nexora_engine::runtime::Runtime;
+    use nexora_engine::server::{FastOutcome, WorkerCtx, handle_packet, resolve_miss};
+    use nexora_engine::upstream::{Protocol, Strategy, UpstreamSet, UpstreamSpec};
+    use std::rc::Rc;
+
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let upstream = socket.local_addr().unwrap();
+    let responder = std::thread::spawn(move || {
+        let mut buf = [0; 4096];
+        // Allowlist miss, filter CNAME, response IP/QNAME, and query RPZ CNAME target.
+        for _ in 0..5 {
+            let (n, peer) = socket.recv_from(&mut buf).unwrap();
+            let mut m = Message::from_bytes(&buf[..n]).unwrap();
+            m.metadata.message_type = MessageType::Response;
+            m.metadata.recursion_available = true;
+            let name = m.queries[0].name().clone();
+            if matches!(name.to_ascii().as_str(), "cloak.test." | "rpz-cloak.test.") {
+                let target = if name.to_ascii() == "cloak.test." {
+                    "blocked.test."
+                } else {
+                    "rpz-blocked.test."
+                };
+                m.add_answer(Record::from_rdata(
+                    name,
+                    60,
+                    RData::CNAME(CNAME(Name::from_ascii(target).unwrap())),
+                ));
+            } else {
+                let last = if name.to_ascii() == "response.test." {
+                    66
+                } else {
+                    1
+                };
+                m.add_answer(Record::from_rdata(
+                    name,
+                    60,
+                    RData::A(A::new(192, 0, 2, last)),
+                ));
+            }
+            socket.send_to(&m.to_bytes().unwrap(), peer).unwrap();
+        }
+    });
+    let sink = Sink::default();
+    let (_collector, addr) = serve(sink.clone());
+    let shared = shared_with_endpoint(&format!("http://{addr}"));
+    let index = Arc::new(
+        FilterIndex::build(
+            &[
+                ListInput {
+                    id: "blocked-original",
+                    category: "ads",
+                    category_slot: 1,
+                    kind: ListKind::Block,
+                    text: b"blocked.test\n",
+                },
+                ListInput {
+                    id: "allowed-original",
+                    category: "",
+                    category_slot: 0,
+                    kind: ListKind::Allow,
+                    text: b"ok.blocked.test\n",
+                },
+            ],
+            &IndexOptions::new(64 << 20),
+        )
+        .unwrap(),
+    );
+    let retired_list = Arc::downgrade(&index);
+    let mut runtime = Runtime::initial();
+    runtime.acl = nexora_engine::acl::Acl::any();
+    runtime.telemetry = shared.runtime.load().telemetry.clone();
+    runtime.upstreams = Arc::new(UpstreamSet::new(
+        vec![UpstreamSpec {
+            id: "fixture".into(),
+            name: "fixture".into(),
+            protocol: Protocol::Udp,
+            addr: Some(upstream),
+            tls_server_name: String::new(),
+            doh_url: String::new(),
+            timeout: Duration::from_secs(1),
+            ca_pem: String::new(),
+        }],
+        Strategy::Ordered,
+        None,
+    ));
+    runtime.policy = PolicyTable::global_only(
+        Arc::new(index.view(&[0], &[1])),
+        BlockReply {
+            mode: nexora_engine::filter::BlockMode::NxDomain,
+            ttl: 60,
+        },
+    );
+    runtime.filter_index = index;
+    shared.runtime.store(Arc::new(runtime));
+    let zone = |id: &str| {
+        Arc::new(RpzZoneIndex::build(id, &parse_rpz_text(
+        &Name::from_ascii("rpz.test.").unwrap(),
+        "$TTL 60\n@ SOA ns h 1 60 60 60 60\n32.66.2.0.192.rpz-ip CNAME .\nrewrite.test CNAME target.test.\nrpz-blocked.test CNAME .\n",
+    ).unwrap(), 0))
+    };
+    let original = zone("response-original");
+    let retired_rpz = Arc::downgrade(&original);
+    shared.recursor.rpz.publish(RpzSet::new(vec![original]));
+    let ctx = Rc::new(WorkerCtx::new(0, shared.clone()));
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = tokio::task::LocalSet::new();
+    executor.block_on(local.run_until(async {
+        for name in [
+            "ok.blocked.test.",
+            "cloak.test.",
+            "response.test.",
+            "rpz-cloak.test.",
+            "rewrite.test.",
+        ] {
+            let mut q = Message::new(1, MessageType::Query, OpCode::Query);
+            q.metadata.recursion_desired = true;
+            q.add_query(Query::query(Name::from_ascii(name).unwrap(), RecordType::A));
+            let wire = q.to_bytes().unwrap();
+            let rt = shared.runtime.load_full();
+            let mut out = [0; 1232];
+            let job = match handle_packet(
+                &ctx,
+                &rt,
+                &wire,
+                "127.0.0.1:53000".parse().unwrap(),
+                Transport::Udp,
+                &mut out,
+            ) {
+                FastOutcome::Miss(job) => job,
+                _ => panic!("expected miss for {name}"),
+            };
+            // Change the RPZ publication between the query decision and its CNAME chase.
+            if name == "rewrite.test." {
+                shared
+                    .recursor
+                    .rpz
+                    .publish(RpzSet::new(vec![zone("replacement")]));
+            }
+            assert!(!resolve_miss(ctx.clone(), rt, job).await.is_empty());
+        }
+    }));
+    responder.join().unwrap();
+    shared.recursor.rpz.publish(RpzSet::default());
+    let mut replacement = Runtime::initial();
+    replacement.telemetry = shared.runtime.load().telemetry.clone();
+    shared.runtime.store(Arc::new(replacement));
+    assert!(retired_list.upgrade().is_none());
+    assert!(retired_rpz.upgrade().is_none());
+    let _t = spawn_telemetry_thread(shared.clone());
+    let records = exported(&sink, 5);
+    let get = |i: usize, key: &str| records[i].get(key).map(String::as_str);
+    assert_eq!(get(0, "nexora.filter.source"), Some("allowlist"));
+    assert_eq!(get(0, "nexora.filter.list_id"), Some("allowed-original"));
+    assert_eq!(get(0, "nexora.filter.rule"), Some("ok.blocked.test"));
+    assert_eq!(get(1, "nexora.filter.source"), Some("category"));
+    assert_eq!(get(1, "nexora.filter.list_id"), Some("blocked-original"));
+    assert_eq!(get(1, "nexora.filter.category"), Some("ads"));
+    assert_eq!(get(1, "nexora.filter.rule"), None);
+    for i in [2, 3, 4] {
+        assert_eq!(get(i, "nexora.filter.source"), Some("rpz"));
+        assert_eq!(get(i, "nexora.rpz_zone"), Some("response-original"));
+    }
+    assert_eq!(shared.metrics.dropped(Signal::Logs), 0);
 }

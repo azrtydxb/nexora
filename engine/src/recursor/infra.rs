@@ -103,6 +103,11 @@ impl InfraCache {
         self.lame.set_capacity(capacity_bytes / 2);
     }
 
+    /// Existing eviction weights of both infrastructure caches, without copying entries.
+    pub fn weight(&self) -> u64 {
+        self.servers.weight() + self.lame.weight()
+    }
+
     fn entry(&self, ip: IpAddr) -> Option<InfraEntry> {
         self.servers.get(&ip)
     }

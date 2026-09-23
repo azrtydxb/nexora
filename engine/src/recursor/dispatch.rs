@@ -110,6 +110,8 @@ pub enum Route<'a> {
     Forward,
     Recursive,
     ForwardZone(&'a ForwardZone),
+    /// A name under `local.` with the mDNS gateway on.
+    Mdns,
 }
 
 pub struct ResolutionRuntime {
@@ -122,6 +124,8 @@ pub struct ResolutionRuntime {
     /// RPZ zones in precedence order, handed to the `RpzManager` by `RecursorState::sync`.
     pub rpz: Vec<RpzZoneConfig>,
     pub config_key: String,
+    /// The mDNS gateway while it is on; set by `Runtime::build` from its `MdnsRuntime`.
+    pub mdns: Option<Arc<crate::mdns::gateway::Gateway>>,
 }
 
 impl Default for ResolutionRuntime {
@@ -135,6 +139,7 @@ impl Default for ResolutionRuntime {
             dnssec: Arc::default(),
             rpz: Vec::new(),
             config_key: String::new(),
+            mdns: None,
         }
     }
 }
@@ -153,12 +158,16 @@ impl ResolutionRuntime {
             dnssec: Arc::new(DnssecRuntime::build(s)?),
             rpz: zone_configs(s, blobs)?,
             config_key: config_key(s),
+            mdns: None,
         })
     }
 
     pub fn route(&self, qname_wire_lower: &[u8]) -> Route<'_> {
         match self.forward_zones.longest_match(qname_wire_lower) {
             Some(z) => Route::ForwardZone(z),
+            None if self.mdns.is_some() && crate::mdns::is_local_name(qname_wire_lower) => {
+                Route::Mdns
+            }
             None if self.mode == Mode::Recursive => Route::Recursive,
             None => Route::Forward,
         }
@@ -171,6 +180,7 @@ impl ResolutionRuntime {
                 Route::Recursive => true,
                 Route::ForwardZone(z) => z.validate,
                 Route::Forward => self.dnssec.validate_forwarded,
+                Route::Mdns => false,
             }
     }
 
@@ -291,6 +301,7 @@ pub struct MissAnswer {
     pub rpz_action: u8,
     /// Index of the RPZ zone that decided into the RPZ set; `NO_RPZ_ZONE` when none did.
     pub rpz_zone: u16,
+    pub rpz_identity: Option<Arc<str>>,
 }
 
 /// The `MissAnswer::rpz_zone` of zone index `zone`.
@@ -314,7 +325,13 @@ impl Fetcher for RoutedFetcher<'_> {
     ) -> LocalBoxFuture<'a, Result<FetchedSet, FetchError>> {
         Box::pin(async move {
             let wire = name_wire(name);
-            match self.rt.route(&wire) {
+            // Chain-of-trust records for `local.` come from the DNS, never from the gateway.
+            let route = match self.rt.route(&wire) {
+                Route::Mdns if self.rt.mode == Mode::Recursive => Route::Recursive,
+                Route::Mdns => Route::Forward,
+                route => route,
+            };
+            match route {
                 Route::Recursive => {
                     match self
                         .state
@@ -339,7 +356,7 @@ impl Fetcher for RoutedFetcher<'_> {
                         authorities: m.authorities,
                     })
                     .map_err(|_| FetchError::Unreachable),
-                Route::Forward => {
+                Route::Forward | Route::Mdns => {
                     let up = self.upstream;
                     fetch_via(
                         move |q: Vec<u8>| async move { up.forward(&q).await },
@@ -426,13 +443,28 @@ enum Failure {
     Unresolved(RouteTaken, Ede),
     /// Validation failed: SERVFAIL is the answer.
     Invalid(RouteTaken, SecurityTag, Ede),
+    /// The mDNS gateway's final answer (NXDOMAIN or SERVFAIL).
+    Answered(MissAnswer),
 }
 
+/// For callers without a captured query-phase identity. Worker pending decisions use
+/// `resolve_miss_with_identity` so a publication cannot rename the original decision.
 pub async fn resolve_miss(
     rt: &ResolutionRuntime,
     state: &RecursorState,
     upstream: &dyn ForwardUpstream,
     q: &MissQuery<'_>,
+) -> MissAnswer {
+    resolve_miss_with_identity(rt, state, upstream, q, None).await
+}
+
+/// Carries the query-phase identity across publication while resolution is pending.
+pub async fn resolve_miss_with_identity(
+    rt: &ResolutionRuntime,
+    state: &RecursorState,
+    upstream: &dyn ForwardUpstream,
+    q: &MissQuery<'_>,
+    pending_identity: Option<Arc<str>>,
 ) -> MissAnswer {
     let set = state.rpz.set.load_full();
     let default_route = route_taken(&rt.route(&name_wire(&q.qname)));
@@ -444,9 +476,23 @@ pub async fn resolve_miss(
             PolicyOutcome::Passthru => {}
             PolicyOutcome::ChaseCname { cname, target } => {
                 let ede = Ede::new(EDE_FORGED, format!("rpz {}", z.origin));
-                return chase(rt, state, upstream, q, *cname, &target, ede, action, *zone).await;
+                return chase(
+                    rt,
+                    state,
+                    upstream,
+                    q,
+                    *cname,
+                    &target,
+                    ede,
+                    action,
+                    *zone,
+                    pending_identity,
+                )
+                .await;
             }
-            outcome => return policy_answer(outcome, action, default_route, *zone),
+            outcome => {
+                return policy_answer(outcome, action, default_route, *zone, pending_identity);
+            }
         }
     }
     let mut r = match resolve_name(rt, state, upstream, q, &q.qname, true).await {
@@ -455,6 +501,7 @@ pub async fn resolve_miss(
     };
     let deferred = matches!(q.rpz, RpzPending::Deferred { .. });
     let (mut rpz_action, mut rpz_zone) = (0, NO_RPZ_ZONE);
+    let mut rpz_identity = None;
     if (set.has_response_triggers || deferred) && !set.zones.is_empty() && r.decode() {
         let upto = match &q.rpz {
             RpzPending::Deferred { zone, .. } => *zone,
@@ -463,38 +510,49 @@ pub async fn resolve_miss(
         let chain = chain_names(&q.qname, &r.answers);
         let hit = set
             .check_response(upto, &chain, &r.answers, &r.ns_names, &r.ns_addrs)
-            .map(|(zone, action)| (zone, action.clone()))
+            .map(|(zone, action)| (zone, action.clone(), Some(set.zones[zone].identity.clone())))
             .or_else(|| match &q.rpz {
-                RpzPending::Deferred { zone, action } => Some((*zone, action.clone())),
+                RpzPending::Deferred { zone, action } => {
+                    Some((*zone, action.clone(), pending_identity.clone()))
+                }
                 _ => None,
             });
-        if let Some((zone, action)) = hit
+        if let Some((zone, action, identity)) = hit
             && let Some(z) = set.zones.get(zone)
         {
             let Some(action) = set.effective_action(zone, &action) else {
-                return finish(q, r, RPZ_DISABLED, zone_index(zone));
+                return finish(q, r, RPZ_DISABLED, zone_index(zone), identity);
             };
             match apply_action(&q.qname, q.qtype, q.over_tcp, z, &action) {
                 PolicyOutcome::Passthru => {
                     rpz_action = action.log_code();
                     rpz_zone = zone_index(zone);
+                    rpz_identity = identity;
                 }
                 PolicyOutcome::ChaseCname { cname, target } => {
                     let ede = Ede::new(EDE_FORGED, format!("rpz {}", z.origin));
-                    return chase(rt, state, upstream, q, *cname, &target, ede, &action, zone)
-                        .await;
+                    return chase(
+                        rt, state, upstream, q, *cname, &target, ede, &action, zone, identity,
+                    )
+                    .await;
                 }
-                outcome => return policy_answer(outcome, &action, r.route, zone),
+                outcome => return policy_answer(outcome, &action, r.route, zone, identity),
             }
         }
     }
-    finish(q, r, rpz_action, rpz_zone)
+    finish(q, r, rpz_action, rpz_zone, rpz_identity)
 }
 
 /// `QueryRecord.rpz_action` of a hit in a zone whose policy override is DISABLED.
 pub const RPZ_DISABLED: u8 = 7;
 
-fn finish(q: &MissQuery<'_>, mut r: Resolved, rpz_action: u8, rpz_zone: u16) -> MissAnswer {
+fn finish(
+    q: &MissQuery<'_>,
+    mut r: Resolved,
+    rpz_action: u8,
+    rpz_zone: u16,
+    rpz_identity: Option<Arc<str>>,
+) -> MissAnswer {
     let wire = match r.raw.take() {
         Some(bytes) => bytes,
         None => Bytes::from(build_response(
@@ -516,6 +574,7 @@ fn finish(q: &MissQuery<'_>, mut r: Resolved, rpz_action: u8, rpz_zone: u16) -> 
         security: r.security,
         rpz_action,
         rpz_zone,
+        rpz_identity,
     }
 }
 
@@ -531,6 +590,7 @@ async fn chase(
     ede: Ede,
     action: &RpzAction,
     zone: usize,
+    rpz_identity: Option<Arc<str>>,
 ) -> MissAnswer {
     let mut r = match resolve_name(rt, state, upstream, q, &target.to_lowercase(), false).await {
         Ok(r) => r,
@@ -538,6 +598,7 @@ async fn chase(
             let mut a = failure_answer(state, q, f);
             a.rpz_action = action.log_code();
             a.rpz_zone = zone_index(zone);
+            a.rpz_identity = rpz_identity;
             return a;
         }
     };
@@ -556,6 +617,7 @@ async fn chase(
         security: r.security,
         rpz_action: action.log_code(),
         rpz_zone: zone_index(zone),
+        rpz_identity,
     }
 }
 
@@ -638,6 +700,14 @@ async fn resolve_name(
                 msg.authorities,
             )
         }
+        Route::Mdns => {
+            let Some(gateway) = rt.mdns.as_deref() else {
+                return Err(unreachable());
+            };
+            let answers = crate::mdns::answer(q, gateway.query(name, q.qtype).await)
+                .map_err(Failure::Answered)?;
+            Resolved::new(taken, ResponseCode::NoError, answers, Vec::new())
+        }
         Route::Forward if !validating && client_bytes => {
             let bytes = upstream.forward(q.query).await.map_err(|_| unreachable())?;
             Resolved {
@@ -707,8 +777,10 @@ fn failure_answer(state: &RecursorState, q: &MissQuery<'_>, f: Failure) -> MissA
                 security: SecurityTag::None,
                 rpz_action: 0,
                 rpz_zone: NO_RPZ_ZONE,
+                rpz_identity: None,
             }
         }
+        Failure::Answered(answer) => answer,
         Failure::Invalid(route, security, ede) => MissAnswer {
             wire: servfail,
             cacheable: false,
@@ -719,6 +791,7 @@ fn failure_answer(state: &RecursorState, q: &MissQuery<'_>, f: Failure) -> MissA
             security,
             rpz_action: 0,
             rpz_zone: NO_RPZ_ZONE,
+            rpz_identity: None,
         },
     }
 }
@@ -729,6 +802,7 @@ fn policy_answer(
     action: &RpzAction,
     route: RouteTaken,
     zone: usize,
+    rpz_identity: Option<Arc<str>>,
 ) -> MissAnswer {
     let (wire, ede, drop) = match outcome {
         PolicyOutcome::Respond { wire, ede } => (Bytes::from(wire), Some(ede), false),
@@ -745,6 +819,7 @@ fn policy_answer(
         security: SecurityTag::None,
         rpz_action: action.log_code(),
         rpz_zone: zone_index(zone),
+        rpz_identity,
     }
 }
 
@@ -764,7 +839,8 @@ fn recursion_ede(m: &RecursorMetrics, e: RecursionError) -> Ede {
 
 fn route_taken(route: &Route<'_>) -> RouteTaken {
     match route {
-        Route::Forward => RouteTaken::Forward,
+        // mDNS answers are counted with the forwarded ones
+        Route::Forward | Route::Mdns => RouteTaken::Forward,
         Route::Recursive => RouteTaken::Recursive,
         Route::ForwardZone(_) => RouteTaken::ForwardZone,
     }

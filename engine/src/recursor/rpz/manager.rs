@@ -9,6 +9,7 @@ use super::tsig::{TsigAlg, TsigKey};
 use crate::proto::{self, TsigAlgorithm, rpz_zone::Source};
 use crate::runtime::Runtime;
 use crate::snapshot::BlobSource;
+use crate::zonemd::{self, Verdict, VerifyMode};
 use arc_swap::ArcSwap;
 use hickory_proto::rr::{Name, RData, Record};
 use hickory_proto::serialize::binary::{BinDecodable, BinDecoder, BinEncodable};
@@ -43,6 +44,8 @@ pub struct RpzZoneConfig {
     pub origin: Name,
     pub policy_override: i32,
     pub refresh_nonce: u64,
+    /// Transfer zones: RFC 8976 verification of each transferred version; file zones are off.
+    pub zonemd_verify: VerifyMode,
     pub source: RpzSourceConfig,
 }
 
@@ -64,6 +67,7 @@ pub fn zone_configs(
             let origin = Name::from_ascii(&z.name)
                 .map_err(|e| err(e.to_string()))?
                 .to_lowercase();
+            let mut zonemd_verify = VerifyMode::Off;
             let source = match &z.source {
                 Some(Source::File(f)) => {
                     let blob = f
@@ -82,15 +86,18 @@ pub fn zone_configs(
                         z.policy_override,
                     )))
                 }
-                Some(Source::Transfer(t)) => RpzSourceConfig::Transfer {
-                    primary: t
-                        .primary
-                        .parse()
-                        .map_err(|_| err(format!("primary is not ip:port: {}", t.primary)))?,
-                    tsig_key_name: t.tsig_key_name.clone(),
-                    tsig_algorithm: t.tsig_algorithm,
-                    min_refresh_seconds: t.min_refresh_seconds,
-                },
+                Some(Source::Transfer(t)) => {
+                    zonemd_verify = VerifyMode::from_proto(t.zonemd_verify);
+                    RpzSourceConfig::Transfer {
+                        primary: t
+                            .primary
+                            .parse()
+                            .map_err(|_| err(format!("primary is not ip:port: {}", t.primary)))?,
+                        tsig_key_name: t.tsig_key_name.clone(),
+                        tsig_algorithm: t.tsig_algorithm,
+                        min_refresh_seconds: t.min_refresh_seconds,
+                    }
+                }
                 None => return Err(err("no source".into())),
             };
             Ok(RpzZoneConfig {
@@ -98,6 +105,7 @@ pub fn zone_configs(
                 origin,
                 policy_override: z.policy_override,
                 refresh_nonce: z.refresh_nonce,
+                zonemd_verify,
                 source,
             })
         })
@@ -113,6 +121,8 @@ struct ZoneTask {
     hits_base: u64,
     last_success: i64,
     last_error: String,
+    /// Verdict of the last transferred version (`None` before the first transfer).
+    zonemd: Option<Verdict>,
     stale: bool,
     failures: u64,
     next_refresh: Instant,
@@ -129,6 +139,7 @@ impl ZoneTask {
             hits_base: 0,
             last_success: 0,
             last_error: String::new(),
+            zonemd: None,
             stale: false,
             failures: 0,
             next_refresh: Instant::now(),
@@ -352,6 +363,7 @@ impl RpzManager {
             (t.cfg.clone(), t.data.clone(), self.key_for(&t.cfg))
         };
         let (primary, _, _) = transfer_fields(&cfg).expect("checked above");
+        let mut verdict = None;
         let result = async {
             let key = key?;
             let (remote, soa) = soa_serial(primary, &cfg.origin, key.as_ref()).await?;
@@ -361,6 +373,14 @@ impl RpzManager {
                 return Ok((None, soa));
             }
             let zone = transfer(primary, &cfg.origin, data.as_deref(), key.as_ref()).await?;
+            // A version that fails verification is neither served nor persisted.
+            let v = zonemd::verify(&cfg.origin, &zone.records, cfg.zonemd_verify);
+            if let Verdict::Failed(e) = &v {
+                let e = format!("zonemd: {e}");
+                verdict = Some(v);
+                return Err(e);
+            }
+            verdict = Some(v);
             let parsed = parse_rpz_records(&cfg.origin, &zone.records)?;
             let index = Arc::new(RpzZoneIndex::build(&cfg.id, &parsed, cfg.policy_override));
             if let Some(dir) = &self.dir {
@@ -375,6 +395,9 @@ impl RpzManager {
         let Some(t) = tasks.iter_mut().find(|t| t.cfg.id == id) else {
             return result.map(|(new, _)| new.is_some());
         };
+        if verdict.is_some() {
+            t.zonemd = verdict;
+        }
         match result {
             Ok((new, soa)) => {
                 let published = new.is_some();
@@ -454,18 +477,26 @@ impl RpzManager {
         self.zones
             .lock()
             .iter()
-            .map(|t| proto::RpzZoneStatus {
-                id: t.cfg.id.clone(),
-                serial: t.index.as_ref().map_or(0, |i| i.serial),
-                records: t.index.as_ref().map_or(0, |i| i.records),
-                skipped: t.index.as_ref().map_or(0, |i| i.skipped),
-                hits: t.hits_base
-                    + t.index
-                        .as_ref()
-                        .map_or(0, |i| i.hits.load(Ordering::Relaxed)),
-                last_success_unix: t.last_success,
-                last_error: t.last_error.clone(),
-                stale: t.stale,
+            .map(|t| {
+                let (zonemd, zonemd_error) = t.zonemd.as_ref().map_or(
+                    (proto::ZonemdStatus::Unspecified as i32, String::new()),
+                    Verdict::to_proto,
+                );
+                proto::RpzZoneStatus {
+                    id: t.cfg.id.clone(),
+                    serial: t.index.as_ref().map_or(0, |i| i.serial),
+                    records: t.index.as_ref().map_or(0, |i| i.records),
+                    skipped: t.index.as_ref().map_or(0, |i| i.skipped),
+                    hits: t.hits_base
+                        + t.index
+                            .as_ref()
+                            .map_or(0, |i| i.hits.load(Ordering::Relaxed)),
+                    last_success_unix: t.last_success,
+                    last_error: t.last_error.clone(),
+                    stale: t.stale,
+                    zonemd,
+                    zonemd_error,
+                }
             })
             .collect()
     }

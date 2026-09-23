@@ -587,3 +587,55 @@ fn filter_rebuild_over_the_memory_limit_is_rejected_before_building() {
     ));
     assert!(blocked("host7.big.example") && !blocked("old.example"));
 }
+
+#[test]
+fn mdns_changes_clear_cached_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let cur = ArcSwap::from_pointee(Runtime::initial());
+    let blobs = DirBlobs {
+        dir: dir.path().to_path_buf(),
+    };
+    let mut s = base(1);
+    snapshot::apply(&cur, s.clone(), &blobs, None);
+    assert_eq!(cache_one_answer(&cur), 1);
+    s.version += 1;
+    s.mdns = Some(MdnsConfig {
+        enabled: true,
+        interfaces: vec!["nxmissing1".into()],
+        ..Default::default()
+    });
+    snapshot::apply(&cur, s.clone(), &blobs, None);
+    assert_eq!(cur.load().version, s.version);
+    assert_eq!(
+        cur.load().cache.entries(),
+        0,
+        "enabling gateway clears upstream answers"
+    );
+    assert_eq!(cache_one_answer(&cur), 1);
+    s.version += 1;
+    snapshot::apply(&cur, s.clone(), &blobs, None);
+    assert_eq!(
+        cur.load().cache.entries(),
+        1,
+        "unchanged gateway preserves cache"
+    );
+    s.version += 1;
+    s.mdns.as_mut().unwrap().interfaces = vec!["nxmissing2".into()];
+    snapshot::apply(&cur, s.clone(), &blobs, None);
+    assert_eq!(cur.load().version, s.version);
+    assert_eq!(
+        cur.load().cache.entries(),
+        0,
+        "changing gateway interfaces clears answers"
+    );
+    assert_eq!(cache_one_answer(&cur), 1);
+    s.version += 1;
+    s.mdns = None;
+    snapshot::apply(&cur, s.clone(), &blobs, None);
+    assert_eq!(cur.load().version, s.version);
+    assert_eq!(
+        cur.load().cache.entries(),
+        0,
+        "disabling gateway clears multicast answers"
+    );
+}

@@ -5,8 +5,8 @@
 
 use super::metrics::Signal;
 use super::querylog::{
-    ACL_RECURSION, DNSSEC_NAMES, FilterSource, NO_FILTER_LIST, NO_RPZ_ZONE, NO_RULE, QueryRecord,
-    ROUTE_NAMES, RPZ_NAMES, name_at,
+    ACL_RECURSION, DNSSEC_NAMES, FilterSource, NO_RULE, QueryRecord, ROUTE_NAMES, RPZ_NAMES,
+    name_at,
 };
 use crate::filter::index::ListMeta;
 use crate::runtime::{Runtime, TelemetrySettings};
@@ -388,12 +388,16 @@ impl Exporter {
     /// Pops up to `BATCH_MAX` records into the current batch and closes it
     /// when full or older than `BATCH_INTERVAL`.
     fn drain(&mut self) {
+        // Leave records in the bounded ring while exports occupy every batch slot. Draining
+        // first used to evict an older batch on every timer tick, even though the ring had room.
+        if self.queue.len() >= MAX_QUEUED_BATCHES {
+            return;
+        }
         let rt = self.shared.runtime.load();
         let t = &rt.telemetry;
         let keep_logs = t.querylog_to_management || !t.otlp_endpoint.is_empty();
         let keep_traces = !t.otlp_endpoint.is_empty();
         let engine_id = self.shared.engine_id.load();
-        let rpz = self.shared.recursor.rpz.set.load();
         for _ in 0..BATCH_MAX {
             let Some(r) = self.shared.querylog.pop() else {
                 break;
@@ -409,20 +413,8 @@ impl Exporter {
                 self.current.spans.extend(spans_for(&r, trace_id, upstream));
             }
             if keep_logs {
-                // Only a list of the index build that decided names the record's list.
-                let list = (r.filter_list != NO_FILTER_LIST
-                    && rt.filter_index.generation() == r.filter_generation)
-                    .then(|| rt.filter_index.lists().get(usize::from(r.filter_list)))
-                    .flatten();
-                let rpz_zone = if r.rpz_zone == NO_RPZ_ZONE {
-                    ""
-                } else {
-                    // debt: resolved against the RPZ set current at drain time, like upstream
-                    // names; a publication that reorders zones in that window mislabels records.
-                    rpz.zones
-                        .get(usize::from(r.rpz_zone))
-                        .map_or("", |z| z.id.as_str())
-                };
+                let list = r.filter_identity.as_deref();
+                let rpz_zone = r.rpz_identity.as_deref().unwrap_or("");
                 self.current
                     .logs
                     .push(log_record(&r, upstream, &engine_id, group, list, rpz_zone));
@@ -430,6 +422,9 @@ impl Exporter {
             self.current.opened.get_or_insert_with(Instant::now);
             if self.current.logs.len() >= BATCH_MAX {
                 self.close();
+                if self.queue.len() >= MAX_QUEUED_BATCHES {
+                    break;
+                }
             }
         }
         if self
@@ -628,6 +623,131 @@ impl Exporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exporter() -> Exporter {
+        let shared = Shared::new(1);
+        let mut rt = Runtime::initial();
+        rt.telemetry.querylog_to_management = true;
+        shared.runtime.store(Arc::new(rt));
+        Exporter {
+            shared,
+            current: Batch::default(),
+            queue: VecDeque::with_capacity(MAX_QUEUED_BATCHES),
+            seq: 0,
+            otlp: None,
+            started_ns: unix_nanos(),
+        }
+    }
+
+    fn record() -> QueryRecord {
+        use super::super::querylog::{CacheOutcome, FilterOutcome, NO_POLICY_GROUP};
+        QueryRecord {
+            unix_micros: 1,
+            client: "127.0.0.1".parse().unwrap(),
+            name: crate::wire::NameKey::from_wire_lowercase(b"\x01x\x00").unwrap(),
+            qtype: 1,
+            rcode: 0,
+            cache: CacheOutcome::None,
+            filter: FilterOutcome::None,
+            upstream: u8::MAX,
+            config_version: 0,
+            policy_group: NO_POLICY_GROUP,
+            transport: crate::edns::Transport::Udp,
+            filter_us: 0,
+            cache_us: 0,
+            upstream_start_us: 0,
+            upstream_us: 0,
+            duration_us: 0,
+            route: 0,
+            dnssec: 0,
+            rpz_action: 0,
+            filter_list: crate::telemetry::querylog::NO_FILTER_LIST,
+            filter_generation: 0,
+            filter_identity: None,
+            rpz_identity: None,
+            filter_source: FilterSource::None,
+            filter_rule_offset: NO_RULE,
+            rewrite_wildcard: false,
+            rpz_zone: crate::telemetry::querylog::NO_RPZ_ZONE,
+            acl_refused: 0,
+            upstream_raced: 1,
+        }
+    }
+
+    #[test]
+    fn saturated_batch_queue_keeps_records_in_bounded_ring() {
+        let mut ex = exporter();
+        for _ in 0..MAX_QUEUED_BATCHES {
+            ex.queue.push_back(Batch {
+                logs: vec![LogRecord::default(); BATCH_MAX],
+                ..Default::default()
+            });
+        }
+        for _ in 0..BATCH_MAX {
+            super::super::querylog::push(&ex.shared.querylog, &ex.shared.metrics, record());
+        }
+        // Any number of timer ticks while all exports are occupied must preserve both queues.
+        for _ in 0..20 {
+            ex.drain();
+        }
+        assert_eq!(ex.shared.metrics.dropped(Signal::Logs), 0);
+        assert_eq!(ex.queue.len(), MAX_QUEUED_BATCHES);
+        assert_eq!(ex.shared.querylog.len(), BATCH_MAX);
+        // As soon as a batch leaves, the next full batch can be drained, without a timer wait.
+        ex.queue.pop_front();
+        ex.drain();
+        assert_eq!(ex.shared.querylog.len(), 0);
+        assert_eq!(ex.queue.len(), MAX_QUEUED_BATCHES);
+        assert_eq!(ex.shared.metrics.dropped(Signal::Logs), 0);
+    }
+
+    #[test]
+    fn partial_batch_stops_at_last_queue_slot() {
+        let mut ex = exporter();
+        for _ in 0..MAX_QUEUED_BATCHES - 1 {
+            ex.queue.push_back(Batch {
+                logs: vec![LogRecord::default(); BATCH_MAX],
+                ..Default::default()
+            });
+        }
+        ex.current.logs = vec![LogRecord::default(); BATCH_MAX - 1];
+        ex.current.opened = Some(Instant::now() - BATCH_INTERVAL);
+        for _ in 0..BATCH_MAX {
+            super::super::querylog::push(&ex.shared.querylog, &ex.shared.metrics, record());
+        }
+        ex.drain();
+        assert_eq!(ex.queue.len(), MAX_QUEUED_BATCHES);
+        assert_eq!(ex.shared.querylog.len(), BATCH_MAX - 1);
+        assert!(ex.current.logs.is_empty());
+        assert_eq!(ex.shared.metrics.dropped(Signal::Logs), 0);
+    }
+
+    #[test]
+    fn ring_overload_counts_only_rejected_records() {
+        use super::super::querylog::{RING_CAPACITY, push};
+        let ex = exporter();
+        for _ in 0..RING_CAPACITY + 17 {
+            push(&ex.shared.querylog, &ex.shared.metrics, record());
+        }
+        assert_eq!(ex.shared.querylog.len(), RING_CAPACITY);
+        assert_eq!(ex.shared.metrics.dropped(Signal::Logs), 17);
+    }
+
+    #[test]
+    fn batch_eviction_still_counts_logs_and_spans_exactly() {
+        let mut ex = exporter();
+        for _ in 0..MAX_QUEUED_BATCHES + 1 {
+            ex.current = Batch {
+                logs: vec![LogRecord::default(); 7],
+                spans: vec![Span::default(); 12],
+                ..Default::default()
+            };
+            ex.close();
+        }
+        assert_eq!(ex.queue.len(), MAX_QUEUED_BATCHES);
+        assert_eq!(ex.shared.metrics.dropped(Signal::Logs), 7);
+        assert_eq!(ex.shared.metrics.dropped(Signal::Traces), 12);
+    }
 
     #[test]
     fn presentation_escapes_and_roots() {

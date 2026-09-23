@@ -125,6 +125,11 @@ impl AggressiveNsecCache {
         zones.bytes = 0;
     }
 
+    /// Existing eviction weight, read under the cache lock without copying records.
+    pub fn weight(&self) -> u64 {
+        self.zones.lock().bytes
+    }
+
     /// Stores the SOA RRset and the denial records (with RRSIGs) of a validated negative
     /// response for `zone`. Opt-out NSEC3 records are never stored.
     pub fn insert_secure(

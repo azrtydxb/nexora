@@ -125,6 +125,12 @@ pub struct RecursorState {
 }
 
 impl RecursorState {
+    /// M7 cache eviction weights, sampled without allocating or walking cached records.
+    /// Concurrent cache updates may occur between these component reads.
+    pub fn cache_bytes(&self) -> u64 {
+        self.recursor.rrcache.weight() + self.recursor.infra.weight() + self.validator.nsec.weight()
+    }
+
     /// `state_dir: None` persists nothing (tests, `Shared::new`).
     pub fn new(state_dir: Option<&Path>) -> Arc<Self> {
         let metrics = Arc::new(RecursorMetrics::default());

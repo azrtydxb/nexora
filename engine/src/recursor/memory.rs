@@ -15,15 +15,20 @@ pub struct Shares {
 
 /// 12/16 to RRsets, 3/16 to aggressive NSEC, 1/16 to the infrastructure cache; 0 is the default.
 pub fn shares(cache_max_bytes: u64) -> Shares {
-    let total = if cache_max_bytes == 0 {
-        DEFAULT_CACHE_MAX_BYTES
-    } else {
-        cache_max_bytes
-    };
+    let total = effective_max_bytes(cache_max_bytes);
     Shares {
         rrset: total / 16 * 12,
         nsec: total / 16 * 3,
         infra: total / 16,
+    }
+}
+
+/// The configured byte budget after resolving the backwards-compatible default.
+pub fn effective_max_bytes(cache_max_bytes: u64) -> u64 {
+    if cache_max_bytes == 0 {
+        DEFAULT_CACHE_MAX_BYTES
+    } else {
+        cache_max_bytes
     }
 }
 

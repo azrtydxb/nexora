@@ -28,20 +28,9 @@ impl DohClient {
             .http2_prior_knowledge()
             .tls_backend_preconfigured(tls)
             .pool_max_idle_per_host(1);
-        if let Ok(pins) = std::env::var("NEXORA_DOH_RESOLVE") {
-            let port = url.port_or_known_default().unwrap_or(443);
-            for pin in pins.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-                let (host, ip) = pin
-                    .split_once('=')
-                    .and_then(|(h, ip)| Some((h.trim(), ip.trim().parse::<IpAddr>().ok()?)))
-                    .ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            format!("NEXORA_DOH_RESOLVE entry {pin:?} is not host=ip"),
-                        )
-                    })?;
-                builder = builder.resolve(host, SocketAddr::new(ip, port));
-            }
+        let port = url.port_or_known_default().unwrap_or(443);
+        for (host, ip) in resolve_pins()? {
+            builder = builder.resolve(&host, SocketAddr::new(ip, port));
         }
         let client = builder
             .build()
@@ -90,6 +79,27 @@ impl DohClient {
         .await
         .map_err(|_| UpstreamError::Timeout)?
     }
+}
+
+/// The `NEXORA_DOH_RESOLVE` (`host=ip,...`) pins; empty when the variable is unset.
+pub(crate) fn resolve_pins() -> std::io::Result<Vec<(String, IpAddr)>> {
+    let Ok(pins) = std::env::var("NEXORA_DOH_RESOLVE") else {
+        return Ok(Vec::new());
+    };
+    pins.split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|pin| {
+            pin.split_once('=')
+                .and_then(|(h, ip)| Some((h.trim().to_string(), ip.trim().parse::<IpAddr>().ok()?)))
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("NEXORA_DOH_RESOLVE entry {pin:?} is not host=ip"),
+                    )
+                })
+        })
+        .collect()
 }
 
 fn http_error(e: reqwest::Error) -> UpstreamError {

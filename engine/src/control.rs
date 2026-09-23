@@ -878,6 +878,7 @@ async fn session(
                     msg: Some(Msg::LogBatch(batch)),
                 });
             }
+            Some(ServerMsg::OdohKeys(k)) => shared.odoh.set_keys(&k),
             None => {}
         }
     };

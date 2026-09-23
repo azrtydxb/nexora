@@ -1,8 +1,9 @@
 //! DNS over HTTPS (RFC 8484): GET and POST on one path, HTTP/2 and HTTP/1.1 over TLS.
 
 use crate::edns::Transport;
+use crate::server::odoh::{self, OdohRuntime, OdohState};
 use crate::server::proxy::{self, ProxyPolicy};
-use crate::server::{Answerer, ClientInfo, tls::CertStore};
+use crate::server::{Answerer, ClientInfo, Shared, tls::CertStore};
 use crate::telemetry::metrics::{ConnectionGuard, ENCRYPTED, HandshakeResult};
 use base64::Engine as _;
 use bytes::Bytes;
@@ -44,11 +45,14 @@ pub fn min_ttl(response: &[u8]) -> u32 {
     }
 }
 
-/// Answers one DoH request and counts it by method and status.
+/// Answers one DoH request (RFC 8484, and RFC 9230 target and proxy when `odoh` enables them)
+/// and counts it by method and status.
 pub async fn handle<A, B>(
     answerer: &A,
     client: ClientInfo,
     doh_path: &str,
+    odoh: &OdohRuntime,
+    keys: &OdohState,
     req: Request<B>,
 ) -> Response<Full<Bytes>>
 where
@@ -57,15 +61,60 @@ where
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let method = req.method().clone();
-    let resp = handle_inner(answerer, client, doh_path, req).await;
+    let resp = handle_inner(answerer, client, doh_path, odoh, keys, req).await;
     ENCRYPTED.doh_request(&method, resp.status());
     resp
 }
 
-async fn handle_inner<A, B>(
+/// Reads at most `limit` octets of the body: 413 above it, 400 on a body error.
+async fn read_body<B>(body: B, limit: usize) -> Result<Bytes, StatusCode>
+where
+    B: http_body::Body<Data = Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    match Limited::new(body, limit).collect().await {
+        Ok(c) => Ok(c.to_bytes()),
+        Err(e) if e.downcast_ref::<LengthLimitError>().is_some() => {
+            Err(StatusCode::PAYLOAD_TOO_LARGE)
+        }
+        Err(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+fn content_type_is<B>(req: &Request<B>, want: &str) -> bool {
+    req.headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.eq_ignore_ascii_case(want))
+}
+
+fn has_targethost(query: Option<&str>) -> bool {
+    query.is_some_and(|q| q.split('&').any(|kv| kv.starts_with("targethost=")))
+}
+
+/// `GET /.well-known/odohconfigs` of the target role.
+fn odoh_configs(odoh: &OdohRuntime, keys: &OdohState) -> Response<Full<Bytes>> {
+    if !odoh.target_enabled {
+        return status(StatusCode::NOT_FOUND);
+    }
+    let resp = match keys.keyring().configs(crate::clock::unix_now()) {
+        None => status(StatusCode::SERVICE_UNAVAILABLE),
+        Some(configs) => Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(CACHE_CONTROL, "max-age=300")
+            .body(Full::new(configs))
+            .expect("static headers"),
+    };
+    odoh::COUNTERS.count("target", resp.status());
+    resp
+}
+
+/// A request carrying `targethost` on the DoH path: relayed to an allow-listed target.
+async fn odoh_proxy<A, B>(
     answerer: &A,
     client: ClientInfo,
-    doh_path: &str,
+    odoh: &OdohRuntime,
     req: Request<B>,
 ) -> Response<Full<Bytes>>
 where
@@ -73,6 +122,111 @@ where
     B: http_body::Body<Data = Bytes>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
+    let Some(proxy) = &odoh.proxy else {
+        return odoh::proxy_error(StatusCode::FORBIDDEN, "http_request_denied");
+    };
+    let resp = async {
+        if req.method() != Method::POST {
+            return Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .header(ALLOW, "POST")
+                .body(Full::new(Bytes::new()))
+                .expect("static response");
+        }
+        if !content_type_is(&req, odoh::CONTENT_TYPE) {
+            return status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        }
+        let Ok(Some((host, path))) = odoh::parse_proxy_params(req.uri().query()) else {
+            return odoh::proxy_error(StatusCode::BAD_REQUEST, "http_request_error");
+        };
+        let Some(target) = proxy.allowed(&host) else {
+            return odoh::proxy_error(StatusCode::FORBIDDEN, "http_request_denied");
+        };
+        if !answerer.recursion_allowed(client) {
+            return odoh::proxy_error(StatusCode::FORBIDDEN, "http_request_denied");
+        }
+        match read_body(req.into_body(), odoh::MAX_BODY).await {
+            Ok(body) => odoh::forward(target, &path, body, proxy.timeout).await,
+            Err(code) => status(code),
+        }
+    }
+    .await;
+    odoh::COUNTERS.count("proxy", resp.status());
+    resp
+}
+
+/// An `application/oblivious-dns-message` POST to the target role: opened, answered through the
+/// normal pipeline for the connecting peer, sealed.
+async fn odoh_target<A, B>(
+    answerer: &A,
+    client: ClientInfo,
+    keys: &OdohState,
+    req: Request<B>,
+) -> Response<Full<Bytes>>
+where
+    A: Answerer,
+    B: http_body::Body<Data = Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let resp = async {
+        let body = match read_body(req.into_body(), odoh::MAX_BODY).await {
+            Ok(b) => b,
+            Err(code) => return status(code),
+        };
+        let opened = match odoh::open(&keys.keyring(), &body, crate::clock::unix_now()) {
+            Ok(o) => o,
+            Err(r) => return odoh::reject_response(r),
+        };
+        if opened.query.len() < 12 {
+            return status(StatusCode::BAD_REQUEST);
+        }
+        let mut out = Vec::with_capacity(512);
+        answerer.answer(client, &opened.query, &mut out).await;
+        if out.is_empty() {
+            return status(StatusCode::BAD_REQUEST);
+        }
+        match opened.seal(&out) {
+            Ok(sealed) => Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, odoh::CONTENT_TYPE)
+                .header(CACHE_CONTROL, "no-store")
+                .body(Full::new(Bytes::from(sealed)))
+                .expect("static headers"),
+            Err(r) => odoh::reject_response(r),
+        }
+    }
+    .await;
+    odoh::COUNTERS.count("target", resp.status());
+    resp
+}
+
+async fn handle_inner<A, B>(
+    answerer: &A,
+    client: ClientInfo,
+    doh_path: &str,
+    odoh: &OdohRuntime,
+    keys: &OdohState,
+    req: Request<B>,
+) -> Response<Full<Bytes>>
+where
+    A: Answerer,
+    B: http_body::Body<Data = Bytes>,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    if req.method() == Method::GET && req.uri().path() == odoh::CONFIGS_PATH {
+        return odoh_configs(odoh, keys);
+    }
+    if req.uri().path() == doh_path {
+        if has_targethost(req.uri().query()) {
+            return odoh_proxy(answerer, client, odoh, req).await;
+        }
+        if req.method() == Method::POST && content_type_is(&req, odoh::CONTENT_TYPE) {
+            if !odoh.target_enabled {
+                return status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+            }
+            return odoh_target(answerer, client, keys, req).await;
+        }
+    }
     if req.uri().path() != doh_path {
         return status(StatusCode::NOT_FOUND);
     }
@@ -91,23 +245,12 @@ where
             }
         }
         Method::POST => {
-            let ct = req
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            if !ct.eq_ignore_ascii_case("application/dns-message") {
+            if !content_type_is(&req, "application/dns-message") {
                 return status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
             }
-            match Limited::new(req.into_body(), MAX_DNS_MESSAGE)
-                .collect()
-                .await
-            {
-                Ok(c) => c.to_bytes().to_vec(),
-                Err(e) if e.downcast_ref::<LengthLimitError>().is_some() => {
-                    return status(StatusCode::PAYLOAD_TOO_LARGE);
-                }
-                Err(_) => return status(StatusCode::BAD_REQUEST),
+            match read_body(req.into_body(), MAX_DNS_MESSAGE).await {
+                Ok(b) => b.to_vec(),
+                Err(code) => return status(code),
             }
         }
         _ => return status(StatusCode::METHOD_NOT_ALLOWED),
@@ -144,11 +287,14 @@ where
 
 /// Accepts DoH connections: optional PROXY v2 header, TLS (ALPN `h2`/`http/1.1`),
 /// then HTTP/2 or HTTP/1.1. The client address is the TCP peer or the PROXY
-/// source; `X-Forwarded-For` and `Forwarded` are ignored.
+/// source; `X-Forwarded-For` and `Forwarded` are ignored. The ODoH settings come from the
+/// runtime loaded per request and the keys from `shared.odoh`.
+#[allow(clippy::too_many_arguments)] // one listener's fixed wiring
 pub async fn run_doh<A: Answerer + 'static>(
     listener: tokio::net::TcpListener,
     acceptor: tokio_rustls::TlsAcceptor,
     certs: Arc<CertStore>,
+    shared: Arc<Shared>,
     answerer: Rc<A>,
     proxy_policy: Option<Rc<ProxyPolicy>>,
     path: Rc<str>,
@@ -162,9 +308,10 @@ pub async fn run_doh<A: Answerer + 'static>(
             }
         };
         let _ = tcp.set_nodelay(true);
-        let (acceptor, certs, answerer, proxy_policy, path) = (
+        let (acceptor, certs, shared, answerer, proxy_policy, path) = (
             acceptor.clone(),
             certs.clone(),
+            shared.clone(),
             answerer.clone(),
             proxy_policy.clone(),
             path.clone(),
@@ -197,10 +344,11 @@ pub async fn run_doh<A: Answerer + 'static>(
                 transport: Transport::Doh,
             };
             let service = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {
-                let answerer = answerer.clone();
-                let path = path.clone();
+                let (shared, answerer, path) = (shared.clone(), answerer.clone(), path.clone());
                 async move {
-                    Ok::<_, std::convert::Infallible>(handle(&*answerer, client, &path, req).await)
+                    let rt = shared.runtime.load_full();
+                    let resp = handle(&*answerer, client, &path, &rt.odoh, &shared.odoh, req).await;
+                    Ok::<_, std::convert::Infallible>(resp)
                 }
             });
             let mut builder = hyper_util::server::conn::auto::Builder::new(LocalExec);
@@ -224,6 +372,27 @@ pub async fn run_doh<A: Answerer + 'static>(
 mod tests {
     use super::*;
     use crate::server::testutil::{EchoAnswerer, test_query};
+
+    async fn handle<B>(
+        answerer: &EchoAnswerer,
+        client: ClientInfo,
+        doh_path: &str,
+        req: Request<B>,
+    ) -> Response<Full<Bytes>>
+    where
+        B: http_body::Body<Data = Bytes>,
+        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        super::handle(
+            answerer,
+            client,
+            doh_path,
+            &OdohRuntime::off(),
+            &OdohState::default(),
+            req,
+        )
+        .await
+    }
 
     fn client() -> ClientInfo {
         ClientInfo {
@@ -360,6 +529,7 @@ mod tests {
                     listener,
                     acceptor,
                     store,
+                    Shared::new(1),
                     Rc::new(EchoAnswerer),
                     None,
                     Rc::from("/dns-query"),

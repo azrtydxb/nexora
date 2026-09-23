@@ -312,7 +312,7 @@ pub struct FilterIndex {
     set_words: usize,
     set_bits: Vec<u64>,
     set_count: usize,
-    lists: Vec<ListMeta>,
+    lists: Vec<Arc<ListMeta>>,
     by_id: FxHashMap<Box<str>, u16>,
     entries: u64,
     invalid_lines: u64,
@@ -1328,7 +1328,11 @@ impl FilterIndex {
         }
         let (stash_count, stash_chosen) = place_stash(&keys, &sizes, &overflow)?;
         drop(keys);
-        let needed = needed - 2 * BLOCK as u64 + u64::from(stash_count + 1) * BLOCK as u64;
+        // Independent metadata Arcs add two refcounts and a vector pointer per list.
+        let identity_overhead = (3 * size_of::<usize>() * lists.len()) as u64;
+        let needed = needed - 2 * BLOCK as u64
+            + u64::from(stash_count + 1) * BLOCK as u64
+            + identity_overhead;
         if needed > opts.max_bytes {
             return Err(IndexError::OverCap {
                 needed,
@@ -1372,7 +1376,9 @@ impl FilterIndex {
             + long.len()
             + 8 * sets.bits.len()
             + 4 * sets.counts.len()
-            + 64 * lists.len()) as u64;
+            + 64 * lists.len()) as u64
+            + identity_overhead;
+        memory.reserve("list identities", identity_overhead)?;
         Ok(FilterIndex {
             seed: opts.seed,
             blocks,
@@ -1385,7 +1391,7 @@ impl FilterIndex {
             set_words: sets.words,
             set_count: sets.len(),
             set_bits: sets.bits,
-            lists,
+            lists: lists.into_iter().map(Arc::new).collect(),
             by_id,
             entries: names,
             invalid_lines: invalid.iter().sum(),
@@ -1447,7 +1453,7 @@ impl FilterIndex {
         self.generation
     }
 
-    pub fn lists(&self) -> &[ListMeta] {
+    pub fn lists(&self) -> &[Arc<ListMeta>] {
         &self.lists
     }
 

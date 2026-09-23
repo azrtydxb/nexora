@@ -144,6 +144,11 @@ pub fn validate(s: &ConfigSnapshot, applied_version: u64) -> Result<(), Snapshot
     crate::filter::lists::SnapshotLists::collect(s).map_err(SnapshotError::Invalid)?;
     crate::snapshot_m3::validate_m3(s).map_err(SnapshotError::Invalid)?;
     crate::authoritative::loader::validate(&s.auth_zones).map_err(SnapshotError::Invalid)?;
+    crate::server::odoh::OdohRuntime::build(s.odoh.as_ref())
+        .map_err(crate::runtime::odoh_invalid)?;
+    if let Some(m) = &s.mdns {
+        crate::mdns::validate(m).map_err(crate::runtime::mdns_invalid)?;
+    }
     Ok(())
 }
 

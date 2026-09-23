@@ -9,8 +9,10 @@ use crate::filter::index::IndexError;
 use crate::filter::lists::{self, SnapshotLists};
 use crate::filter::memory::{self, BuildMemory};
 use crate::filter::{BlockMode, BlockReply, FilterIndex, PolicyTable};
+use crate::mdns::MdnsRuntime;
 use crate::proto::{self, ConfigSnapshot, UpstreamProtocol, UpstreamStrategy};
 use crate::recursor::dispatch::ResolutionRuntime;
+use crate::server::odoh::OdohRuntime;
 use crate::snapshot::{BlobSource, SnapshotError};
 use crate::upstream::{Protocol, Strategy, UpstreamSet, UpstreamSpec};
 use std::sync::Arc;
@@ -59,7 +61,7 @@ pub struct Runtime {
     /// Per-client policy groups and rewrites; the global view for clients in no group.
     pub policy: PolicyTable,
     /// `l:<SnapshotLists::key>`, `g:<key>` per policy-group cache partition,
-    /// `r:<ResolutionRuntime::config_key>`, then `u:<upstreams_key>`.
+    /// `r:<ResolutionRuntime::config_key>`, `u:<upstreams_key>`, then `m:<mDNS gateway identity>`.
     pub filter_hashes: Vec<String>,
     pub cache: Arc<Cache>,
     pub upstreams: Arc<UpstreamSet>,
@@ -74,6 +76,10 @@ pub struct Runtime {
     pub auth_changed: Vec<(Box<[u8]>, u32)>,
     /// Record labels of this version and up to [`LABEL_HISTORY`] - 1 earlier ones, newest first.
     pub labels: Arc<[Arc<RecordLabels>]>,
+    /// ODoH target and proxy roles (M8); keys live in `Shared.odoh`.
+    pub odoh: Arc<OdohRuntime>,
+    /// mDNS gateway and reflection settings (M8); the running reflector lives in `Shared.mdns`.
+    pub mdns: MdnsRuntime,
 }
 
 impl Runtime {
@@ -111,6 +117,8 @@ impl Runtime {
             auth_loads: LoadCounts::default(),
             auth_changed: Vec::new(),
             labels: Arc::from([]),
+            odoh: Arc::new(OdohRuntime::off()),
+            mdns: MdnsRuntime::off(),
         }
     }
 
@@ -234,12 +242,17 @@ impl Runtime {
                 .to_string(),
             ));
         }
-        let resolution =
-            Arc::new(ResolutionRuntime::build(s, blobs).map_err(SnapshotError::Invalid)?);
+        let mdns = MdnsRuntime::build(s.mdns.as_ref()).map_err(mdns_invalid)?;
+        let resolution = Arc::new(ResolutionRuntime {
+            mdns: mdns.gateway.clone(),
+            ..ResolutionRuntime::build(s, blobs).map_err(SnapshotError::Invalid)?
+        });
         let filter_hashes: Vec<String> = std::iter::once(format!("l:{}", lists.key))
             .chain(policy.partition_keys().iter().map(|k| format!("g:{k}")))
             .chain(std::iter::once(format!("r:{}", resolution.config_key)))
             .chain(std::iter::once(format!("u:{}", upstreams_key(s))))
+            // `.local` answers cached from the upstream must not outlive turning the gateway on.
+            .chain(std::iter::once(format!("m:{}", mdns.gateway_key)))
             .collect();
         if let Some(p) = reused
             && p.filter_hashes != filter_hashes
@@ -280,8 +293,20 @@ impl Runtime {
             auth_loads: loaded.counts,
             auth_changed: loaded.changed,
             labels,
+            odoh: Arc::new(OdohRuntime::build(s.odoh.as_ref()).map_err(odoh_invalid)?),
+            mdns,
         })
     }
+}
+
+/// An `OdohRuntime::build` error as the snapshot error both `validate` and `build` report.
+pub(crate) fn odoh_invalid(e: String) -> SnapshotError {
+    SnapshotError::Invalid(format!("odoh: {e}"))
+}
+
+/// An `mdns::validate` error as the snapshot error both `validate` and `build` report.
+pub(crate) fn mdns_invalid(e: String) -> SnapshotError {
+    SnapshotError::Invalid(format!("mdns: {e}"))
 }
 
 /// SHA-256 hex over the prost encoding of the upstream strategy and every upstream: answers

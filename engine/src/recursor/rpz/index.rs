@@ -103,6 +103,8 @@ fn name_key(name: &Name) -> Option<Box<[u8]>> {
 
 pub struct RpzZoneIndex {
     pub id: String,
+    /// Preallocated telemetry identity; owns no rule tables or publication.
+    pub identity: Arc<str>,
     pub origin: Name,
     pub soa: Record,
     pub serial: u32,
@@ -134,6 +136,7 @@ impl RpzZoneIndex {
     pub fn build(id: &str, parsed: &ParsedRpz, policy_override: i32) -> Self {
         let mut z = RpzZoneIndex {
             id: id.to_owned(),
+            identity: Arc::from(id),
             origin: parsed.origin.clone(),
             soa: parsed.soa.clone(),
             serial: parsed.serial,

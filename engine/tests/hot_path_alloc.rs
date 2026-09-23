@@ -106,6 +106,17 @@ fn cache_hit_path_does_not_allocate() {
         }),
         authoritative_allow_cidrs: vec!["0.0.0.0/0".into(), "::/0".into()],
         authoritative_acl_set: true,
+        // M8: the mDNS gateway and the ODoH target on leave the cache-hit path allocation-free.
+        mdns: Some(MdnsConfig {
+            enabled: true,
+            interfaces: vec!["lo".into()],
+            timeout_ms: 100,
+            ..Default::default()
+        }),
+        odoh: Some(OdohConfig {
+            target_enabled: true,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     // Forward mode (M1/M2), then recursive mode with DNSSEC validation (M3): a cache hit takes the
@@ -430,6 +441,16 @@ fn measure_auth(
             image_serial: 2026091301,
             ..Default::default()
         }],
+        mdns: Some(MdnsConfig {
+            enabled: true,
+            interfaces: vec!["lo".into()],
+            timeout_ms: 100,
+            ..Default::default()
+        }),
+        odoh: Some(OdohConfig {
+            target_enabled: true,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     assert!(matches!(

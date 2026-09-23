@@ -1,10 +1,12 @@
-//! Fixed-size query records pushed lock-free by workers, drained by telemetry.
+//! Fixed-size query records with small shared identities, pushed lock-free by workers.
 
 use super::metrics::{Metrics, Signal};
 use crate::edns::Transport;
+use crate::filter::index::ListMeta;
 use crate::wire::NameKey;
 use crossbeam_queue::ArrayQueue;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 pub const RING_CAPACITY: usize = 65536;
@@ -89,7 +91,7 @@ impl FilterSource {
 }
 
 /// Stage offsets are microseconds from the query's arrival.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct QueryRecord {
     pub unix_micros: u64,
     pub client: IpAddr,
@@ -116,15 +118,19 @@ pub struct QueryRecord {
     /// 0 none, else `RpzAction::log_code`.
     pub rpz_action: u8,
     /// The blocking list's index in the filter index of `filter_generation`; `NO_FILTER_LIST`
-    /// unless blocked.
+    /// unless a list decided. Export uses `filter_identity`, never this numeric index.
     pub filter_list: u16,
     pub filter_generation: u64,
+    /// Small publication-bound metadata only; never owns an index or generation.
+    pub filter_identity: Option<Arc<ListMeta>>,
+    pub rpz_identity: Option<Arc<str>>,
     pub filter_source: FilterSource,
     /// Octet offset in the wire name of the matched suffix or rewrite rule; `NO_RULE` for none.
     pub filter_rule_offset: u8,
     /// The matched rewrite rule is a `*.` wildcard.
     pub rewrite_wildcard: bool,
     /// Index into the RPZ zone set that decided; `NO_RPZ_ZONE` for none.
+    /// Export uses `rpz_identity`, never an index into a later publication.
     pub rpz_zone: u16,
     /// `ACL_NONE`, `ACL_RECURSION` or `ACL_AUTHORITATIVE`.
     pub acl_refused: u8,

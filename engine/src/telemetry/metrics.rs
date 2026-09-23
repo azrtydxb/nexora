@@ -5,7 +5,8 @@ use crate::clock;
 use crate::edns::Transport;
 use crate::filter::lists::{self, CATEGORY_SLOTS};
 use crate::proto::{
-    DnssecStats, FilterIndexStats, RecursionStats, Stats, TrustAnchorState, UpstreamStatus,
+    DnssecStats, FilterIndexStats, RecursionStats, RecursorCacheStats, Stats, TrustAnchorState,
+    UpstreamStatus,
 };
 use crate::recursor::RecursorState;
 use crate::runtime::Runtime;
@@ -762,6 +763,15 @@ impl Metrics {
 
         let mut out = String::with_capacity(4096);
         text::encode(&mut out, &reg).expect("writing to a String cannot fail");
+        // The ODoH and mDNS families are plain atomics with their own text form, ahead of the EOF
+        // marker.
+        let eof = out.len() - "# EOF\n".len();
+        debug_assert_eq!(&out[eof..], "# EOF\n");
+        out.truncate(eof);
+        crate::server::odoh::COUNTERS.render(&mut out);
+        rt.mdns.render(&mut out);
+        crate::mdns::reflector::REFLECTED.render(&mut out);
+        out.push_str("# EOF\n");
         out
     }
 
@@ -949,6 +959,14 @@ impl Metrics {
                 .collect(),
             cache_entries: rt.cache.entries(),
             cache_bytes: rt.cache.bytes(),
+            recursor_cache: Some(RecursorCacheStats {
+                enabled: rt.resolution.mode == crate::recursor::dispatch::Mode::Recursive
+                    || rt.resolution.validates_any_route(),
+                bytes: recursor.cache_bytes(),
+                max_bytes: crate::recursor::memory::effective_max_bytes(
+                    rt.resolution.params.cache_max_bytes,
+                ),
+            }),
             recursion: Some(recursion_stats(recursor)),
             dnssec: Some(dnssec_stats(rt, recursor)),
             rpz_zones: recursor.rpz.manager.status(),

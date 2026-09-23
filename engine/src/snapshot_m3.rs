@@ -258,6 +258,7 @@ mod tests {
                         tsig_key_name: "rpz-key.".into(),
                         tsig_algorithm: TsigAlgorithm::HmacSha256 as i32,
                         min_refresh_seconds: 0,
+                        zonemd_verify: 0,
                     })),
                     policy_override: 0,
                     refresh_nonce: 0,

@@ -6,6 +6,7 @@ pub mod buffers;
 pub mod doh;
 pub mod doq;
 pub mod dot;
+pub mod odoh;
 pub mod proxy;
 pub mod rewrite;
 pub mod stream;
@@ -73,6 +74,10 @@ pub struct Shared {
     pub auth: Arc<AuthState>,
     /// Readiness and graceful shutdown.
     pub lifecycle: crate::lifecycle::Lifecycle,
+    /// ODoH target keys pushed on the control stream; empty until the first push.
+    pub odoh: odoh::OdohState,
+    /// The mDNS reflector, synced to the applied runtime after each apply.
+    pub mdns: crate::mdns::MdnsState,
 }
 
 impl Shared {
@@ -96,6 +101,8 @@ impl Shared {
             recursor,
             auth: AuthState::new(),
             lifecycle: Default::default(),
+            odoh: odoh::OdohState::default(),
+            mdns: crate::mdns::MdnsState::default(),
         })
     }
 }
@@ -172,6 +179,12 @@ pub trait Answerer {
 
     /// Stream transports (TCP, DoT): every message of the reply in order (several for a zone
     /// transfer). Default: the one `answer` message, none when it is dropped.
+    /// Whether `client` is inside the recursion ACL (the ODoH proxy role serves only those).
+    /// Default: nobody.
+    fn recursion_allowed(&self, _client: ClientInfo) -> bool {
+        false
+    }
+
     async fn answer_frames(&self, client: ClientInfo, query: &[u8], frames: &mut Vec<Vec<u8>>) {
         let mut out = Vec::new();
         self.answer(client, query, &mut out).await;
@@ -210,6 +223,10 @@ impl WorkerAnswerer {
 }
 
 impl Answerer for WorkerAnswerer {
+    fn recursion_allowed(&self, client: ClientInfo) -> bool {
+        self.0.shared.runtime.load().acl.allows(client.addr.ip())
+    }
+
     async fn answer(&self, client: ClientInfo, query: &[u8], out: &mut Vec<u8>) {
         let rt = self.0.shared.runtime.load_full();
         out.clear();
@@ -298,6 +315,8 @@ impl Scope<'_> {
             rpz_action: 0,
             filter_list: NO_FILTER_LIST,
             filter_generation: 0,
+            filter_identity: None,
+            rpz_identity: None,
             filter_source: FilterSource::None,
             filter_rule_offset: NO_RULE,
             rewrite_wildcard: false,
@@ -501,12 +520,12 @@ pub fn handle_packet(
             QueryPhase::Hit { zone, action } => match set.effective_action(zone, action) {
                 None => {
                     rec.rpz_action = dispatch::RPZ_DISABLED;
-                    note_rpz_zone(&mut rec, zone);
+                    note_rpz_zone(&mut rec, zone, &set);
                     RpzPending::None
                 }
                 Some(RpzAction::Passthru) => {
                     rec.rpz_action = RpzAction::Passthru.log_code();
-                    note_rpz_zone(&mut rec, zone);
+                    note_rpz_zone(&mut rec, zone, &set);
                     RpzPending::None
                 }
                 Some(action) => RpzPending::Apply { zone, action },
@@ -516,6 +535,9 @@ pub fn handle_packet(
                 action: action.clone(),
             },
         };
+        if let RpzPending::Apply { zone, .. } | RpzPending::Deferred { zone, .. } = &pending {
+            note_rpz_zone(&mut rec, *zone, &set);
+        }
         match pending {
             RpzPending::None => {}
             RpzPending::Apply { zone, action } if !matches!(&action, RpzAction::LocalData(d) if d.cname.is_some()) =>
@@ -523,7 +545,6 @@ pub fn handle_packet(
                 // allocates only on an RPZ hit
                 let qname = Name::from_bytes(q.key.as_wire()).unwrap_or_else(|_| Name::root());
                 rec.rpz_action = action.log_code();
-                note_rpz_zone(&mut rec, zone);
                 let over_tcp = transport != Transport::Udp;
                 match apply_action(
                     &qname,
@@ -662,9 +683,14 @@ pub async fn resolve_miss(ctx: Rc<WorkerCtx>, rt: Arc<Runtime>, job: MissJob) ->
         ) {
             None => None,
             Some(mq) => {
-                let ans =
-                    dispatch::resolve_miss(&rt.resolution, &ctx.shared.recursor, &forward, &mq)
-                        .await;
+                let ans = dispatch::resolve_miss_with_identity(
+                    &rt.resolution,
+                    &ctx.shared.recursor,
+                    &forward,
+                    &mq,
+                    rec.rpz_identity.clone(),
+                )
+                .await;
                 note_answer(&mut rec, &ans, &forward);
                 ede = ans.ede.as_ref().map(|e| e.code);
                 dropped = ans.drop;
@@ -767,12 +793,14 @@ fn note_answer(rec: &mut QueryRecord, ans: &dispatch::MissAnswer, forward: &Work
     }
     if ans.rpz_zone != NO_RPZ_ZONE {
         rec.rpz_zone = ans.rpz_zone;
+        rec.rpz_identity = ans.rpz_identity.clone();
         rec.filter_source = FilterSource::Rpz;
     }
 }
 
 /// Records the RPZ zone (index into the RPZ set) that decided a query.
-fn note_rpz_zone(rec: &mut QueryRecord, zone: usize) {
+fn note_rpz_zone(rec: &mut QueryRecord, zone: usize, set: &crate::recursor::rpz::index::RpzSet) {
+    rec.rpz_identity = set.zones.get(zone).map(|z| z.identity.clone());
     rec.rpz_zone = u16::try_from(zone).unwrap_or(NO_RPZ_ZONE);
     rec.filter_source = FilterSource::Rpz;
 }
@@ -823,6 +851,7 @@ fn record_hit(
     let index = policy.filter().index();
     rec.filter_list = hit.list;
     rec.filter_generation = index.generation();
+    rec.filter_identity = index.lists().get(usize::from(hit.list)).cloned();
     rec.filter_rule_offset = hit.offset;
     if allowed {
         rec.filter = FilterOutcome::Allowed;
@@ -1006,17 +1035,20 @@ pub fn spawn_workers(
                     let doh_proxy = doh_proxy.map(Rc::new);
                     let doh_path: Rc<str> = Rc::from(doh_path.as_str());
                     for listener in sockets.doh {
-                        let (acceptor, certs, proxy, path) = (
+                        let (acceptor, certs, shared, proxy, path) = (
                             doh_acceptor.clone(),
                             cert_store.clone(),
+                            ctx.shared.clone(),
                             doh_proxy.clone(),
                             doh_path.clone(),
                         );
                         let answerer = Rc::new(WorkerAnswerer(ctx.clone()));
                         local.spawn_local(until_stopped(Box::pin(async move {
                             if let Some(listener) = from_std_listener(listener, "doh") {
-                                doh::run_doh(listener, acceptor, certs, answerer, proxy, path)
-                                    .await;
+                                doh::run_doh(
+                                    listener, acceptor, certs, shared, answerer, proxy, path,
+                                )
+                                .await;
                             }
                         })));
                     }
