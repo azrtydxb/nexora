@@ -53,3 +53,9 @@ arrive, and all lines are lost when the engine restarts.
 The level filter shows lines at the chosen level and above: `error`, then `warn`, `info` and
 `debug`, so `debug` shows every line. The search matches part of a line's message, ignoring case. An
 engine that is not connected cannot send logs.
+
+## mDNS gateway and reflection
+
+Each engine group's mDNS section controls gateway lookups and multicast reflection independently. Both start off. The gateway needs at least one named LAN interface; reflection needs at least two. Names are comma-separated, unique within each list, and must exist on the engine hosts. The query timeout defaults to 500 ms (100–5000).
+
+The mDNS gateway needs hostNetwork or an interface on the LAN segment; normal pod networking alone does not provide LAN multicast. Reflection exposes discovery across the selected VLANs, so select interfaces deliberately. Turning off gateway resolution does not turn off reflection. Saving changes the group configuration using its revision and existing rollout policy.

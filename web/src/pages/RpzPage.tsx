@@ -33,6 +33,7 @@ import {
   StatusDot,
 } from "@/components/common";
 import { EngineGroupName, EngineGroupSelect } from "@/components/fleet";
+import { ZonemdStatus, ZonemdVerifySelect } from "@/components/ZonemdControls";
 import { HelpTip } from "@/components/HelpTip";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -104,7 +105,7 @@ export function RpzPage() {
   const rows = [...(zones.data ?? [])].sort((a, b) => a.position - b.position);
   const actions =
     canUpdate || canDelete || canUpload || canRefresh || canReorder;
-  const cols = 7 + (actions ? 1 : 0);
+  const cols = 8 + (actions ? 1 : 0);
 
   function move(i: number, by: -1 | 1) {
     const ids = rows.map((z) => z.id);
@@ -177,6 +178,10 @@ export function RpzPage() {
                   <TableHead className="text-right">Min. refresh</TableHead>
                   <TableHead>Engine group</TableHead>
                   <TableHead>Engines</TableHead>
+                  <TableHead>
+                    ZONEMD{" "}
+                    <HelpTip id="rpz-zonemd-status" label="ZONEMD status" />
+                  </TableHead>
                   {actions && (
                     <TableHead className="w-44 text-right">Actions</TableHead>
                   )}
@@ -228,6 +233,28 @@ export function RpzPage() {
                     </TableCell>
                     <TableCell className="py-3">
                       <EngineStatus zone={z} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="grid gap-2">
+                        {z.status.length ? (
+                          z.status.map((status) => (
+                            <div key={status.engine_id} className="grid gap-1">
+                              <span className="text-xs">
+                                {status.engine_name}
+                              </span>
+                              <ZonemdStatus
+                                testId="rpz-zonemd-status"
+                                status={status.zonemd}
+                                error={status.zonemd_error}
+                              />
+                            </div>
+                          ))
+                        ) : (
+                          <span className="text-muted-foreground">
+                            Not reported
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     {actions && (
                       <TableCell className="py-2 text-right whitespace-nowrap">
@@ -406,6 +433,7 @@ type ZoneForm = {
   policy_override: Override;
   min_refresh_seconds: string;
   engine_group_id: string | null;
+  zonemd_verify: Schemas["ZonemdVerify"];
 };
 
 function EditRpzZoneDialog({
@@ -448,6 +476,7 @@ function RpzZoneDialog({
     policy_override: (zone?.policy_override as Override) ?? "given",
     min_refresh_seconds: String(zone?.min_refresh_seconds ?? 60),
     engine_group_id: zone?.engine_group_id ?? null,
+    zonemd_verify: zone?.zonemd_verify ?? "if_present",
   });
   const set = <K extends keyof ZoneForm>(key: K, value: ZoneForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -460,6 +489,7 @@ function RpzZoneDialog({
   function submit(e: FormEvent) {
     e.preventDefault();
     const fields = {
+      ...(transfer ? { zonemd_verify: form.zonemd_verify } : {}),
       primary: transfer ? form.primary.trim() : null,
       tsig_algorithm: tsig ? (form.tsig_algorithm as Algorithm) : null,
       tsig_key_name: tsig ? form.tsig_key_name.trim() : null,
@@ -550,6 +580,12 @@ function RpzZoneDialog({
           </div>
           {transfer && (
             <>
+              <ZonemdVerifySelect
+                rpz
+                value={form.zonemd_verify}
+                disabled={save.isPending}
+                onChange={(v) => set("zonemd_verify", v)}
+              />
               <div className="grid gap-1.5">
                 <div className="flex items-center gap-1.5">
                   <Label htmlFor="rpz-primary">Primary</Label>

@@ -69,3 +69,9 @@ and keep each upstream's health current.
 Parallel multiplies the load on your upstreams by the number of upstreams raced, and some public
 resolvers rate-limit. Every raced upstream sees every uncached query name, which matters for privacy
 when upstreams are run by different providers.
+
+## Oblivious DoH
+
+Settings contains independent ODoH target and proxy switches, both off by default. They require the engine's DoH listener. Targets publish public configurations at `/.well-known/odohconfigs`. The recursion ACL must permit proxies that use the engine as a target. A target sees the proxy engine's address, not the original client.
+
+A proxy forwards only to configured target hosts; optional CA PEM certificates replace system trust for that target. Enter a host and optional port, not a URL. Proxy timeout defaults to 2000 ms (100–10000); key rotation defaults to 24 hours (1–720). Administrators can rotate a key after confirming. Configured key storage is required. Keys are published five minutes after creation and remain usable through their validity window. The table exposes metadata only.

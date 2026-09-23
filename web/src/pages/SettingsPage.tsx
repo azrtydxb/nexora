@@ -7,6 +7,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, unwrap, type Schemas } from "@/api/client";
+import { OdohSection } from "@/pages/OdohSection";
 import { useDnsTlsStatus } from "@/api/policies";
 import { useCan } from "@/auth/AuthProvider";
 import {
@@ -124,6 +125,7 @@ export function SettingsPage() {
       {settings.data && <SettingsForm settings={settings.data} />}
 
       <DnsTlsSection />
+      <OdohSection />
 
       <section aria-labelledby="versions-heading" className="mt-10">
         <h2 id="versions-heading" className="mb-1 text-sm font-semibold">

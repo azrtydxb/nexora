@@ -12,6 +12,7 @@ import {
   useRollouts,
   useUpdateEngineGroup,
 } from "@/api/fleet";
+import { EngineGroupMdnsSection } from "@/pages/EngineGroupMdnsSection";
 import { useCan } from "@/auth/AuthProvider";
 import {
   ConfirmDialog,
@@ -117,7 +118,7 @@ export function EngineGroupPage() {
       />
       {q.isPending && <p className="text-muted-foreground text-sm">Loading…</p>}
       {g && (
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-6">
           {g.rollouts_paused && (
             <Alert
               data-testid="enginegroup-paused"
@@ -145,10 +146,11 @@ export function EngineGroupPage() {
           )}
           <ErrorAlert error={resume.error} prefix="Could not resume rollouts" />
           <ActiveRollout group={g} />
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <RolloutsTable groupId={g.id} />
             <GroupSettings key={g.id} group={g} />
           </div>
+          <EngineGroupMdnsSection key={g.id} group={g} />
           <GroupEngines groupId={g.id} />
         </div>
       )}
@@ -201,7 +203,7 @@ function ActiveRollout({ group: g }: { group: EngineGroup }) {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-6">
           <div className="text-sm">
             <div className="text-muted-foreground text-xs">Stable version</div>
             <div className="font-medium tabular-nums">
@@ -235,7 +237,7 @@ function RolloutsTable({ groupId }: { groupId: string }) {
   const rollouts = useRollouts({ engineGroupId: groupId, limit: 20 });
   const rows = rollouts.data ?? [];
   return (
-    <section aria-labelledby="rollouts-heading">
+    <section className="min-w-0" aria-labelledby="rollouts-heading">
       <h2 id="rollouts-heading" className="mb-3 text-sm font-semibold">
         Rollouts
       </h2>
@@ -385,13 +387,16 @@ function GroupSettings({ group }: { group: EngineGroup }) {
   }
 
   return (
-    <section aria-labelledby="settings-heading">
+    <section className="min-w-0" aria-labelledby="settings-heading">
       <h2 id="settings-heading" className="mb-3 text-sm font-semibold">
         Settings
       </h2>
       <Card className="p-5">
-        <form onSubmit={submit} className="grid gap-4">
-          <fieldset disabled={disabled} className="grid gap-4">
+        <form onSubmit={submit} className="grid min-w-0 grid-cols-1 gap-4">
+          <fieldset
+            disabled={disabled}
+            className="grid min-w-0 grid-cols-1 gap-4"
+          >
             <div className="grid gap-1.5">
               <div className="flex items-center gap-1.5">
                 <Label htmlFor="enginegroup-settings-name">Name</Label>
@@ -436,7 +441,7 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               >
                 <SelectTrigger
                   id="enginegroup-settings-upstreams"
-                  className="h-9"
+                  className="h-auto min-h-9 min-w-0 whitespace-normal text-left [&>span]:line-clamp-none"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -485,7 +490,7 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 onChange={(e) => set("otlp_endpoint", e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <div className="flex items-center gap-1.5">
                   <Label htmlFor="enginegroup-settings-strategy">
@@ -503,7 +508,7 @@ function GroupSettings({ group }: { group: EngineGroup }) {
                 >
                   <SelectTrigger
                     id="enginegroup-settings-strategy"
-                    className="h-9"
+                    className="h-auto min-h-9 min-w-0 whitespace-normal text-left [&>span]:line-clamp-none"
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -527,7 +532,7 @@ function GroupSettings({ group }: { group: EngineGroup }) {
               />
             </div>
             {canary && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <NumberField
                   id="enginegroup-settings-canary-count"
                   data-help="enginegroup-settings-canary-count"
@@ -675,7 +680,7 @@ function GroupEngines({ groupId }: { groupId: string }) {
     .sort((a, b) => a.node_name.localeCompare(b.node_name));
   const rows = all.slice(0, groupEnginesShown);
   return (
-    <section aria-labelledby="group-engines-heading">
+    <section className="min-w-0" aria-labelledby="group-engines-heading">
       <div className="mb-3 flex items-end justify-between gap-3">
         <h2 id="group-engines-heading" className="text-sm font-semibold">
           Engines

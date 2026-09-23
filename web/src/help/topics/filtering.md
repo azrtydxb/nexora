@@ -75,3 +75,9 @@ list whose trigger matches decides. A zone's policy override can replace the act
 it, or disable the zone so that matches are only logged.
 
 Resolvers keep the last good copy of a transferred zone and keep using it when a refresh fails.
+
+## RPZ ZONEMD
+
+Transfer-backed response policy zones offer **Off**, **If present** (default), and **Required** verification. File sources do not use this control. Required rejects missing digests as well as bad ones; If present accepts missing digests but rejects a bad digest when supplied. A failed check keeps the last good policy zone subject to expiry.
+
+The ZONEMD column lists each reporting engine and its verification status or failure reason. No report is not success. Digest integrity does not establish publisher identity; use authenticated transfers where needed.

@@ -900,6 +900,75 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/catalog-zones": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listCatalogZones"];
+    put?: never;
+    /** @description Creates a producer (primary) or consumer (secondary) catalog zone (RFC 9432). */
+    post: operations["createCatalogZone"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/catalog-zones/{catalogZoneId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        catalogZoneId: string;
+      };
+      cookie?: never;
+    };
+    get: operations["getCatalogZone"];
+    put?: never;
+    post?: never;
+    /** @description Deletes the catalog zone. Consumer member zones stay as ordinary secondaries. */
+    delete: operations["deleteCatalogZone"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/odoh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getOdohSettings"];
+    put: operations["updateOdohSettings"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/odoh/rotate-key": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Creates a new ODoH key now; it is published 5 minutes later. */
+    post: operations["rotateOdohKey"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/zones": {
     parameters: {
       query?: never;
@@ -2355,6 +2424,7 @@ export interface components {
         | "passthru"
         | "drop"
         | "tcp_only";
+      zonemd_verify?: components["schemas"]["ZonemdVerify"];
     };
     RpzZoneUpdate: {
       primary?: string | null;
@@ -2374,6 +2444,7 @@ export interface components {
         | "tcp_only";
       /** Format: int64 */
       revision: number;
+      zonemd_verify?: components["schemas"]["ZonemdVerify"];
     };
     RpzZone: {
       /**
@@ -2412,7 +2483,11 @@ export interface components {
         last_success: string | null;
         last_error: string;
         stale: boolean;
+        /** @enum {string} */
+        zonemd: "off" | "absent" | "verified" | "failed";
+        zonemd_error: string;
       }[];
+      zonemd_verify: components["schemas"]["ZonemdVerify"];
     };
     RpzZoneFile: {
       content: string;
@@ -2513,6 +2588,13 @@ export interface components {
       created_at: string;
       /** Format: date-time */
       updated_at: string;
+      zonemd_generate: boolean;
+      zonemd_verify: components["schemas"]["ZonemdVerify"];
+      /** Format: uuid */
+      catalog_zone_id: string | null;
+      zonemd_status: components["schemas"]["ZonemdStatus"];
+      zonemd_error: string;
+      catalog_member_label: string;
     };
     ZoneCreate: {
       /**
@@ -2540,6 +2622,10 @@ export interface components {
       update?: components["schemas"]["ZoneUpdatePolicy"];
       /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
       allow_query_cidrs?: string[];
+      zonemd_generate?: boolean;
+      zonemd_verify?: components["schemas"]["ZonemdVerify"];
+      /** Format: uuid */
+      catalog_zone_id?: string | null;
     };
     ZoneUpdate: {
       /** Format: int64 */
@@ -2553,6 +2639,90 @@ export interface components {
       update?: components["schemas"]["ZoneUpdatePolicy"];
       /** @description Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs. */
       allow_query_cidrs?: string[];
+      zonemd_generate?: boolean;
+      zonemd_verify?: components["schemas"]["ZonemdVerify"];
+      /** Format: uuid */
+      catalog_zone_id?: string | null;
+    };
+    /**
+     * @description Secondary and RPZ transfer zones: verify RFC 8976 ZONEMD after each transfer.
+     * @enum {string}
+     */
+    ZonemdVerify: "off" | "if_present" | "required";
+    /** @enum {string} */
+    ZonemdStatus: "not_checked" | "off" | "absent" | "verified" | "failed";
+    MdnsSettings: {
+      enabled: boolean;
+      interfaces: string[];
+      timeout_ms: number;
+      reflect: boolean;
+      reflect_interfaces: string[];
+    };
+    CatalogMember: {
+      /** Format: uuid */
+      zone_id: string | null;
+      name: string;
+      label: string;
+      /** @enum {string} */
+      state: "configured" | "clash";
+      issue: string;
+    };
+    CatalogZone: {
+      /** Format: uuid */
+      id: string;
+      /** Format: uuid */
+      zone_id: string;
+      name: string;
+      /** @enum {string} */
+      role: "producer" | "consumer";
+      /** Format: uuid */
+      engine_group_id: string | null;
+      broken_reason: string;
+      /** Format: int64 */
+      processed_serial: number | null;
+      /** Format: date-time */
+      processed_at: string | null;
+      members: components["schemas"]["CatalogMember"][];
+      /** Format: date-time */
+      created_at: string;
+    };
+    CatalogZoneCreate: {
+      name: string;
+      /** @enum {string} */
+      role: "producer" | "consumer";
+      /** Format: uuid */
+      engine_group_id?: string | null;
+      primaries?: components["schemas"]["ZoneEndpoint"][];
+      transfer?: components["schemas"]["ZoneTransfer"];
+      notify?: components["schemas"]["ZoneEndpoint"][];
+    };
+    OdohProxyTarget: {
+      host: string;
+      ca_pem: string;
+    };
+    OdohKeyInfo: {
+      /** Format: uuid */
+      id: string;
+      /** Format: date-time */
+      created_at: string;
+      /** Format: date-time */
+      publish_after: string;
+      /** Format: date-time */
+      not_after: string;
+    };
+    OdohSettingsUpdate: {
+      target_enabled: boolean;
+      proxy_enabled: boolean;
+      proxy_targets: components["schemas"]["OdohProxyTarget"][];
+      proxy_timeout_ms: number;
+      key_rotation_hours: number;
+      /** Format: int64 */
+      revision: number;
+    };
+    OdohSettings: components["schemas"]["OdohSettingsUpdate"] & {
+      keys: components["schemas"]["OdohKeyInfo"][];
+      /** Format: date-time */
+      updated_at: string;
     };
     RecordInput: {
       /** @description Absolute owner name inside the zone. */
@@ -2767,6 +2937,7 @@ export interface components {
        * @description filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216
        */
       filter_index_max_bytes?: number;
+      mdns?: components["schemas"]["MdnsSettings"];
     };
     EngineGroupUpdate: components["schemas"]["EngineGroupInput"] & {
       /** Format: int64 */
@@ -2792,6 +2963,7 @@ export interface components {
       rollouts_paused: boolean;
       /** Format: int64 */
       filter_index_max_bytes: number;
+      mdns: components["schemas"]["MdnsSettings"];
       /** Format: int64 */
       stable_version?: number | null;
       engine_count: number;
@@ -5546,6 +5718,171 @@ export interface operations {
       };
       404: components["responses"]["Error"];
       409: components["responses"]["Error"];
+    };
+  };
+  listCatalogZones: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Catalog zones ordered by name. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogZone"][];
+        };
+      };
+      501: components["responses"]["Error"];
+    };
+  };
+  createCatalogZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CatalogZoneCreate"];
+      };
+    };
+    responses: {
+      /** @description Created. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogZone"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+    };
+  };
+  getCatalogZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        catalogZoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The catalog zone with its members. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CatalogZone"];
+        };
+      };
+      404: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+    };
+  };
+  deleteCatalogZone: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        catalogZoneId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      404: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+    };
+  };
+  getOdohSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Oblivious DoH settings and key metadata (never the key material). */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OdohSettings"];
+        };
+      };
+      501: components["responses"]["Error"];
+    };
+  };
+  updateOdohSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OdohSettingsUpdate"];
+      };
+    };
+    responses: {
+      /** @description Updated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OdohSettings"];
+        };
+      };
+      400: components["responses"]["Error"];
+      409: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+    };
+  };
+  rotateOdohKey: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Rotated. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OdohSettings"];
+        };
+      };
+      409: components["responses"]["Error"];
+      501: components["responses"]["Error"];
+      503: components["responses"]["Error"];
     };
   };
   listZones: {

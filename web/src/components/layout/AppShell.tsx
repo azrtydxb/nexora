@@ -221,11 +221,27 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         op: "getDnssecSettings",
       },
       {
-        route: "zones",
-        path: "/zones",
+        route: "zone-management",
         label: "Zones",
         icon: Globe,
-        op: "listZones",
+        storageKey: "nexora.nav.zones",
+        children: [
+          {
+            route: "zones",
+            path: "/zones",
+            label: "Zones",
+            icon: Globe,
+            op: "listZones",
+            end: true,
+          },
+          {
+            route: "catalog-zones",
+            path: "/zones/catalogs",
+            label: "Catalog zones",
+            icon: Globe,
+            op: "listCatalogZones",
+          },
+        ],
       },
       {
         route: "access-control",

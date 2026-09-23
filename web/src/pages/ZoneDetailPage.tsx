@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ZoneZonemdCard } from "@/pages/ZoneZonemdCard";
 import { ZoneDnssecTab } from "@/pages/ZoneDnssecTab";
 import { ZoneImportExportTab } from "@/pages/ZoneImportExportTab";
 import { ZoneRecordsTab } from "@/pages/ZoneRecordsTab";
@@ -71,6 +72,7 @@ export function ZoneDetailPage() {
               </Badge>
             )}
           </div>
+          <ZoneZonemdCard key={z.id} zone={z} />
           <Tabs defaultValue="records">
             <TabsList>
               <TabsTrigger value="records">Records</TabsTrigger>

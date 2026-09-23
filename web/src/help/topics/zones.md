@@ -66,3 +66,13 @@ listed with their line numbers.
 
 Export downloads the zone as a BIND master file with its SOA and every record, for backups or for
 moving a zone to another server.
+
+## ZONEMD
+
+Primary zones can generate an RFC 8976 SHA-384 SIMPLE digest on every rebuild, including signed zones. Generation starts off. Secondary verification defaults to **If present**: missing digests are allowed but bad digests are rejected. **Required** also rejects a missing digest; **Off** skips verification. Failures retain the last good copy, subject to normal expiry. The status and error describe the last check; **Not checked** is not success. ZONEMD checks zone integrity, not publisher identity or DNSSEC trust.
+
+## Catalog zones
+
+Under Zones, open **Catalog zones** to create a producer or consumer. Producers require transfer CIDRs and can use an existing TSIG key. Assign member zones from their detail pages. Consumers require a primary address and optionally a TSIG key. Use the catalog's Zone transfer settings link for additional primaries, NOTIFY destinations and transfer configuration.
+
+The members table shows configured members and clashes; a clash does not replace an unrelated existing zone. Broken catalogs retain their last good reconciliation. An empty catalog deletes every member zone this catalog created. Deleting a consumer catalog itself instead preserves its member zones as ordinary secondaries. Consumer-managed zones reject manual edits.

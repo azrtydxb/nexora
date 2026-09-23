@@ -63,7 +63,10 @@ export function useUpdateZone(zoneId: string) {
       ),
     onSuccess: (z) => {
       qc.setQueryData(["zones", zoneId], z);
-      return qc.invalidateQueries({ queryKey: ["zones"], exact: true });
+      return Promise.all([
+        qc.invalidateQueries({ queryKey: ["zones"], exact: true }),
+        qc.invalidateQueries({ queryKey: ["catalog-zones"] }),
+      ]);
     },
   });
 }

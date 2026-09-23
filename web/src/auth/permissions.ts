@@ -59,6 +59,15 @@ export const permissions = {
   changeOwnPassword: "viewer",
   getVersion: "viewer",
 
+  // M8 DNS protocols
+  listCatalogZones: "viewer",
+  getCatalogZone: "viewer",
+  createCatalogZone: "operator",
+  deleteCatalogZone: "operator",
+  getOdohSettings: "viewer",
+  updateOdohSettings: "operator",
+  rotateOdohKey: "admin",
+
   // M11 AI
   getAiStatus: "viewer",
   getAiTask: "viewer",

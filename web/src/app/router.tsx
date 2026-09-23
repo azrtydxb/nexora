@@ -1,3 +1,4 @@
+import { CatalogZonesPage } from "@/pages/CatalogZonesPage";
 import { createBrowserRouter, Navigate } from "react-router";
 
 import { RequireAuth } from "@/auth/AuthProvider";
@@ -56,6 +57,7 @@ export const router = createBrowserRouter([
       { path: "rpz", element: <RpzPage /> },
       { path: "dnssec", element: <DnssecPage /> },
       { path: "zones", element: <ZonesPage /> },
+      { path: "zones/catalogs", element: <CatalogZonesPage /> },
       { path: "zones/tsig-keys", element: <TsigKeysPage /> },
       { path: "zones/:zoneId", element: <ZoneDetailPage /> },
       { path: "engines", element: <EnginesPage /> },

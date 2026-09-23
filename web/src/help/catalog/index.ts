@@ -1,3 +1,4 @@
+import { m8Help } from "./m8";
 import { adminHelp } from "./admin";
 import { aiHelp } from "./ai";
 import { filteringHelp } from "./filtering";
@@ -9,6 +10,7 @@ import { zonesHelp } from "./zones";
 export type { HelpArea, HelpEntry, HelpTopic } from "./types";
 
 export const areas: Record<string, HelpArea> = {
+  m8: m8Help,
   resolver: resolverHelp,
   filtering: filteringHelp,
   zones: zonesHelp,
