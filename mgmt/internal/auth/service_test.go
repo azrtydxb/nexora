@@ -20,9 +20,15 @@ import (
 )
 
 func db(t *testing.T) (*harness.Env, *store.Store, context.Context) {
+	return dbWithin(t, 90*time.Second)
+}
+
+// dbWithin is db with an explicit budget, for tests whose argon2 work (64 MiB and 3 passes per
+// login) does not fit the default one on a slow shared runner under -race.
+func dbWithin(t *testing.T, budget time.Duration) (*harness.Env, *store.Store, context.Context) {
 	env := harness.New(t)
 	pg := env.StartPostgres()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	t.Cleanup(cancel)
 	st, err := store.Open(ctx, pg.URL)
 	if err != nil {
