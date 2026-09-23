@@ -9,7 +9,7 @@ import (
 func (h *handlers) ImportZoneFile(ctx context.Context, req ImportZoneFileRequestObject) (ImportZoneFileResponseObject, error) {
 	res, err := h.d.Zones.Import(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, req.Body.Revision, req.Body.Content)
 	if err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return ImportZoneFile200JSONResponse{Zone: zoneOut(res.Zone), RecordsImported: res.RecordsImported}, nil
 }

@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -81,6 +82,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 	defer func() {
 		_, _ = conn.Exec(context.WithoutCancel(ctx), "select pg_advisory_unlock(hashtext('nexora:migrate'))")
 	}()
+	if err := checkM8MigrationHistory(ctx, conn); err != nil {
+		return err
+	}
+
 	db := stdlib.OpenDBFromPool(s.Pool)
 	defer db.Close()
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
@@ -106,13 +111,61 @@ func (s *Store) InTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return MapError(err)
 }
 
+// InTxOnce runs one READ COMMITTED transaction with the same bounded cleanup as
+// InTx, but never retries. The caller must bound ctx and use it for callback IO.
+// Success means COMMIT was acknowledged; every error is passed through MapError.
+func (s *Store) InTxOnce(ctx context.Context, fn func(pgx.Tx) error) error {
+	return MapError(s.inTxOnce(ctx, fn))
+}
+
 func (s *Store) inTxOnce(ctx context.Context, fn func(pgx.Tx) error) error {
-	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	var tx pgx.Tx
+	defer func() {
+		// Cancellation must not skip rollback, but a lost response must not hold
+		// shutdown (or the pool's only slot) indefinitely. Match the one-second
+		// cleanup budget used by control's secret enqueue transactions.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		var rollbackErr error
+		if tx != nil {
+			rollbackErr = tx.Rollback(cleanupCtx)
+		}
+		if (rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed)) || conn.Conn().IsClosed() || conn.Conn().PgConn().IsBusy() || conn.Conn().PgConn().TxStatus() != 'I' {
+			// pgx's asynchronous failure cleanup can wait on a separate cancel
+			// connection. Hijack releases pool capacity before that cleanup ends.
+			// Retire the socket immediately; never reuse an uncertain transaction.
+			broken := conn.Hijack()
+			transport := broken.PgConn().Conn()
+			// tls.Conn.Close writes close_notify, with its own five-second
+			// deadline. Only unwrap the known standard-library wrapper; do not
+			// invoke arbitrary wrapper methods or manipulate TLS internals.
+			for {
+				tlsConn, ok := transport.(*tls.Conn)
+				if !ok {
+					break
+				}
+				transport = tlsConn.NetConn()
+			}
+			_ = transport.Close()
+			// asyncClose marks pgx closed synchronously before launching its
+			// worker. Close then returns without touching its frontend/watcher.
+			// Otherwise we still own the idle driver and close it after the
+			// transport, so neither PostgreSQL nor TLS writes can block.
+			closeCtx, stop := context.WithCancel(context.Background())
+			stop()
+			_ = broken.Close(closeCtx)
+		}
+	}()
+	tx, err = conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 	if err := fn(tx); err != nil {
-		_ = tx.Rollback(context.WithoutCancel(ctx))
 		return err
 	}
 	return tx.Commit(ctx)

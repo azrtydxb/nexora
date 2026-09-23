@@ -17,6 +17,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
+	"github.com/piwi3910/nexora/mgmt/internal/zonemd"
 )
 
 const (
@@ -243,6 +244,21 @@ func (r *Refresher) succeed(ctx context.Context, z *zone.Zone, ans *Answer, soa 
 	if ans == nil && !z.Expired {
 		return store.MapError(timers(r.Store.Pool))
 	}
+	// A transfer is applied only when the zone it leads to passes the zone's ZONEMD verification.
+	var verified zonemd.Result
+	if ans != nil {
+		set, err := r.transferred(ctx, z, ans, soa)
+		if err != nil {
+			return err
+		}
+		verified = zonemd.Verify(z.Name, set, zonemd.Mode(z.ZonemdVerify))
+		if verified.Status == zonemd.StatusFailed {
+			if err := zone.SetZonemdStatus(ctx, r.Store.Pool, z.ID, string(verified.Status), verified.Err); err != nil {
+				return err
+			}
+			return fmt.Errorf("zonemd: %s", verified.Err)
+		}
+	}
 	// A transfer, or a zone that expired and answers again: publish a new config version.
 	_, err := r.Zones.Mutate(ctx, z.ID, func(tx pgx.Tx, locked *zone.Zone) (string, any, any, zone.RebuildOptions, error) {
 		after := map[string]any{"trigger": trigger, "serial": soa.Serial}
@@ -270,12 +286,80 @@ func (r *Refresher) succeed(ctx context.Context, z *zone.Zone, ans *Answer, soa 
 				refresh, timer(soa.Retry), expire, min(int64(soa.Minttl), maxTimer), min(int64(soa.Hdr.Ttl), maxTimer)); err != nil {
 				return "", nil, nil, opts, err
 			}
+			if err := zone.SetZonemdStatus(ctx, tx, locked.ID, string(verified.Status), verified.Err); err != nil {
+				return "", nil, nil, opts, err
+			}
 			serial := ans.Serial
 			opts.Serial = &serial
 		}
 		return "refreshZone", map[string]any{"serial": locked.Serial}, after, opts, timers(tx)
 	}, systemActor)
 	return err
+}
+
+// transferred returns the zone content ans leads to: the AXFR records (SOA first), or the served
+// zone with the IXFR diffs applied and soa, the primary's current SOA, as its SOA.
+func (r *Refresher) transferred(ctx context.Context, z *zone.Zone, ans *Answer, soa *dns.SOA) ([]dns.RR, error) {
+	if ans.Full != nil {
+		return ans.Full, nil
+	}
+	tx, err := r.Store.Pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, store.MapError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	current, err := zone.LoadServed(ctx, tx, z)
+	if err != nil {
+		return nil, fmt.Errorf("zone %s served records: %w", z.Name, err)
+	}
+	return append(applyDiffs(current, ans.Diffs), soa), nil
+}
+
+// applyDiffs applies IXFR diffs to current the way zone.ApplyRecordChanges applies them to the
+// stored records: a deletion matches owner (case-insensitively), type and RDATA whatever the
+// TTL, an added record replaces an equal one, every RRset written takes the TTL of its last added
+// record, and SOA records are dropped.
+func applyDiffs(current []dns.RR, diffs []Diff) []dns.RR {
+	key := func(rr dns.RR) string {
+		c := dns.Copy(rr)
+		h := c.Header()
+		h.Name, h.Ttl = strings.ToLower(h.Name), 0
+		return c.String()
+	}
+	type rrset struct {
+		owner string
+		rtype uint16
+	}
+	set := make(map[string]dns.RR, len(current))
+	for _, rr := range current {
+		if rr.Header().Rrtype != dns.TypeSOA {
+			set[key(rr)] = rr
+		}
+	}
+	ttls := map[rrset]uint32{}
+	for _, d := range diffs {
+		for _, rr := range d.Deleted {
+			delete(set, key(rr))
+		}
+		for _, rr := range d.Added {
+			h := rr.Header()
+			if h.Rrtype == dns.TypeSOA {
+				continue
+			}
+			set[key(rr)] = rr
+			ttls[rrset{strings.ToLower(h.Name), h.Rrtype}] = h.Ttl
+		}
+	}
+	out := make([]dns.RR, 0, len(set)+1)
+	for _, rr := range set {
+		h := rr.Header()
+		if ttl, ok := ttls[rrset{strings.ToLower(h.Name), h.Rrtype}]; ok && ttl != h.Ttl {
+			rr = dns.Copy(rr)
+			rr.Header().Ttl = ttl
+		}
+		out = append(out, rr)
+	}
+	return out
 }
 
 // fail records a failed refresh: retry after the SOA retry interval and expire when due.

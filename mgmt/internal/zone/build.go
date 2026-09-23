@@ -14,6 +14,7 @@ import (
 
 	"github.com/piwi3910/nexora/mgmt/internal/nzf"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
+	"github.com/piwi3910/nexora/mgmt/internal/zonemd"
 )
 
 const (
@@ -31,14 +32,20 @@ const (
 // DNSSEC is on), diffs it against the current served version and, when anything changed (or
 // opts force it), writes the next serial as a journal delta and, when due, a full image. A record
 // edit (opts.Edit) of an unsigned primary zone writes its delta from the edited RRsets instead.
+// A primary zone with ZonemdGenerate serves an apex ZONEMD (SIMPLE, SHA-384) over each version,
+// signed when DNSSEC is on.
 func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts RebuildOptions, now time.Time) (bool, error) {
-	// debt: DNSSEC-signed zones still rebuild from the whole record set per edit (NSEC/NSEC3 chain and RRSIG maintenance need the ordered owner set; zone_signatures limits re-signing); revisit when signed zones with hundreds of thousands of records are edited record by record.
-	if opts.Edit != nil && !z.DNSSECEnabled && z.Kind == "primary" && z.CurrentSeq > 0 && !opts.Force {
+	generateZonemd := z.ZonemdGenerate && z.Kind == "primary"
+	// debt: DNSSEC-signed zones still rebuild from the whole record set per edit, as do ZONEMD-generating zones (NSEC/NSEC3 chain, RRSIG maintenance and the zone digest need every record; zone_signatures limits re-signing); revisit when such zones with hundreds of thousands of records are edited record by record.
+	if opts.Edit != nil && !z.DNSSECEnabled && !generateZonemd && z.Kind == "primary" && z.CurrentSeq > 0 && !opts.Force {
 		return rebuildEdit(ctx, tx, z, opts)
 	}
 	desired, err := desiredRRs(ctx, tx, z)
 	if err != nil {
 		return false, err
+	}
+	if generateZonemd {
+		desired = append(desired, zonemd.Placeholder(z.Name, 0, z.SOA.TTL))
 	}
 	if z.DNSSECEnabled && signer != nil {
 		if desired, err = signer.Sign(ctx, tx, z, desired, now); err != nil {
@@ -69,6 +76,16 @@ func Rebuild(ctx context.Context, tx pgx.Tx, signer Signer, z *Zone, opts Rebuil
 	if z.DNSSECEnabled && signer != nil {
 		if desired, err = signer.ResignSOA(ctx, tx, z, desired, now); err != nil {
 			return false, err
+		}
+	}
+	if generateZonemd {
+		if err := zonemd.Apply(z.Name, desired); err != nil {
+			return false, fmt.Errorf("zone %s: %w", z.Name, err)
+		}
+		if z.DNSSECEnabled && signer != nil {
+			if desired, err = signer.SignZONEMD(ctx, tx, z, desired, now); err != nil {
+				return false, err
+			}
 		}
 	}
 	if desiredRecs, err = toRecords(desired); err != nil {
@@ -319,13 +336,23 @@ func toRecords(rrs []dns.RR) ([]nzf.Record, error) {
 	return out, nil
 }
 
-// isSOAData reports whether r is the SOA or an RRSIG covering it: these carry the serial and
-// travel first in every delta instead of through the diff.
+// isSOAData reports whether r is the SOA, a ZONEMD or an RRSIG covering either: these carry the
+// serial and travel first in every delta instead of through the diff. Primary zones serve ZONEMD
+// only at the apex (it is not a managed type); a ZONEMD below the apex of a transferred secondary
+// still reaches engines correctly, because every secondary version is written with its whole SOA
+// data deleted and added.
 func isSOAData(r nzf.Record) bool {
-	return r.Type == dns.TypeSOA || (r.Type == dns.TypeRRSIG && len(r.RData) >= 2 && binary.BigEndian.Uint16(r.RData) == dns.TypeSOA)
+	if r.Type == dns.TypeSOA || r.Type == dns.TypeZONEMD {
+		return true
+	}
+	if r.Type != dns.TypeRRSIG || len(r.RData) < 2 {
+		return false
+	}
+	covered := binary.BigEndian.Uint16(r.RData)
+	return covered == dns.TypeSOA || covered == dns.TypeZONEMD
 }
 
-// soaWithSigs returns the SOA record of rs followed by the RRSIGs covering it.
+// soaWithSigs returns the SOA record of rs followed by the other SOA data (ZONEMD and the RRSIGs).
 func soaWithSigs(rs []nzf.Record) []nzf.Record {
 	var soa, sigs []nzf.Record
 	for _, r := range rs {

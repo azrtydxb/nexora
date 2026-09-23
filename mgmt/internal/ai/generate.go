@@ -74,10 +74,20 @@ func generate[T any](ctx context.Context, s *Service, r Request[T]) (Result[T], 
 	lengthRetried := false
 	var lastErr error
 	for res.Attempts < s.cfg.ValidationAttempts {
-		if err := CheckEndpoint(ctx, s.cfg.BaseURL, s.cfg.AllowPublicEndpoint, s.resolve); err != nil {
-			return res, err
+		model := &capture{LanguageModel: s.model,
+			before: func(ctx context.Context) error {
+				if err := CheckEndpoint(ctx, s.cfg.BaseURL, s.cfg.AllowPublicEndpoint, s.resolve); err != nil {
+					return err
+				}
+				return s.checkBudget(ctx, r.Priority)
+			},
+			after: func(ctx context.Context, u provider.Usage) error {
+				// A timed-out caller must not erase usage already returned by the provider.
+				accounting, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				return s.recordUsage(accounting, r.Feature, u)
+			},
 		}
-		model := &capture{LanguageModel: s.model}
 		callCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 		out, err := sdk.GenerateObject[T](callCtx, sdk.GenerateObjectOpts{
 			Model: model, System: system, Messages: msgs, MaxRetries: &retries, MaxTokens: &maxTokens, Temperature: &temp,
@@ -85,9 +95,6 @@ func generate[T any](ctx context.Context, s *Service, r Request[T]) (Result[T], 
 		cancel()
 		usage, finish := model.result()
 		addUsage(&res.Usage, usage)
-		if uerr := s.recordUsage(ctx, r.Feature, usage); uerr != nil {
-			return res, uerr
-		}
 		var raw string
 		var noObject *sdk.NoObjectGeneratedError
 		switch {
@@ -142,6 +149,11 @@ func providerError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	for _, sentinel := range []error{ErrBudgetExhausted, ErrEndpointNotPrivate} {
+		if errors.Is(err, sentinel) {
+			return sentinel
+		}
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return ErrTimeout
 	}
@@ -189,15 +201,31 @@ type capture struct {
 	mu     sync.Mutex
 	usage  provider.Usage
 	finish provider.FinishReason
+	before func(context.Context) error
+	after  func(context.Context, provider.Usage) error
 }
 
 func (c *capture) Generate(ctx context.Context, call provider.Call) (*provider.Response, error) {
+	if c.before != nil {
+		if err := c.before(ctx); err != nil {
+			return nil, err
+		}
+	}
 	resp, err := c.LanguageModel.Generate(ctx, call)
 	if resp != nil {
 		c.mu.Lock()
 		addUsage(&c.usage, resp.Usage)
 		c.finish = resp.FinishReason
 		c.mu.Unlock()
+	}
+	if c.after != nil {
+		var usage provider.Usage
+		if resp != nil {
+			usage = resp.Usage
+		}
+		if accountingErr := c.after(ctx, usage); accountingErr != nil {
+			return resp, accountingErr
+		}
 	}
 	return resp, err
 }

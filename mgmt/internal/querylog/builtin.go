@@ -186,11 +186,18 @@ func (b *Builtin) Search(_ context.Context, q Query) (Page, error) {
 // Top implements Topper over the records held in the ring.
 func (b *Builtin) Top(_ context.Context, q TopQuery) ([]TopEntry, error) {
 	counts := map[string]int64{}
+	search := q.SearchQuery()
+	name := strings.ToLower(strings.TrimSuffix(search.Name, "."))
+	groups := slices.Clone(search.PolicyGroups)
+	for i, g := range groups {
+		if g == GlobalPolicyGroup {
+			groups[i] = ""
+		}
+	}
 	b.mu.RLock()
 	for _, e := range b.ring {
 		r := e.rec
-		if (!q.From.IsZero() && r.Time.Before(q.From)) || (!q.To.IsZero() && r.Time.After(q.To)) ||
-			(len(q.Filters) > 0 && !slices.Contains(q.Filters, r.Filter)) {
+		if !matches(r, search, name, groups) {
 			continue
 		}
 		var key string

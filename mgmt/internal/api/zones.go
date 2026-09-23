@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -48,6 +51,9 @@ func zoneOut(z *zone.Zone) Zone {
 		Update:          ZoneUpdatePolicy{TsigKeyIds: append([]uuid.UUID{}, z.UpdateTSIGKeyIDs...), AllowCidrs: &updateCIDRs},
 		Primaries:       zoneEndpointsOut(z.Primaries),
 		AllowQueryCidrs: prefixesOut(z.AllowQueryCIDRs),
+		ZonemdGenerate:  z.ZonemdGenerate, ZonemdVerify: ZonemdVerify(z.ZonemdVerify),
+		ZonemdStatus: ZonemdStatus(z.ZonemdStatus), ZonemdError: z.ZonemdError,
+		CatalogZoneId: z.CatalogZoneID, CatalogMemberLabel: z.CatalogMemberLabel,
 	}
 	if z.Kind == "secondary" {
 		out.SecondaryStatus = &ZoneSecondaryStatus{
@@ -56,6 +62,50 @@ func zoneOut(z *zone.Zone) Zone {
 		}
 	}
 	return out
+}
+
+// zoneErr answers zone.ErrCatalogManaged with 409 catalog_managed and the ZONEMD and catalog
+// membership validation errors with 400; other errors pass through.
+func zoneErr(err error) error {
+	var zve *zone.ValidationError
+	switch {
+	case errors.Is(err, zone.ErrCatalogManaged):
+		return coded(http.StatusConflict, "catalog_managed", "%s", err.Error())
+	case errors.As(err, &zve) && (zve.Code == "invalid_zonemd" || zve.Code == "invalid_catalog_zone_id"):
+		return coded(http.StatusBadRequest, zve.Code, "%s", zve.Message)
+	}
+	return err
+}
+
+// UnmarshalJSON decodes a ZoneUpdate, keeping an explicit "catalog_zone_id": null apart from an
+// omitted one: null leaves the catalog and reads as a pointer to uuid.Nil, which names no catalog.
+func (u *ZoneUpdate) UnmarshalJSON(b []byte) error {
+	type plain ZoneUpdate
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	if raw, ok := fields["catalog_zone_id"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		leave := uuid.Nil
+		p.CatalogZoneId = &leave
+	}
+	*u = ZoneUpdate(p)
+	return nil
+}
+
+// zonemdVerifyIn checks an optional zonemd_verify; nil stays "".
+func zonemdVerifyIn(v *ZonemdVerify) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	if !v.Valid() {
+		return "", invalid("zonemd_verify must be off, if_present or required")
+	}
+	return string(*v), nil
 }
 
 func recordOut(r *zone.Record) Record {
@@ -102,6 +152,9 @@ func transferIn(t *ZoneTransfer) zone.TransferInput {
 }
 
 func recordIn(name string, typ string, ttl int64, data string) (zone.RecordInput, error) {
+	if strings.EqualFold(strings.TrimSpace(typ), "ZONEMD") {
+		return zone.RecordInput{}, invalid("ZONEMD records are generated; enable zonemd_generate on the primary zone")
+	}
 	t, err := u32("ttl", ttl)
 	return zone.RecordInput{Name: name, Type: typ, TTL: t, Data: data}, err
 }
@@ -128,7 +181,16 @@ func (h *handlers) GetZone(ctx context.Context, req GetZoneRequestObject) (GetZo
 
 func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) (CreateZoneResponseObject, error) {
 	b := req.Body
-	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: 3600, Transfer: transferIn(b.Transfer), EngineGroupID: b.EngineGroupId}
+	in := zone.CreateZoneInput{Name: b.Name, Kind: string(b.Kind), DefaultTTL: 3600, Transfer: transferIn(b.Transfer), EngineGroupID: b.EngineGroupId,
+		CatalogZoneID: b.CatalogZoneId}
+	if b.ZonemdGenerate != nil {
+		in.ZonemdGenerate = *b.ZonemdGenerate
+	}
+	verify, err := zonemdVerifyIn(b.ZonemdVerify)
+	if err != nil {
+		return nil, err
+	}
+	in.ZonemdVerify = verify
 	if b.DefaultTtl != nil {
 		ttl, err := u32("default_ttl", *b.DefaultTtl)
 		if err != nil {
@@ -177,7 +239,7 @@ func (h *handlers) CreateZone(ctx context.Context, req CreateZoneRequestObject) 
 		return nil, coded(http.StatusUnprocessableEntity, "engine_group_not_found", "engine group %s does not exist", *b.EngineGroupId)
 	}
 	if err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return CreateZone201JSONResponse(zoneOut(z)), nil
 }
@@ -191,7 +253,21 @@ func (h *handlers) RefreshZone(ctx context.Context, req RefreshZoneRequestObject
 
 func (h *handlers) UpdateZone(ctx context.Context, req UpdateZoneRequestObject) (UpdateZoneResponseObject, error) {
 	b := req.Body
-	in := zone.UpdateZoneInput{Revision: b.Revision}
+	in := zone.UpdateZoneInput{Revision: b.Revision, ZonemdGenerate: b.ZonemdGenerate}
+	if b.ZonemdVerify != nil {
+		verify, err := zonemdVerifyIn(b.ZonemdVerify)
+		if err != nil {
+			return nil, err
+		}
+		in.ZonemdVerify = &verify
+	}
+	if b.CatalogZoneId != nil {
+		catalog := b.CatalogZoneId
+		if *catalog == uuid.Nil { // explicit null: leave the catalog
+			catalog = nil
+		}
+		in.CatalogZoneID = &catalog
+	}
 	if b.DefaultTtl != nil {
 		ttl, err := u32("default_ttl", *b.DefaultTtl)
 		if err != nil {
@@ -242,14 +318,14 @@ func (h *handlers) UpdateZone(ctx context.Context, req UpdateZoneRequestObject) 
 	}
 	z, err := h.d.Zones.UpdateZone(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, in)
 	if err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return UpdateZone200JSONResponse(zoneOut(z)), nil
 }
 
 func (h *handlers) DeleteZone(ctx context.Context, req DeleteZoneRequestObject) (DeleteZoneResponseObject, error) {
 	if err := h.d.Zones.DeleteZone(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, req.Params.Revision); err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return DeleteZone204Response{}, nil
 }
@@ -291,7 +367,7 @@ func (h *handlers) CreateZoneRecord(ctx context.Context, req CreateZoneRecordReq
 	}
 	r, err := h.d.Zones.CreateRecord(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, in)
 	if err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return CreateZoneRecord201JSONResponse(recordOut(r)), nil
 }
@@ -304,14 +380,14 @@ func (h *handlers) UpdateZoneRecord(ctx context.Context, req UpdateZoneRecordReq
 	}
 	r, err := h.d.Zones.UpdateRecord(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, req.RecordId, b.Revision, in)
 	if err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return UpdateZoneRecord200JSONResponse(recordOut(r)), nil
 }
 
 func (h *handlers) DeleteZoneRecord(ctx context.Context, req DeleteZoneRecordRequestObject) (DeleteZoneRecordResponseObject, error) {
 	if err := h.d.Zones.DeleteRecord(ctx, PrincipalFrom(ctx).Actor(), req.ZoneId, req.RecordId, req.Params.Revision); err != nil {
-		return nil, err
+		return nil, zoneErr(err)
 	}
 	return DeleteZoneRecord204Response{}, nil
 }

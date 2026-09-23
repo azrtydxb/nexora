@@ -29,8 +29,8 @@ func (e ValidationError) Error() string { return string(e) }
 // Failed-attempt throttle: more than maxAuthFailures failed logins or password changes for one
 // username from one client address within authFailureWindow give ErrTooManyAttempts. The client
 // address is part of the key so a remote attacker cannot lock a user out everywhere.
-// debt: the address is the TCP peer; behind a reverse proxy every client shares the proxy's
-// address, so the throttle degrades to per username. Revisit when a trusted-proxy setting exists.
+// HTTP callers resolve the address through ClientAddr: TCP peer by default, or the nearest
+// untrusted hop behind explicitly configured reverse proxies.
 const (
 	maxAuthFailures      = 10
 	authFailureWindowSQL = "interval '15 minutes'"

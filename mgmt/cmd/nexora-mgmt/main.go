@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -36,12 +38,14 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/blocklist"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
+	"github.com/piwi3910/nexora/mgmt/internal/catzone"
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 	"github.com/piwi3910/nexora/mgmt/internal/control"
 	"github.com/piwi3910/nexora/mgmt/internal/dnssec"
 	"github.com/piwi3910/nexora/mgmt/internal/dynupdate"
 	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/mcpserver"
+	"github.com/piwi3910/nexora/mgmt/internal/odoh"
 	"github.com/piwi3910/nexora/mgmt/internal/pki"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
 	"github.com/piwi3910/nexora/mgmt/internal/rollout"
@@ -357,6 +361,9 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	hub := control.NewHub(st, instanceID)
 	hub.RPZTsig = control.NewRPZTsig(st, box)
 	hub.TSIGKeys = control.NewTSIGKeys(st, box)
+	odohKeys := &odoh.Keys{Pool: st.Pool, Box: box}
+	hub.ODoH = odohKeys
+	go func() { _ = odohKeys.Run(ctx, time.Minute) }()
 	logs := control.NewLogBroker(st)
 	hub.SetLogBroker(logs)
 	go func() { _ = hub.Run(ctx) }()
@@ -374,11 +381,18 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	go fetcher.Run(ctx)
 
 	zones := &zone.Service{Store: st, Build: build, Signer: &dnssec.Store{Box: box}, Now: time.Now}
+	catalogZones := &catzone.Service{Store: st, Zones: zones, Build: build}
+	zones.CatalogChanged = catalogZones.Regenerate
 	zoneDNSSEC := &dnssec.Service{Store: st, Box: box, Zones: zones}
 	go func() { _ = (&dnssec.Maintainer{Store: st, Service: zoneDNSSEC, Tick: 5 * time.Second}).Run(ctx) }()
 	tsigKeys := &tsigkey.Service{Store: st, Build: build, Box: box}
 	refresher := &xfrin.Refresher{Store: st, Zones: zones, TSIG: tsigKeys, Now: time.Now, Dial: 5 * time.Second}
 	scheduler := &xfrin.Scheduler{Store: st, Refresher: refresher, Tick: 5 * time.Second}
+	scheduler.AfterRefresh = func(ctx context.Context, zoneID uuid.UUID) {
+		if err := catalogZones.Reconcile(ctx, zoneID); err != nil && ctx.Err() == nil {
+			slog.Warn("reconcile consumer catalog zone", "zone_id", zoneID, "err", err)
+		}
+	}
 	go func() { _ = scheduler.Run(ctx) }()
 
 	authSvc := auth.NewService(st, cfg.SecureCookies)
@@ -394,7 +408,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 	if cfg.BootstrapTokenFile != "" {
 		go authSvc.RunBootstrapToken(ctx, cfg.BootstrapTokenFile, cfg.BootstrapTokenReloadInterval, log.Printf)
 	}
-	dnsTLS := control.NewDNSTLSFanout()
+	dnsTLS := control.NewDNSTLSFanout(st)
 	if cfg.DNSTLSCertFile != "" {
 		go pki.NewDNSTLSWatcher(cfg.DNSTLSCertFile, cfg.DNSTLSKeyFile, cfg.DNSTLSReloadInterval).Run(ctx, dnsTLS.Set)
 	}
@@ -414,6 +428,7 @@ func serve(ctx context.Context, stdout io.Writer) error {
 		RefreshFilterList: fetcher.RefreshNow, DNSTLS: dnsTLS, Secrets: box,
 		Zones: zones, TSIGKeys: tsigKeys, ZoneDNSSEC: zoneDNSSEC, Catalog: cat,
 		EngineLogs: logs, AIDisabledReason: aiDisabledReason, AI: aiRuntime,
+		CatalogZones: api.NewCatalogZoneService(catalogZones), ODoH: api.NewODoHService(st, odohKeys, build),
 	}
 	// MCP replays through the very handler it is mounted in, so it is set once that handler exists
 	// (before the listener serves anything).

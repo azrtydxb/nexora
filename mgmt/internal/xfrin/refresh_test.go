@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,14 +14,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/miekg/dns"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 	"github.com/piwi3910/nexora/mgmt/internal/secrets"
+	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 	"github.com/piwi3910/nexora/mgmt/internal/tsigkey"
 	"github.com/piwi3910/nexora/mgmt/internal/xfrin"
 	"github.com/piwi3910/nexora/mgmt/internal/zone"
+	"github.com/piwi3910/nexora/mgmt/internal/zonemd"
 )
 
 var actor = auth.Actor{Type: "user", ID: "t", Name: "t"}
@@ -29,7 +33,7 @@ type fakePrimary struct {
 	mu      sync.Mutex
 	serial  uint32
 	records []string
-	history map[uint32][2][]string // from serial -> (deleted, added) to serial+1
+	history map[uint32][2][]string // from serial -> (deleted, added) to the current serial
 	queries []uint16
 	signed  bool // requests must carry a valid TSIG; responses are signed
 }
@@ -66,7 +70,7 @@ func (p *fakePrimary) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 		rrs = append(rrs, p.soa())
 		if q.Qtype == dns.TypeIXFR {
 			from := req.Ns[0].(*dns.SOA).Serial
-			if h, ok := p.history[from]; ok && from+1 == p.serial {
+			if h, ok := p.history[from]; ok {
 				old, _ := dns.NewRR("up.test. 300 IN SOA ns.up.test. h.up.test. " + itoa(from) + " 3600 600 86400 300")
 				rrs = append(rrs, old)
 				rrs = append(rrs, parse(h[0])...)
@@ -203,6 +207,212 @@ func TestRefreshWithTSIGRequiresSignedPrimary(t *testing.T) {
 	}
 }
 
+func TestRefreshDiscardsTransferFailingZonemd(t *testing.T) {
+	for _, ixfr := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ixfr=%v", ixfr), func(t *testing.T) {
+			env := newRefreshEnv(t) // fake primary serving up.test. with a valid ZONEMD at serial 1
+			env.primary.ixfr = ixfr // answers IXFR incrementally from every earlier version
+			env.load(t)             // first AXFR
+			if got := env.zone(t); got.ZonemdStatus != "verified" || got.Serial != 1 {
+				t.Fatalf("first load: %s serial %d", got.ZonemdStatus, got.Serial)
+			}
+			before := env.recordRows(t)
+			env.primary.setVersion(2, tamperedZonemd) // serial 2, a record added, ZONEMD digest of serial 1 with serial 2
+			err := env.refresher.Refresh(context.Background(), env.zoneID, "manual")
+			if err == nil || !strings.Contains(err.Error(), "zonemd: ") {
+				t.Fatalf("refresh error %v", err)
+			}
+			got := env.zone(t)
+			if got.Serial != 1 || got.ZonemdStatus != "failed" || !strings.HasPrefix(got.LastError, "primary ") || !strings.Contains(got.LastError, "zonemd: digest mismatch") {
+				t.Fatalf("after failure: serial %d status %s error %q", got.Serial, got.ZonemdStatus, got.LastError)
+			}
+			if after := env.recordRows(t); after != before {
+				t.Fatalf("zone_records changed on a failed verification: %s -> %s", before, after)
+			}
+			env.primary.setVersion(3, validZonemd)
+			if err := env.refresher.Refresh(context.Background(), env.zoneID, "manual"); err != nil {
+				t.Fatal(err)
+			}
+			if got := env.zone(t); got.Serial != 3 || got.ZonemdStatus != "verified" {
+				t.Fatalf("recovery: serial %d status %s", got.Serial, got.ZonemdStatus)
+			}
+			env.setVerify(t, "required")
+			env.primary.setVersion(4, noZonemd)
+			if err := env.refresher.Refresh(context.Background(), env.zoneID, "manual"); err == nil {
+				t.Fatal("required accepted a zone without ZONEMD")
+			}
+			env.setVerify(t, "off")
+			if err := env.refresher.Refresh(context.Background(), env.zoneID, "manual"); err != nil {
+				t.Fatal(err)
+			}
+			if got := env.zone(t); got.Serial != 4 || got.ZonemdStatus != "off" {
+				t.Fatalf("off: serial %d status %s", got.Serial, got.ZonemdStatus)
+			}
+			if want := ixfrTransfers(ixfr); env.primary.transfers() != want {
+				t.Fatalf("incremental answers served %d, want %d", env.primary.transfers(), want)
+			}
+		})
+	}
+}
+
+type zmdVersion int
+
+const (
+	validZonemd zmdVersion = iota
+	tamperedZonemd
+	noZonemd
+)
+
+// ixfrTransfers is the number of incremental answers the ZONEMD test's primary serves: none
+// without IXFR, else serial 1->2 (tampered), 1->3 (recovery), 3->4 (required) and 3->4 (off).
+func ixfrTransfers(ixfr bool) int {
+	if ixfr {
+		return 4
+	}
+	return 0
+}
+
+// zmdPrimary is a fakePrimary for up.test. whose versions carry an RFC 8976 ZONEMD. With ixfr it
+// answers IXFR from any earlier version with the difference to the current one.
+type zmdPrimary struct {
+	*fakePrimary
+	ixfr        bool
+	versions    map[uint32][]string
+	incremental int
+}
+
+func (p *zmdPrimary) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
+	p.mu.Lock()
+	if req.Question[0].Qtype == dns.TypeIXFR && len(req.Ns) > 0 {
+		if soa, ok := req.Ns[0].(*dns.SOA); ok {
+			if _, ok := p.history[soa.Serial]; ok {
+				p.incremental++
+			}
+		}
+	}
+	p.mu.Unlock()
+	p.fakePrimary.ServeDNS(w, req)
+}
+
+func (p *zmdPrimary) transfers() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.incremental
+}
+
+// zmdZone returns the records (SOA excluded) of up.test. at serial: NS, ns A and one A per serial
+// above 1, with a ZONEMD as kind says.
+func zmdZone(serial uint32, kind zmdVersion) []string {
+	rrs := func(serial uint32, withZonemd bool) []dns.RR {
+		out := []dns.RR{(&fakePrimary{serial: serial}).soa()}
+		out = append(out, parse([]string{"up.test. 300 IN NS ns.up.test.", "ns.up.test. 300 IN A 192.0.2.53"})...)
+		for s := uint32(2); s <= serial; s++ {
+			out = append(out, parse([]string{fmt.Sprintf("r%d.up.test. 300 IN A 192.0.2.%d", s, s)})...)
+		}
+		if withZonemd {
+			out = append(out, zonemd.Placeholder("up.test.", 0, 300))
+			if err := zonemd.Apply("up.test.", out); err != nil {
+				panic(err)
+			}
+		}
+		return out
+	}
+	cur := rrs(serial, kind != noZonemd)
+	if kind == tamperedZonemd {
+		prev := rrs(serial-1, true)
+		cur[len(cur)-1].(*dns.ZONEMD).Digest = prev[len(prev)-1].(*dns.ZONEMD).Digest
+	}
+	out := make([]string, 0, len(cur)-1)
+	for _, rr := range cur[1:] {
+		out = append(out, rr.String())
+	}
+	return out
+}
+
+func (p *zmdPrimary) setVersion(serial uint32, kind zmdVersion) {
+	records := zmdZone(serial, kind)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.history = map[uint32][2][]string{}
+	if p.ixfr {
+		for from, old := range p.versions {
+			p.history[from] = [2][]string{zmdMinus(old, records), zmdMinus(records, old)}
+		}
+	}
+	p.versions[serial] = records
+	p.serial, p.records = serial, records
+}
+
+// zmdMinus returns the records of a that b lacks.
+func zmdMinus(a, b []string) []string {
+	in := make(map[string]bool, len(b))
+	for _, s := range b {
+		in[s] = true
+	}
+	var out []string
+	for _, s := range a {
+		if !in[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+type refreshEnv struct {
+	st        *store.Store
+	zones     *zone.Service
+	refresher *xfrin.Refresher
+	primary   *zmdPrimary
+	zoneID    uuid.UUID
+}
+
+func newRefreshEnv(t *testing.T) *refreshEnv {
+	t.Helper()
+	p := &zmdPrimary{fakePrimary: &fakePrimary{}, versions: map[uint32][]string{}}
+	p.setVersion(1, validZonemd)
+	addr := startPrimaryWithKeys(t, p, nil)
+	st := storetest.New(t)
+	zs := &zone.Service{Store: st, Now: time.Now}
+	z, err := zs.CreateZone(context.Background(), actor, zone.CreateZoneInput{Name: "up.test.", Kind: "secondary", Primaries: []zone.Endpoint{{Address: addr}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &refreshEnv{st: st, zones: zs, refresher: &xfrin.Refresher{Store: st, Zones: zs, Now: time.Now, Dial: 2 * time.Second}, primary: p, zoneID: z.ID}
+}
+
+func (e *refreshEnv) load(t *testing.T) {
+	t.Helper()
+	if err := e.refresher.Refresh(context.Background(), e.zoneID, "create"); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+}
+
+func (e *refreshEnv) zone(t *testing.T) *zone.Zone {
+	t.Helper()
+	z, err := e.zones.GetZone(context.Background(), e.zoneID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return z
+}
+
+func (e *refreshEnv) recordRows(t *testing.T) string {
+	t.Helper()
+	var rows string
+	if err := e.st.Pool.QueryRow(context.Background(), `SELECT coalesce(string_agg(owner || ' ' || rtype::text || ' ' || ttl::text || ' ' || rdata, E'\n'
+		ORDER BY owner, rtype, rdata), '') FROM zone_records WHERE zone_id = $1`, e.zoneID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+func (e *refreshEnv) setVerify(t *testing.T, mode string) {
+	t.Helper()
+	if _, err := e.st.Pool.Exec(context.Background(), `UPDATE zones SET zonemd_verify = $2 WHERE id = $1`, e.zoneID, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func kekBox(t *testing.T) *secrets.Box {
 	t.Helper()
 	key := make([]byte, 32)
@@ -240,8 +450,8 @@ func startPrimary(t *testing.T, p *fakePrimary) string {
 	return startPrimaryWithKeys(t, p, nil)
 }
 
-// startPrimaryWithKeys is startPrimary with TSIG secrets (key name -> base64 secret).
-func startPrimaryWithKeys(t *testing.T, p *fakePrimary, keys map[string]string) string {
+// startPrimaryWithKeys serves handler p (a fakePrimary) like startPrimary, with TSIG secrets (key name -> base64 secret).
+func startPrimaryWithKeys(t *testing.T, p dns.Handler, keys map[string]string) string {
 	t.Helper()
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

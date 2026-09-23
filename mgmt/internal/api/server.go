@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/piwi3910/nexora/mgmt/internal/ai"
@@ -64,6 +65,25 @@ type Deps struct {
 	AIDisabledReason  string                // "" when AI is on; getAiStatus reports it
 	AI                *AIRuntime            // nil while AI is off: AI operations answer 503 ai_disabled
 	MCP               http.Handler          // nil: no /mcp endpoint
+	// CatalogZones serves the catalog zone operations; nil answers 501.
+	CatalogZones CatalogZoneService
+	// ODoH serves the Oblivious DoH settings and keys; nil answers 501.
+	ODoH ODoHService
+}
+
+// CatalogZoneService is the catalog zone (RFC 9432) backend of the API (M8).
+type CatalogZoneService interface {
+	List(ctx context.Context) ([]CatalogZone, error)
+	Get(ctx context.Context, id uuid.UUID) (CatalogZone, error)
+	Create(ctx context.Context, actor auth.Actor, in CatalogZoneCreate) (CatalogZone, error)
+	Delete(ctx context.Context, actor auth.Actor, id uuid.UUID) error
+}
+
+// ODoHService is the Oblivious DoH settings and key backend of the API (M8).
+type ODoHService interface {
+	Get(ctx context.Context) (OdohSettings, error)
+	Update(ctx context.Context, actor auth.Actor, in OdohSettingsUpdate) (OdohSettings, error)
+	Rotate(ctx context.Context, actor auth.Actor) (OdohSettings, error)
 }
 
 // AIRuntime holds the AI collaborators of the handlers while AI is on.

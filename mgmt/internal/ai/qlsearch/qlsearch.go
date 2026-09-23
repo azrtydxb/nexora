@@ -185,15 +185,13 @@ func New(st *store.Store, svc *ai.Service, ql querylog.Backend, cat *catalog.Cat
 		if err != nil {
 			return nil, &ai.TaskError{Code: "querylog_unavailable", Message: err.Error()}
 		}
-		// debt: the top lists honour only the range and the filter result (querylog.TopQuery); revisit when
-		// a backend aggregates over every search filter.
 		topNames, topClients := []querylog.TopEntry{}, []querylog.TopEntry{}
 		if topper, ok := ql.(querylog.Topper); ok {
 			for _, l := range []struct {
 				field querylog.TopField
 				dst   *[]querylog.TopEntry
 			}{{querylog.TopName, &topNames}, {querylog.TopClient, &topClients}} {
-				entries, err := topper.Top(ctx, querylog.TopQuery{From: filters.From, To: filters.To, Field: l.field, Filters: filters.Filter, Limit: topLimit})
+				entries, err := topper.Top(ctx, q.TopQuery(l.field, topLimit))
 				if err != nil {
 					return nil, &ai.TaskError{Code: "querylog_unavailable", Message: err.Error()}
 				}

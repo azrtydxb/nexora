@@ -47,6 +47,7 @@ type Server struct {
 	// loop with a 4 s context; without it every update is answered NOTIMP. The callback
 	// MUST call fence in its mutation transaction before writing, on every retry.
 	// Preparation may use the pool before that transaction; no network IO under the fence.
+	// It must finish bounded cleanup on cancellation; Connect joins it before unregistering.
 	OnUpdate func(ctx context.Context, engineID string, req *controlv1.UpdateRequest, fence func(pgx.Tx) error) *controlv1.UpdateResult
 	// EngineCertTTL is the lifetime of issued engine certificates (0: pki.EngineCertValidity).
 	EngineCertTTL time.Duration
@@ -61,6 +62,11 @@ type Server struct {
 
 // NewServer creates the EngineControl server of one instance.
 func NewServer(st *store.Store, ca *pki.CA, hub *Hub, instanceID string, dnsTLS *DNSTLSFanout) *Server {
+	if dnsTLS != nil {
+		dnsTLS.mu.Lock()
+		dnsTLS.st = st
+		dnsTLS.mu.Unlock()
+	}
 	return &Server{st: st, ca: ca, hub: hub, instanceID: instanceID, dnsTLS: dnsTLS}
 }
 
@@ -116,6 +122,8 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		return status.Error(codes.PermissionDenied, "Hello engine_id does not match the client certificate")
 	}
 	sub := newSubscriber(id, hello.AppliedVersion)
+	sub.certificateSerial = serial
+	sub.workers = newStreamWorkers()
 	defer s.hub.unregisterConnection(sub, func() {
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -159,13 +167,12 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		return err
 	}
 
-	var tlsCh <-chan *controlv1.TlsMaterial
-	err = s.withConnection(ctx, sub, func(tx pgx.Tx) error {
-		tlsCh = s.dnsTLS.Register(id, hello.TlsFingerprintSha256)
-		return nil
-	})
+	tlsCh, err := s.dnsTLS.Register(ctx, id, sub.sessionID, serial, hello.TlsFingerprintSha256)
 	if err != nil {
 		s.dnsTLS.Unregister(id, tlsCh)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return status.Error(codes.Aborted, "connection superseded or revoked")
+		}
 		return grpcError(err)
 	}
 	sub.tlsCh = tlsCh
@@ -185,7 +192,7 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		return grpcError(err)
 	}
 	ks := s.hub.loadKeySets(ctx)
-	offerTarget(sub, t, ks)
+	s.hub.offerTarget(ctx, sub, t, ks)
 	clearKeyMaterial(ks.km)
 	if t.Version > 0 && hello.AppliedVersion > t.Version {
 		if err := s.writeConnection(ctx, "update engines set version_ahead = true where id = $1 and connection_session = $2", id, sub.sessionID); err != nil {
@@ -197,21 +204,39 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 		sub.renew()
 	}
 
-	// A failed Send breaks the stream, which also ends Recv in the loop below.
+	// Only handler return cancels transport IO. Join application workers here,
+	// but leave the bounded Send/Recv workers to exit on RPC cancellation.
 	sendCtx, stopSend := context.WithCancel(ctx)
-	sendDone := make(chan struct{})
+	retryDone := sub.workers.retryDone
+	go func() {
+		defer close(retryDone)
+		ticker := time.NewTicker(hubSafetyInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sendCtx.Done():
+				return
+			case <-ticker.C:
+				s.dnsTLS.RetryFor(sendCtx, id, tlsCh)
+			}
+		}
+	}()
+	sendDone := sub.workers.sendDone
 	go func() {
 		defer close(sendDone)
 		for {
+			if sendCtx.Err() != nil {
+				return
+			}
 			// Pending keys go first: a snapshot may name a zone whose key is queued with it.
 			select {
-			case k := <-sub.keys:
-				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}); err != nil {
+			case prepared := <-sub.keys:
+				if !sendPreparedRpzTsigKeys(sendCtx, stream, prepared) {
 					return
 				}
 				continue
-			case km := <-sub.keyMaterial:
-				if !sendKeyMaterial(stream, km) {
+			case prepared := <-sub.keyMaterial:
+				if !sendPreparedKeyMaterial(sendCtx, stream, prepared) {
 					return
 				}
 				continue
@@ -220,12 +245,12 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 			select {
 			case <-sendCtx.Done():
 				return
-			case k := <-sub.keys:
-				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}); err != nil {
+			case prepared := <-sub.keys:
+				if !sendPreparedRpzTsigKeys(sendCtx, stream, prepared) {
 					return
 				}
-			case km := <-sub.keyMaterial:
-				if !sendKeyMaterial(stream, km) {
+			case prepared := <-sub.keyMaterial:
+				if !sendPreparedKeyMaterial(sendCtx, stream, prepared) {
 					return
 				}
 			case msg := <-sub.out:
@@ -236,42 +261,50 @@ func (s *Server) Connect(stream controlv1.EngineControl_ConnectServer) error {
 				if err := stream.Send(msg); err != nil {
 					return
 				}
-			case msg := <-sub.control:
-				if err := stream.Send(msg); err != nil {
+			case prepared := <-sub.control:
+				if !sendPreparedServerMessage(sendCtx, stream, prepared) {
 					return
 				}
 			case r := <-sub.logs:
 				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_LogRequest{LogRequest: r}}); err != nil {
 					return
 				}
-			case m := <-tlsCh:
-				if err := stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}); err != nil {
+			case prepared := <-tlsCh:
+				if !sendPreparedTlsMaterial(sendCtx, stream, prepared) {
 					return
 				}
 			}
 		}
 	}()
 	received := make(chan error, 1)
-	go func() { received <- s.receive(ctx, stream, sub) }()
+	receiver := newCancelableReceive(sendCtx, stream, sub.workers.recvDone)
+	go func() {
+		defer close(sub.workers.receiveDone)
+		received <- s.receive(sendCtx, receiver, sub)
+	}()
 	select {
 	case err = <-received:
+	case <-ctx.Done():
+		err = ctx.Err()
+	case <-sendDone:
+		err = status.Error(codes.Unavailable, "stream send ended")
 	case <-sub.revoked:
 		err = status.Error(codes.PermissionDenied, "certificate revoked")
 	}
+	sub.updateWorkers.stop()
 	stopSend()
-	<-sendDone
+	<-sub.workers.receiveDone
+	sub.updateWorkers.wait()
+	<-retryDone
 	return err
-}
-
-// sendKeyMaterial sends km (Send marshals synchronously) and then clears its secrets.
-func sendKeyMaterial(stream controlv1.EngineControl_ConnectServer, km *controlv1.KeyMaterial) bool {
-	defer clearKeyMaterial(km)
-	return stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}) == nil
 }
 
 func (s *Server) receive(ctx context.Context, stream controlv1.EngineControl_ConnectServer, sub *subscriber) error {
 	for {
 		msg, err := stream.Recv()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -375,7 +408,20 @@ const (
 // update applies one forwarded dynamic update outside the receive loop, within the engine's rate
 // and concurrency bounds, and queues its result on sub.results.
 func (s *Server) update(ctx context.Context, sub *subscriber, req *controlv1.UpdateRequest) {
+	if !sub.updateWorkers.start() {
+		return
+	}
+	// Transfer this admission to the async callback only after acquiring a slot.
+	async := false
+	defer func() {
+		if !async {
+			sub.updateWorkers.wg.Done()
+		}
+	}()
 	reply := func(rcode uint32, detail string) {
+		if ctx.Err() != nil {
+			return
+		}
 		sub.result(&controlv1.UpdateResult{RequestId: req.RequestId, Rcode: rcode, Detail: detail})
 	}
 	switch {
@@ -398,11 +444,16 @@ func (s *Server) update(ctx context.Context, sub *subscriber, req *controlv1.Upd
 		reply(dns.RcodeRefused, "too many concurrent updates")
 		return
 	}
+	async = true
 	go func() {
+		defer sub.updateWorkers.wg.Done()
 		defer func() { <-sub.updateSlots }()
 		uctx, cancel := context.WithTimeout(ctx, updateTimeout)
 		defer cancel()
 		res := s.OnUpdate(uctx, sub.engineID, req, s.connectionFence(uctx, sub))
+		if ctx.Err() != nil {
+			return
+		}
 		if res == nil {
 			reply(dns.RcodeServerFailure, "")
 			return
@@ -542,8 +593,8 @@ func (s *Server) renew(ctx context.Context, sub *subscriber, req *controlv1.Cert
 	}
 	slog.Info("engine certificate issued", "engine", sub.engineID, "reason", req.Reason.String())
 	select {
-	case sub.control <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_CertIssued{CertIssued: &controlv1.CertificateIssued{
-		CertDer: der, CaDer: s.ca.Cert.Raw}}}:
+	case sub.control <- Delivery[*controlv1.ServerMessage]{value: &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_CertIssued{CertIssued: &controlv1.CertificateIssued{
+		CertDer: der, CaDer: s.ca.Cert.Raw}}}}:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -565,4 +616,24 @@ func grpcError(err error) error {
 	}
 	slog.Error("engine control", "err", err)
 	return status.Error(codes.Internal, "internal error")
+}
+
+// Each secret-bearing queue has a single transport gate. Both priority and
+// ordinary select paths use it, with no queue or database lock held here.
+func sendPreparedRpzTsigKeys(ctx context.Context, stream controlv1.EngineControl_ConnectServer, d Delivery[*controlv1.RpzTsigKeys]) bool {
+	k, ok := d.Await(ctx)
+	return !ok || stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RpzTsigKeys{RpzTsigKeys: k}}) == nil
+}
+func sendPreparedKeyMaterial(ctx context.Context, stream controlv1.EngineControl_ConnectServer, d Delivery[*controlv1.KeyMaterial]) bool {
+	defer clearKeyMaterial(d.value)
+	km, ok := d.Await(ctx)
+	return !ok || stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_KeyMaterial{KeyMaterial: km}}) == nil
+}
+func sendPreparedServerMessage(ctx context.Context, stream controlv1.EngineControl_ConnectServer, d Delivery[*controlv1.ServerMessage]) bool {
+	msg, ok := d.Await(ctx)
+	return !ok || stream.Send(msg) == nil
+}
+func sendPreparedTlsMaterial(ctx context.Context, stream controlv1.EngineControl_ConnectServer, d Delivery[*controlv1.TlsMaterial]) bool {
+	m, ok := d.Await(ctx)
+	return !ok || stream.Send(&controlv1.ServerMessage{Msg: &controlv1.ServerMessage_TlsMaterial{TlsMaterial: m}}) == nil
 }

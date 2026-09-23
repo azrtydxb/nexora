@@ -6,8 +6,6 @@ package ai
 import (
 	"context"
 	"errors"
-	"net"
-	"net/netip"
 	"time"
 
 	"github.com/azrtydxb/go-ai-sdk/provider"
@@ -101,9 +99,7 @@ func New(ctx context.Context, o Options) (*Service, string, error) {
 	s := &Service{cfg: o.Config, st: o.Store, model: o.Model, resolve: o.Resolve, now: o.Now, slotWait: o.SlotWait,
 		sem: make(chan struct{}, o.Config.MaxConcurrency)}
 	if s.resolve == nil {
-		s.resolve = func(ctx context.Context, host string) ([]netip.Addr, error) {
-			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-		}
+		s.resolve = defaultResolve
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -115,7 +111,7 @@ func New(ctx context.Context, o Options) (*Service, string, error) {
 		return nil, "endpoint_not_private", nil
 	}
 	if s.model == nil {
-		s.model = NewModel(s.cfg)
+		s.model = newModel(s.cfg, s.resolve)
 	}
 	if s.cfg.StructuredOutput == "prompt" {
 		s.model = promptSchemaModel{s.model}

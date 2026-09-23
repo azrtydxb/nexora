@@ -16,6 +16,7 @@ import (
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/fleet"
+	"github.com/piwi3910/nexora/mgmt/internal/odoh"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
 
@@ -35,6 +36,8 @@ const (
 	ChannelEngineUpdated = "nexora_engine_updated"
 	ChannelEngineRevoked = "nexora_engine_revoked"
 	ChannelEngineRotate  = "nexora_engine_rotate"
+	// ChannelOdohKeys carries no payload: the ODoH key set changed.
+	ChannelOdohKeys = odoh.ChannelKeys
 )
 
 // Hub tracks the engine streams connected to this instance and pushes each engine its target
@@ -47,6 +50,8 @@ type Hub struct {
 	RPZTsig *RPZTsig
 	// TSIGKeys, when set, supplies the hosted-zone TSIG keys (KeyMaterial) pushed with every broadcast.
 	TSIGKeys *TSIGKeys
+	// ODoH, when set, supplies the ODoH key set pushed to every engine (nil: none is sent).
+	ODoH ODoHKeyLoader
 
 	logs *LogBroker // set before Run (SetLogBroker); nil: replies stored by other instances are not read
 
@@ -63,36 +68,42 @@ type Hub struct {
 // subscriber is one connected engine stream. out holds at most one pending message; a newer
 // snapshot replaces an unsent older one.
 type subscriber struct {
-	tlsCh     <-chan *controlv1.TlsMaterial // registration identity; set before receive starts
-	engineID  string
-	sessionID uuid.UUID // unique per stream, including reconnects to this instance
-	id        uuid.UUID
-	out       chan *controlv1.ServerMessage
-	// control carries certificate messages (RenewCertificate); nothing replaces a queued one.
-	control chan *controlv1.ServerMessage
+	workers           *streamWorkers                          // immutable, initialized before registration
+	tlsCh             <-chan Delivery[*controlv1.TlsMaterial] // registration identity; set before receive starts
+	engineID          string
+	sessionID         uuid.UUID // unique per stream, including reconnects to this instance
+	certificateSerial string    // authenticated certificate, immutable for this stream
+	id                uuid.UUID
+	out               chan *controlv1.ServerMessage
+	// control carries certificate messages and ODoH key sets; nothing replaces a queued one.
+	control chan Delivery[*controlv1.ServerMessage]
 	// revoked is closed once when the engine is revoked; Connect then ends the stream.
 	revoked    chan struct{}
 	revokeOnce sync.Once
-	keys       chan *controlv1.RpzTsigKeys // at most one pending key set; a newer set replaces it
+	keys       chan Delivery[*controlv1.RpzTsigKeys] // at most one pending key set; a newer set replaces it
 	// keyMaterial holds at most one pending KeyMaterial, owned by this subscriber: the send loop
 	// clears its secrets once sent and a replaced pending set is cleared at once.
-	keyMaterial chan *controlv1.KeyMaterial
+	keyMaterial chan Delivery[*controlv1.KeyMaterial]
 	// results carries UpdateResult replies. Unlike out, nothing replaces a queued result; one that
 	// does not fit is dropped and the engine answers SERVFAIL after its own timeout.
 	results chan *controlv1.ServerMessage
 	// updateSlots bounds the updates of this engine being applied at once.
-	updateSlots chan struct{}
+	updateSlots   chan struct{}
+	updateWorkers applicationWorkers
 	// logs carries LogRequest messages; a request that does not fit is dropped and its reader times out.
 	logs chan *controlv1.LogRequest
 
-	mu                sync.Mutex
-	engineGroupID     uuid.UUID // from the last target loaded
-	version           uint64    // highest version sent, applied or rejected
-	keysDigest        string    // digest of the last key set queued ("" = none)
-	keyMaterialDigest string    // digest of the last KeyMaterial queued ("" = none)
-	updateTokens      float64
-	updateRefilled    time.Time
-	logRequests       map[string]time.Time // ids of log requests sent and not yet answered
+	mu                       sync.Mutex
+	engineGroupID            uuid.UUID // from the last target loaded
+	version                  uint64    // highest version sent, applied or rejected
+	keysDigestInvalid        bool      // an unsent set was displaced without a successful replacement
+	keyMaterialDigestInvalid bool
+	keysDigest               string // digest of the last key set queued ("" = none)
+	keyMaterialDigest        string // digest of the last KeyMaterial queued ("" = none)
+	odohKeysDigest           string // digest of the last ODoH key set queued ("" = none)
+	updateTokens             float64
+	updateRefilled           time.Time
+	logRequests              map[string]time.Time // ids of log requests sent and not yet answered
 }
 
 const (
@@ -105,8 +116,8 @@ const (
 
 func newSubscriber(engineID string, applied uint64) *subscriber {
 	return &subscriber{engineID: engineID, sessionID: uuid.New(), id: uuid.MustParse(engineID), version: applied, out: make(chan *controlv1.ServerMessage, 1),
-		control: make(chan *controlv1.ServerMessage, 4), revoked: make(chan struct{}),
-		keys: make(chan *controlv1.RpzTsigKeys, 1), keyMaterial: make(chan *controlv1.KeyMaterial, 1),
+		control: make(chan Delivery[*controlv1.ServerMessage], 4), revoked: make(chan struct{}),
+		keys: make(chan Delivery[*controlv1.RpzTsigKeys], 1), keyMaterial: make(chan Delivery[*controlv1.KeyMaterial], 1),
 		results: make(chan *controlv1.ServerMessage, resultsQueue), updateSlots: make(chan struct{}, maxInflightUpdates),
 		updateTokens: updateBurst, logs: make(chan *controlv1.LogRequest, logsQueue), logRequests: map[string]time.Time{}}
 }
@@ -137,34 +148,69 @@ func (s *subscriber) result(r *controlv1.UpdateResult) {
 
 // offerKeyMaterial queues a private copy of km unless this engine was already given the set with
 // digest. The caller keeps ownership of km.
-func (s *subscriber) offerKeyMaterial(km *controlv1.KeyMaterial, digest string) {
+func (h *Hub) offerKeyMaterial(ctx context.Context, s *subscriber, km *controlv1.KeyMaterial, digest string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if digest == s.keyMaterialDigest {
+	if digest == s.keyMaterialDigest && !s.keyMaterialDigestInvalid {
 		return
 	}
-	s.keyMaterialDigest = digest
-	select {
-	case old := <-s.keyMaterial:
-		clearKeyMaterial(old)
-	default:
+	cloned := proto.Clone(km).(*controlv1.KeyMaterial)
+	queued := false
+	err := enqueueSecret(ctx, h.st, s.id, s.sessionID, s.certificateSerial, func(barrier *commitBarrier) {
+		select {
+		case old := <-s.keyMaterial:
+			clearKeyMaterial(old.value)
+			// Even an empty desired set must be reoffered after displacement.
+			s.keyMaterialDigestInvalid = true
+		default:
+		}
+		select {
+		case s.keyMaterial <- Delivery[*controlv1.KeyMaterial]{value: cloned, barrier: barrier}:
+			queued = true
+		default:
+		}
+	})
+	if !queued {
+		clearKeyMaterial(cloned)
 	}
-	s.keyMaterial <- proto.Clone(km).(*controlv1.KeyMaterial)
+	if err != nil {
+		slog.Debug("fence zone tsig keys", "engine", s.engineID, "err", err)
+		return
+	}
+	if queued {
+		s.keyMaterialDigest = digest
+		s.keyMaterialDigestInvalid = false
+	}
 }
 
 // offerKeys queues k unless this engine was already given the key set with digest.
-func (s *subscriber) offerKeys(k *controlv1.RpzTsigKeys, digest string) {
+func (h *Hub) offerKeys(ctx context.Context, s *subscriber, k *controlv1.RpzTsigKeys, digest string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if digest == s.keysDigest {
+	if digest == s.keysDigest && !s.keysDigestInvalid {
 		return
 	}
-	s.keysDigest = digest
-	select {
-	case <-s.keys:
-	default:
+	queued := false
+	err := enqueueSecret(ctx, h.st, s.id, s.sessionID, s.certificateSerial, func(barrier *commitBarrier) {
+		select {
+		case <-s.keys:
+			s.keysDigestInvalid = true
+		default:
+		}
+		select {
+		case s.keys <- Delivery[*controlv1.RpzTsigKeys]{value: k, barrier: barrier}:
+			queued = true
+		default:
+		}
+	})
+	if err != nil {
+		slog.Debug("fence rpz tsig keys", "engine", s.engineID, "err", err)
+		return
 	}
-	s.keys <- k
+	if queued {
+		s.keysDigest = digest
+		s.keysDigestInvalid = false
+	}
 }
 
 // offer queues snap when it is newer than anything this engine has seen.
@@ -196,8 +242,8 @@ func (s *subscriber) replace(msg *controlv1.ServerMessage) {
 // renew queues RenewCertificate without blocking (a full queue already holds requests).
 func (s *subscriber) renew() {
 	select {
-	case s.control <- &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RenewCertificate{RenewCertificate: &controlv1.RenewCertificate{
-		Reason: controlv1.CertificateRequest_REASON_ROTATE}}}:
+	case s.control <- Delivery[*controlv1.ServerMessage]{value: &controlv1.ServerMessage{Msg: &controlv1.ServerMessage_RenewCertificate{RenewCertificate: &controlv1.RenewCertificate{
+		Reason: controlv1.CertificateRequest_REASON_ROTATE}}}}:
 	default:
 	}
 }
@@ -229,13 +275,16 @@ func (h *Hub) Connected() int {
 	return len(h.subs)
 }
 
-// registerConnection keeps a previous stream's cleanup from clearing this connection
-// between its in-memory registration and its database ownership write.
+// registerConnection serializes claims and cleanup. Publish membership only after
+// persistence succeeds, so a failed claim cannot retire the legitimate stream.
 func (h *Hub) registerConnection(s *subscriber, persist func() error) error {
 	h.connectionMu.Lock()
 	defer h.connectionMu.Unlock()
+	if err := persist(); err != nil {
+		return err
+	}
 	h.register(s)
-	return persist()
+	return nil
 }
 
 func (h *Hub) unregisterConnection(s *subscriber, clear func()) {
@@ -249,6 +298,11 @@ func (h *Hub) unregisterConnection(s *subscriber, clear func()) {
 func (h *Hub) register(s *subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Retire fanout membership only. Material already queued or in Send may
+	// still arrive; every fresh-secret enqueue is separately fenced in PostgreSQL.
+	if old := h.latest[s.engineID]; old != nil {
+		delete(h.subs, old)
+	}
 	h.subs[s] = struct{}{}
 	h.latest[s.engineID] = s
 }
@@ -295,7 +349,8 @@ func (h *Hub) listen(ctx context.Context) error {
 		listen nexora_engine_revoked;
 		listen nexora_engine_rotate;
 		listen nexora_engine_logs;
-		listen nexora_engine_logs_done`); err != nil {
+		listen nexora_engine_logs_done;
+		listen nexora_odoh_keys`); err != nil {
 		return store.MapError(err)
 	}
 	// Anything published while disconnected is picked up here.
@@ -334,8 +389,12 @@ func (h *Hub) listen(ctx context.Context) error {
 // engine group or engine named.
 func (h *Hub) handle(ctx context.Context, batch []*pgconn.Notification) {
 	groups, engines := map[uuid.UUID]bool{}, map[uuid.UUID]bool{}
+	odohKeysChanged := false
 	for _, n := range batch {
 		switch n.Channel {
+		case ChannelOdohKeys:
+			odohKeysChanged = true
+			continue
 		case ChannelEngineLogs:
 			h.offerLogNote(n.Payload)
 			continue
@@ -364,6 +423,9 @@ func (h *Hub) handle(ctx context.Context, batch []*pgconn.Notification) {
 				s.renew()
 			}
 		}
+	}
+	if odohKeysChanged {
+		h.offerOdohKeysToAll(ctx)
 	}
 	for g := range groups {
 		h.push(ctx, fleet.EngineFilter{EngineGroupID: &g}, func(s *subscriber) bool { return s.group() == g })
@@ -413,7 +475,7 @@ func (h *Hub) push(ctx context.Context, f fleet.EngineFilter, match func(*subscr
 			// reconnect): end its stream now rather than never.
 			s.revoke()
 		case ok:
-			offerTarget(s, t, ks)
+			h.offerTarget(ctx, s, t, ks)
 		}
 	}
 }
@@ -426,18 +488,23 @@ type keySets struct {
 	km    *controlv1.KeyMaterial
 	zoned map[string]bool
 	kmOK  bool
+	// odoh is the same set for every engine; engines share it (it is never modified after loading).
+	odoh       *controlv1.OdohKeys
+	odohDigest string
+	odohOK     bool
 }
 
 func (h *Hub) loadKeySets(ctx context.Context) keySets {
 	var ks keySets
 	ks.rpz, _, ks.rpzOK = h.loadKeys(ctx)
 	ks.km, ks.zoned, ks.kmOK = h.loadKeyMaterial(ctx)
+	ks.odoh, ks.odohDigest, ks.odohOK = h.loadOdohKeys(ctx)
 	return ks
 }
 
 // offerTarget offers s its target: the RPZ and hosted-zone TSIG keys it may hold (FilterRPZKeys,
-// FilterKeyMaterial), then the snapshot.
-func offerTarget(s *subscriber, t fleet.Target, ks keySets) {
+// FilterKeyMaterial), the ODoH key set, then the snapshot.
+func (h *Hub) offerTarget(ctx context.Context, s *subscriber, t fleet.Target, ks keySets) {
 	s.mu.Lock()
 	s.engineGroupID = t.EngineGroupID
 	s.mu.Unlock()
@@ -446,11 +513,14 @@ func offerTarget(s *subscriber, t fleet.Target, ks keySets) {
 	}
 	if ks.rpzOK {
 		k := FilterRPZKeys(t.Snapshot, ks.rpz)
-		s.offerKeys(k, keySetDigest(k, len(k.Keys)))
+		h.offerKeys(ctx, s, k, keySetDigest(k, len(k.Keys)))
 	}
 	if ks.kmOK {
 		m := FilterKeyMaterial(t.Snapshot, ks.km, ks.zoned)
-		s.offerKeyMaterial(m, keySetDigest(m, len(m.TsigKeys)))
+		h.offerKeyMaterial(ctx, s, m, keySetDigest(m, len(m.TsigKeys)))
+	}
+	if ks.odohOK {
+		h.offerOdohKeys(ctx, s, ks.odoh, ks.odohDigest)
 	}
 	s.offer(t.Version, t.Snapshot)
 }

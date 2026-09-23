@@ -39,6 +39,8 @@ type Scheduler struct {
 	Store     *store.Store
 	Refresher *Refresher
 	Tick      time.Duration
+	// AfterRefresh, when set, runs after each successful refresh of a zone (catalog consumers).
+	AfterRefresh func(ctx context.Context, zoneID uuid.UUID)
 
 	once     sync.Once
 	slots    chan struct{}
@@ -172,7 +174,13 @@ func (s *Scheduler) refreshLocked(ctx context.Context, id uuid.UUID) error {
 	if trigger == "" {
 		trigger = "timer"
 	}
-	return s.Refresher.Refresh(ctx, id, trigger)
+	if err := s.Refresher.Refresh(ctx, id, trigger); err != nil {
+		return err
+	}
+	if s.AfterRefresh != nil {
+		s.AfterRefresh(ctx, id)
+	}
+	return nil
 }
 
 // Notify handles a NOTIFY for zoneName forwarded by an engine from source ("ip:port"): when source

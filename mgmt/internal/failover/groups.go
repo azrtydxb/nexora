@@ -28,6 +28,7 @@ type Group struct {
 	FrontendIP           string
 	Members              [2]uuid.UUID
 	Generation           int64
+	Lifecycle            string
 	CreatedAt, UpdatedAt time.Time
 }
 
@@ -47,22 +48,22 @@ func (g Group) Validate() error {
 	return nil
 }
 
-const columns = `id, name, host(frontend_ip), member_a, member_b, generation, created_at, updated_at`
+const columns = `id, name, host(frontend_ip), member_a, member_b, generation, lifecycle, created_at, updated_at`
 
 func scan(row pgx.Row) (Group, error) {
 	var g Group
-	err := row.Scan(&g.ID, &g.Name, &g.FrontendIP, &g.Members[0], &g.Members[1], &g.Generation, &g.CreatedAt, &g.UpdatedAt)
+	err := row.Scan(&g.ID, &g.Name, &g.FrontendIP, &g.Members[0], &g.Members[1], &g.Generation, &g.Lifecycle, &g.CreatedAt, &g.UpdatedAt)
 	return g, store.MapError(err)
 }
 
 // Get returns desired state, without implying operational health.
 func Get(ctx context.Context, q store.PolicyQuerier, id uuid.UUID) (Group, error) {
-	return scan(q.QueryRow(ctx, "select "+columns+" from failover_groups where id=$1", id))
+	return scan(q.QueryRow(ctx, "select "+columns+" from public.failover_groups where id=$1", id))
 }
 
-// List returns groups ordered by name.
+// List returns non-deleted groups ordered by name; Get retains tombstone access.
 func List(ctx context.Context, q store.PolicyQuerier) ([]Group, error) {
-	rows, err := q.Query(ctx, "select "+columns+" from failover_groups order by name")
+	rows, err := q.Query(ctx, "select "+columns+" from public.failover_groups where lifecycle <> 'deleted' order by name")
 	if err != nil {
 		return nil, store.MapError(err)
 	}
@@ -80,7 +81,7 @@ func Create(ctx context.Context, tx pgx.Tx, g Group) (Group, error) {
 		return Group{}, err
 	}
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `insert into failover_groups(name,frontend_ip,member_a,member_b)
+	err := tx.QueryRow(ctx, `insert into public.failover_groups(name,frontend_ip,member_a,member_b)
  values($1,$2::inet,$3,$4) returning id`, g.Name, g.FrontendIP, g.Members[0], g.Members[1]).Scan(&id)
 	if err != nil {
 		return Group{}, store.MapError(err)
@@ -93,7 +94,9 @@ func Create(ctx context.Context, tx pgx.Tx, g Group) (Group, error) {
 }
 
 // Update changes name/membership at an expected generation. Moving a frontend IP
-// needs a dedicated guarded migration, not an ordinary CRUD edit.
+// needs a dedicated guarded migration, not an ordinary CRUD edit. Identity changes
+// enter whole-pair draining and retain removed-member reservations until verified
+// withdrawal. Caller-provided lifecycle is never applied.
 func Update(ctx context.Context, tx pgx.Tx, g Group, expected int64) (Group, error) {
 	if err := g.Validate(); err != nil {
 		return Group{}, err
@@ -102,17 +105,24 @@ func Update(ctx context.Context, tx pgx.Tx, g Group, expected int64) (Group, err
 	if err != nil {
 		return Group{}, err
 	}
+	if current.Lifecycle != "active" && current.Lifecycle != "withdrawn" {
+		return Group{}, fmt.Errorf("%w: lifecycle mutation pending", ErrInvalid)
+	}
 	if current.FrontendIP != g.FrontendIP {
 		return Group{}, fmt.Errorf("%w: frontend IP is immutable", ErrInvalid)
 	}
 	if err := validateMembers(ctx, tx, g.Members); err != nil {
 		return Group{}, err
 	}
-	_, err = tx.Exec(ctx, `update failover_groups set name=$2,member_a=$3,member_b=$4,generation=generation+1,updated_at=now() where id=$1`, g.ID, g.Name, g.Members[0], g.Members[1])
+	next := current.Lifecycle
+	if !sameMembers(current.Members, g.Members) {
+		next = "draining"
+	}
+	_, err = tx.Exec(ctx, `update public.failover_groups set name=$2,member_a=$3,member_b=$4,lifecycle=$5,generation=generation+1,updated_at=now() where id=$1`, g.ID, g.Name, g.Members[0], g.Members[1], next)
 	if err != nil {
 		return Group{}, store.MapError(err)
 	}
-	if _, err = tx.Exec(ctx, `delete from failover_members where group_id=$1`, g.ID); err != nil {
+	if _, err = tx.Exec(ctx, `delete from public.failover_members where group_id=$1`, g.ID); err != nil {
 		return Group{}, store.MapError(err)
 	}
 	if err = insertMembers(ctx, tx, g); err != nil {
@@ -122,7 +132,7 @@ func Update(ctx context.Context, tx pgx.Tx, g Group, expected int64) (Group, err
 }
 
 func lock(ctx context.Context, tx pgx.Tx, id uuid.UUID, expected int64) (Group, error) {
-	g, err := scan(tx.QueryRow(ctx, "select "+columns+" from failover_groups where id=$1 for update", id))
+	g, err := scan(tx.QueryRow(ctx, "select "+columns+" from public.failover_groups where id=$1 for update", id))
 	if err != nil {
 		return Group{}, err
 	}
@@ -133,7 +143,7 @@ func lock(ctx context.Context, tx pgx.Tx, id uuid.UUID, expected int64) (Group, 
 }
 
 func insertMembers(ctx context.Context, tx pgx.Tx, g Group) error {
-	_, err := tx.Exec(ctx, `insert into failover_members(group_id,engine_id,slot) values($1,$2,1),($1,$3,2)`, g.ID, g.Members[0], g.Members[1])
+	_, err := tx.Exec(ctx, `insert into public.failover_members(group_id,engine_id,slot) values($1,$2,1),($1,$3,2)`, g.ID, g.Members[0], g.Members[1])
 	return store.MapError(err)
 }
 
@@ -144,7 +154,7 @@ func insertMembers(ctx context.Context, tx pgx.Tx, g Group) error {
 // distinct failure-domain nodes (prefixed engine names are not that proof).
 func validateMembers(ctx context.Context, tx pgx.Tx, ids [2]uuid.UUID) error {
 	rows, err := tx.Query(ctx, `select node_name,engine_group_id,deleted_at is not null or revoked_at is not null
- from engines where id in ($1,$2) order by id for update`, ids[0], ids[1])
+ from public.engines where id in ($1,$2) order by id for update`, ids[0], ids[1])
 	if err != nil {
 		return store.MapError(err)
 	}
@@ -179,3 +189,5 @@ func validateMembers(ctx context.Context, tx pgx.Tx, ids [2]uuid.UUID) error {
 	}
 	return nil
 }
+
+func sameMembers(a, b [2]uuid.UUID) bool { return a == b || a[0] == b[1] && a[1] == b[0] }

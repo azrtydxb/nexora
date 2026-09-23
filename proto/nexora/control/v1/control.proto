@@ -69,6 +69,7 @@ message ServerMessage {
     CertificateIssued cert_issued = 500;       // M5: reply to EngineMessage.cert_request
     RenewCertificate renew_certificate = 501; // M5: send a CertificateRequest now
     LogRequest log_request = 700;              // M6: read the engine log ring buffer
+    OdohKeys odoh_keys = 900;                  // M8: never persisted, never part of ConfigSnapshot
   }
 }
 
@@ -106,6 +107,9 @@ message ConfigSnapshot {
   // M6: authoritative access.
   repeated string authoritative_allow_cidrs = 700; // M6: hosted-zone query ACL default; used only when authoritative_acl_set
   bool authoritative_acl_set = 701;                // M6: false (pre-M6 management): hosted zones answer every client
+  // M8: DNS protocols.
+  MdnsConfig mdns = 900; // M8: absent = mDNS gateway and reflector off
+  OdohConfig odoh = 901; // M8: absent = ODoH target and proxy off
 }
 
 enum UpstreamStrategy {
@@ -232,6 +236,8 @@ message Stats {
   int64 tls_certificate_not_after_unix = 712;        // M6: 0 = no DNS serving certificate
   uint64 log_lines_dropped_total = 713;              // M6
   repeated uint64 race_duration_bucket_counts = 714; // M6: cumulative, same bounds
+  // M11: absent on older engines; absence is not a measured empty cache.
+  RecursorCacheStats recursor_cache = 1200;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +369,7 @@ message RpzTransferSource {
   string tsig_key_name = 2;
   TsigAlgorithm tsig_algorithm = 3; // the secret arrives only in RpzTsigKeys
   uint32 min_refresh_seconds = 4;   // 0 -> 60
+  ZonemdVerify zonemd_verify = 900; // M8: UNSPECIFIED = off
 }
 
 message RpzZone {
@@ -436,6 +443,8 @@ message RpzZoneStatus {
   int64 last_success_unix = 6;
   string last_error = 7;
   bool stale = 8;
+  ZonemdStatus zonemd = 900; // M8
+  string zonemd_error = 901; // M8
 }
 
 // ---- M4 (authoritative). Field numbers 200-299 in ConfigSnapshot and in both
@@ -601,4 +610,63 @@ message LogBatch { // M6
   repeated LogLine lines = 2;
   uint64 last_seq = 3;   // newest seq in the ring
   uint64 oldest_seq = 4; // oldest seq still in the ring
+}
+
+// The three caches governed by the M7 recursor budget, including forwarding
+// DNSSEC validation. Bytes are the existing eviction weights, not process RSS.
+message RecursorCacheStats {
+  bool enabled = 1;    // recursive mode or at least one DNSSEC-validating route
+  uint64 bytes = 2;    // RRsets + aggressive NSEC/NSEC3 + infrastructure (servers and lame marks)
+  uint64 max_bytes = 3; // effective configured budget, with the zero/default setting resolved
+}
+
+// ---------------------------------------------------------------------------
+// M8 DNS protocols: fields added to existing messages use 900-999.
+// ---------------------------------------------------------------------------
+
+enum ZonemdVerify { // M8
+  ZONEMD_VERIFY_UNSPECIFIED = 0; // older management plane: off
+  ZONEMD_VERIFY_OFF = 1;
+  ZONEMD_VERIFY_IF_PRESENT = 2;
+  ZONEMD_VERIFY_REQUIRED = 3;
+}
+
+enum ZonemdStatus { // M8
+  ZONEMD_STATUS_UNSPECIFIED = 0;
+  ZONEMD_STATUS_OFF = 1;
+  ZONEMD_STATUS_ABSENT = 2;
+  ZONEMD_STATUS_VERIFIED = 3;
+  ZONEMD_STATUS_FAILED = 4;
+}
+
+message MdnsConfig { // M8
+  bool enabled = 1;
+  repeated string interfaces = 2;         // interface names, 1-15 chars
+  uint32 timeout_ms = 3;                  // 0 -> 500; else 100..=5000
+  bool reflect = 4;
+  repeated string reflect_interfaces = 5; // at least 2 when reflect
+}
+
+message OdohConfig { // M8
+  bool target_enabled = 1;
+  bool proxy_enabled = 2;
+  repeated OdohProxyTarget proxy_targets = 3; // at least 1 when proxy_enabled
+  uint32 proxy_timeout_ms = 4;                // 0 -> 2000; else 100..=10000
+}
+
+message OdohProxyTarget { // M8
+  string host = 1;   // "name" or "name:port" (IPv6 in brackets); no port = 443
+  string ca_pem = 2; // empty = webpki roots
+}
+
+// ODoH key seeds. Sent only on the Connect stream; held in engine memory only; never part of
+// ConfigSnapshot, never persisted by the engine.
+message OdohKeys { // M8
+  repeated OdohKey keys = 1; // the complete set, newest first
+}
+
+message OdohKey { // M8
+  bytes seed = 1;               // 32 octets; HPKE DeriveKeyPair input
+  int64 publish_after_unix = 2; // listed in /.well-known/odohconfigs from then on
+  int64 not_after_unix = 3;     // accepted until then
 }

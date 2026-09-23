@@ -33,7 +33,7 @@ For every resource in the data answer one object {"resource", "confidence", "rec
 - confidence: 0..1, how much the projection can be trusted, at most the resource's max_confidence;
 - recommendation: one or two sentences of concrete advice for the operator.
 Only for the resource "cache", when the limit will be reached, you may add "cache_max_bytes": a new resolver cache limit in bytes
-above the current limit. Other limits have no API setting; give text advice only.
+above the current limit. For all other resources, give text advice only.
 Answer with only JSON: {"forecasts":[...]}`
 )
 
@@ -43,16 +43,7 @@ Answer with only JSON: {"forecasts":[...]}`
 func SampleToday(ctx context.Context, st *store.Store, now time.Time) error {
 	now = now.UTC()
 	dayStart := now.Truncate(24 * time.Hour)
-	type sampleRow struct {
-		value float64
-		limit *float64
-	}
-	samples := map[string]sampleRow{}
-	higher := func(resource string, value float64, limit *float64) {
-		if s, ok := samples[resource]; !ok || value > s.value {
-			samples[resource] = sampleRow{value, limit}
-		}
-	}
+	samples := sampleSet{}
 
 	var cacheMax float64
 	if err := st.Pool.QueryRow(ctx, `select cache_max_bytes from resolver_settings`).Scan(&cacheMax); err != nil {
@@ -74,25 +65,11 @@ func SampleToday(ctx context.Context, st *store.Store, now time.Time) error {
 		if proto.Unmarshal(raw, s) != nil {
 			continue // a corrupt sample is skipped, as on the dashboard
 		}
-		higher("cache", float64(s.CacheBytes), &cacheMax)
-		if fi := s.FilterIndex; fi != nil {
-			limit := float64(fi.MaxBytes)
-			higher("filter_index", float64(fi.Bytes), &limit)
-		}
-		if s.ProcessResidentBytes > 0 {
-			var limit *float64
-			if s.MemoryLimitBytes > 0 {
-				l := float64(s.MemoryLimitBytes)
-				limit = &l
-			}
-			higher("engine_memory", float64(s.ProcessResidentBytes), limit)
-		}
+		samples.addEngine(s, cacheMax)
 	}
 	if err := rows.Err(); err != nil {
 		return store.MapError(err)
 	}
-	// debt: recursor_cache is not sampled: engines report no recursion cache bytes and resolution_settings has
-	// no recursor_cache_max_bytes until M7 Task 12 lands; revisit when both exist.
 
 	var entries float64
 	if err := st.Pool.QueryRow(ctx, `select coalesce(sum(entry_count), 0) from filter_lists where enabled and kind = 'block'`).
@@ -110,6 +87,13 @@ func SampleToday(ctx context.Context, st *store.Store, now time.Time) error {
 	}
 
 	day := dayStart.Format(time.DateOnly)
+	if _, ok := samples["recursor_cache"]; !ok {
+		// A later run may observe recursion disabled, an older binary, or a malformed
+		// newest report. Do not leave today's earlier measurement looking current.
+		if _, err := st.Pool.Exec(ctx, `delete from ai_capacity_samples where day = $1 and resource = 'recursor_cache'`, day); err != nil {
+			return store.MapError(err)
+		}
+	}
 	for resource, s := range samples {
 		if _, err := st.Pool.Exec(ctx, `insert into ai_capacity_samples(day, resource, value, limit_value) values ($1, $2, $3, $4)
 			on conflict (day, resource) do update set value = excluded.value, limit_value = excluded.limit_value`,

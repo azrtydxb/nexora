@@ -2,6 +2,10 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	"google.golang.org/protobuf/proto"
 	"io"
 	"net/http"
 	"net/url"
@@ -81,4 +85,53 @@ func TestQueryLogConformanceLoki(t *testing.T) {
 			t.Fatalf("partitioned top %v, reference %v", got, want)
 		}
 	})
+}
+
+// TestLokiTopNanosecondBoundaries verifies actual LogQL template execution, millisecond rounding,
+// and inclusive endpoints without changing the M10 time contract.
+func TestLokiTopNanosecondBoundaries(t *testing.T) {
+	requireE2E(t)
+	_, backend, ingest := lokiBackend(t, harness.LokiOptions{})
+	from := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Minute).Add(time.Minute - time.Nanosecond)
+	to := from.Add(1900 * time.Microsecond)
+	seed := querylogtest.Dataset("boundary", from)[0]
+	original := seed.Req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	seed.Req.ResourceLogs[0].ScopeLogs[0].LogRecords = nil
+	times := []time.Time{from.Add(-time.Nanosecond), from, to, to.Add(time.Nanosecond), to.Add(500 * time.Microsecond)}
+	for i, ts := range times {
+		lr := proto.Clone(original).(*logspb.LogRecord)
+		lr.TimeUnixNano = uint64(ts.UnixNano())
+		lr.Attributes = append(lr.Attributes, &commonpb.KeyValue{Key: "nexora.filter.category", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "boundary"}}})
+		// Unique lines prevent Loki's documented identical timestamp+line deduplication.
+		for _, kv := range lr.Attributes {
+			if kv.Key == "dns.question.name" {
+				kv.Value = &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: fmt.Sprintf("edge-%d.test.", i)}}
+			}
+		}
+		seed.Req.ResourceLogs[0].ScopeLogs[0].LogRecords = append(seed.Req.ResourceLogs[0].ScopeLogs[0].LogRecords, lr)
+	}
+	ingest(t, seed.EngineID, seed.Req)
+	deadline := time.Now().Add(time.Minute)
+	for {
+		page, err := backend.Search(context.Background(), querylog.Query{From: from.Add(-time.Second), To: to.Add(time.Second), Name: "edge-", Limit: 100})
+		if err == nil && len(page.Records) == 5 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("boundary records not visible: %v %v", page, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	ref := querylog.NewBuiltin(10)
+	ref.Ingest(seed.EngineID, seed.Req)
+	for _, window := range [][2]time.Time{{from, to}, {from, from}, {to, to}, {from.Add(time.Nanosecond), to.Add(-time.Nanosecond)}} {
+		for _, field := range []querylog.TopField{querylog.TopName, querylog.TopClient, querylog.TopCategory} {
+			q := querylog.TopQuery{From: window[0], To: window[1], Field: field, Limit: 10}
+			got, err := backend.Top(context.Background(), q)
+			want, _ := ref.Top(context.Background(), q)
+			if err != nil || !slices.Equal(got, want) {
+				t.Fatalf("window %v field %s got %v %v want %v", window, field, got, err, want)
+			}
+		}
+	}
 }

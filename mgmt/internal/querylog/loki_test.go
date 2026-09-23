@@ -304,15 +304,14 @@ func TestLokiTopTwoStepTies(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("%d requests, want 2", len(reqs))
 	}
-	// Loki ranges are whole milliseconds and left-open: 60001ms evaluated at From-1ns+60001ms covers
-	// exactly (From-1ns, To+1ms-1ns].
-	rangeMS := int64(60_001)
-	for _, want := range []string{`topk(2, sum by (dns_question_name) (count_over_time(`, `dns_question_name!=""`, fmt.Sprintf("[%dms]", rangeMS)} {
+	// Millisecond envelope plus exact entry timestamp filtering preserves both inclusive edges.
+	rangeMS := int64(60_002)
+	for _, want := range []string{`topk(2, sum by (dns_question_name) (count_over_time(`, `dns_question_name!=""`, fmt.Sprintf("[%dms]", rangeMS), `(__timestamp__).UnixNano`, `nexora_window="true" | drop nexora_window`} {
 		if !strings.Contains(reqs[0].Query, want) {
 			t.Errorf("step 1 %s lacks %s", reqs[0].Query, want)
 		}
 	}
-	if wantTime := strconv.FormatInt(from.UnixNano()-1+rangeMS*int64(time.Millisecond), 10); reqs[0].Path != "/loki/api/v1/query" || reqs[0].Time != wantTime {
+	if wantTime := strconv.FormatInt(to.Add(time.Millisecond).UnixNano(), 10); reqs[0].Path != "/loki/api/v1/query" || reqs[0].Time != wantTime {
 		t.Errorf("step 1 %+v, want time %s", reqs[0], wantTime)
 	}
 	if !strings.HasSuffix(reqs[1].Query, ") >= 3") || strings.HasPrefix(reqs[1].Query, "topk(") {

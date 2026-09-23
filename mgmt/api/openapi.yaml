@@ -1152,6 +1152,7 @@ components:
             type: string,
             enum: [given, disabled, nxdomain, nodata, passthru, drop, tcp_only],
           }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
     RpzZoneUpdate:
       type: object
       required: [min_refresh_seconds, policy_override, revision]
@@ -1168,6 +1169,7 @@ components:
             enum: [given, disabled, nxdomain, nodata, passthru, drop, tcp_only],
           }
         revision: { type: integer, format: int64 }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
     RpzZone:
       type: object
       required:
@@ -1186,6 +1188,7 @@ components:
           revision,
           status,
           engine_group_id,
+          zonemd_verify,
         ]
       properties:
         engine_group_id:
@@ -1221,6 +1224,8 @@ components:
                 last_success,
                 last_error,
                 stale,
+                zonemd,
+                zonemd_error,
               ]
             properties:
               engine_id: { type: string, format: uuid }
@@ -1232,6 +1237,9 @@ components:
               last_success: { type: [string, "null"], format: date-time }
               last_error: { type: string }
               stale: { type: boolean }
+              zonemd: { type: string, enum: [off, absent, verified, failed] }
+              zonemd_error: { type: string }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
     RpzZoneFile:
       type: object
       required: [content, revision]
@@ -1342,6 +1350,12 @@ components:
           updated_at,
           engine_group_id,
           allow_query_cidrs,
+          zonemd_generate,
+          zonemd_verify,
+          catalog_zone_id,
+          zonemd_status,
+          zonemd_error,
+          catalog_member_label,
         ]
       properties:
         allow_query_cidrs:
@@ -1377,6 +1391,12 @@ components:
         dnssec_enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        zonemd_generate: { type: boolean }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
+        catalog_zone_id: { type: [string, "null"], format: uuid }
+        zonemd_status: { $ref: "#/components/schemas/ZonemdStatus" }
+        zonemd_error: { type: string }
+        catalog_member_label: { type: string }
     ZoneCreate:
       type: object
       required: [name, kind]
@@ -1423,6 +1443,9 @@ components:
             items: { type: string },
             description: "Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.",
           }
+        zonemd_generate: { type: boolean }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
+        catalog_zone_id: { type: [string, "null"], format: uuid }
     ZoneUpdate:
       type: object
       required: [revision]
@@ -1443,6 +1466,136 @@ components:
             items: { type: string },
             description: "Clients allowed to query the zone; empty uses the access control authoritative_allow_cidrs.",
           }
+        zonemd_generate: { type: boolean }
+        zonemd_verify: { $ref: "#/components/schemas/ZonemdVerify" }
+        catalog_zone_id: { type: [string, "null"], format: uuid }
+    ZonemdVerify:
+      type: string
+      enum: [off, if_present, required]
+      description: "Secondary and RPZ transfer zones: verify RFC 8976 ZONEMD after each transfer."
+    ZonemdStatus:
+      type: string
+      enum: [not_checked, off, absent, verified, failed]
+    MdnsSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, interfaces, timeout_ms, reflect, reflect_interfaces]
+      properties:
+        enabled: { type: boolean }
+        interfaces:
+          {
+            type: array,
+            maxItems: 16,
+            items: { type: string, pattern: "^[A-Za-z0-9_.:@-]{1,15}$" },
+          }
+        timeout_ms: { type: integer, minimum: 100, maximum: 5000 }
+        reflect: { type: boolean }
+        reflect_interfaces:
+          {
+            type: array,
+            maxItems: 16,
+            items: { type: string, pattern: "^[A-Za-z0-9_.:@-]{1,15}$" },
+          }
+    CatalogMember:
+      type: object
+      required: [zone_id, name, label, state, issue]
+      properties:
+        zone_id: { type: [string, "null"], format: uuid }
+        name: { type: string }
+        label: { type: string }
+        state: { type: string, enum: [configured, clash] }
+        issue: { type: string }
+    CatalogZone:
+      type: object
+      required:
+        [
+          id,
+          zone_id,
+          name,
+          role,
+          engine_group_id,
+          broken_reason,
+          processed_serial,
+          processed_at,
+          members,
+          created_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        zone_id: { type: string, format: uuid }
+        name: { type: string }
+        role: { type: string, enum: [producer, consumer] }
+        engine_group_id: { type: [string, "null"], format: uuid }
+        broken_reason: { type: string }
+        processed_serial: { type: [integer, "null"], format: int64 }
+        processed_at: { type: [string, "null"], format: date-time }
+        members:
+          { type: array, items: { $ref: "#/components/schemas/CatalogMember" } }
+        created_at: { type: string, format: date-time }
+    CatalogZoneCreate:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      properties:
+        name: { type: string, maxLength: 255 }
+        role: { type: string, enum: [producer, consumer] }
+        engine_group_id: { type: [string, "null"], format: uuid }
+        primaries:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+        transfer: { $ref: "#/components/schemas/ZoneTransfer" }
+        notify:
+          { type: array, items: { $ref: "#/components/schemas/ZoneEndpoint" } }
+    OdohProxyTarget:
+      type: object
+      additionalProperties: false
+      required: [host, ca_pem]
+      properties:
+        host: { type: string, maxLength: 261 }
+        ca_pem: { type: string, maxLength: 65536 }
+    OdohKeyInfo:
+      type: object
+      required: [id, created_at, publish_after, not_after]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        publish_after: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+    OdohSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          target_enabled,
+          proxy_enabled,
+          proxy_targets,
+          proxy_timeout_ms,
+          key_rotation_hours,
+          revision,
+        ]
+      properties:
+        target_enabled: { type: boolean }
+        proxy_enabled: { type: boolean }
+        proxy_targets:
+          {
+            type: array,
+            maxItems: 64,
+            items: { $ref: "#/components/schemas/OdohProxyTarget" },
+          }
+        proxy_timeout_ms: { type: integer, minimum: 100, maximum: 10000 }
+        key_rotation_hours: { type: integer, minimum: 1, maximum: 720 }
+        revision: { type: integer, format: int64 }
+    OdohSettings:
+      allOf:
+        - { $ref: "#/components/schemas/OdohSettingsUpdate" }
+        - type: object
+          required: [keys, updated_at]
+          properties:
+            keys:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/OdohKeyInfo" },
+              }
+            updated_at: { type: string, format: date-time }
     RecordInput:
       type: object
       required: [name, type, ttl, data]
@@ -1742,6 +1895,7 @@ components:
             minimum: 0,
             description: "filter index memory cap of this group's engines; 0 = engine default (50% of the cgroup memory limit, else 512 MiB), otherwise at least 16777216",
           }
+        mdns: { $ref: "#/components/schemas/MdnsSettings" }
     EngineGroupUpdate:
       allOf:
         - { $ref: "#/components/schemas/EngineGroupInput" }
@@ -1770,6 +1924,7 @@ components:
           rollouts_paused,
           engine_count,
           filter_index_max_bytes,
+          mdns,
           revision,
           created_at,
           updated_at,
@@ -1790,6 +1945,7 @@ components:
         min_health_queries: { type: integer }
         rollouts_paused: { type: boolean }
         filter_index_max_bytes: { type: integer, format: int64 }
+        mdns: { $ref: "#/components/schemas/MdnsSettings" }
         stable_version: { type: [integer, "null"], format: int64 }
         engine_count: { type: integer }
         active_rollout:
@@ -4570,6 +4726,108 @@ paths:
         "202": { description: Engines refresh the zone now. }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /catalog-zones:
+    get:
+      operationId: listCatalogZones
+      tags: [zones]
+      responses:
+        "200":
+          description: Catalog zones ordered by name.
+          content:
+            application/json:
+              schema:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/CatalogZone" },
+                }
+        "501": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createCatalogZone
+      tags: [zones]
+      description: "Creates a producer (primary) or consumer (secondary) catalog zone (RFC 9432)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogZoneCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogZone" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+  /catalog-zones/{catalogZoneId}:
+    parameters:
+      - {
+          name: catalogZoneId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    get:
+      operationId: getCatalogZone
+      tags: [zones]
+      responses:
+        "200":
+          description: The catalog zone with its members.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogZone" }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteCatalogZone
+      tags: [zones]
+      description: "Deletes the catalog zone. Consumer member zones stay as ordinary secondaries."
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+  /odoh:
+    get:
+      operationId: getOdohSettings
+      tags: [settings]
+      responses:
+        "200":
+          description: Oblivious DoH settings and key metadata (never the key material).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdohSettings" }
+        "501": { $ref: "#/components/responses/Error" }
+    put:
+      operationId: updateOdohSettings
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OdohSettingsUpdate" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdohSettings" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+  /odoh/rotate-key:
+    post:
+      operationId: rotateOdohKey
+      tags: [settings]
+      description: "Creates a new ODoH key now; it is published 5 minutes later."
+      responses:
+        "200":
+          description: Rotated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdohSettings" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /zones:
     get:
       operationId: listZones

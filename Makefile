@@ -2,6 +2,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 BIN := $(CURDIR)/bin
+OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 GO_PKGS := $(foreach d,mgmt gen bench deploy,$(if $(wildcard $(d)),./$(d)/...))
 
 .PHONY: proto engine-test mgmt-test web-test e2e-build e2e lint build web-build webui-placeholder fuzz-smoke bench images operator-generate operator-test
@@ -11,7 +12,7 @@ proto:
 	  --go_out=gen/go --go_opt=paths=source_relative \
 	  --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative \
 	  proto/nexora/control/v1/control.proto
-	cd mgmt/api && oapi-codegen -config oapi-codegen.yaml openapi.yaml
+	cd mgmt/api && $(OAPI_CODEGEN) -config oapi-codegen.yaml openapi.yaml
 	cd web && pnpm install --frozen-lockfile && pnpm run gen:api
 
 engine-test:
@@ -86,3 +87,32 @@ operator-generate:
 
 operator-test:
 	cd operator && KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.0 use $(ENVTEST_K8S) --bin-dir $(CURDIR)/bin/envtest -p path)" go test -race -count=1 ./...
+
+# Ordinary supported Linux verification. Live kw/kernel experiments remain separate opt-ins.
+.PHONY: ci-race ci-e2e ci-failover web-unit-test ci-coverage-test
+ci-race:
+	bash scripts/ci-prerequisites.sh race
+	$(MAKE) webui-placeholder
+	mkdir -p $(BIN)
+	go build -o $(BIN)/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
+	go test -json -race -count=1 -timeout 30m $(GO_PKGS) ./e2e/harness/...
+
+ci-e2e:
+	bash scripts/ci-prerequisites.sh linux
+	cd web && pnpm install --frozen-lockfile && pnpm exec playwright install chromium
+	bash scripts/ci-prerequisites.sh e2e
+	$(MAKE) e2e-build
+	NEXORA_E2E_BIN_DIR=$(BIN) go test -json -count=1 -timeout 120m ./e2e/... ./mgmt/internal/querylog/e2e/...
+
+ci-failover:
+	bash scripts/ci-prerequisites.sh contracts
+	PYTHONDONTWRITEBYTECODE=1 python3 -O -m unittest discover -s deploy/failoverlab -v
+	PYTHONDONTWRITEBYTECODE=1 python3 -O -m unittest discover -s deploy/failoverlab/crosshost -v
+	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s deploy/failover/platform -v
+	PYTHONDONTWRITEBYTECODE=1 $(MAKE) -C deploy/failover/fence test
+
+web-unit-test:
+	cd web && pnpm install --frozen-lockfile && pnpm exec playwright test e2e/unit --output test-results/unit
+
+ci-coverage-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci-coverage-test.py

@@ -3,51 +3,18 @@ package api
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/netip"
-	"strings"
 
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
 )
 
-// TrustedProxies are the reverse proxies (e.g. an ingress controller's pod network) whose
+// TrustedProxies are explicitly configured reverse proxies whose
 // X-Forwarded-For header is believed; set from NEXORA_TRUSTED_PROXY_CIDRS.
 var TrustedProxies []netip.Prefix
 
-func trustedProxy(a netip.Addr) bool {
-	for _, p := range TrustedProxies {
-		if p.Contains(a.Unmap()) {
-			return true
-		}
-	}
-	return false
-}
-
-// clientAddr is the client address of r: the client key of the auth failure throttle. It is the
-// TCP peer address, unless the peer is a trusted proxy: then it is the rightmost X-Forwarded-For
-// entry that is not itself a trusted proxy. A header from an untrusted peer is ignored because any
-// client can set it.
 func clientAddr(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	peer, err := netip.ParseAddr(host)
-	if err != nil || !trustedProxy(peer) {
-		return host
-	}
-	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
-	for i := len(hops) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
-		if err != nil {
-			return host
-		}
-		if !trustedProxy(a) {
-			return a.Unmap().String()
-		}
-	}
-	return host
+	return auth.ClientAddr(r, TrustedProxies)
 }
 
 // accountError maps the self-service errors that only these handlers produce.

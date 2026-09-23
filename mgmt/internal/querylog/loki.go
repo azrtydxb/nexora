@@ -184,12 +184,15 @@ func (l *Loki) Top(ctx context.Context, q TopQuery) ([]TopEntry, error) {
 	if q.Limit <= 0 || from.After(to) {
 		return []TopEntry{}, nil
 	}
-	// Loki range selectors take whole milliseconds and are left-open, (time-range, time]. The
-	// smallest range covering [From, To] is evaluated so that its start is exactly From-1ns.
-	// debt: Top also counts records less than 1 ms after To (none when To is now); revisit if LogQL ranges accept nanoseconds
-	rangeMS := int64(to.Sub(from)/time.Millisecond) + 1
-	at := strconv.FormatInt(from.UnixNano()-1+rangeMS*int64(time.Millisecond), 10)
-	stages := lokiStages(Query{Filters: q.Filters})
+	// Loki range selectors and evaluation may round to milliseconds. Cover the window, then
+	// filter on the original entry timestamp with integer Go-template comparisons. Comparing
+	// epoch nanoseconds as LogQL numbers would lose precision through float64.
+	end := to.Truncate(time.Millisecond).Add(time.Millisecond)
+	start := from.Truncate(time.Millisecond).Add(-time.Millisecond)
+	rangeMS := end.Sub(start).Milliseconds()
+	at := strconv.FormatInt(end.UnixNano(), 10)
+	window := fmt.Sprintf("{{ $t := (__timestamp__).UnixNano }}{{ and (ge $t %d) (le $t %d) }}", from.UnixNano(), to.UnixNano())
+	stages := lokiStages(q.SearchQuery()) + " | label_format nexora_window=" + lokiQuote(window) + ` | nexora_window="true" | drop nexora_window`
 	metric := func(partition string) string {
 		extra := ""
 		if partition != "" {

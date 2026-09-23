@@ -29,7 +29,14 @@ type Service struct {
 	Build  snapshot.BuildConfig
 	Signer Signer
 	Now    func() time.Time
+	// CatalogChanged regenerates the producer catalogs catalogZoneIDs inside the transaction of a
+	// zone create, membership change or delete (M8, catzone.Service.Regenerate); nil skips it.
+	CatalogChanged func(ctx context.Context, tx pgx.Tx, catalogZoneIDs []uuid.UUID) error
 }
+
+// ErrCatalogManaged refuses changes the catalog service owns: updating or deleting a zone a consumer
+// catalog created, and editing the records of a producer catalog zone (API 409 catalog_managed).
+var ErrCatalogManaged = errors.New("catalog_managed")
 
 func (s *Service) now() time.Time {
 	if s.Now == nil {
@@ -47,7 +54,8 @@ type querier interface {
 const zoneColumns = `z.id, z.name, z.kind, z.revision, z.serial, z.default_ttl, z.soa_mname, z.soa_rname, z.soa_refresh,
 	z.soa_retry, z.soa_expire, z.soa_minimum, z.soa_ttl, z.transfer_allow_cidrs, z.transfer_tsig_key_id, z.notify_targets,
 	z.update_tsig_key_ids, z.update_allow_cidrs, z.allow_query_cidrs, z.primaries, z.current_seq, z.image_seq, z.loaded, z.expired, z.last_refresh_at, z.last_success_at,
-	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at, z.engine_group_id`
+	z.next_refresh_at, z.expires_at, z.last_error, z.last_trigger, COALESCE(d.enabled, false), z.created_at, z.updated_at, z.engine_group_id,
+	z.zonemd_generate, z.zonemd_verify, z.zonemd_status, z.zonemd_error, z.catalog_zone_id, z.catalog_member_label`
 
 const zoneFrom = " FROM zones z LEFT JOIN zone_dnssec d ON d.zone_id = z.id"
 
@@ -58,7 +66,8 @@ func scanZone(row pgx.Row) (*Zone, error) {
 	err := row.Scan(&z.ID, &z.Name, &z.Kind, &z.Revision, &serial, &ttl, &z.SOA.MName, &z.SOA.RName, &refresh, &retry,
 		&expire, &minimum, &soaTTL, &z.TransferAllowCIDRs, &z.TransferTSIGKeyID, &z.Notify, &z.UpdateTSIGKeyIDs,
 		&z.UpdateAllowCIDRs, &z.AllowQueryCIDRs, &z.Primaries, &z.CurrentSeq, &z.ImageSeq, &z.Loaded, &z.Expired, &z.LastRefreshAt, &z.LastSuccessAt, &z.NextRefreshAt,
-		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt, &z.EngineGroupID)
+		&z.ExpiresAt, &z.LastError, &z.LastTrigger, &z.DNSSECEnabled, &z.CreatedAt, &z.UpdatedAt, &z.EngineGroupID,
+		&z.ZonemdGenerate, &z.ZonemdVerify, &z.ZonemdStatus, &z.ZonemdError, &z.CatalogZoneID, &z.CatalogMemberLabel)
 	if err != nil {
 		return nil, store.MapError(err)
 	}
@@ -229,6 +238,98 @@ func nonNil[T any](s []T) []T {
 // CreateZone creates a zone. Primary zones get one apex NS record per nameserver and their first
 // served version; secondary zones load on their first transfer. Zero SOA timers take the defaults.
 func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZoneInput) (*Zone, error) {
+	var out *Zone
+	_, err := snapshot.Mutate(ctx, s.Store, s.Build, actor, func(tx pgx.Tx) (auth.Change, error) {
+		if in.CatalogZoneID != nil {
+			if err := checkProducer(ctx, tx, *in.CatalogZoneID); err != nil {
+				return auth.Change{}, err
+			}
+		}
+		var err error
+		if out, err = s.CreateZoneInTx(ctx, tx, actor, in); err != nil {
+			return auth.Change{}, err
+		}
+		if err := s.catalogChanged(ctx, tx, nil, out.CatalogZoneID); err != nil {
+			return auth.Change{}, err
+		}
+		return auth.Change{Action: "createZone", TargetType: "zone", TargetID: out.ID.String(), After: out}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// catalogChanged runs the CatalogChanged hook with the catalogs a zone left and joined, old first
+// and nils dropped; nothing when both are nil or equal.
+func (s *Service) catalogChanged(ctx context.Context, tx pgx.Tx, old, joined *uuid.UUID) error {
+	if s.CatalogChanged == nil || (old != nil && joined != nil && *old == *joined) {
+		return nil
+	}
+	var ids []uuid.UUID
+	for _, id := range []*uuid.UUID{old, joined} {
+		if id != nil {
+			ids = append(ids, *id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.CatalogChanged(ctx, tx, ids)
+}
+
+// checkProducer requires catalog id to be a producer catalog, locking its row against deletion.
+func checkProducer(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	var role string
+	err := tx.QueryRow(ctx, "SELECT role FROM catalog_zones WHERE id = $1 FOR KEY SHARE", id).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) || role == "consumer" {
+		return invalid("invalid_catalog_zone_id", fmt.Sprintf("catalog_zone_id %s does not name a producer catalog", id))
+	}
+	return err
+}
+
+// checkCatalogManaged returns ErrCatalogManaged for a zone a consumer catalog created.
+func checkCatalogManaged(ctx context.Context, tx pgx.Tx, z *Zone) error {
+	if z.CatalogMemberLabel == "" || z.CatalogZoneID == nil {
+		return nil
+	}
+	var consumer bool
+	err := tx.QueryRow(ctx, "SELECT role = 'consumer' FROM catalog_zones WHERE id = $1", *z.CatalogZoneID).Scan(&consumer)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if consumer {
+		return fmt.Errorf("zone %s is managed by its consumer catalog: %w", z.Name, ErrCatalogManaged)
+	}
+	return nil
+}
+
+// checkRecordsWritable is writable plus the refusal of record edits on a producer catalog zone,
+// whose records the catalog service generates.
+func checkRecordsWritable(ctx context.Context, tx pgx.Tx, z *Zone) error {
+	if err := writable(z); err != nil {
+		return err
+	}
+	var producer bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM catalog_zones WHERE zone_id = $1 AND role = 'producer')", z.ID).Scan(&producer); err != nil {
+		return err
+	}
+	if producer {
+		return fmt.Errorf("zone %s is a producer catalog with generated records: %w", z.Name, ErrCatalogManaged)
+	}
+	return nil
+}
+
+// zonemdVerifyModes are the valid zonemd_verify values.
+var zonemdVerifyModes = map[string]bool{"off": true, "if_present": true, "required": true}
+
+// CreateZoneInTx is CreateZone inside the caller's transaction: it validates in, inserts the zone
+// and builds its first version, but writes no audit row and publishes no config version (the
+// caller does both). actor is the principal the caller audits.
+func (s *Service) CreateZoneInTx(ctx context.Context, tx pgx.Tx, _ auth.Actor, in CreateZoneInput) (*Zone, error) {
 	name, err := validName("name", in.Name)
 	if err != nil {
 		return nil, err
@@ -264,6 +365,15 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 	default:
 		return nil, invalid("invalid_zone", fmt.Sprintf("kind %q must be primary or secondary", in.Kind))
 	}
+	if in.ZonemdGenerate && in.Kind != "primary" {
+		return nil, invalid("invalid_zonemd", "only primary zones generate ZONEMD")
+	}
+	if in.ZonemdVerify == "" {
+		in.ZonemdVerify = "if_present"
+	}
+	if !zonemdVerifyModes[in.ZonemdVerify] {
+		return nil, invalid("invalid_zonemd", fmt.Sprintf("zonemd_verify %q must be off, if_present or required", in.ZonemdVerify))
+	}
 	if err := validEndpoints("primaries", in.Primaries); err != nil {
 		return nil, err
 	}
@@ -286,58 +396,48 @@ func (s *Service) CreateZone(ctx context.Context, actor auth.Actor, in CreateZon
 	if in.Transfer.TSIGKeyID != nil {
 		keys = append(keys, *in.Transfer.TSIGKeyID)
 	}
-	var out *Zone
-	_, err = snapshot.Mutate(ctx, s.Store, s.Build, actor, func(tx pgx.Tx) (auth.Change, error) {
-		if err := checkKeys(ctx, tx, keys); err != nil {
-			return auth.Change{}, err
+	if err := checkKeys(ctx, tx, keys); err != nil {
+		return nil, err
+	}
+	if in.EngineGroupID != nil {
+		var one int
+		err := tx.QueryRow(ctx, "SELECT 1 FROM engine_groups WHERE id = $1 FOR KEY SHARE", *in.EngineGroupID).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUnknownEngineGroup
 		}
-		if in.EngineGroupID != nil {
-			var one int
-			err := tx.QueryRow(ctx, "SELECT 1 FROM engine_groups WHERE id = $1 FOR KEY SHARE", *in.EngineGroupID).Scan(&one)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return auth.Change{}, ErrUnknownEngineGroup
-			}
-			if err != nil {
-				return auth.Change{}, err
-			}
-		}
-		var id uuid.UUID
-		err := tx.QueryRow(ctx, `INSERT INTO zones (name, kind, default_ttl, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire,
-			soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries, engine_group_id,
-			update_allow_cidrs, allow_query_cidrs)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-			name, in.Kind, int64(in.DefaultTTL), dns.CanonicalName(in.SOA.MName), dns.CanonicalName(in.SOA.RName),
-			int64(in.SOA.Refresh), int64(in.SOA.Retry), int64(in.SOA.Expire), int64(in.SOA.Minimum), int64(in.SOA.TTL),
-			cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries), in.EngineGroupID,
-			updateCIDRs, queryCIDRs).Scan(&id)
 		if err != nil {
-			return auth.Change{}, err
+			return nil, err
 		}
-		for _, rr := range ns {
-			if _, err := insertRecord(ctx, tx, id, rr); err != nil {
-				return auth.Change{}, err
-			}
-		}
-		z, err := loadZone(ctx, tx, id, true)
-		if err != nil {
-			return auth.Change{}, err
-		}
-		if z.Kind == "primary" {
-			if _, err := Rebuild(ctx, tx, s.Signer, z, RebuildOptions{Force: true}, s.now()); err != nil {
-				return auth.Change{}, err
-			}
-		} else if err := RequestRefresh(ctx, tx, id, "create"); err != nil {
-			return auth.Change{}, err
-		}
-		if out, err = loadZone(ctx, tx, id, false); err != nil {
-			return auth.Change{}, err
-		}
-		return auth.Change{Action: "createZone", TargetType: "zone", TargetID: id.String(), After: out}, nil
-	})
+	}
+	var id uuid.UUID
+	err = tx.QueryRow(ctx, `INSERT INTO zones (name, kind, default_ttl, soa_mname, soa_rname, soa_refresh, soa_retry, soa_expire,
+		soa_minimum, soa_ttl, transfer_allow_cidrs, transfer_tsig_key_id, notify_targets, update_tsig_key_ids, primaries, engine_group_id,
+		update_allow_cidrs, allow_query_cidrs, zonemd_generate, zonemd_verify, catalog_zone_id, catalog_member_label)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,
+		name, in.Kind, int64(in.DefaultTTL), dns.CanonicalName(in.SOA.MName), dns.CanonicalName(in.SOA.RName),
+		int64(in.SOA.Refresh), int64(in.SOA.Retry), int64(in.SOA.Expire), int64(in.SOA.Minimum), int64(in.SOA.TTL),
+		cidrs, in.Transfer.TSIGKeyID, nonNil(in.Notify), nonNil(in.UpdateTSIGKeyIDs), nonNil(in.Primaries), in.EngineGroupID,
+		updateCIDRs, queryCIDRs, in.ZonemdGenerate, in.ZonemdVerify, in.CatalogZoneID, in.CatalogMemberLabel).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	for _, rr := range ns {
+		if _, err := insertRecord(ctx, tx, id, rr); err != nil {
+			return nil, err
+		}
+	}
+	z, err := loadZone(ctx, tx, id, true)
+	if err != nil {
+		return nil, err
+	}
+	if z.Kind == "primary" {
+		if _, err := Rebuild(ctx, tx, s.Signer, z, RebuildOptions{Force: true}, s.now()); err != nil {
+			return nil, err
+		}
+	} else if err := RequestRefresh(ctx, tx, id, "create"); err != nil {
+		return nil, err
+	}
+	return loadZone(ctx, tx, id, false)
 }
 
 // UpdateZone changes zone settings at in.Revision.
@@ -389,6 +489,9 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 		}
 	}
 	return s.Mutate(ctx, id, func(tx pgx.Tx, z *Zone) (string, any, any, RebuildOptions, error) {
+		if err := checkCatalogManaged(ctx, tx, z); err != nil {
+			return "", nil, nil, RebuildOptions{}, err
+		}
 		if z.Revision != in.Revision {
 			return "", nil, nil, RebuildOptions{}, fmt.Errorf("zone revision %d is stale (current %d): %w", in.Revision, z.Revision, store.ErrConflict)
 		}
@@ -403,6 +506,27 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 		}
 		if z.Kind == "secondary" && in.Primaries != nil && len(*in.Primaries) == 0 {
 			return "", nil, nil, RebuildOptions{}, invalid("invalid_zone", "secondary zones need at least one primary")
+		}
+		if z.Kind != "primary" && in.ZonemdGenerate != nil && *in.ZonemdGenerate {
+			return "", nil, nil, RebuildOptions{}, invalid("invalid_zonemd", "only primary zones generate ZONEMD")
+		}
+		if in.ZonemdVerify != nil && !zonemdVerifyModes[*in.ZonemdVerify] {
+			return "", nil, nil, RebuildOptions{}, invalid("invalid_zonemd", fmt.Sprintf("zonemd_verify %q must be off, if_present or required", *in.ZonemdVerify))
+		}
+		joined := z.CatalogZoneID
+		if in.CatalogZoneID != nil {
+			if joined = *in.CatalogZoneID; joined != nil {
+				var isCatalog bool
+				if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM catalog_zones WHERE zone_id = $1)", z.ID).Scan(&isCatalog); err != nil {
+					return "", nil, nil, RebuildOptions{}, err
+				}
+				if isCatalog {
+					return "", nil, nil, RebuildOptions{}, invalid("invalid_catalog_zone_id", "a catalog zone cannot be a member of a catalog")
+				}
+				if err := checkProducer(ctx, tx, *joined); err != nil {
+					return "", nil, nil, RebuildOptions{}, err
+				}
+			}
 		}
 		sets := []string{}
 		args := []any{z.ID}
@@ -441,12 +565,27 @@ func (s *Service) UpdateZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 			set("transfer_allow_cidrs", cidrs)
 			set("transfer_tsig_key_id", in.Transfer.TSIGKeyID)
 		}
+		if in.ZonemdGenerate != nil {
+			set("zonemd_generate", *in.ZonemdGenerate)
+		}
+		if in.ZonemdVerify != nil {
+			set("zonemd_verify", *in.ZonemdVerify)
+		}
+		if in.CatalogZoneID != nil {
+			set("catalog_zone_id", *in.CatalogZoneID)
+		}
 		if len(sets) > 0 {
 			if _, err := tx.Exec(ctx, "UPDATE zones SET "+strings.Join(sets, ", ")+" WHERE id = $1", args...); err != nil {
 				return "", nil, nil, RebuildOptions{}, err
 			}
 		}
-		return "updateZone", z, nil, RebuildOptions{}, nil
+		// The catalogs list their members from the zones rows, so the hook runs after the update.
+		if err := s.catalogChanged(ctx, tx, z.CatalogZoneID, joined); err != nil {
+			return "", nil, nil, RebuildOptions{}, err
+		}
+		// Switching ZONEMD generation rebuilds at once, so the digest appears or disappears now.
+		opts := RebuildOptions{Force: in.ZonemdGenerate != nil && *in.ZonemdGenerate != z.ZonemdGenerate}
+		return "updateZone", z, nil, opts, nil
 	}, actor)
 }
 
@@ -493,15 +632,35 @@ func (s *Service) DeleteZone(ctx context.Context, actor auth.Actor, id uuid.UUID
 		if err != nil {
 			return auth.Change{}, err
 		}
+		if err := checkCatalogManaged(ctx, tx, z); err != nil {
+			return auth.Change{}, err
+		}
 		if z.Revision != revision {
 			return auth.Change{}, fmt.Errorf("zone revision %d is stale (current %d): %w", revision, z.Revision, store.ErrConflict)
 		}
-		if _, err := tx.Exec(ctx, "DELETE FROM zones WHERE id = $1", id); err != nil {
+		if err := s.DeleteZoneInTx(ctx, tx, actor, id); err != nil {
+			return auth.Change{}, err
+		}
+		// After the delete, so the regenerated catalog no longer lists the zone.
+		if err := s.catalogChanged(ctx, tx, z.CatalogZoneID, nil); err != nil {
 			return auth.Change{}, err
 		}
 		return auth.Change{Action: "deleteZone", TargetType: "zone", TargetID: id.String(), Before: z}, nil
 	})
 	return err
+}
+
+// DeleteZoneInTx deletes zone id inside the caller's transaction (store.ErrNotFound when it does
+// not exist). It writes no audit row and publishes no config version; the caller does both.
+func (s *Service) DeleteZoneInTx(ctx context.Context, tx pgx.Tx, _ auth.Actor, id uuid.UUID) error {
+	tag, err := tx.Exec(ctx, "DELETE FROM zones WHERE id = $1", id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("zone %s: %w", id, store.ErrNotFound)
+	}
+	return nil
 }
 
 // Mutate is the single transactional path for zone content changes: it locks the zone row, runs
@@ -785,7 +944,7 @@ func lockRecord(ctx context.Context, tx pgx.Tx, zoneID, recordID uuid.UUID, revi
 func (s *Service) CreateRecord(ctx context.Context, actor auth.Actor, zoneID uuid.UUID, in RecordInput) (*Record, error) {
 	var rec *Record
 	_, err := s.Mutate(ctx, zoneID, func(tx pgx.Tx, z *Zone) (string, any, any, RebuildOptions, error) {
-		if err := writable(z); err != nil {
+		if err := checkRecordsWritable(ctx, tx, z); err != nil {
 			return "", nil, nil, RebuildOptions{}, err
 		}
 		rr, _, err := ParseRecord(z.Name, in)
@@ -832,7 +991,7 @@ func recordEdit(ctx context.Context, tx pgx.Tx, z *Zone, owners []string, sets [
 func (s *Service) UpdateRecord(ctx context.Context, actor auth.Actor, zoneID, recordID uuid.UUID, revision int64, in RecordInput) (*Record, error) {
 	var rec *Record
 	_, err := s.Mutate(ctx, zoneID, func(tx pgx.Tx, z *Zone) (string, any, any, RebuildOptions, error) {
-		if err := writable(z); err != nil {
+		if err := checkRecordsWritable(ctx, tx, z); err != nil {
 			return "", nil, nil, RebuildOptions{}, err
 		}
 		before, err := lockRecord(ctx, tx, zoneID, recordID, revision)
@@ -869,7 +1028,7 @@ func (s *Service) UpdateRecord(ctx context.Context, actor auth.Actor, zoneID, re
 // DeleteRecord removes record recordID at revision.
 func (s *Service) DeleteRecord(ctx context.Context, actor auth.Actor, zoneID, recordID uuid.UUID, revision int64) error {
 	_, err := s.Mutate(ctx, zoneID, func(tx pgx.Tx, z *Zone) (string, any, any, RebuildOptions, error) {
-		if err := writable(z); err != nil {
+		if err := checkRecordsWritable(ctx, tx, z); err != nil {
 			return "", nil, nil, RebuildOptions{}, err
 		}
 		before, err := lockRecord(ctx, tx, zoneID, recordID, revision)

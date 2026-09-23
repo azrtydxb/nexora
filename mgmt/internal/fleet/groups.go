@@ -64,20 +64,74 @@ type EngineGroup struct {
 	Revision                                      int64
 	EngineCount                                   int
 	CreatedAt, UpdatedAt                          time.Time
+	// M8 mDNS gateway and reflection. MdnsTimeoutMS 0 is stored as the default 500.
+	MdnsEnabled           bool
+	MdnsInterfaces        []string
+	MdnsTimeoutMS         int32
+	MdnsReflect           bool
+	MdnsReflectInterfaces []string
+}
+
+// defaultMdnsTimeoutMS is engine_groups.mdns_timeout_ms's default.
+const defaultMdnsTimeoutMS = 500
+
+// mdnsInterfaceRE is a Linux interface name (IFNAMSIZ 16 with the terminating NUL).
+var mdnsInterfaceRE = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,15}$`)
+
+// ValidateMdns checks g's mDNS settings; the error names the offending field.
+func ValidateMdns(g EngineGroup) error {
+	if g.MdnsTimeoutMS < 100 || g.MdnsTimeoutMS > 5000 {
+		return fmt.Errorf("mdns.timeout_ms must be 100..5000")
+	}
+	if g.MdnsEnabled && len(g.MdnsInterfaces) == 0 {
+		return fmt.Errorf("mdns.interfaces must name at least one interface when mdns is enabled")
+	}
+	if g.MdnsReflect && len(g.MdnsReflectInterfaces) < 2 {
+		return fmt.Errorf("mdns.reflect_interfaces must name at least two interfaces when reflection is on")
+	}
+	for _, f := range []struct {
+		field string
+		names []string
+	}{{"mdns.interfaces", g.MdnsInterfaces}, {"mdns.reflect_interfaces", g.MdnsReflectInterfaces}} {
+		field, names := f.field, f.names
+		if len(names) > 64 {
+			return fmt.Errorf("%s must list at most 64 interfaces", field)
+		}
+		seen := make(map[string]bool, len(names))
+		for _, n := range names {
+			if !mdnsInterfaceRE.MatchString(n) {
+				return fmt.Errorf("%s: %q must be 1-15 characters of A-Z, a-z, 0-9, '_', '.', ':', '@', '-'", field, n)
+			}
+			if seen[n] {
+				return fmt.Errorf("%s: %q is listed twice", field, n)
+			}
+			seen[n] = true
+		}
+	}
+	return nil
+}
+
+func mdnsTimeout(ms int32) int32 {
+	if ms == 0 {
+		return defaultMdnsTimeoutMS
+	}
+	return ms
 }
 
 const engineGroupColumns = `g.id, g.name, g.description, g.upstream_mode, g.otlp_endpoint, g.rollout_strategy,
 	array(select host(c) || '/' || masklen(c) from unnest(g.extra_acl_cidrs) with ordinality as u(c, n) order by n),
 	g.canary_count, g.canary_percent, g.ack_timeout_seconds, g.health_window_seconds, g.max_servfail_ratio,
 	g.min_health_queries, g.filter_index_max_bytes, g.rollouts_paused, g.stable_version, g.revision,
-	(select count(*) from engines e where e.engine_group_id = g.id and e.deleted_at is null), g.created_at, g.updated_at`
+	(select count(*) from engines e where e.engine_group_id = g.id and e.deleted_at is null), g.created_at, g.updated_at,
+	g.mdns_enabled, g.mdns_interfaces, g.mdns_timeout_ms, g.mdns_reflect, g.mdns_reflect_interfaces`
 
 func scanEngineGroup(row pgx.Row) (EngineGroup, error) {
 	var g EngineGroup
 	var stable *int64
 	err := row.Scan(&g.ID, &g.Name, &g.Description, &g.UpstreamMode, &g.OTLPEndpoint, &g.RolloutStrategy, &g.ExtraACLCIDRs,
 		&g.CanaryCount, &g.CanaryPercent, &g.AckTimeoutSeconds, &g.HealthWindowSeconds, &g.MaxServfailRatio,
-		&g.MinHealthQueries, &g.FilterIndexMaxBytes, &g.RolloutsPaused, &stable, &g.Revision, &g.EngineCount, &g.CreatedAt, &g.UpdatedAt)
+		&g.MinHealthQueries, &g.FilterIndexMaxBytes, &g.RolloutsPaused, &stable, &g.Revision, &g.EngineCount, &g.CreatedAt, &g.UpdatedAt,
+		&g.MdnsEnabled, &g.MdnsInterfaces, &g.MdnsTimeoutMS, &g.MdnsReflect, &g.MdnsReflectInterfaces)
 	if stable != nil {
 		v := uint64(*stable)
 		g.StableVersion = &v
@@ -106,10 +160,11 @@ func CreateEngineGroup(ctx context.Context, tx pgx.Tx, g EngineGroup) (EngineGro
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `insert into engine_groups (name, description, upstream_mode, extra_acl_cidrs, otlp_endpoint,
 		rollout_strategy, canary_count, canary_percent, ack_timeout_seconds, health_window_seconds, max_servfail_ratio, min_health_queries,
-		filter_index_max_bytes)
-		values ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id`,
+		filter_index_max_bytes, mdns_enabled, mdns_interfaces, mdns_timeout_ms, mdns_reflect, mdns_reflect_interfaces)
+		values ($1, $2, $3, $4::cidr[], $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) returning id`,
 		g.Name, g.Description, g.UpstreamMode, nonNil(g.ExtraACLCIDRs), g.OTLPEndpoint, g.RolloutStrategy, g.CanaryCount, g.CanaryPercent,
-		g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, g.FilterIndexMaxBytes).Scan(&id)
+		g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, g.FilterIndexMaxBytes,
+		g.MdnsEnabled, nonNil(g.MdnsInterfaces), mdnsTimeout(g.MdnsTimeoutMS), g.MdnsReflect, nonNil(g.MdnsReflectInterfaces)).Scan(&id)
 	if err != nil {
 		return EngineGroup{}, groupError(err)
 	}
@@ -121,9 +176,11 @@ func UpdateEngineGroup(ctx context.Context, tx pgx.Tx, g EngineGroup, revision i
 	tag, err := tx.Exec(ctx, `update engine_groups set name = $2, description = $3, upstream_mode = $4, extra_acl_cidrs = $5::cidr[],
 		otlp_endpoint = $6, rollout_strategy = $7, canary_count = $8, canary_percent = $9, ack_timeout_seconds = $10,
 		health_window_seconds = $11, max_servfail_ratio = $12, min_health_queries = $13, filter_index_max_bytes = $15,
+		mdns_enabled = $16, mdns_interfaces = $17, mdns_timeout_ms = $18, mdns_reflect = $19, mdns_reflect_interfaces = $20,
 		revision = revision + 1, updated_at = now() where id = $1 and revision = $14`,
 		g.ID, g.Name, g.Description, g.UpstreamMode, nonNil(g.ExtraACLCIDRs), g.OTLPEndpoint, g.RolloutStrategy, g.CanaryCount,
-		g.CanaryPercent, g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, revision, g.FilterIndexMaxBytes)
+		g.CanaryPercent, g.AckTimeoutSeconds, g.HealthWindowSeconds, g.MaxServfailRatio, g.MinHealthQueries, revision, g.FilterIndexMaxBytes,
+		g.MdnsEnabled, nonNil(g.MdnsInterfaces), mdnsTimeout(g.MdnsTimeoutMS), g.MdnsReflect, nonNil(g.MdnsReflectInterfaces))
 	if err != nil {
 		return EngineGroup{}, groupError(err)
 	}

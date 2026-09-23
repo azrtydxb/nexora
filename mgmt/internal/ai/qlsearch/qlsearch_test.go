@@ -17,6 +17,7 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/ai/qlsearch"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
 	"github.com/piwi3910/nexora/mgmt/internal/querylog"
+	"github.com/piwi3910/nexora/mgmt/internal/querylog/querylogtest"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 	"github.com/piwi3910/nexora/mgmt/internal/store/storetest"
 )
@@ -99,5 +100,29 @@ func TestQueryLogSearchDefaultsToLastHour(t *testing.T) {
 	r := out.(qlsearch.Result)
 	if !r.Filters.To.Equal(now) || !r.Filters.From.Equal(now.Add(-time.Hour)) || r.Filters.Name != "example" {
 		t.Fatalf("filters %+v", r.Filters)
+	}
+}
+
+func TestQueryLogSummaryExcludesUnselectedClient(t *testing.T) {
+	st := storetest.New(t)
+	now := time.Now().UTC()
+	b := querylog.NewBuiltin(100)
+	batches := querylogtest.Dataset("summary", now.Add(-time.Minute))
+	for _, batch := range batches {
+		b.Ingest(batch.EngineID, batch.Req)
+	}
+	m := aifake.Model(aifake.JSON(map[string]any{"client": "10.0.0.2", "explanation": "selected client"}), aifake.JSON(map[string]any{"summary": "One matching record.", "suggestions": []string{}}))
+	run := qlsearch.New(st, aifake.Service(t, st, m, nil), b, &catalog.Catalog{}, func() time.Time { return now })
+	in, _ := json.Marshal(qlsearch.Input{Query: "queries from 10.0.0.2"})
+	if _, err := run(context.Background(), ai.Task{Kind: ai.TaskQueryLogSearch, Input: in}); err != nil {
+		t.Fatal(err)
+	}
+	calls := m.RecordedCalls()
+	if len(calls) != 2 {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	prompt := lastUserText(calls[1])
+	if strings.Contains(prompt, "10.0.0.1") || strings.Contains(prompt, "top-a-summary") || !strings.Contains(prompt, "10.0.0.2") || !strings.Contains(prompt, "you-summary.test.") {
+		t.Fatalf("summary leaked unrelated aggregates: %s", prompt)
 	}
 }

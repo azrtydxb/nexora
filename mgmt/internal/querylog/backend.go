@@ -69,13 +69,25 @@ const (
 	TopCategory TopField = "category"
 )
 
-// TopQuery counts records between From and To (zero times do not bound) whose filter result is one
-// of Filters (empty: any) by Field, returning at most Limit entries.
+// TopQuery aggregates the same inclusive time and field predicates as Query.
+// Limit bounds aggregate entries, not the records being counted.
 type TopQuery struct {
-	From, To time.Time
-	Field    TopField
-	Filters  []string
-	Limit    int
+	From, To                                                                      time.Time
+	Field                                                                         TopField
+	Filters                                                                       []string
+	Client, Name                                                                  string
+	QTypes, RCodes, Caches, Categories, Sources, ListIDs, PolicyGroups, EngineIDs []string
+	Limit                                                                         int
+}
+
+// SearchQuery returns the aggregation predicates without search paging or a record limit.
+func (q TopQuery) SearchQuery() Query {
+	return Query{From: q.From, To: q.To, Client: q.Client, Name: q.Name, QTypes: q.QTypes, RCodes: q.RCodes, Caches: q.Caches, Filters: q.Filters, Categories: q.Categories, Sources: q.Sources, ListIDs: q.ListIDs, PolicyGroups: q.PolicyGroups, EngineIDs: q.EngineIDs}
+}
+
+// TopQuery returns the full search predicates as an aggregation request, ignoring paging.
+func (q Query) TopQuery(field TopField, limit int) TopQuery {
+	return TopQuery{From: q.From, To: q.To, Client: q.Client, Name: q.Name, QTypes: q.QTypes, RCodes: q.RCodes, Caches: q.Caches, Filters: q.Filters, Categories: q.Categories, Sources: q.Sources, ListIDs: q.ListIDs, PolicyGroups: q.PolicyGroups, EngineIDs: q.EngineIDs, Field: field, Limit: limit}
 }
 
 // TopEntry is one key of a top list with its record count.

@@ -14,7 +14,11 @@ import (
 // NewModel builds the OpenAI-compatible model for c. It is the only place Nexora constructs a
 // provider; <think> spans become reasoning parts and never reach the decoded text.
 func NewModel(c config.AIConfig) provider.LanguageModel {
-	m := openai.New(openai.WithBaseURL(strings.TrimRight(c.BaseURL, "/")), openai.WithAPIKey(c.APIKey)).Model(c.Model)
+	return newModel(c, nil)
+}
+
+func newModel(c config.AIConfig, resolve Resolver) provider.LanguageModel {
+	m := openai.New(openai.WithBaseURL(strings.TrimRight(c.BaseURL, "/")), openai.WithAPIKey(c.APIKey), openai.WithHTTPClient(providerClient(c.AllowPublicEndpoint, resolve, nil))).Model(c.Model)
 	return sdk.ExtractReasoningMiddleware(m, sdk.ExtractReasoningOpts{TagName: "think"})
 }
 

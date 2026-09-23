@@ -205,7 +205,7 @@ func (c *ClickHouse) Top(ctx context.Context, q TopQuery) ([]TopEntry, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	clauses, params := clickHouseWhere(Query{From: q.From, To: q.To, Filters: q.Filters})
+	clauses, params := clickHouseWhere(q.SearchQuery())
 	clauses = append(clauses, "key != ''")
 	params["limit"] = strconv.Itoa(limit)
 	sql := "SELECT " + col + " AS key, count() AS c FROM `" + c.table + "`" + whereSQL(clauses) +

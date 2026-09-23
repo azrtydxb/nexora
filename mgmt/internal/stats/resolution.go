@@ -41,17 +41,33 @@ func RecordM3WithQuerier(ctx context.Context, q store.PolicyQuerier, engineID st
 			lastSuccess = &t
 		}
 		if _, err := q.Exec(ctx, `insert into engine_rpz_status(engine_id, rpz_zone_id, serial, records, skipped, hits,
-			last_success_at, last_error, stale, reported_at)
-			select $1, $2, $3, $4, $5, $6, $7, $8, $9, now() where exists (select 1 from rpz_zones where id = $2)
+			last_success_at, last_error, stale, zonemd, zonemd_error, reported_at)
+			select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() where exists (select 1 from rpz_zones where id = $2)
 			on conflict (engine_id, rpz_zone_id) do update set serial = excluded.serial, records = excluded.records,
 			skipped = excluded.skipped, hits = excluded.hits, last_success_at = excluded.last_success_at,
-			last_error = excluded.last_error, stale = excluded.stale, reported_at = excluded.reported_at`,
+			last_error = excluded.last_error, stale = excluded.stale, zonemd = excluded.zonemd,
+			zonemd_error = excluded.zonemd_error, reported_at = excluded.reported_at`,
 			engineID, id, int64(z.Serial), clampInt64(z.Records), clampInt64(z.Skipped), clampInt64(z.Hits),
-			lastSuccess, z.LastError, z.Stale); err != nil {
+			lastSuccess, z.LastError, z.Stale, zonemdStatus(z.Zonemd), z.ZonemdError); err != nil {
 			return store.MapError(err)
 		}
 	}
 	return nil
+}
+
+// zonemdStatus maps the engine's ZONEMD verification status to engine_rpz_status.zonemd; an
+// unspecified (or unknown) status reads as off.
+func zonemdStatus(s controlv1.ZonemdStatus) string {
+	switch s {
+	case controlv1.ZonemdStatus_ZONEMD_STATUS_ABSENT:
+		return "absent"
+	case controlv1.ZonemdStatus_ZONEMD_STATUS_VERIFIED:
+		return "verified"
+	case controlv1.ZonemdStatus_ZONEMD_STATUS_FAILED:
+		return "failed"
+	default:
+		return "off"
+	}
 }
 
 func clampInt64(v uint64) int64 {

@@ -22,6 +22,11 @@ var (
 		"hmac-sha256": controlv1.TsigAlgorithm_TSIG_ALGORITHM_HMAC_SHA256,
 		"hmac-sha512": controlv1.TsigAlgorithm_TSIG_ALGORITHM_HMAC_SHA512,
 	}
+	zonemdVerifyModes = map[string]controlv1.ZonemdVerify{
+		"off":        controlv1.ZonemdVerify_ZONEMD_VERIFY_OFF,
+		"if_present": controlv1.ZonemdVerify_ZONEMD_VERIFY_IF_PRESENT,
+		"required":   controlv1.ZonemdVerify_ZONEMD_VERIFY_REQUIRED,
+	}
 )
 
 // ApplyResolution fills the M3 snapshot sections from rows: resolution mode and recursion
@@ -77,7 +82,8 @@ func ApplyResolution(s *controlv1.ConfigSnapshot, rows store.ResolutionRows, now
 				Blob: &controlv1.BlobRef{Sha256: *z.BlobSHA256, Size: uint64(z.BlobSize), Name: z.Name},
 			}}
 		case "transfer":
-			tr := &controlv1.RpzTransferSource{Primary: deref(z.PrimaryAddress), TsigKeyName: deref(z.TSIGKeyName), MinRefreshSeconds: uint32(z.MinRefreshSeconds)}
+			tr := &controlv1.RpzTransferSource{Primary: deref(z.PrimaryAddress), TsigKeyName: deref(z.TSIGKeyName), MinRefreshSeconds: uint32(z.MinRefreshSeconds),
+				ZonemdVerify: zonemdVerifyModes[z.ZonemdVerify]}
 			if z.TSIGAlgorithm != nil {
 				tr.TsigAlgorithm = tsigAlgorithms[*z.TSIGAlgorithm]
 			}

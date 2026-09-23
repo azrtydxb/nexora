@@ -111,6 +111,15 @@ var Permissions = map[string]Role{
 	"getAiAssistantSession":         RoleOperator,
 	"postAiAssistantMessage":        RoleOperator,
 
+	// M8 DNS protocols
+	"listCatalogZones":   RoleViewer,
+	"getCatalogZone":     RoleViewer,
+	"getOdohSettings":    RoleViewer,
+	"createCatalogZone":  RoleOperator,
+	"deleteCatalogZone":  RoleOperator,
+	"updateOdohSettings": RoleOperator,
+	"rotateOdohKey":      RoleAdmin,
+
 	"createUpstream":            RoleOperator,
 	"updateUpstream":            RoleOperator,
 	"deleteUpstream":            RoleOperator,

@@ -12,6 +12,7 @@ import (
 type EligibilityReason string
 
 const (
+	ReasonLifecycle       EligibilityReason = "lifecycle_not_active"
 	ReasonInvalidGroup    EligibilityReason = "invalid_group"
 	ReasonInvalidClock    EligibilityReason = "invalid_clock"
 	ReasonExpectedMembers EligibilityReason = "expected_members"
@@ -66,6 +67,8 @@ type EligibilitySnapshot struct {
 // snapshot store, never inferred from the desired version or Ready alone.
 type MemberEvidence struct {
 	EngineID, PolicyGroupID      uuid.UUID
+	ConnectionSession            uuid.UUID
+	ContainerID                  string
 	PodUID                       string
 	Placement                    TrustedPlacement
 	ObservedAt                   time.Time
@@ -73,6 +76,9 @@ type MemberEvidence struct {
 	Ready, Management, DirectDNS EligibilityCheck
 	Applied, Target              EligibilitySnapshot
 	SnapshotObservedAt           time.Time
+	// InventoryValidUntil is overwritten by database validation, never authority
+	// from a collector. It bounds certificate/session validity across DB waits.
+	InventoryValidUntil time.Time
 }
 
 // MemberEligibility contains all applicable denials in deterministic order.
@@ -106,6 +112,9 @@ func EvaluateEligibility(g Group, evidence []MemberEvidence, now time.Time, maxA
 		r.Members[i].EngineID = id
 	}
 	deny := func(reason EligibilityReason) { r.Reasons = append(r.Reasons, reason) }
+	if g.Lifecycle != "" && g.Lifecycle != "active" {
+		deny(ReasonLifecycle)
+	}
 	if g.Validate() != nil {
 		deny(ReasonInvalidGroup)
 	}
@@ -147,7 +156,7 @@ func EvaluateEligibility(g Group, evidence []MemberEvidence, now time.Time, maxA
 				add(ReasonBindingTime)
 				placementInvalid = true
 			}
-			if !freshEligibility(e.ObservedAt, now, maxAge) {
+			if !freshEligibility(e.ObservedAt, now, maxAge) || (!e.InventoryValidUntil.IsZero() && !now.Before(e.InventoryValidUntil)) {
 				add(ReasonInventoryTime)
 			}
 			if e.Revoked {

@@ -74,6 +74,7 @@ type RPZZone struct {
 	MinRefreshSeconds                          int32
 	PolicyOverride                             string
 	RefreshNonce, Revision                     int64
+	ZonemdVerify                               string // off | if_present | required; "" on create means if_present
 }
 
 // RPZEngineStatus is one engine's report for one RPZ zone.
@@ -84,6 +85,8 @@ type RPZEngineStatus struct {
 	LastSuccessAt                  *time.Time
 	LastError                      string
 	Stale                          bool
+	Zonemd                         string // off | absent | verified | failed
+	ZonemdError                    string
 }
 
 // EngineDnssecStatus is one engine's latest DnssecStats as protojson.
@@ -275,14 +278,14 @@ func DeleteExpiredNegativeTrustAnchors(ctx context.Context, tx pgx.Tx, now time.
 
 const selectRPZZones = `select z.id, z.engine_group_id, z.name, z.position, z.source_type, z.blob_sha256, coalesce(b.size, 0), z.file_records,
 	z.primary_address, z.tsig_key_name, z.tsig_algorithm, z.tsig_secret_envelope, z.min_refresh_seconds,
-	z.policy_override, z.refresh_nonce, z.revision
+	z.policy_override, z.refresh_nonce, z.revision, z.zonemd_verify
 	from rpz_zones z left join blobs b on b.sha256 = z.blob_sha256`
 
 func scanRPZZone(row pgx.Row) (RPZZone, error) {
 	var z RPZZone
 	err := row.Scan(&z.ID, &z.EngineGroupID, &z.Name, &z.Position, &z.SourceType, &z.BlobSHA256, &z.BlobSize, &z.FileRecords,
 		&z.PrimaryAddress, &z.TSIGKeyName, &z.TSIGAlgorithm, &z.TSIGSecretEnvelope, &z.MinRefreshSeconds,
-		&z.PolicyOverride, &z.RefreshNonce, &z.Revision)
+		&z.PolicyOverride, &z.RefreshNonce, &z.Revision, &z.ZonemdVerify)
 	return z, err
 }
 
@@ -302,11 +305,14 @@ func CreateRPZZone(ctx context.Context, tx pgx.Tx, z RPZZone) (RPZZone, error) {
 	if z.ID == uuid.Nil {
 		z.ID = uuid.New()
 	}
+	if z.ZonemdVerify == "" {
+		z.ZonemdVerify = "if_present"
+	}
 	_, err := tx.Exec(ctx, `insert into rpz_zones(id, name, position, source_type, primary_address, tsig_key_name,
-		tsig_algorithm, tsig_secret_envelope, min_refresh_seconds, policy_override, engine_group_id)
-		values ($1, $2, (select coalesce(max(position), 0) + 1 from rpz_zones), $3, $4, $5, $6, $7, $8, $9, $10)`,
+		tsig_algorithm, tsig_secret_envelope, min_refresh_seconds, policy_override, engine_group_id, zonemd_verify)
+		values ($1, $2, (select coalesce(max(position), 0) + 1 from rpz_zones), $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		z.ID, z.Name, z.SourceType, z.PrimaryAddress, z.TSIGKeyName, z.TSIGAlgorithm, z.TSIGSecretEnvelope,
-		z.MinRefreshSeconds, z.PolicyOverride, z.EngineGroupID)
+		z.MinRefreshSeconds, z.PolicyOverride, z.EngineGroupID, z.ZonemdVerify)
 	if err != nil {
 		return RPZZone{}, MapError(err)
 	}
@@ -314,13 +320,16 @@ func CreateRPZZone(ctx context.Context, tx pgx.Tx, z RPZZone) (RPZZone, error) {
 }
 
 // UpdateRPZZone replaces the editable fields of z using z.Revision as the expected revision. The
-// source type never changes; a nil envelope keeps the stored one unless the algorithm is cleared.
+// source type never changes; a nil envelope keeps the stored one unless the algorithm is cleared;
+// an empty ZonemdVerify keeps the stored mode.
 func UpdateRPZZone(ctx context.Context, tx pgx.Tx, z RPZZone) (RPZZone, error) {
 	tag, err := tx.Exec(ctx, `update rpz_zones set primary_address = $2, tsig_key_name = $3, tsig_algorithm = $4,
 		tsig_secret_envelope = case when $4::text is null then null else coalesce($5, tsig_secret_envelope) end,
-		min_refresh_seconds = $6, policy_override = $7, revision = revision + 1, updated_at = now()
+		min_refresh_seconds = $6, policy_override = $7, zonemd_verify = coalesce(nullif($9::text, ''), zonemd_verify),
+		revision = revision + 1, updated_at = now()
 		where id = $1 and revision = $8`,
-		z.ID, z.PrimaryAddress, z.TSIGKeyName, z.TSIGAlgorithm, z.TSIGSecretEnvelope, z.MinRefreshSeconds, z.PolicyOverride, z.Revision)
+		z.ID, z.PrimaryAddress, z.TSIGKeyName, z.TSIGAlgorithm, z.TSIGSecretEnvelope, z.MinRefreshSeconds, z.PolicyOverride, z.Revision,
+		z.ZonemdVerify)
 	if err != nil {
 		return RPZZone{}, MapError(err)
 	}
@@ -392,7 +401,7 @@ func ReorderRPZZones(ctx context.Context, tx pgx.Tx, ids []uuid.UUID) error {
 // ListRPZEngineStatus returns the status reports of live engines keyed by zone id.
 func ListRPZEngineStatus(ctx context.Context, q PolicyQuerier) (map[uuid.UUID][]RPZEngineStatus, error) {
 	rows, err := q.Query(ctx, `select s.rpz_zone_id, s.engine_id, e.node_name, s.serial, s.records, s.skipped, s.hits,
-		s.last_success_at, s.last_error, s.stale from engine_rpz_status s join engines e on e.id = s.engine_id
+		s.last_success_at, s.last_error, s.stale, s.zonemd, s.zonemd_error from engine_rpz_status s join engines e on e.id = s.engine_id
 		where e.deleted_at is null order by e.node_name, s.engine_id`)
 	if err != nil {
 		return nil, MapError(err)
@@ -403,7 +412,7 @@ func ListRPZEngineStatus(ctx context.Context, q PolicyQuerier) (map[uuid.UUID][]
 		var zone uuid.UUID
 		var s RPZEngineStatus
 		if err := rows.Scan(&zone, &s.EngineID, &s.EngineName, &s.Serial, &s.Records, &s.Skipped, &s.Hits,
-			&s.LastSuccessAt, &s.LastError, &s.Stale); err != nil {
+			&s.LastSuccessAt, &s.LastError, &s.Stale, &s.Zonemd, &s.ZonemdError); err != nil {
 			return nil, MapError(err)
 		}
 		out[zone] = append(out[zone], s)

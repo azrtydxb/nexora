@@ -519,8 +519,16 @@ func TestTLSResultRollbackKeepsFingerprint(t *testing.T) {
 	if _, err := st.Pool.Exec(ctx, `insert into engines(id,node_name,certificate_serial,connection_session) values ($1,'tls-rollback','tls-rollback',$2)`, id, sub.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	f := NewDNSTLSFanout()
-	sub.tlsCh = f.Register(id, "old")
+	f := NewDNSTLSFanout(st)
+	sub.certificateSerial = "aa"
+	if _, err := st.Pool.Exec(ctx, `insert into engine_certificates(serial,engine_id,not_before,not_after) values ($1,$2,now(),now()+interval '1 hour')`, sub.certificateSerial, id); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	sub.tlsCh, err = f.Register(ctx, id, sub.sessionID, sub.certificateSerial, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := NewServer(st, nil, nil, "", f)
 	stream := &controlledStream{ctx: ctx, in: make(chan *controlv1.EngineMessage, 1), reading: make(chan struct{}, 2)}
 	// Violates the real fingerprint constraint, after ownership was acquired.

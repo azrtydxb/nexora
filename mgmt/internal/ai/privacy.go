@@ -23,18 +23,23 @@ func CheckEndpoint(ctx context.Context, baseURL string, allowPublic bool, resolv
 	if err != nil || u.Hostname() == "" {
 		return fmt.Errorf("%w: invalid base URL", ErrProvider)
 	}
-	host := u.Hostname()
+	_, err = endpointAddresses(ctx, u.Hostname(), allowPublic, resolve)
+	return err
+}
+
+func endpointAddresses(ctx context.Context, host string, allowPublic bool, resolve Resolver) ([]netip.Addr, error) {
 	var addrs []netip.Addr
-	if a, err := netip.ParseAddr(host); err == nil {
+	var err error
+	if a, parseErr := netip.ParseAddr(host); parseErr == nil {
 		addrs = []netip.Addr{a}
 	} else if addrs, err = resolve(ctx, host); err != nil || len(addrs) == 0 {
-		return fmt.Errorf("%w: resolve %s: %v", ErrProvider, host, err)
+		return nil, fmt.Errorf("%w: resolve %s: %v", ErrProvider, host, err)
 	}
 	for _, a := range addrs {
 		a = a.Unmap()
-		if !a.IsLoopback() && !a.IsPrivate() && !a.IsLinkLocalUnicast() && !sharedAddressSpace.Contains(a) {
-			return fmt.Errorf("%w: %s resolves to %s", ErrEndpointNotPrivate, host, a)
+		if !a.IsValid() || (!allowPublic && !a.IsLoopback() && !a.IsPrivate() && !a.IsLinkLocalUnicast() && !sharedAddressSpace.Contains(a)) {
+			return nil, fmt.Errorf("%w: %s resolves to %s", ErrEndpointNotPrivate, host, a)
 		}
 	}
-	return nil
+	return addrs, nil
 }

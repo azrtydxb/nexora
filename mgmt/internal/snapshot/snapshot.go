@@ -19,6 +19,7 @@ import (
 
 	controlv1 "github.com/piwi3910/nexora/gen/go/nexora/control/v1"
 	"github.com/piwi3910/nexora/mgmt/internal/auth"
+	"github.com/piwi3910/nexora/mgmt/internal/fleet"
 	"github.com/piwi3910/nexora/mgmt/internal/rollout"
 	"github.com/piwi3910/nexora/mgmt/internal/store"
 )
@@ -275,10 +276,12 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 	var upstreamMode, groupOTLP string
 	var extraACL []string
 	var indexMaxBytes int64
+	var group fleet.EngineGroup
 	if err := tx.QueryRow(ctx, `select upstream_mode,
 		array(select host(c) || '/' || masklen(c) from unnest(extra_acl_cidrs) with ordinality as u(c, n) order by n), otlp_endpoint,
-		filter_index_max_bytes
-		from engine_groups where id = $1`, groupID).Scan(&upstreamMode, &extraACL, &groupOTLP, &indexMaxBytes); err != nil {
+		filter_index_max_bytes, mdns_enabled, mdns_interfaces, mdns_timeout_ms, mdns_reflect, mdns_reflect_interfaces
+		from engine_groups where id = $1`, groupID).Scan(&upstreamMode, &extraACL, &groupOTLP, &indexMaxBytes,
+		&group.MdnsEnabled, &group.MdnsInterfaces, &group.MdnsTimeoutMS, &group.MdnsReflect, &group.MdnsReflectInterfaces); err != nil {
 		return nil, fmt.Errorf("engine group %s: %w", groupID, err)
 	}
 	snap := &controlv1.ConfigSnapshot{
@@ -332,6 +335,10 @@ func BuildForGroup(ctx context.Context, tx pgx.Tx, version uint64, cfg BuildConf
 		return nil, fmt.Errorf("authoritative access control: %w", err)
 	}
 	snap.AuthoritativeAclSet = true
+	if err := AddOdoh(ctx, tx, snap); err != nil {
+		return nil, err
+	}
+	AddMdns(snap, group)
 	if err := buildFilterLists(ctx, tx, snap, groupID); err != nil {
 		return nil, err
 	}

@@ -204,6 +204,7 @@ func Run(tb testing.TB, run string, base time.Time, h Harness) {
 	if !ok {
 		tb.Fatalf("backend %s does not implement querylog.Topper", h.Backend.Name())
 	}
+	fullTopPredicates(tb, topper, ref, all)
 	// top compares the backend's top list with the reference's; onlyRun keeps the keys of this run
 	// so a backend holding other records still compares.
 	top := func(tb testing.TB, q querylog.TopQuery, onlyRun bool) []querylog.TopEntry {

@@ -23,7 +23,7 @@ type Observation struct {
 func GetObservation(ctx context.Context, q store.PolicyQuerier, id uuid.UUID) (*Observation, error) {
 	var o Observation
 	err := q.QueryRow(ctx, `select applied_generation, owner, state, reason, observed_at
-		from failover_observations where group_id=$1`, id).Scan(&o.AppliedGeneration, &o.Owner, &o.State, &o.Reason, &o.ObservedAt)
+		from public.failover_observations where group_id=$1`, id).Scan(&o.AppliedGeneration, &o.Owner, &o.State, &o.Reason, &o.ObservedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -36,6 +36,9 @@ func GetObservation(ctx context.Context, q store.PolicyQuerier, id uuid.UUID) (*
 // Status projects an observation conservatively. Missing/stale/future reports or
 // reports for another generation cannot establish current frontend health.
 func (g Group) Status(o *Observation, now time.Time) string {
+	if g.Lifecycle != "" && g.Lifecycle != "active" {
+		return "pending"
+	}
 	if o == nil || o.Owner == "" || o.ObservedAt.IsZero() || o.ObservedAt.After(now) || now.Sub(o.ObservedAt) > 30*time.Second {
 		return "unknown"
 	}

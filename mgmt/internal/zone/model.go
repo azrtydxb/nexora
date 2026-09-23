@@ -23,6 +23,8 @@ var ManagedTypes = map[uint16]bool{
 type Signer interface {
 	Sign(ctx context.Context, tx pgx.Tx, z *Zone, rrs []dns.RR, now time.Time) (served []dns.RR, err error)
 	ResignSOA(ctx context.Context, tx pgx.Tx, z *Zone, served []dns.RR, now time.Time) ([]dns.RR, error)
+	// SignZONEMD replaces the RRSIGs covering the apex ZONEMD RRset of a signed zone (M8).
+	SignZONEMD(ctx context.Context, tx pgx.Tx, z *Zone, served []dns.RR, now time.Time) ([]dns.RR, error)
 }
 
 // SOA holds the zone's SOA fields except the serial, which lives on Zone.
@@ -65,6 +67,12 @@ type Zone struct {
 	DNSSECEnabled      bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	ZonemdGenerate     bool   // primary zones: publish an RFC 8976 ZONEMD on every rebuild
+	ZonemdVerify       string // "off" | "if_present" | "required"
+	ZonemdStatus       string // "not_checked" | "off" | "absent" | "verified" | "failed"
+	ZonemdError        string
+	CatalogZoneID      *uuid.UUID // producer membership or consumer ownership
+	CatalogMemberLabel string     // consumer-created zones only
 }
 
 // Record is one stored resource record; Data is the RDATA in presentation form.
@@ -92,6 +100,14 @@ type CreateZoneInput struct {
 	AllowQueryCIDRs  []string
 	// EngineGroupID scopes the zone to one engine group (nil: served by every group).
 	EngineGroupID *uuid.UUID
+	// ZonemdGenerate publishes a ZONEMD on every rebuild (primary zones only).
+	ZonemdGenerate bool
+	// ZonemdVerify is the verification mode of secondary zones; "" means "if_present".
+	ZonemdVerify string
+	// CatalogZoneID joins a producer catalog, or marks a zone a consumer catalog created.
+	CatalogZoneID *uuid.UUID
+	// CatalogMemberLabel is the member label of a consumer-created zone.
+	CatalogMemberLabel string
 }
 
 // TransferInput is the outgoing transfer policy.
@@ -111,6 +127,9 @@ type UpdateZoneInput struct {
 	UpdateTSIGKeyIDs *[]uuid.UUID
 	UpdateAllowCIDRs *[]string
 	AllowQueryCIDRs  *[]string
+	ZonemdGenerate   *bool
+	ZonemdVerify     *string
+	CatalogZoneID    **uuid.UUID // nil: unchanged; pointer to nil: leave the catalog
 }
 
 // RecordInput is one record as written by an operator; Name is absolute.

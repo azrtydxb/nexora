@@ -58,16 +58,26 @@ func (s *Service) day() time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
-// acquire checks the budget, then waits for a rate token and a concurrency slot: Interactive at most
-// slotWait (ErrBusy), Background until ctx ends. One Generate, including its validation attempts,
-// holds one token and one slot.
-func (s *Service) acquire(ctx context.Context, p Priority) (release func(), err error) {
+// checkBudget reads committed fleet-wide usage immediately before dispatch. In-flight provider
+// usage is unknowable; this prevents starting work after recorded exhaustion, without reserving
+// guessed token counts or serialising all fleet calls.
+func (s *Service) checkBudget(ctx context.Context, p Priority) error {
 	b, err := s.Budget(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if limit := b.LimitTokens; b.UsedTokens >= limit || (p == Background && b.UsedTokens >= b.BackgroundLimitTokens) {
-		return nil, ErrBudgetExhausted
+	if b.UsedTokens >= b.LimitTokens || (p == Background && b.UsedTokens >= b.BackgroundLimitTokens) {
+		return ErrBudgetExhausted
+	}
+	return nil
+}
+
+// acquire checks the budget, then waits for a rate token and a concurrency slot: Interactive at most
+// slotWait (ErrBusy), Background until ctx ends. One Generate, including its validation attempts,
+// holds one token and one slot. Generate rechecks the budget after waiting and before each retry.
+func (s *Service) acquire(ctx context.Context, p Priority) (release func(), err error) {
+	if err := s.checkBudget(ctx, p); err != nil {
+		return nil, err
 	}
 	wait := ctx
 	if p == Interactive {

@@ -87,6 +87,42 @@ func (s *Store) rolloverDue(ctx context.Context, tx pgx.Tx, z *zone.Zone, rrs []
 	return next, nil
 }
 
+// SignZONEMD replaces the RRSIGs covering the apex ZONEMD RRset in served after Rebuild set its
+// digest, signing it with the active ZSKs. The zone_signatures cache is bypassed for this RRset:
+// the digest changes with every version, so a cached signature would never be reused.
+func (s *Store) SignZONEMD(ctx context.Context, tx pgx.Tx, z *zone.Zone, served []dns.RR, now time.Time) ([]dns.RR, error) {
+	apex := dns.CanonicalName(z.Name)
+	var set []dns.RR
+	out := make([]dns.RR, 0, len(served))
+	for _, rr := range served {
+		atApex := dns.CanonicalName(rr.Header().Name) == apex
+		if sig, ok := rr.(*dns.RRSIG); ok && atApex && sig.TypeCovered == dns.TypeZONEMD {
+			continue
+		}
+		if atApex && rr.Header().Rrtype == dns.TypeZONEMD {
+			set = append(set, rr)
+		}
+		out = append(out, rr)
+	}
+	if len(set) == 0 {
+		return nil, fmt.Errorf("zone %s: no apex ZONEMD in the served set", z.Name)
+	}
+	keys, release, err := s.loadKeys(ctx, tx, z)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	signed := &Output{Cache: map[SigKey]CachedSig{}}
+	sigs, err := signSet(apex, setKey{owner: apex, rtype: dns.TypeZONEMD}, set, keys, map[SigKey]CachedSig{}, now, signed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE zone_dnssec SET next_maintenance_at = LEAST(next_maintenance_at, $2) WHERE zone_id = $1`, z.ID, signed.NextRefresh); err != nil {
+		return nil, err
+	}
+	return append(out, sigs...), nil
+}
+
 // ResignSOA replaces the SOA signatures in served after Rebuild set the new serial.
 func (s *Store) ResignSOA(ctx context.Context, tx pgx.Tx, z *zone.Zone, served []dns.RR, now time.Time) ([]dns.RR, error) {
 	var soa []dns.RR

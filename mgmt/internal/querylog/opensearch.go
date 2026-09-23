@@ -165,7 +165,7 @@ func (o *OpenSearch) Top(ctx context.Context, q TopQuery) ([]TopEntry, error) {
 	body := map[string]any{
 		"size":             0,
 		"track_total_hits": false,
-		"query":            map[string]any{"bool": map[string]any{"filter": filterClauses(Query{From: q.From, To: q.To, Filters: q.Filters})}},
+		"query":            map[string]any{"bool": map[string]any{"filter": filterClauses(q.SearchQuery())}},
 		"aggs":             map[string]any{"top": map[string]any{"terms": map[string]any{"field": "attributes." + field + ".keyword", "size": q.Limit + 1}}},
 	}
 	resp, err := o.search(ctx, body)

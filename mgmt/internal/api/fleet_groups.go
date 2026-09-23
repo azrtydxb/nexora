@@ -39,6 +39,7 @@ type engineGroupInput struct {
 	canaryCount, canaryPercent, ackTimeout, healthWindow, minQueries *int
 	maxServfail                                                      *float32
 	filterIndexMaxBytes                                              *int64
+	mdns                                                             *MdnsSettings
 }
 
 // applyEngineGroupInput overlays in on base (the table defaults on create, the stored group on
@@ -86,6 +87,17 @@ func applyEngineGroupInput(base fleet.EngineGroup, in engineGroupInput) (fleet.E
 			g.ExtraACLCIDRs = append(g.ExtraACLCIDRs, p.Masked().String())
 		}
 	}
+	if in.mdns != nil {
+		if in.mdns.TimeoutMs < 0 || in.mdns.TimeoutMs > 5000 {
+			return g, invalid("mdns.timeout_ms must be 100..5000")
+		}
+		g.MdnsEnabled, g.MdnsReflect, g.MdnsTimeoutMS = in.mdns.Enabled, in.mdns.Reflect, int32(in.mdns.TimeoutMs)
+		g.MdnsInterfaces = append([]string{}, in.mdns.Interfaces...)
+		g.MdnsReflectInterfaces = append([]string{}, in.mdns.ReflectInterfaces...)
+	}
+	if err := fleet.ValidateMdns(g); err != nil {
+		return g, invalid("%s", err)
+	}
 	switch {
 	case len(g.Description) > 1024:
 		return g, invalid("description must be at most 1024 characters")
@@ -115,7 +127,7 @@ func applyEngineGroupInput(base fleet.EngineGroup, in engineGroupInput) (fleet.E
 
 // newEngineGroupDefaults are the engine_groups column defaults.
 var newEngineGroupDefaults = fleet.EngineGroup{UpstreamMode: "inherit", RolloutStrategy: string(rollout.AllAtOnce),
-	AckTimeoutSeconds: 60, HealthWindowSeconds: 30, MaxServfailRatio: 0.05, MinHealthQueries: 100}
+	AckTimeoutSeconds: 60, HealthWindowSeconds: 30, MaxServfailRatio: 0.05, MinHealthQueries: 100, MdnsTimeoutMS: 500}
 
 func engineGroupOut(g fleet.EngineGroup, active *Rollout) EngineGroup {
 	out := EngineGroup{Id: g.ID, Name: g.Name, Description: g.Description, UpstreamMode: EngineGroupUpstreamMode(g.UpstreamMode),
@@ -123,7 +135,9 @@ func engineGroupOut(g fleet.EngineGroup, active *Rollout) EngineGroup {
 		RolloutStrategy: EngineGroupRolloutStrategy(g.RolloutStrategy), CanaryCount: g.CanaryCount, CanaryPercent: g.CanaryPercent,
 		AckTimeoutSeconds: g.AckTimeoutSeconds, HealthWindowSeconds: g.HealthWindowSeconds, MaxServfailRatio: float32(g.MaxServfailRatio),
 		MinHealthQueries: g.MinHealthQueries, FilterIndexMaxBytes: g.FilterIndexMaxBytes, RolloutsPaused: g.RolloutsPaused, EngineCount: g.EngineCount, Revision: g.Revision,
-		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, ActiveRollout: active}
+		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, ActiveRollout: active,
+		Mdns: MdnsSettings{Enabled: g.MdnsEnabled, Interfaces: append([]string{}, g.MdnsInterfaces...), TimeoutMs: int(g.MdnsTimeoutMS),
+			Reflect: g.MdnsReflect, ReflectInterfaces: append([]string{}, g.MdnsReflectInterfaces...)}}
 	if g.StableVersion != nil {
 		v := int64(*g.StableVersion)
 		out.StableVersion = &v
@@ -180,7 +194,7 @@ func (h *handlers) CreateEngineGroup(ctx context.Context, req CreateEngineGroupR
 		otlpEndpoint: b.OtlpEndpoint, upstreamMode: (*string)(b.UpstreamMode), strategy: (*string)(b.RolloutStrategy),
 		extraACL: b.ExtraAclCidrs, canaryCount: b.CanaryCount, canaryPercent: b.CanaryPercent, ackTimeout: b.AckTimeoutSeconds,
 		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio,
-		filterIndexMaxBytes: b.FilterIndexMaxBytes})
+		filterIndexMaxBytes: b.FilterIndexMaxBytes, mdns: b.Mdns})
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +222,7 @@ func (h *handlers) UpdateEngineGroup(ctx context.Context, req UpdateEngineGroupR
 		upstreamMode: (*string)(b.UpstreamMode), strategy: (*string)(b.RolloutStrategy), extraACL: b.ExtraAclCidrs,
 		canaryCount: b.CanaryCount, canaryPercent: b.CanaryPercent, ackTimeout: b.AckTimeoutSeconds,
 		healthWindow: b.HealthWindowSeconds, minQueries: b.MinHealthQueries, maxServfail: b.MaxServfailRatio,
-		filterIndexMaxBytes: b.FilterIndexMaxBytes}
+		filterIndexMaxBytes: b.FilterIndexMaxBytes, mdns: b.Mdns}
 	err := h.mutate(ctx, func(tx pgx.Tx) (auth.Change, error) {
 		before, err := fleet.GetEngineGroup(ctx, tx, req.Id)
 		if err != nil {

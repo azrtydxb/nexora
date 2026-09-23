@@ -20,6 +20,7 @@ func rpzZoneOut(z store.RPZZone, status []store.RPZEngineStatus) RpzZone {
 		Id: z.ID, EngineGroupId: z.EngineGroupID, Name: z.Name, Position: int(z.Position), SourceType: RpzZoneSourceType(z.SourceType),
 		Primary: z.PrimaryAddress, TsigKeyName: z.TSIGKeyName, TsigAlgorithm: z.TSIGAlgorithm, TsigSecretSet: z.TSIGSecretEnvelope != nil,
 		MinRefreshSeconds: int(z.MinRefreshSeconds), PolicyOverride: z.PolicyOverride, Revision: z.Revision,
+		ZonemdVerify: ZonemdVerify(z.ZonemdVerify),
 	}
 	if z.FileRecords != nil {
 		n := int(*z.FileRecords)
@@ -30,6 +31,7 @@ func rpzZoneOut(z store.RPZZone, status []store.RPZEngineStatus) RpzZone {
 		o := &out.Status[i]
 		o.EngineId, o.EngineName, o.Serial, o.Records, o.Skipped, o.Hits = s.EngineID, s.EngineName, s.Serial, s.Records, s.Skipped, s.Hits
 		o.LastSuccess, o.LastError, o.Stale = s.LastSuccessAt, s.LastError, s.Stale
+		o.Zonemd, o.ZonemdError = RpzZoneStatusZonemd(s.Zonemd), s.ZonemdError
 	}
 	return out
 }
@@ -86,6 +88,21 @@ func validateRPZFields(sourceType string, primary, keyName, algorithm, secret *s
 	return f, nil
 }
 
+// rpzZonemdVerify validates the zonemd_verify of a zone of sourceType: "" keeps the default (or
+// the stored mode on update); file zones carry no transfer to verify.
+func rpzZonemdVerify(sourceType string, v *ZonemdVerify) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	if !v.Valid() {
+		return "", invalid("zonemd_verify must be off, if_present or required")
+	}
+	if sourceType == "file" {
+		return "", invalid("file zones take no zonemd_verify")
+	}
+	return string(*v), nil
+}
+
 // seal seals a provided TSIG secret for zone id before any transaction starts, so an unconfigured
 // key store refuses the request without writing anything.
 func (h *handlers) seal(id uuid.UUID, f rpzFields) ([]byte, error) {
@@ -140,6 +157,10 @@ func (h *handlers) CreateRpzZone(ctx context.Context, req CreateRpzZoneRequestOb
 	if f.algorithm != nil && f.secret == nil {
 		return nil, invalid("tsig_algorithm requires tsig_secret")
 	}
+	zonemdVerify, err := rpzZonemdVerify(string(b.SourceType), b.ZonemdVerify)
+	if err != nil {
+		return nil, err
+	}
 	id := uuid.New()
 	envelope, err := h.seal(id, f)
 	if err != nil {
@@ -153,7 +174,7 @@ func (h *handlers) CreateRpzZone(ctx context.Context, req CreateRpzZoneRequestOb
 		created, err := store.CreateRPZZone(ctx, tx, store.RPZZone{
 			ID: id, EngineGroupID: b.EngineGroupId, Name: name, SourceType: string(b.SourceType), PrimaryAddress: f.primary, TSIGKeyName: f.keyName,
 			TSIGAlgorithm: f.algorithm, TSIGSecretEnvelope: envelope, MinRefreshSeconds: int32(b.MinRefreshSeconds),
-			PolicyOverride: string(b.PolicyOverride),
+			PolicyOverride: string(b.PolicyOverride), ZonemdVerify: zonemdVerify,
 		})
 		after = rpzZoneOut(created, nil)
 		return auth.Change{Action: "createRpzZone", TargetType: "rpz_zone", TargetID: id.String(), After: after}, err
@@ -174,6 +195,10 @@ func (h *handlers) UpdateRpzZone(ctx context.Context, req UpdateRpzZoneRequestOb
 	if err != nil {
 		return nil, err
 	}
+	zonemdVerify, err := rpzZonemdVerify(current.SourceType, b.ZonemdVerify)
+	if err != nil {
+		return nil, err
+	}
 	envelope, err := h.seal(req.Id, f)
 	if err != nil {
 		return nil, err
@@ -190,6 +215,7 @@ func (h *handlers) UpdateRpzZone(ctx context.Context, req UpdateRpzZoneRequestOb
 		updated, err := store.UpdateRPZZone(ctx, tx, store.RPZZone{
 			ID: req.Id, PrimaryAddress: f.primary, TSIGKeyName: f.keyName, TSIGAlgorithm: f.algorithm, TSIGSecretEnvelope: envelope,
 			MinRefreshSeconds: int32(b.MinRefreshSeconds), PolicyOverride: string(b.PolicyOverride), Revision: b.Revision,
+			ZonemdVerify: zonemdVerify,
 		})
 		after = rpzZoneOut(updated, nil)
 		return auth.Change{Action: "updateRpzZone", TargetType: "rpz_zone", TargetID: req.Id.String(), Before: rpzZoneOut(before, nil), After: after}, err
