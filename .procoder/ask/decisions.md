@@ -368,3 +368,26 @@ The migration is live, but the cluster still runs `sha-96962cc` — M9 and M11 c
 - Defer: leave the open todo items for a dedicated deploy session; the migration is complete and the cluster runs stable on `sha-96962cc`.
 
 **Answer (2026-09-15):** Take it on now — full M9+M11 kw deploy, `kw-deploy.sh` from HEAD, acceptance suite.
+
+## CI trusted-CA rework: provision `NEXORA_CI_CA_PEM` or drop it
+
+The session that died on 2026-09-17 left an uncommitted rework of all four workflows
+(`ci.yml`, `fuzz.yml`, `images.yml`, `perf-gate.yml`) plus `scripts/ci-trusted-ca.sh`,
+`ci-prerequisites.sh` and two Python contract tests. Every job would start with an
+"Install provisioned CI CA" step that validates a single self-signed CA certificate and
+installs it into a job-private bundle, instead of fetching the cluster CA over an
+unverified HTTPS connection from Nexus as the committed workflows do. The step fails
+closed when the secret is absent. `NEXORA_CI_CA_PEM` exists neither as a repo secret
+(repo secrets: 0, environments: 0) nor in the `azrtydxb` org. Committing the rework as it
+stands therefore breaks every CI job on the first step.
+
+- Provision the secret (the cluster root CA certificate, public, no private key) as a repo
+  or org secret, then commit the rework
+- Leave the rework uncommitted for now and keep the committed workflows, which pass
+- Drop the rework entirely (delete the uncommitted workflow and script changes)
+
+**Answer (2026-09-23):** Provision the secret, then commit. Done: the kw root CA
+(`O=Azrty, CN=kw-cluster-internal-ca`, self-signed, CA:TRUE, valid to 2036-05-12) was read
+from the kw API (`nexora-ingress-tls`, key `ca.crt`) and set as the repo secret
+`NEXORA_CI_CA_PEM`. Its SHA-256 fingerprint matches the copy Nexus serves, so the
+previously unverified fetch was authentic. Rework committed as ed98e94.
