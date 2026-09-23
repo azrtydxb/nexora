@@ -10,6 +10,9 @@ concurrency:
 # Every job runs on the arm64 ARC scale set inside the dev toolbox image (deploy/dev/Dockerfile:
 # Rust 1.97, Go 1.27, Node 26 + pnpm, protoc, PostgreSQL 17, dnsperf), because the runner image
 # carries no toolchains. The image's /work paths only exist in the dev pod, so caches move to /tmp.
+defaults:
+  run:
+    shell: bash
 env:
   CARGO_TARGET_DIR: /tmp/target
   GOCACHE: /tmp/cache/go-build
@@ -19,21 +22,53 @@ env:
 jobs:
   engine:
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
     timeout-minutes: 45
     steps:
-      # The Nexus proxies serve a cluster-CA certificate. It is added to the system bundle (rather
-      # than pointing the tools at the lone CA) so public endpoints keep verifying too.
-      - name: Trust the cluster CA
+      # Bootstrap before checkout; the bundle preserves public trust roots.
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
         run: |
-          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
-          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
           {
-            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
-            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
-            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-          } >> "$GITHUB_ENV"
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
@@ -48,19 +83,52 @@ jobs:
 
   mgmt:
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
     timeout-minutes: 45
     steps:
-      - name: Trust the cluster CA
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
         run: |
-          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
-          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
           {
-            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
-            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
-            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-          } >> "$GITHUB_ENV"
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
@@ -72,23 +140,66 @@ jobs:
       # TestOIDCLoginAndProviderDown starts the OIDC fixture, which the harness finds in bin/.
       # PostgreSQL-backed tests run as the image's `dev` user (PostgreSQL refuses root).
       - run: go build -o bin/nexora-fixture ./e2e/fixtures/cmd/nexora-fixture
-      - run: go test -race -count=1 ./mgmt/... ./gen/... ./bench/...
+      - name: Management, control, deployment and harness race tests
+        run: |
+          mkdir -p artifacts
+          make ci-race 2>&1 | tee artifacts/race.log
+      - name: Retain raw race output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-race
+          path: artifacts/
+          retention-days: 7
 
   operator:
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
     timeout-minutes: 30
     steps:
-      - name: Trust the cluster CA
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
         run: |
-          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
-          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
           {
-            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
-            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
-            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-          } >> "$GITHUB_ENV"
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
@@ -102,21 +213,205 @@ jobs:
 
   web:
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1" }
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
     timeout-minutes: 30
     steps:
-      - name: Trust the cluster CA
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
         run: |
-          curl -sk -o /tmp/cluster-ca.crt https://192.168.10.131:8443/repository/public/cluster-ca.crt
-          cp /tmp/cluster-ca.crt /usr/local/share/ca-certificates/cluster-ca.crt && update-ca-certificates
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
           {
-            echo "NODE_EXTRA_CA_CERTS=/tmp/cluster-ca.crt"
-            echo "CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-            echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
-            echo "GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt"
-          } >> "$GITHUB_ENV"
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: make web-test
+      - name: Web checks and M8 unit tests
+        run: |
+          mkdir -p artifacts
+          make web-test web-unit-test 2>&1 | tee artifacts/web.log
+      - name: Retain web output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-web
+          path: |
+            artifacts/
+            web/test-results/
+          retention-days: 7
+
+  failover-contracts:
+    runs-on: arc-azrtydxb
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
+    timeout-minutes: 15
+    steps:
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
+        run: |
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
+          {
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install contract test prerequisite
+        run: apt-get update && apt-get install -y --no-install-recommends python3
+      - run: make ci-coverage-test
+      - name: Run ci-failover
+        run: |
+          mkdir -p artifacts
+          make ci-failover 2>&1 | tee artifacts/failover-contracts.log
+      - name: Retain verification output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-failover-contracts
+          path: |
+            artifacts/
+          retention-days: 7
+
+  e2e:
+    runs-on: arc-azrtydxb
+    container:
+      image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-1"
+      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
+      options: --user 0
+    timeout-minutes: 150
+    # Existing test services documented in deploy/dev/dev-pod.yaml; no live kw opt-ins.
+    # Their reachability and namespace support are required, not assumed accepted.
+    env:
+      NEXORA_E2E_OPENSEARCH_URL: http://opensearch.nexora.svc.cluster.local:9200
+      NEXORA_E2E_JAEGER_QUERY_URL: http://jaeger.observability.svc.cluster.local:16686
+    steps:
+      - name: Install provisioned CI CA
+        env:
+          NEXORA_CI_CA_PEM: ${{ secrets.NEXORA_CI_CA_PEM }}
+        run: |
+          set +x
+          set -euo pipefail
+          fail_ca() {
+          	echo 'Trusted CI CA missing, invalid, or unavailable; parent provisioning required.' >&2
+          	exit 1
+          }
+          [[ -n ${NEXORA_CI_CA_PEM:-} ]] || fail_ca
+          : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
+          umask 077
+          ca_dir=$(mktemp -d "$RUNNER_TEMP/nexora-ca.XXXXXX")
+          trap 'rm -rf "$ca_dir"' EXIT
+          printf '%s\n' "$NEXORA_CI_CA_PEM" >"$ca_dir/input.pem"
+          unset NEXORA_CI_CA_PEM
+          # Reject additional objects, keys, trailing garbage and multiple certificates.
+          awk '
+            /^-----BEGIN CERTIFICATE-----$/ { if (state != 0) exit 1; state=1; next }
+            /^-----END CERTIFICATE-----$/ { if (state != 1) exit 1; state=2; next }
+            state == 1 { if ($0 !~ /^[A-Za-z0-9+\/=]+$/) exit 1; next }
+            /[^[:space:]]/ { exit 1 }
+            END { if (state != 2) exit 1 }
+          ' "$ca_dir/input.pem" || fail_ca
+          openssl x509 -in "$ca_dir/input.pem" -out "$ca_dir/cluster-ca.crt" 2>/dev/null || fail_ca
+          openssl x509 -in "$ca_dir/cluster-ca.crt" -noout -ext basicConstraints 2>/dev/null | grep -E '^[[:space:]]*CA:TRUE(, pathlen:[0-9]+)?[[:space:]]*$' >/dev/null || fail_ca
+          openssl verify -check_ss_sig -CAfile "$ca_dir/cluster-ca.crt" "$ca_dir/cluster-ca.crt" >/dev/null 2>&1 || fail_ca
+          # Keep public roots; install only a job-private bundle, never change host/cluster trust.
+          cat /etc/ssl/certs/ca-certificates.crt "$ca_dir/cluster-ca.crt" >"$ca_dir/ca-bundle.crt"
+          rm "$ca_dir/input.pem"
+          {
+          	echo "NEXORA_CI_CA_FILE=$ca_dir/cluster-ca.crt"
+          	echo "NODE_EXTRA_CA_CERTS=$ca_dir/cluster-ca.crt"
+          	echo "CARGO_HTTP_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "SSL_CERT_FILE=$ca_dir/ca-bundle.crt"
+          	echo "GIT_SSL_CAINFO=$ca_dir/ca-bundle.crt"
+          	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
+          } >>"$GITHUB_ENV"
+          trap - EXIT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # go build's VCS stamping) refuses the repository as dubious ownership.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Run ci-e2e
+        run: |
+          mkdir -p artifacts
+          make ci-e2e 2>&1 | tee artifacts/e2e.log
+      - name: Retain verification output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-e2e
+          path: |
+            artifacts/
+            web/test-results/
+          retention-days: 7
