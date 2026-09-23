@@ -13,12 +13,17 @@ const usage = `usage (a port of 0 lets the kernel choose; the READY line names t
   nexora-fixture http --listen ADDR
   nexora-fixture openai --listen ADDR
   nexora-fixture oidc --listen ADDR --client-id ID --client-secret-file F --users-file F
-  nexora-fixture authhier --ready-file F`
+  nexora-fixture authhier --ready-file F
+  nexora-fixture mdns-responder --interface IF --record "<zone file RR>"...   (READY <IF IPv4 address>)
+  nexora-fixture mdns-query --interface IF --name N --type T --wait D [--legacy]   (runs once and exits)`
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if os.Args[1] == "mdns-query" {
+		os.Exit(runMDNSQuery(os.Args[2:]))
 	}
 	var stop func()
 	var addrs string
@@ -34,6 +39,8 @@ func main() {
 		stop, addrs, err = runOIDC(os.Args[2:])
 	case "authhier":
 		stop, addrs, err = runAuthhier(os.Args[2:])
+	case "mdns-responder":
+		stop, addrs, err = runMDNSResponder(os.Args[2:])
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

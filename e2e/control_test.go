@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -97,32 +99,58 @@ func TestMgmtStatelessHA(t *testing.T) {
 	api.WaitEngine("engine-ha", 15*time.Second, func(v harness.EngineView) bool { return v.AppliedVersion == v1 && v.Connected })
 	eng.Proc.WaitLog(regexpMust("control connected to"), 5*time.Second)
 
-	a.Proc.Kill()
+	// Start the contract clock before disruption; no phase gets a fresh timeout.
 	killed := time.Now()
+	ctx, cancel := context.WithDeadline(context.Background(), killed.Add(mgmtHARecoveryBudget))
+	defer cancel()
+	if err := acceptanceDisrupt(ctx, a.Proc.Kill); err != nil {
+		t.Fatal(err)
+	}
+	recoveryAPI := acceptanceAPI(ctx, api)
 
 	var ok int
-	deadline := killed.Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		code, err := api.Do("GET", "/upstreams", nil, nil)
-		if err == nil && code == 200 {
-			ok++
-			if ok >= 3 {
-				break
-			}
+	if err := acceptancePoll(ctx, 200*time.Millisecond, func() error {
+		code, err := recoveryAPI.Do("GET", "/upstreams", nil, nil)
+		if err != nil || code != 200 {
+			return fmt.Errorf("API recovery: HTTP %d: %v", code, err)
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if ok < 3 {
-		t.Fatalf("API through the load balancer did not recover within 10s of killing an instance")
+		ok++
+		if ok < 3 {
+			return fmt.Errorf("only %d successful API observations", ok)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	var up map[string]any
-	api.Must("POST", "/upstreams", map[string]any{"name": "after-failover", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 1}, &up, 201)
-	v2 := api.LatestVersion()
-	api.WaitEngine("engine-ha", time.Until(killed.Add(10*time.Second))+time.Second, func(v harness.EngineView) bool { return v.AppliedVersion == v2 && v.Connected })
-	if elapsed := time.Since(killed); elapsed > 11*time.Second {
-		t.Fatalf("engine control stream recovered after %v", elapsed)
+	recoveryAPI.Must("POST", "/upstreams", map[string]any{"name": "after-failover", "protocol": "udp", "address": fx.UDP, "timeout_ms": 250, "enabled": true, "position": 1}, &up, 201)
+	v2 := recoveryAPI.LatestVersion()
+	if v2 <= v1 {
+		t.Fatalf("failover mutation did not publish a new version: %d <= %d", v2, v1)
 	}
-	if r := harness.MustQuery(t, eng.DNS, harness.UniqueName("ha"), dns.TypeA, harness.QueryOpts{}); r.Rcode != dns.RcodeSuccess {
-		t.Fatalf("engine not answering: %v", r)
+	if err := acceptancePoll(ctx, 200*time.Millisecond, func() error {
+		var engines []harness.EngineView
+		if _, err := recoveryAPI.Do("GET", "/engines", nil, &engines); err != nil {
+			return err
+		}
+		for _, e := range engines {
+			if e.NodeName == "engine-ha" && e.AppliedVersion == v2 && e.Connected && e.Status == "current" {
+				return nil
+			}
+		}
+		return fmt.Errorf("engine has not applied version %d: %+v", v2, engines)
+	}); err != nil {
+		t.Fatal(err)
 	}
+	q := new(dns.Msg)
+	q.SetQuestion(dns.Fqdn(harness.UniqueName("ha")), dns.TypeA)
+	r, _, err := (&dns.Client{}).ExchangeContext(ctx, q, eng.DNS)
+	elapsed := time.Since(killed)
+	if elapsed > mgmtHARecoveryBudget || ctx.Err() != nil {
+		t.Fatalf("management HA end-to-end recovery took %v, contract <= %v (%v)", elapsed, mgmtHARecoveryBudget, ctx.Err())
+	}
+	if err != nil || r == nil || r.Rcode != dns.RcodeSuccess {
+		t.Fatalf("engine not answering after failover: %v (%v)", r, err)
+	}
+	t.Logf("management HA recovered, applied version %d and answered DNS in %v", v2, elapsed)
 }

@@ -36,6 +36,9 @@ engine/                                 Rust crate `nexora-engine` (binary + lib
   src/recursor/…                        (M3) iterative resolver, DNSSEC validation, RPZ
   src/authoritative/…                   (M4) zone serving, transfers, updates, signing
   src/cert_renewal.rs                   (M5) certificate renewal timing, CSR, atomic identity swap
+  src/zonemd.rs                         (M8) RFC 8976 digest and verify
+  src/mdns/{mod,iface,gateway,reflector}.rs (M8) mDNS gateway and reflector
+  src/server/odoh.rs                    (M8) Oblivious DoH target and proxy
   fuzz/                                 cargo-fuzz targets
   build.rs                              tonic-prost codegen from proto/
 gen/go/nexora/control/v1/               generated Go protobuf/gRPC (committed)
@@ -64,6 +67,8 @@ mgmt/                                   Go management plane (module root is repo
   internal/ai/{proposal,finding,forecast} (M11) proposals and replay validation, findings, forecasts
   internal/ai/{qlsearch,anomaly,insight,filterrec,assistant,upstreampred,rolloutrisk,threat,capacity,rpzsuggest}
   internal/mcpserver                    (M11) MCP Streamable HTTP server
+  internal/zonemd, internal/catzone, internal/odoh (M8) ZONEMD digest and verify, catalog zones,
+                                        ODoH settings and keys
   internal/webui                        embedded GUI dist
 web/                                    React + Vite GUI
   src/api/schema.d.ts                   generated from mgmt/api/openapi.yaml
@@ -218,6 +223,9 @@ host concerns and are not part of the snapshot.
   `HashMap<CacheKey, Arc<Pending>>`, `Pending` wraps a `tokio::sync::watch`).
   The first miss is the leader; later misses subscribe. The leader inserts into
   the cache before removing the in-flight entry, so late arrivals hit cache.
+- Route order for a query not answered from the cache (M8): a hosted zone for the name, then a
+  forward zone matching the name (longest match), then the mDNS gateway for names under `local.`
+  (when the snapshot's `mdns.enabled`), then forwarding or recursion.
 
 ### Filtering
 
@@ -309,6 +317,70 @@ recursion ACL allows. Transfers keep `TransferPolicy`; UPDATE additionally requi
 fe80::/10 and authoritative access with 0.0.0.0/0, ::/0. The allow list is kept as sorted, merged
 address ranges per family and looked up by binary search.
 
+### mDNS gateway and reflector (M8)
+
+Per engine group, off by default (`ConfigSnapshot.mdns`, absent = off; the management plane sets it
+only while `enabled || reflect`). There is no "all interfaces" default.
+
+- **Route:** `recursor::dispatch::ResolutionRuntime.mdns` holds the gateway. `route()` returns
+  `Route::Mdns` only on the cache-miss path, after the forward-zone match fails, when the lowercase
+  wire name ends in `\x05local\x00`. The RFC 6762 §4 reverse zones keep normal resolution. Recursion
+  ACL, filtering, rewrites, RPZ, caching and in-flight coalescing apply as to any recursion query.
+- **Query:** per query and per configured interface family, one socket2 UDP socket bound to the
+  interface address with port 0 (`mdns::iface::lookup`: `getifaddrs`, `if_nametoindex`),
+  `IP_MULTICAST_IF` (v6: the interface index), multicast TTL 255, loop on. It sends an RFC 6762
+  §5.1 one-shot query to 224.0.0.251:5353 (and ff02::fb:5353 where the interface has an IPv6
+  link-local address) and reads the §6.7 legacy unicast replies with `tokio::net::UdpSocket`.
+- **Collection:** a reply counts only on the query's socket, with the query ID, QR=1 and the
+  question; answers are the records whose owner and type match the question (additional records are
+  not passed on). For A, AAAA, SRV and TXT the first reply with matching answers ends collection;
+  other types wait for the whole `timeout_ms` (0 = 500, 100..=5000) and merge answers without
+  duplicates.
+- **Answer:** NOERROR, AA=0, every TTL capped at 10 s. No matching answer by the timeout: NXDOMAIN
+  without SOA, not cached.
+- **Cap:** at most 64 gateway queries at once per engine (static `AtomicUsize` with a guard); above
+  it SERVFAIL (`Busy`: not cached, not served stale), counted as `dropped`.
+- **Reflector:** one socket per reflection interface and family, bound to `0.0.0.0:5353` /
+  `[::]:5353` with `SO_REUSEADDR`, `SO_REUSEPORT` (an avahi-daemon on the host keeps working) and
+  `SO_BINDTODEVICE`, joined to the group on that interface's index, loop off, TTL / hop limit 255
+  (RFC 6762 §11). Every multicast packet received on one reflection interface is resent unchanged to
+  the group on each other one. Dropped: packets whose source address belongs to a reflection
+  interface, and packets whose payload digest was reflected in the last second on any interface
+  (1,024-entry table). Unicast legacy responses are not reflected, and there is no service
+  filtering. The reflector runs as tokio tasks on the control runtime, restarted by
+  `mdns::MdnsState::sync` only when the reflection interface list changes.
+- Multicast tests run only inside the harness network namespace lab (`unshare -Urn`, veth pairs);
+  Rust unit tests use unicast fakes on 127.0.0.1. Gatewaying a LAN needs `engine.hostNetwork: true`
+  or an interface on the segment (for example macvlan).
+
+### Oblivious DoH (M8)
+
+Fleet-wide settings (`ConfigSnapshot.odoh`, absent = both roles off; set only while a role is on).
+ODoH runs on the DoH listener's own HTTP request path, never on the UDP/TCP hot path.
+
+- **Target** (`target_enabled`): `GET /.well-known/odohconfigs` returns the RFC 9230 §6
+  `ObliviousDoHConfigs` of the published keys (DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-128-GCM).
+  `POST` of `application/oblivious-dns-message` on the DoH path is decrypted, answered through the
+  normal query pipeline (ACL, policy group and query log use the connecting peer, the proxy) and
+  returned encrypted with `Cache-Control: no-store`, response padding 0. Unknown key id: 401;
+  decryption failure, non-zero padding, wrong message type or malformed body: 400; another content
+  type: 415; another method: 405. DNS errors stay HTTP 200.
+- **Keys:** `server::odoh::Keyring` derives each key pair from its 32-byte seed with
+  `ObliviousDoHKeyPair::from_parameters(0x0020, 0x0001, 0x0001, &seed)` (RFC 9180 DeriveKeyPair),
+  indexed by key id, held in `Shared.odoh` (`ArcSwap<Keyring>`). Every key is accepted at once until
+  `not_after_unix`; `/.well-known/odohconfigs` lists only keys past `publish_after_unix`, newest first.
+- **Proxy** (`proxy_enabled`): `POST` of `application/oblivious-dns-message` with `targethost` and
+  `targetpath` (a request carrying `targethost` is always a proxy request) is forwarded unchanged to
+  `https://<targethost><targetpath>` with only `content-type` and `accept`, through one
+  `reqwest::Client` per allowed target (HTTP/2, rustls, the target's CA or webpki roots). The
+  target's status and body return unchanged with `Proxy-Status: nexora; received-status=<code>`.
+  Missing or malformed parameter: 400 `error=http_request_error`; target not in `proxy_targets`
+  (host and port compared; no port = 443) or client outside the recursion ACL: 403
+  `error=http_request_denied`; timeout (`proxy_timeout_ms`, 0 = 2000): 502
+  `error=connection_timeout`; TLS failure: 502 `error=tls_protocol_error`; other connection failure:
+  502 `error=destination_unavailable`. No client address, cookie or forwarding header reaches the
+  target, and the allow list is mandatory (no open relay).
+
 ### Snapshot application
 
 - Validate (version > applied, addresses parse, CIDRs parse, cache
@@ -353,7 +425,9 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   `nexora_proxy_protocol_rejected_total{transport="dot|doh",reason="untrusted_peer|invalid_header|timeout"}`,
   `nexora_tls_certificate_not_after_seconds`,
   `nexora_tls_material_updates_total{result="applied|rejected"}`,
-  `nexora_filter_rewritten_total`.
+  `nexora_filter_rewritten_total`. M8 adds `nexora_mdns_queries_total{result}`,
+  `nexora_mdns_interface_missing{interface}`, `nexora_mdns_reflected_packets_total{from,to}` and
+  `nexora_odoh_requests_total{role,status}`.
 - Query log: each worker pushes a fixed-size `QueryRecord` into a lock-free
   `crossbeam_queue::ArrayQueue` (capacity 65536); on full, the record is
   dropped and `nexora_export_dropped_total{signal="logs"}` increments.
@@ -433,6 +507,11 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   (700). `ServerMessage.log_request` / `EngineMessage.log_batch` (700) read the engine's log
   ring buffer on demand (`LogRequest`, `LogBatch`, `LogLine`, `LogLevel`).
 - M7: fields added to existing messages use 800-899: `RecursionConfig.cache_max_bytes` (800).
+- M8 DNS protocols: fields added to existing messages use 900-999: `ConfigSnapshot.mdns` (900)
+  and `odoh` (901), `RpzTransferSource.zonemd_verify` (900), `RpzZoneStatus.zonemd` (900) and
+  `zonemd_error` (901), `ServerMessage.odoh_keys` (900). `OdohKeys` travel only on `Connect`, are
+  held in engine memory and are never part of `ConfigSnapshot`, `config_versions` or `state_dir`.
+  An engine treats `ZONEMD_VERIFY_UNSPECIFIED` as off.
 
 ## Management plane
 
@@ -556,6 +635,15 @@ One budget, `RecursionConfig.cache_max_bytes` (0 = 64 MiB, else 4 MiB..16 GiB), 
   client IP so a remote attacker cannot lock out the admin). `NEXORA_REPOSITORY_URL` is shown in
   the GUI version details.
 - M7: `GetBlob` streams 1 MiB `substring` reads; `blobs.data` storage is `EXTERNAL` (migration 00801). `resolution_settings.recursor_cache_max_bytes` (migration 00800).
+- M8: primary zones with `zonemd_generate` get a SHA-384 SIMPLE ZONEMD on every rebuild (signed
+  zones: placeholder before signing, ZONEMD RRset signed last); secondary refreshes verify
+  ZONEMD (`zonemd_verify`) before writing anything. Catalog zones (`catalog_zones`): producer
+  catalogs are regenerated inside the zone transaction that changes membership; consumer
+  catalogs are reconciled after each refresh (`xfrin.Scheduler.AfterRefresh`) under
+  `pg_advisory_xact_lock(hashtext('catalog:'||id))`. ODoH seeds (`odoh_keys`, sealed) rotate
+  every `key_rotation_hours` under `nexora:odoh-rotate` and are pushed on `nexora_odoh_keys`.
+  Migrations `01300_zonemd.sql` … `01303_engine_group_mdns.sql`: existing zones and RPZ transfer
+  zones get `zonemd_verify=off`, new ones default to `if_present`.
 - The OpenSearch adapter sorts by `@timestamp` then `_id`; its cursor is `[timestamp, _id]`.
 - Zone export streams rows (apex first, then owners byte-wise); record edits validate only the edited owners and, for unsigned primary zones, write the journal delta from the edited RRsets.
 
@@ -567,7 +655,7 @@ openapi-fetch client generated from `mgmt/api/openapi.yaml`, Recharts.
 
 Routes: `/login`, `/setup`, `/` (dashboard), `/query-log`, `/resolution` ("Forwarding &
 recursion"; `/upstreams` redirects), `/access-control`, `/filtering` ("Blocklist / allowlist"),
-`/filtering/categories`, `/policies`, `/rewrites`, `/zones`, `/zones/tsig-keys`,
+`/filtering/categories`, `/policies`, `/rewrites`, `/zones`, `/zones/tsig-keys`, `/zones/catalogs`,
 `/zones/:zoneId`, `/rpz`, `/dnssec`, `/engines` (`?engine=<id>` opens the engine modal),
 `/engines/groups/:id`, `/engines/nodes/:id`, `/engines/rollouts/:id`, `/users`, `/api-tokens`,
 `/audit`, `/settings`, `/account`, `/help`, `/help/:topic`. Help text lives in

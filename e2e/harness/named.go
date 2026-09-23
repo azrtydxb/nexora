@@ -41,10 +41,50 @@ type NamedZone struct {
 	Name, Type, Text, Primary, KeyName, AllowTransferKey, AllowUpdateKey, AlsoNotify, NotifyKey string
 }
 
+// NamedCatalog consumes an RFC 9432 catalog from Primary (ip:port). KeyName signs
+// both the catalog transfer and member transfers; an empty key permits unsigned transfers.
+// StartNamedConfig creates the catalog secondary automatically. Its members use
+// Primary unless the catalog supplies a per-member primary.
+type NamedCatalog struct {
+	Zone, Primary, KeyName string
+}
+
 // NamedConfig configures StartNamedConfig.
 type NamedConfig struct {
-	Keys  []NamedKey
-	Zones []NamedZone
+	Keys     []NamedKey
+	Zones    []NamedZone
+	Catalogs []NamedCatalog
+}
+
+// renderNamedCatalogs returns the options and zone declarations for BIND 9.20.
+// Catalog refresh is deliberately short: tests wait for observable DNS changes,
+// including when the producer has no NOTIFY target for this ephemeral consumer.
+func renderNamedCatalogs(dir string, catalogs []NamedCatalog) (string, string, error) {
+	if len(catalogs) == 0 {
+		return "", "", nil
+	}
+	var options, zones strings.Builder
+	options.WriteString("\tallow-new-zones yes;\n\tcatalog-zones {\n")
+	for _, catalog := range catalogs {
+		name := dns.Fqdn(catalog.Zone)
+		host, port, err := net.SplitHostPort(catalog.Primary)
+		if err != nil {
+			return "", "", fmt.Errorf("catalog %s primary: %w", name, err)
+		}
+		p, err := strconv.Atoi(port)
+		if net.ParseIP(host) == nil || err != nil || p < 1 || p > 65535 {
+			return "", "", fmt.Errorf("catalog %s primary %q: want IP and port 1..65535", name, catalog.Primary)
+		}
+		key := ""
+		if catalog.KeyName != "" {
+			key = fmt.Sprintf(" key %q", catalog.KeyName)
+		}
+		fmt.Fprintf(&options, "\t\tzone %q default-primaries port %d { %s%s; } in-memory yes min-update-interval 1;\n", name, p, host, key)
+		file := filepath.Join(dir, strings.TrimSuffix(name, ".")+".db")
+		fmt.Fprintf(&zones, "zone %q { type secondary; primaries port %d { %s%s; }; file %q; min-refresh-time 1; max-refresh-time 2; min-retry-time 1; max-retry-time 2; };\n", name, p, host, key, file)
+	}
+	options.WriteString("\t};\n")
+	return options.String(), zones.String(), nil
 }
 
 // StartNamed starts `named` (from $PATH) as the primary for zoneName with zoneText, allowing
@@ -137,6 +177,11 @@ func (e *Env) StartNamedConfig(c NamedConfig) *Named {
 			t.Fatalf("named zone %s: unknown type %q", name, z.Type)
 		}
 	}
+	catalogOptions, catalogZones, err := renderNamedCatalogs(dir, c.Catalogs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.WriteString(catalogZones)
 	for attempt := 1; ; attempt++ {
 		port := e.FreePort()
 		conf := fmt.Sprintf(`options {
@@ -151,9 +196,10 @@ func (e *Env) StartNamedConfig(c NamedConfig) *Named {
 	allow-transfer { any; };
 	ixfr-from-differences yes;
 	dnssec-validation no;
+%[4]s
 };
 controls { };
-%[3]s`, dir, port, body.String())
+%[3]s`, dir, port, body.String(), catalogOptions)
 		n.writeFile(t, "named.conf", conf)
 		args := []string{"-g", "-c", filepath.Join(dir, "named.conf")}
 		if n.cred != nil {

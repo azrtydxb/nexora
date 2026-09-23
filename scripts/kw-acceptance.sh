@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwFullProduct, TestKwFilterCategories, TestKwSmokeAI, TestKwQueryLogBackends)
+# Run the kw acceptance tests (TestKwSmoke, TestKwSmokeM4, TestKwSmokeM8, TestKwFullProduct, TestKwFilterCategories, TestKwSmokeAI, TestKwQueryLogBackends)
 # in the dev pod against the live deployment.
 # TestKwFilterCategories writes per-engine filter index memory and decision time to
 # /work/kw-filter-categories.json in the toolbox pod.
-#   scripts/kw-acceptance.sh [go test -run pattern]   # default 'TestKwSmoke|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI|TestKwQueryLogBackends'
+#   scripts/kw-acceptance.sh [go test -run pattern]   # default 'TestKwSmoke|TestKwSmokeM8|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI|TestKwQueryLogBackends'
 set -euo pipefail
+# Independently pinned inventory: JSON array of {id,node_name,engine_group_id}.
+# Supply persistent UUID bindings; never derive this from the API under test.
+: "${NEXORA_KW_EXPECTED_ENGINES:?set independently verified expected engine UUID/name/group bindings}"
 ctx="${NEXORA_KW_CONTEXT:-kw}"
-run="${1:-TestKwSmoke|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI|TestKwQueryLogBackends}"
+run="${1:-TestKwSmoke|TestKwSmokeM8|TestKwFullProduct|TestKwFilterCategories|TestKwSmokeAI|TestKwQueryLogBackends}"
 # Kubernetes endpoint membership and independent persisted UUID bindings must
 # pass before API/query-log acceptance; observing only one VIP backend is not HA.
 "$(dirname "$0")/kw-preflight.sh" --require-paired
@@ -27,6 +30,8 @@ engine_ip=$(k get pods -l app.kubernetes.io/name=nexora-engine,nexora.io/engine-
 	-o jsonpath='{.items[0].status.podIP}')
 
 exec "$(dirname "$0")/dev-exec.sh" env \
+	NEXORA_KW_M8=1 \
+	NEXORA_KW_EXPECTED_ENGINES="$NEXORA_KW_EXPECTED_ENGINES" \
 	NEXORA_KW_DNS_ADDR=192.168.10.136:53 NEXORA_KW_DNS_ADDR_2=192.168.10.139:53 NEXORA_KW_ENGINE_ADDR="${engine_ip}:53" \
 	NEXORA_KW_API_URL=https://nexora.kw.watteel.lab \
 	NEXORA_KW_API_CA_FILE=/work/kw-cluster-ca.crt NEXORA_KW_ENCRYPTED_ADDR=192.168.10.136 \

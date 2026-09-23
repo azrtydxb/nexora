@@ -917,6 +917,98 @@ Behind a TCP load balancer that sends PROXY v2 headers, set
 client address. Rejections are counted in
 `nexora_proxy_protocol_rejected_total`.
 
+## mDNS gateway and reflection
+
+mDNS is off by default per engine group. Name the LAN interfaces explicitly;
+`timeout_ms` accepts 100–5000 ms (default 500). Hosted zones and matching forward
+zones take precedence over the `local.` gateway. Recursion ACLs, filtering,
+rewrites and RPZ still apply. Answers have TTL capped at 10 seconds. No answer
+returns NXDOMAIN without SOA, which is not cached. At most 64 gateway queries run
+concurrently; excess queries return SERVFAIL.
+
+The engine needs an interface on the LAN segment, such as macvlan, or Helm
+`engine.hostNetwork: true`. Review ports and network access before changing a
+deployment. Existing kw engines are not hostNetwork; a settings round trip there
+does not prove LAN multicast. Linux namespace acceptance is separate.
+Reflection needs at least two named interfaces. It repeats multicast packets
+unchanged with hop limit 255, drops local-source packets, and suppresses payload
+duplicates for one second with a 1024-entry table. Legacy unicast responses are
+not reflected. There is no service-type filter.
+
+Monitor `nexora_mdns_queries_total{result="answered|unanswered|dropped"}`,
+`nexora_mdns_interface_missing{interface}` and
+`nexora_mdns_reflected_packets_total{from,to}`. Missing interfaces are skipped.
+
+## ZONEMD
+
+Enable `zonemd_generate` on a primary to publish a SIMPLE SHA-384 digest with the
+served SOA serial. Signed zones include ZONEMD in denial-of-existence bitmaps and
+sign the digest RRset after computing it. Secondaries and transfer RPZ zones
+accept `zonemd_verify` values `off`, `if_present`, and `required`. Existing rows
+upgrade to `off`; new rows default to `if_present`. Status distinguishes absent,
+verified and failed digests. Failed transfers retain the last good zone and
+report the error; they do not publish unverified records. RPZ file uploads are
+not verified. Verification accepts SHA-384 and SHA-512; generation uses SHA-384.
+
+Export an allowed AXFR to a zone file and verify independently using
+`ldns-verify-zone -Z <zone-file>`. Use TSIG and transfer ACLs for authentication.
+The management plane does not DNSSEC-validate transferred zones (RFC 8976 section
+4 step 1); it checks the digest against the transferred records.
+
+## Oblivious DoH
+
+Target and proxy roles are fleet-wide and off by default. An engine DoH listener
+is required. Targets publish `/.well-known/odohconfigs` and accept
+`application/oblivious-dns-message` on the DoH path. Encrypted DNS errors still
+use HTTP 200; malformed messages use 400 and unknown keys use 401.
+Keys require the management KEK and travel only over the control stream, never
+in snapshots or persisted engine state. Standalone ODoH is unsupported.
+`key_rotation_hours` accepts 1–720 (default 24). A new key is accepted immediately,
+published after five minutes, and valid for two rotation intervals. Allow the
+publication delay in acceptance tests; do not change production key timestamps.
+
+Proxies require an explicit host/port allow list, optionally a target CA, and a
+100–10000 ms timeout (default 2000). Target or recursion-ACL denial returns 403;
+connection, timeout and TLS failures return 502 with `Proxy-Status`. Targets see
+the proxy address, not the client: permit the proxy in the target recursion ACL
+and account for that identity in policies and query logs. Monitor
+`nexora_odoh_requests_total{role,status}`. Key rotation requires an administrator.
+
+## Catalog zones
+
+A producer publishes RFC 9432 version 2 with stable UUID-derived member labels.
+Add primaries through `catalog_zone_id`; membership changes rebuild the catalog
+in the same transaction. Generated records cannot be edited. Query access
+defaults to loopback; configure transfer ACLs and TSIG for external consumers.
+A BIND consumer uses a secondary catalog referenced by `catalog-zones`:
+
+```bind
+options { catalog-zones { zone "catalog.example."; }; };
+zone "catalog.example." {
+    type secondary;
+    primaries { 192.0.2.53; };
+    file "secondary/catalog.example";
+};
+```
+
+Configure authentication and writable storage for the actual BIND installation.
+This example is guidance, not interoperability evidence. Catalog `coo` migration
+and `group` mapping are unsupported. Nexora consumers inherit catalog primaries,
+TSIG references and engine group for created secondaries. Foreign-name clashes
+are recorded without taking over zones; broken or expired catalogs leave
+membership unchanged. A changed label recreates member state. Consumer-owned
+members reject manual update/delete with `catalog_managed`. Deleting a consumer
+catalog detaches members as ordinary secondaries. By contrast, an empty catalog
+deletes every member zone this catalog created. Review the primary before
+publishing an empty catalog.
+
+The integrated schema preserves main 01300/01301 and assigns 01302–01305 to
+ZONEMD, catalogs, ODoH and mDNS. Historical standalone M8 used 01300–01303 for
+different SQL. Startup rejects incompatible schema/history before migrating.
+Renaming files is not a supported upgrade of an already-applied M8 database.
+Preserve a backup; the integration owner must inspect live history and design a
+transition. Do not rewrite goose history to bypass refusal.
+
 ## Key storage
 
 TSIG keys, RPZ TSIG secrets and DNSSEC private keys are never stored in

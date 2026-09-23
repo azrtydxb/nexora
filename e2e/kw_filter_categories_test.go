@@ -4,9 +4,9 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,13 +19,14 @@ import (
 )
 
 type kwFilterIndex struct {
-	Entries           int64   `json:"entries"`
-	Bytes             int64   `json:"bytes"`
-	MaxBytes          int64   `json:"max_bytes"`
-	BuildSeconds      float64 `json:"build_seconds"`
-	DecisionNSBlocked float64 `json:"decision_ns_blocked"`
-	DecisionNSClean   float64 `json:"decision_ns_clean"`
-	CPU               string  `json:"cpu"`
+	At                time.Time `json:"at"`
+	Entries           int64     `json:"entries"`
+	Bytes             int64     `json:"bytes"`
+	MaxBytes          int64     `json:"max_bytes"`
+	BuildSeconds      float64   `json:"build_seconds"`
+	DecisionNSBlocked float64   `json:"decision_ns_blocked"`
+	DecisionNSClean   float64   `json:"decision_ns_clean"`
+	CPU               string    `json:"cpu"`
 }
 
 var kwListName = regexp.MustCompile(`^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+$`)
@@ -86,9 +87,21 @@ func kwSourceNames(t *testing.T, src harness.CategorySource, member string, n in
 
 func TestKwFilterCategories(t *testing.T) {
 	env := loadKwEnv(t)
+	expected, err := kwExpectedFleet(os.Getenv("NEXORA_KW_EXPECTED_ENGINES"), env.engines)
+	if err != nil {
+		t.Fatal(err)
+	}
 	api := kwLogin(t, env)
+	var initial []kwFilterEngine
+	api.Must(http.MethodGet, "/engines", nil, &initial, http.StatusOK)
+	if err := kwValidateFleet(expected, initial, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	var cats []harness.CategoryView
 	api.Must(http.MethodGet, "/filter-categories", nil, &cats, http.StatusOK)
+	if len(cats) == 0 {
+		t.Fatal("no filter categories returned")
+	}
 	t.Cleanup(func() {
 		for _, c := range cats {
 			if code, reason := api.SetFilterCategory(c.Key, c.Enabled, nil, false); code != http.StatusOK {
@@ -105,6 +118,16 @@ func TestKwFilterCategories(t *testing.T) {
 		api.RefreshCategory(c.Key)
 	}
 	kwWaitApplied(t, api, env.engines)
+	var engines []kwFilterEngine
+	api.Must(http.MethodGet, "/engines", nil, &engines, http.StatusOK)
+	if err := kwValidateFleet(expected, engines, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	versions := make(map[string]uint64, len(expected))
+	for _, e := range engines {
+		versions[e.ID] = e.TargetVersion
+	}
+	after := time.Now()
 
 	t.Run("every-category-blocks-real-names", func(t *testing.T) {
 		for _, cat := range cats {
@@ -141,26 +164,20 @@ func TestKwFilterCategories(t *testing.T) {
 	})
 
 	t.Run("per-engine-memory-and-decision-time", func(t *testing.T) {
-		var engines []harness.EngineView
-		api.Must(http.MethodGet, "/engines", nil, &engines, http.StatusOK)
-		report := map[string]kwFilterIndex{}
-		harness.Eventually(t, 3*time.Minute, func() error {
-			for _, e := range engines {
-				if !e.Connected {
-					continue
-				}
-				var stats struct {
-					FilterIndex *kwFilterIndex `json:"filter_index"`
-				}
-				api.Must(http.MethodGet, "/engines/"+e.ID+"/stats?window=5m", nil, &stats, http.StatusOK)
-				if stats.FilterIndex == nil || stats.FilterIndex.Entries < 1_000_000 {
-					return fmt.Errorf("engine %s has not reported the category index yet: %+v", e.NodeName, stats.FilterIndex)
-				}
-				report[e.NodeName] = *stats.FilterIndex
-			}
-			return nil
-		})
-		for node, fi := range report {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		boundedAPI := acceptanceAPI(ctx, api)
+		var report map[string]kwFilterIndex
+		if err := acceptancePoll(ctx, 200*time.Millisecond, func() error {
+			var err error
+			report, err = kwCollectFilterReport(boundedAPI, expected, versions, after)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for _, engine := range expected {
+			node := engine.NodeName + " (" + engine.ID + ")"
+			fi := report[engine.ID]
 			scale := max(1, float64(fi.Entries)/5.1e6)
 			t.Logf("%s: %d names, %.1f MiB (cap %.0f MiB), build %.2f s, %.0f ns blocked, %.0f ns clean on %s",
 				node, fi.Entries, float64(fi.Bytes)/(1<<20), float64(fi.MaxBytes)/(1<<20), fi.BuildSeconds, fi.DecisionNSBlocked, fi.DecisionNSClean, fi.CPU)
@@ -177,7 +194,10 @@ func TestKwFilterCategories(t *testing.T) {
 			}
 		}
 		if path := os.Getenv("NEXORA_KW_FILTER_REPORT"); path != "" {
-			raw, _ := json.MarshalIndent(report, "", "  ")
+			raw, err := json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(path, raw, 0o644); err != nil {
 				t.Fatal(err)
 			}

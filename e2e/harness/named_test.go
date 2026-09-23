@@ -4,12 +4,74 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 )
+
+func TestRenderNamedCatalogs(t *testing.T) {
+	for _, tc := range []struct {
+		name, primary, key, wantPrimary string
+	}{
+		{"signed IPv4", "127.0.0.1:15353", "catalog-key.", `port 15353 { 127.0.0.1 key "catalog-key."; }`},
+		{"unsigned IPv6", "[::1]:25353", "", `port 25353 { ::1; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			options, zones, err := renderNamedCatalogs(dir, []NamedCatalog{{Zone: "catalog.test", Primary: tc.primary, KeyName: tc.key}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantOptions := "\tallow-new-zones yes;\n\tcatalog-zones {\n\t\tzone \"catalog.test.\" default-primaries " + tc.wantPrimary + " in-memory yes min-update-interval 1;\n\t};\n"
+			if options != wantOptions {
+				t.Fatalf("catalog options:\n%s\nwant:\n%s", options, wantOptions)
+			}
+			wantZones := fmt.Sprintf("zone %q { type secondary; primaries %s; file %q; min-refresh-time 1; max-refresh-time 2; min-retry-time 1; max-retry-time 2; };\n", "catalog.test.", tc.wantPrimary, filepath.Join(dir, "catalog.test.db"))
+			if zones != wantZones {
+				t.Fatalf("catalog secondary:\n%s\nwant:\n%s", zones, wantZones)
+			}
+		})
+	}
+}
+
+func TestRenderNamedCatalogsMultipleAndEmpty(t *testing.T) {
+	options, zones, err := renderNamedCatalogs(t.TempDir(), nil)
+	if err != nil || options != "" || zones != "" {
+		t.Fatalf("no catalogs: options=%q zones=%q error=%v", options, zones, err)
+	}
+	options, zones, err = renderNamedCatalogs(t.TempDir(), []NamedCatalog{
+		{Zone: "first.test.", Primary: "127.0.0.1:15353", KeyName: "first-key."},
+		{Zone: "second.test.", Primary: "127.0.0.2:25353", KeyName: "second-key."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(options, "catalog-zones {") != 1 || strings.Count(options, "in-memory yes min-update-interval 1;") != 2 || strings.Count(zones, "type secondary;") != 2 {
+		t.Fatalf("multiple catalogs did not produce one options list and two secondaries:\n%s\n%s", options, zones)
+	}
+	for _, want := range []string{
+		`zone "first.test." default-primaries port 15353 { 127.0.0.1 key "first-key."; }`,
+		`zone "second.test." default-primaries port 25353 { 127.0.0.2 key "second-key."; }`,
+	} {
+		if !strings.Contains(options, want) {
+			t.Fatalf("catalog options missing %q:\n%s", want, options)
+		}
+	}
+}
+
+func TestRenderNamedCatalogsInvalidPrimary(t *testing.T) {
+	for _, primary := range []string{"", "127.0.0.1", "localhost:53", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:dns"} {
+		t.Run(primary, func(t *testing.T) {
+			options, zones, err := renderNamedCatalogs(t.TempDir(), []NamedCatalog{{Zone: "catalog.test.", Primary: primary}})
+			if err == nil || options != "" || zones != "" {
+				t.Fatalf("invalid primary %q: options=%q zones=%q error=%v", primary, options, zones, err)
+			}
+		})
+	}
+}
 
 func TestNamedHarnessServesTSIGAXFRAndReloads(t *testing.T) {
 	env := New(t)
