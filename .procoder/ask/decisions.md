@@ -391,3 +391,26 @@ stands therefore breaks every CI job on the first step.
 from the kw API (`nexora-ingress-tls`, key `ca.crt`) and set as the repo secret
 `NEXORA_CI_CA_PEM`. Its SHA-256 fingerprint matches the copy Nexus serves, so the
 previously unverified fetch was authentic. Rework committed as ed98e94.
+
+## Dev toolbox pods: how much should stand idle in the cluster
+
+Building and testing Nexora happens in a long-lived `toolbox` pod in `nexora-dev`
+(no Docker on the laptop; arm64 target; PostgreSQL and fixtures live there), with a 100Gi
+`work` volume for build caches. Parallel milestone work added `toolbox-m7`, `toolbox-m9`
+and `toolbox-m10`, each requesting 4 CPU and 8Gi, and none were removed when those
+milestones finished; the user deleted them on 2026-09-23 for wasting resources. One
+`toolbox` remains (4 CPU / 8Gi reserved on worker-23, plus the 100Gi volume). The CI job
+container image `nexora-dev:toolbox-1`/`toolbox-2` is a registry tag, unrelated to these
+running pods.
+
+- Keep one toolbox but shrink its request (about 1 CPU, higher limit) and scale it to zero
+  when idle, deleting per-milestone pods as soon as their milestone merges
+- Keep one toolbox exactly as it is (4 CPU / 8Gi always reserved)
+- Drop the persistent dev pod entirely and run builds in short-lived pods: nothing lingers,
+  but every run pays for a cold build cache
+
+**Answer (2026-09-23):** No persistent dev pod. Run builds and tests in short-lived pods and
+remove the `toolbox` Deployment and its 100Gi `work` volume. `scripts/dev-exec.sh`,
+`dev-sync.sh` and `scripts/kw-acceptance.sh` currently require the standing pod, so they are
+converted first; the toolbox is deleted last, after the kw rollout and acceptance run that
+are in flight now.
