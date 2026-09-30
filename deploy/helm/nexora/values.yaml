@@ -57,6 +57,12 @@ mgmt:
   grpcLoadBalancer:
     enabled: false
     loadBalancerIP: ""
+    # Passed to the Service as-is, e.g. io.cilium/l2-announcer with an
+    # lbipam.cilium.io/ips annotation. Engine group, instance, extra and
+    # failover-pair services accept the same three keys.
+    loadBalancerClass: ""
+    labels: {}
+    annotations: {}
   ingress:
     enabled: false
     name: "" # default <prefix>-mgmt

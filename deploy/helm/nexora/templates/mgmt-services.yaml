@@ -27,8 +27,17 @@ kind: Service
 metadata:
   name: {{ $prefix }}-mgmt-lb
   labels: {{- include "nexora.labels" (dict "root" . "name" "nexora-mgmt") | nindent 4 }}
+    {{- with .Values.mgmt.grpcLoadBalancer.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.mgmt.grpcLoadBalancer.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: LoadBalancer
+  {{- with .Values.mgmt.grpcLoadBalancer.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
   {{- with .Values.mgmt.grpcLoadBalancer.loadBalancerIP }}
   loadBalancerIP: {{ . }}
   {{- end }}

@@ -117,7 +117,16 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "loadBalancerIP": { "type": "string" }
+            "loadBalancerIP": { "type": "string" },
+            "loadBalancerClass": { "type": "string" },
+            "labels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
           }
         },
         "ingress": {
@@ -312,6 +321,15 @@
                   "name": { "type": "string" },
                   "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
                   "loadBalancerIP": { "type": "string" },
+                  "loadBalancerClass": { "type": "string" },
+                  "labels": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
+                  "annotations": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" }
+                  },
                   "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                 }
               },
@@ -340,6 +358,15 @@
                       "properties": {
                         "name": { "type": "string", "minLength": 1 },
                         "loadBalancerIP": { "type": "string", "minLength": 1 },
+                        "loadBalancerClass": { "type": "string" },
+                        "labels": {
+                          "type": "object",
+                          "additionalProperties": { "type": "string" }
+                        },
+                        "annotations": {
+                          "type": "object",
+                          "additionalProperties": { "type": "string" }
+                        },
                         "type": { "enum": ["LoadBalancer"] },
                         "externalTrafficPolicy": { "enum": ["Local"] }
                       }
@@ -378,6 +405,15 @@
                           "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
                         },
                         "loadBalancerIP": { "type": "string" },
+                        "loadBalancerClass": { "type": "string" },
+                        "labels": {
+                          "type": "object",
+                          "additionalProperties": { "type": "string" }
+                        },
+                        "annotations": {
+                          "type": "object",
+                          "additionalProperties": { "type": "string" }
+                        },
                         "externalTrafficPolicy": {
                           "enum": ["Local", "Cluster"]
                         }
@@ -398,6 +434,15 @@
                       "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
                     },
                     "loadBalancerIP": { "type": "string" },
+                    "loadBalancerClass": { "type": "string" },
+                    "labels": {
+                      "type": "object",
+                      "additionalProperties": { "type": "string" }
+                    },
+                    "annotations": {
+                      "type": "object",
+                      "additionalProperties": { "type": "string" }
+                    },
                     "externalTrafficPolicy": { "enum": ["Local", "Cluster"] }
                   },
                   "additionalProperties": false

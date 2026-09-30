@@ -27,7 +27,14 @@ mgmt:
   mcp:
     enabled: true
     readOnly: true
-  grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
+  # kw announces LoadBalancer addresses with Cilium L2 (internal-lab
+  # kubernetes/cilium/l2-announcements.yaml); its pool selects on the label.
+  grpcLoadBalancer:
+    enabled: true
+    loadBalancerIP: 192.168.10.135
+    loadBalancerClass: io.cilium/l2-announcer
+    labels: { lb.kw.watteel.lab/announcer: cilium }
+    annotations: { lbipam.cilium.io/ips: 192.168.10.135 }
   ingress:
     enabled: true
     name: nexora
@@ -54,8 +61,9 @@ engine:
   resources:
     requests: { cpu: 500m, memory: 384Mi }
     limits: { cpu: "4", memory: 1Gi }
-  # kube-vip announces the VIPs from a control-plane node; with externalTrafficPolicy Local that
-  # node must run the engine behind the address.
+  # Cilium L2 announces each DNS VIP only from the nodes running its engines (a per-service
+  # CiliumL2AnnouncementPolicy in internal-lab, selected by lb.kw.watteel.lab/pinned); with
+  # externalTrafficPolicy Local the announcing node must run an engine behind the address.
   tolerations:
     - {
         key: node-role.kubernetes.io/control-plane,
@@ -83,6 +91,13 @@ engine:
               type: LoadBalancer,
               loadBalancerIP: 192.168.10.136,
               externalTrafficPolicy: Local,
+              loadBalancerClass: io.cilium/l2-announcer,
+              labels:
+                {
+                  lb.kw.watteel.lab/announcer: cilium,
+                  lb.kw.watteel.lab/pinned: dns136,
+                },
+              annotations: { lbipam.cilium.io/ips: 192.168.10.136 },
             }
         - name: b
           node: master-13
@@ -92,6 +107,13 @@ engine:
               type: LoadBalancer,
               loadBalancerIP: 192.168.10.139,
               externalTrafficPolicy: Local,
+              loadBalancerClass: io.cilium/l2-announcer,
+              labels:
+                {
+                  lb.kw.watteel.lab/announcer: cilium,
+                  lb.kw.watteel.lab/pinned: dns139,
+                },
+              annotations: { lbipam.cilium.io/ips: 192.168.10.139 },
             }
 metrics:
   serviceMonitor:

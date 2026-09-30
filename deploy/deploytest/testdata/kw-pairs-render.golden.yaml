@@ -121,8 +121,13 @@ metadata:
     app.kubernetes.io/version: "golden"
     helm.sh/chart: nexora-1.0.0
     nexora.io/engine-group: default
+    lb.kw.watteel.lab/announcer: cilium
+    lb.kw.watteel.lab/pinned: dns136
+  annotations:
+    lbipam.cilium.io/ips: 192.168.10.136
 spec:
   type: LoadBalancer
+  loadBalancerClass: io.cilium/l2-announcer
   loadBalancerIP: 192.168.10.136
   # Local keeps client source addresses (per-client policy, query log); the node announcing a
   # LoadBalancer address must then run an engine of this group.
@@ -152,8 +157,13 @@ metadata:
     app.kubernetes.io/version: "golden"
     helm.sh/chart: nexora-1.0.0
     nexora.io/engine-group: default
+    lb.kw.watteel.lab/announcer: cilium
+    lb.kw.watteel.lab/pinned: dns139
+  annotations:
+    lbipam.cilium.io/ips: 192.168.10.139
 spec:
   type: LoadBalancer
+  loadBalancerClass: io.cilium/l2-announcer
   loadBalancerIP: 192.168.10.139
   # Local keeps client source addresses (per-client policy, query log); the node announcing a
   # LoadBalancer address must then run an engine of this group.
@@ -221,8 +231,12 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "golden"
     helm.sh/chart: nexora-1.0.0
+    lb.kw.watteel.lab/announcer: cilium
+  annotations:
+    lbipam.cilium.io/ips: 192.168.10.135
 spec:
   type: LoadBalancer
+  loadBalancerClass: io.cilium/l2-announcer
   loadBalancerIP: 192.168.10.135
   selector:
     app.kubernetes.io/name: nexora-mgmt
