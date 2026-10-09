@@ -80,6 +80,11 @@ type QuerylogSpec struct {
 type LoadBalancerSpec struct {
 	Enabled        *bool  `json:"enabled,omitempty"`
 	LoadBalancerIP string `json:"loadBalancerIP,omitempty"`
+	// LoadBalancerClass, Labels and Annotations pass through to the rendered
+	// Service as-is (kw selects its Cilium L2 announcer with them).
+	LoadBalancerClass string            `json:"loadBalancerClass,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
 // IngressSpec is values `mgmt.ingress`.
@@ -270,6 +275,11 @@ type ServiceSpec struct {
 	Type                  string `json:"type,omitempty"`
 	LoadBalancerIP        string `json:"loadBalancerIP,omitempty"`
 	ExternalTrafficPolicy string `json:"externalTrafficPolicy,omitempty"`
+	// LoadBalancerClass, Labels and Annotations pass through to the rendered
+	// Service as-is (kw selects its Cilium L2 announcer with them).
+	LoadBalancerClass string            `json:"loadBalancerClass,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
 // EngineInstanceSpec is one engine pinned to one node.

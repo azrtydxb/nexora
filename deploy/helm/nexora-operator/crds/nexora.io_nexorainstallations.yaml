@@ -274,7 +274,20 @@ spec:
                             description: ServiceSpec is a DNS Service of an engine
                               group or instance.
                             properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                type: object
                               externalTrafficPolicy:
+                                type: string
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                              loadBalancerClass:
+                                description: |-
+                                  LoadBalancerClass, Labels and Annotations pass through to the rendered
+                                  Service as-is (kw selects its Cilium L2 announcer with them).
                                 type: string
                               loadBalancerIP:
                                 type: string
@@ -298,7 +311,20 @@ spec:
                                 description: ServiceSpec is a DNS Service of an engine
                                   group or instance.
                                 properties:
+                                  annotations:
+                                    additionalProperties:
+                                      type: string
+                                    type: object
                                   externalTrafficPolicy:
+                                    type: string
+                                  labels:
+                                    additionalProperties:
+                                      type: string
+                                    type: object
+                                  loadBalancerClass:
+                                    description: |-
+                                      LoadBalancerClass, Labels and Annotations pass through to the rendered
+                                      Service as-is (kw selects its Cilium L2 announcer with them).
                                     type: string
                                   loadBalancerIP:
                                     type: string
@@ -528,7 +554,20 @@ spec:
                           description: ServiceSpec is a DNS Service of an engine group
                             or instance.
                           properties:
+                            annotations:
+                              additionalProperties:
+                                type: string
+                              type: object
                             externalTrafficPolicy:
+                              type: string
+                            labels:
+                              additionalProperties:
+                                type: string
+                              type: object
+                            loadBalancerClass:
+                              description: |-
+                                LoadBalancerClass, Labels and Annotations pass through to the rendered
+                                Service as-is (kw selects its Cilium L2 announcer with them).
                               type: string
                             loadBalancerIP:
                               type: string
@@ -3027,8 +3066,21 @@ spec:
                   grpcLoadBalancer:
                     description: LoadBalancerSpec is values `mgmt.grpcLoadBalancer`.
                     properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
                       enabled:
                         type: boolean
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      loadBalancerClass:
+                        description: |-
+                          LoadBalancerClass, Labels and Annotations pass through to the rendered
+                          Service as-is (kw selects its Cilium L2 announcer with them).
+                        type: string
                       loadBalancerIP:
                         type: string
                     type: object

@@ -28,7 +28,14 @@ spec:
           url: "http://opensearch.nexora.svc.cluster.local:9200",
           index: "nexora-querylog-*",
         }
-    grpcLoadBalancer: { enabled: true, loadBalancerIP: 192.168.10.135 }
+    grpcLoadBalancer:
+      {
+        enabled: true,
+        loadBalancerIP: 192.168.10.135,
+        loadBalancerClass: io.cilium/l2-announcer,
+        labels: { lb.kw.watteel.lab/announcer: cilium },
+        annotations: { lbipam.cilium.io/ips: 192.168.10.135 },
+      }
     ingress:
       enabled: true
       name: nexora
@@ -73,6 +80,13 @@ spec:
                 type: LoadBalancer,
                 loadBalancerIP: 192.168.10.136,
                 externalTrafficPolicy: Local,
+                loadBalancerClass: io.cilium/l2-announcer,
+                labels:
+                  {
+                    lb.kw.watteel.lab/announcer: cilium,
+                    lb.kw.watteel.lab/pinned: dns136,
+                  },
+                annotations: { lbipam.cilium.io/ips: 192.168.10.136 },
               }
           - name: b
             node: master-13
@@ -82,6 +96,13 @@ spec:
                 type: LoadBalancer,
                 loadBalancerIP: 192.168.10.139,
                 externalTrafficPolicy: Local,
+                loadBalancerClass: io.cilium/l2-announcer,
+                labels:
+                  {
+                    lb.kw.watteel.lab/announcer: cilium,
+                    lb.kw.watteel.lab/pinned: dns139,
+                  },
+                annotations: { lbipam.cilium.io/ips: 192.168.10.139 },
               }
   metrics:
     serviceMonitor: { enabled: true, labels: { release: kps }, interval: 30s }
