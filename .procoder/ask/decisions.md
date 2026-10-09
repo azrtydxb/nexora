@@ -414,3 +414,13 @@ remove the `toolbox` Deployment and its 100Gi `work` volume. `scripts/dev-exec.s
 `dev-sync.sh` and `scripts/kw-acceptance.sh` currently require the standing pod, so they are
 converted first; the toolbox is deleted last, after the kw rollout and acceptance run that
 are in flight now.
+
+## Making the kw query log reliable (2026-10-09)
+
+The query log works, but `GET /query-log?name=…` intermittently returns `querylog_unavailable`. A cold leading-wildcard search over 28 daily indices (~13.8M docs, 1 node, 1g heap) can exceed mgmt's hard 5 s OpenSearch timeout (mgmt/internal/querylog/opensearch.go:19). Separately, index nexora-querylog-v2-2026.10.06 is red (TranslogCorruptedException since 2026-10-07 08:03); its data is unreadable. Replicas can never be placed on one node, so the cluster stays yellow.
+
+- Delete the corrupt 2026.10.06 index (loses that day's log, already unreadable), set number_of_replicas 0 on querylog indices, raise heap to 2g in deploy/kw/opensearch.yaml, and fix the name search in code (bounded default time window + 15 s timeout) (recommended)
+- Same, but keep the corrupt index (cluster stays red)
+- Only the code change
+
+**Decision (2026-10-09, owner):** all of it: delete the corrupt index, replicas 0, heap 2g, and the name-search code fix.

@@ -4845,6 +4845,7 @@ export interface operations {
   searchQueryLog: {
     parameters: {
       query?: {
+        /** @description Start of the time range. When neither from nor to is given, the search covers the last 24 hours. */
         from?: string;
         to?: string;
         client?: string;

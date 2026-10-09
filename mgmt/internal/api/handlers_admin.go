@@ -281,6 +281,10 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	if p.To != nil {
 		q.To = *p.To
 	}
+	if q.From.IsZero() && q.To.IsZero() {
+		// An unbounded search fans out over every daily index and can outlast the backend timeout.
+		q.From = time.Now().Add(-defaultQueryLogWindow)
+	}
 	for _, f := range []struct {
 		name  string
 		dst   *[]string
@@ -319,6 +323,9 @@ func (h *handlers) SearchQueryLog(ctx context.Context, req SearchQueryLogRequest
 	}
 	return SearchQueryLog200JSONResponse(QueryLogPage{Backend: h.d.QueryLog.Name(), NextCursor: page.NextCursor, Records: records}), nil
 }
+
+// defaultQueryLogWindow is how far back a query-log search looks when the request has neither from nor to.
+const defaultQueryLogWindow = 24 * time.Hour
 
 // maxQueryLogValues caps the values of one repeated query-log parameter.
 const maxQueryLogValues = 32

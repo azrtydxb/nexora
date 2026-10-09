@@ -28,15 +28,15 @@ spec:
             - { name: bootstrap.memory_lock, value: "false" }
             - { name: DISABLE_SECURITY_PLUGIN, value: "true" }
             - { name: DISABLE_INSTALL_DEMO_CONFIG, value: "true" }
-            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms1g -Xmx1g" }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms2g -Xmx2g" }
           ports:
             - { name: http, containerPort: 9200 }
           readinessProbe:
             httpGet: { path: /_cluster/health, port: 9200 }
             periodSeconds: 10
           resources:
-            requests: { cpu: 500m, memory: 2Gi }
-            limits: { cpu: "2", memory: 3Gi }
+            requests: { cpu: 500m, memory: 3Gi }
+            limits: { cpu: "2", memory: 4Gi }
           volumeMounts:
             - { name: data, mountPath: /usr/share/opensearch/data }
   volumeClaimTemplates:

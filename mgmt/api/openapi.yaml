@@ -4076,7 +4076,12 @@ paths:
     get:
       operationId: searchQueryLog
       parameters:
-        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - {
+            name: from,
+            in: query,
+            description: "Start of the time range. When neither from nor to is given, the search covers the last 24 hours.",
+            schema: { type: string, format: date-time },
+          }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - { name: client, in: query, schema: { type: string } }
         - {

@@ -121,6 +121,10 @@ k patch statefulset clickhouse -p "{\"spec\":{\"template\":{\"metadata\":{\"anno
 k rollout status statefulset/clickhouse --timeout=5m
 k exec -i clickhouse-0 -c clickhouse -- clickhouse client --multiquery <"$root/deploy/clickhouse/querylog.sql"
 k apply -f "$kw/opensearch.yaml" -f "$kw/cnpg-cluster.yaml" -f "$kw/otelcol.yaml" -f "$kw/blocklist.yaml"
+# Single-node OpenSearch can never place replicas: new daily indices get 0 so the cluster stays green.
+k rollout status statefulset/opensearch --timeout=10m
+k exec -i opensearch-0 -c opensearch -- curl -fsS -XPUT -H 'Content-Type: application/json' \
+	localhost:9200/_index_template/nexora-querylog --data-binary @- <"$kw/opensearch-querylog-template.json"
 # A changed collector ConfigMap does not restart the pod: stamp its hash into the pod template, so the
 # collector (e.g. the nexora-querylog-v2 rename) is live before any engine of the new release sends records.
 otel_sha=$(shasum -a 256 "$kw/otelcol.yaml" | cut -c1-16)
