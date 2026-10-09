@@ -434,3 +434,13 @@ PR #74 (24h default window, 15s timeout) is not live: kw runs mgmt sha-115317a, 
 - Leave it undeployed for now
 
 **Decision (2026-10-09, owner):** merge #74 after its review comments, then deploy from main with scripts/kw-deploy.sh and rerun the verification.
+
+## Merging nexora#74 over pre-existing red checks (2026-10-09)
+
+On #74 two checks fail exactly as on main and are unrelated to the PR: `operator` (TestValuesFromKwEquivalentInstallation, also red on main run 37925971706) and `e2e` (`unshare: Operation not permitted` on the ARC runners, also red on main). `mgmt` was red from a test fixture gap introduced by 08202d3; fixed in fb1e18c.
+
+- Merge once mgmt is green, accepting operator and e2e as known pre-existing failures, then deploy and verify (recommended)
+- Fix operator and e2e on main first, then merge #74
+- Hold #74
+
+**Decision (2026-10-09, owner):** fix operator and e2e on main first, then merge #74.
