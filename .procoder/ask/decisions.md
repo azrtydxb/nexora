@@ -424,3 +424,13 @@ The query log works, but `GET /query-log?name=…` intermittently returns `query
 - Only the code change
 
 **Decision (2026-10-09, owner):** all of it: delete the corrupt index, replicas 0, heap 2g, and the name-search code fix.
+
+## Deploying the query-log fix to kw (2026-10-09)
+
+PR #74 (24h default window, 15s timeout) is not live: kw runs mgmt sha-115317a, and cold name searches still hit the old 5s timeout (2 of 5 runs 503). The only deploy path is scripts/kw-deploy.sh, which builds both images and walks the guarded serial Helm stages over all four DNS engines (LAN DNS) with a DNS monitor; "sampled DNS success is not a zero-loss guarantee".
+
+- Deploy now from the PR branch with scripts/kw-deploy.sh, then rerun the five verification searches (recommended)
+- Merge PR #74 first (after review comments), then deploy from main
+- Leave it undeployed for now
+
+**Decision (2026-10-09, owner):** merge #74 after its review comments, then deploy from main with scripts/kw-deploy.sh and rerun the verification.
