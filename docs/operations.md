@@ -2139,6 +2139,22 @@ at a time after verifying its partner. On interruption, inspect the retained
 `nexora-deploy-lock`, Helm history/status and actual pod/endpoint identities before
 manual recovery; never clear ownership just because a client process timed out.
 
+**Releasing a retained lock.** Only after the run is known to be dead, in this order:
+
+1. Inspect: `kubectl --context kw -n nexora get configmap nexora-deploy-lock -o yaml`. `data.owner` is the token,
+   `data.acquiredAt` the start time and `data.stage` the last phase or stage the run entered (advisory;
+   empty on locks written by older versions). Also check Helm history/status, controller strategies, pods
+   and EndpointSlices.
+2. Confirm no process is running: no `kw-rollout deploy` or `scripts/kw-deploy.sh` on any operator machine
+   or CI runner, and no `helm` operation pending (`helm --kube-context kw -n nexora status nexora` is not
+   `pending-*`). A client timeout is not proof: the API server may still be applying changes.
+3. Confirm the failed stage from `data.stage` and the failed run's output, and that the fleet is healthy or
+   that you accept re-running from that stage (`scripts/kw-preflight.sh`).
+4. Release: `scripts/kw-release-lock.sh --owner <data.owner>` shows the lock and refuses; add `--confirm`
+   to release it. The owner must equal the current one, so a lock re-acquired meanwhile cannot be
+   released by mistake; the update fails if the ConfigMap changed since it was read, and never deletes it.
+   It refuses when no lock is held. Never clear `data.owner` by hand.
+
 `scripts/kw-acceptance.sh` runs
 `TestKwSmoke`, `TestKwSmokeM4`, `TestKwFullProduct` and `TestKwFilterCategories`
 from the dev pod against the live release. The admin password is in the secret `nexora-admin`

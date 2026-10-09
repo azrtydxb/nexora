@@ -76,7 +76,7 @@ func TestDeploymentLockLive(t *testing.T) {
 	if err := a.Acquire(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.changeOwner(ctx, stale, ""); err == nil {
+	if _, err := b.changeOwner(ctx, stale, "", "", ""); err == nil {
 		t.Fatal("real API accepted stale compare-and-swap release")
 	}
 	if err := a.Check(ctx); err != nil {

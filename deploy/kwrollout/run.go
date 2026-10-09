@@ -46,7 +46,10 @@ type steps struct {
 	lock      func(context.Context) error
 	unlock    func(context.Context) error
 	ownership func(context.Context) error
-	inspect   func(context.Context) (bool, error)
+	// progress optionally records the stage about to run on the lock, as
+	// advisory diagnostics only; its failure never decides safety.
+	progress func(context.Context, string)
+	inspect  func(context.Context) (bool, error)
 	// checkDNS performs one complete configured VIP probe round without retries.
 	// It must honor cancellation; run joins it before returning or unlocking.
 	checkDNS        func(context.Context) error
@@ -175,6 +178,9 @@ func runStages(ctx context.Context, pairs []Pair, s steps) error {
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if s.progress != nil {
+			s.progress(ctx, "stage "+stage.Name)
 		}
 		if err := s.apply(ctx, stage); err != nil {
 			return fmt.Errorf("stage %s (lock retained): %w", stage.Name, err)

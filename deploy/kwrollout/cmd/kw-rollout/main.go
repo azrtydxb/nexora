@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,7 +27,7 @@ func main() {
 
 func execute(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: kw-rollout check|deploy --context kw --probe-helper PATH [--root PATH --tag sha-COMMIT] | dns")
+		return fmt.Errorf("usage: kw-rollout check|deploy|release-lock --context kw --probe-helper PATH [--root PATH --tag sha-COMMIT] | dns")
 	}
 	if args[0] == "dns" {
 		if len(args) != 1 {
@@ -55,6 +56,11 @@ func execute(ctx context.Context, args []string, input io.Reader, output io.Writ
 			return encodeErr
 		}
 		return err
+	}
+	if args[0] == "release-lock" {
+		return releaseLock(ctx, args[1:], output, func(kubeContext string) (lockReleaser, error) {
+			return kwrollout.NewDeploymentLock(kubeContext, "nexora", "nexora")
+		})
 	}
 	if args[0] != "check" && args[0] != "deploy" {
 		return fmt.Errorf("unknown command %q", args[0])
@@ -97,4 +103,49 @@ func execute(ctx context.Context, args []string, input io.Reader, output io.Writ
 		fmt.Fprintln(output, "preflight passed; no production resources modified")
 	}
 	return err
+}
+
+type lockReleaser interface {
+	ReleaseHeld(ctx context.Context, owner string, confirm bool) (*kwrollout.HeldLock, error)
+}
+
+// releaseLock is the guarded operator recovery for a lock whose run died. Read
+// docs/operations.md before using it: it must never follow a mere client timeout.
+func releaseLock(ctx context.Context, args []string, output io.Writer, newLock func(string) (lockReleaser, error)) error {
+	flags := flag.NewFlagSet("release-lock", flag.ContinueOnError)
+	kubeContext := flags.String("context", "kw", "explicit Kubernetes context")
+	owner := flags.String("owner", "", "current lock owner token, read from the ConfigMap (required)")
+	confirm := flags.Bool("confirm", false, "confirm that no rollout process or remote mutation is still running")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *kubeContext == "" || *owner == "" {
+		return fmt.Errorf("usage: kw-rollout release-lock --context kw --owner TOKEN --confirm (read the owner from nexora/nexora-deploy-lock first)")
+	}
+	lock, err := newLock(*kubeContext)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	held, err := lock.ReleaseHeld(ctx, *owner, *confirm)
+	if held != nil {
+		verb := "found"
+		if err == nil {
+			verb = "released"
+		}
+		fmt.Fprintf(output, "%s lock %s: owner=%s acquiredAt=%s stage=%s resourceVersion=%s\n", verb, held.Name,
+			held.Owner, orUnknown(held.AcquiredAt), orUnknown(held.Stage), held.ResourceVersion)
+	}
+	if errors.Is(err, kwrollout.ErrReleaseNotConfirmed) {
+		return fmt.Errorf("%w: confirm no kw-rollout process is running and the failed stage is understood, then re-run with --confirm", err)
+	}
+	return err
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
 }

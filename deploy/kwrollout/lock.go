@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
+	"time"
 )
 
 const lockProtocol = "nexora-kw-rollout-v1"
@@ -58,7 +61,8 @@ func (l *DeploymentLock) Acquire(ctx context.Context) error {
 	}
 	var out []byte
 	if obj == nil {
-		obj = &lockObject{APIVersion: "v1", Kind: "ConfigMap", Data: map[string]string{"protocol": lockProtocol, "owner": l.owner}}
+		obj = &lockObject{APIVersion: "v1", Kind: "ConfigMap", Data: map[string]string{
+			"protocol": lockProtocol, "owner": l.owner, "acquiredAt": acquiredAt(), "stage": "acquired"}}
 		obj.Metadata.Name, obj.Metadata.Namespace = l.name, l.namespace
 		body, err := json.Marshal(obj)
 		if err != nil {
@@ -72,7 +76,7 @@ func (l *DeploymentLock) Acquire(ctx context.Context) error {
 		if obj.Data["owner"] != "" {
 			return fmt.Errorf("deployment lock is held; automatic takeover is forbidden")
 		}
-		out, err = l.changeOwner(ctx, obj, l.owner)
+		out, err = l.changeOwner(ctx, obj, l.owner, acquiredAt(), "acquired")
 		if err != nil {
 			return fmt.Errorf("claim deployment lock: %w", err)
 		}
@@ -102,7 +106,7 @@ func (l *DeploymentLock) Release(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	out, err := l.changeOwner(ctx, obj, "")
+	out, err := l.changeOwner(ctx, obj, "", "", "")
 	if err != nil {
 		return fmt.Errorf("release deployment lock: %w", err)
 	}
@@ -154,17 +158,94 @@ func (l *DeploymentLock) decode(out []byte) (*lockObject, error) {
 	return &obj, nil
 }
 
-func (l *DeploymentLock) changeOwner(ctx context.Context, obj *lockObject, owner string) ([]byte, error) {
+func acquiredAt() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func (l *DeploymentLock) changeOwner(ctx context.Context, obj *lockObject, owner, acquired, stage string) ([]byte, error) {
 	patch := []map[string]string{
 		{"op": "test", "path": "/metadata/uid", "value": obj.Metadata.UID},
 		{"op": "test", "path": "/metadata/resourceVersion", "value": obj.Metadata.ResourceVersion},
 		{"op": "test", "path": "/data/protocol", "value": lockProtocol},
 		{"op": "test", "path": "/data/owner", "value": obj.Data["owner"]},
 		{"op": "replace", "path": "/data/owner", "value": owner},
+		// Advisory diagnostics for an operator judging a retained lock.
+		{"op": "add", "path": "/data/acquiredAt", "value": acquired},
+		{"op": "add", "path": "/data/stage", "value": stage},
 	}
 	body, err := json.Marshal(patch)
 	if err != nil {
 		return nil, err
 	}
 	return l.execute(ctx, body, "patch", "configmap", l.name, "--type=json", "--patch-file=/dev/stdin", "-o", "json")
+}
+
+// Note records the stage this invocation reached, as advisory diagnostics for an
+// operator judging a retained lock. It is guarded by the UID, protocol and owner
+// tests, so it can never write to a lock this invocation does not own.
+func (l *DeploymentLock) Note(ctx context.Context, stage string) error {
+	if l.uid == "" {
+		return fmt.Errorf("this invocation has not acquired the deployment lock")
+	}
+	patch := []map[string]string{
+		{"op": "test", "path": "/metadata/uid", "value": l.uid},
+		{"op": "test", "path": "/data/protocol", "value": lockProtocol},
+		{"op": "test", "path": "/data/owner", "value": l.owner},
+		{"op": "add", "path": "/data/stage", "value": stage},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	_, err = l.execute(ctx, body, "patch", "configmap", l.name, "--type=json", "--patch-file=/dev/stdin", "-o", "json")
+	return err
+}
+
+// ErrReleaseNotConfirmed is returned by ReleaseHeld when confirm is false.
+var ErrReleaseNotConfirmed = errors.New("release not confirmed; nothing changed")
+
+// HeldLock describes a lock found by ReleaseHeld. Stage and AcquiredAt are
+// advisory and empty for locks written before they were recorded.
+type HeldLock struct {
+	Name, Owner, AcquiredAt, Stage, ResourceVersion string
+}
+
+// ReleaseHeld is the operator recovery path for a lock whose run died. It is
+// not a takeover: the caller must present the current owner token, proving it
+// read the lock, and must confirm explicitly. Ownership is cleared with UID,
+// resourceVersion and owner preconditions, so a concurrent acquire or release
+// between the read and the write makes the patch fail instead of clobbering it.
+// The ConfigMap is never deleted. The returned HeldLock describes the lock
+// found, including when confirm is false (nothing is written in that case).
+func (l *DeploymentLock) ReleaseHeld(ctx context.Context, owner string, confirm bool) (*HeldLock, error) {
+	if owner == "" {
+		return nil, fmt.Errorf("the current owner token is required")
+	}
+	obj, err := l.read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, fmt.Errorf("no deployment lock %s/%s exists; nothing to release", l.namespace, l.name)
+	}
+	if obj.Data["owner"] == "" {
+		return nil, fmt.Errorf("deployment lock %s/%s is not held; nothing to release", l.namespace, l.name)
+	}
+	if subtle.ConstantTimeCompare([]byte(owner), []byte(obj.Data["owner"])) != 1 {
+		return nil, fmt.Errorf("owner does not match the current lock owner; re-read the lock before retrying")
+	}
+	held := &HeldLock{Name: l.name, Owner: obj.Data["owner"], AcquiredAt: obj.Data["acquiredAt"], Stage: obj.Data["stage"], ResourceVersion: obj.Metadata.ResourceVersion}
+	if !confirm {
+		return held, ErrReleaseNotConfirmed
+	}
+	out, err := l.changeOwner(ctx, obj, "", "", "")
+	if err != nil {
+		return held, fmt.Errorf("release deployment lock (changed concurrently? re-read it): %w", err)
+	}
+	updated, err := l.decode(out)
+	if err != nil {
+		return held, err
+	}
+	if updated.Metadata.UID != obj.Metadata.UID || updated.Data["owner"] != "" {
+		return held, fmt.Errorf("lock release was not confirmed")
+	}
+	return held, nil
 }
