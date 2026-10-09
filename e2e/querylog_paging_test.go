@@ -44,7 +44,8 @@ func TestOpenSearchPagesRecordsSharingAMillisecond(t *testing.T) {
 			} `json:"records"`
 			NextCursor string `json:"next_cursor"`
 		}
-		api.Must("GET", "/query-log?limit=1&name=paging.test&cursor="+url.QueryEscape(cursor), nil, &page, 200)
+		// The documents are dated 2026-09-14; without from/to the API searches only the last 24h.
+		api.Must("GET", "/query-log?limit=1&name=paging.test&from=2026-09-14T00:00:00Z&cursor="+url.QueryEscape(cursor), nil, &page, 200)
 		for _, r := range page.Records {
 			seen[r.Name] = true
 		}
