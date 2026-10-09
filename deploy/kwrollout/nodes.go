@@ -36,7 +36,6 @@ func (r *FleetReader) CheckNodes(ctx context.Context, fleet FleetSnapshot) error
 	type resourceContainer struct {
 		Name      string
 		Resources struct{ Requests map[string]string }
-		Env       []struct{ Name, Value string }
 	}
 	var pods struct {
 		Items []struct {
@@ -62,27 +61,11 @@ func (r *FleetReader) CheckNodes(ctx context.Context, fleet FleetSnapshot) error
 	}
 	for _, name := range []string{"master-11", "master-12", "master-13"} {
 		allocated := map[string]*big.Rat{"cpu": new(big.Rat), "memory": new(big.Rat), "pods": new(big.Rat)}
-		vipReady := false
 		for _, pod := range pods.Items {
 			if pod.Spec.NodeName != name || pod.Status.Phase == "Succeeded" || pod.Status.Phase == "Failed" {
 				continue
 			}
 			allocated["pods"].Add(allocated["pods"], big.NewRat(1, 1))
-			if pod.Metadata.Namespace == "kube-system" && strings.HasPrefix(pod.Metadata.Name, "kube-vip-ds-") && pod.Metadata.DeletionTimestamp == nil {
-				owner, election, ready := false, false, false
-				for _, o := range pod.Metadata.OwnerReferences {
-					owner = owner || o.Controller && o.Kind == "DaemonSet" && o.Name == "kube-vip-ds" && o.UID != ""
-				}
-				for _, c := range pod.Spec.Containers {
-					for _, e := range c.Env {
-						election = election || e.Name == "svc_election" && e.Value == "true"
-					}
-				}
-				for _, c := range pod.Status.Conditions {
-					ready = ready || c.Type == "Ready" && c.Status == "True"
-				}
-				vipReady = vipReady || owner && election && ready
-			}
 			// Summing init and pod-level requests may overestimate, but never
 			// understates scheduler demand or needs a new Kubernetes dependency.
 			requests := []map[string]string{pod.Spec.Overhead, pod.Spec.Resources.Requests}
@@ -104,9 +87,6 @@ func (r *FleetReader) CheckNodes(ctx context.Context, fleet FleetSnapshot) error
 					allocated[key].Add(allocated[key], q)
 				}
 			}
-		}
-		if !vipReady {
-			return fmt.Errorf("%s lacks a Ready kube-vip announcer with per-Service election", name)
 		}
 		missing := 1 // one same-node surge
 		for _, pair := range KWPairTopology() {
@@ -163,6 +143,13 @@ func (r *FleetReader) CheckNodes(ctx context.Context, fleet FleetSnapshot) error
 		if !found {
 			return fmt.Errorf("required node %s is missing", name)
 		}
+	}
+	labels := map[string]map[string]string{}
+	for _, node := range nodes.Items {
+		labels[node.Metadata.Name] = node.Metadata.Labels
+	}
+	if err := r.checkL2Announcers(ctx, labels); err != nil {
+		return err
 	}
 	return ctx.Err()
 }

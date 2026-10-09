@@ -24,7 +24,7 @@ func Preflight(ctx context.Context, reader *FleetReader, client *http.Client, or
 		return snapshot, fmt.Errorf("node capacity/announcers: %w", err)
 	}
 	if report != nil {
-		report("all three nodes have Ready per-Service VIP announcers and partner/surge request capacity")
+		report("all engine nodes can announce their VIPs via Cilium L2 and have partner/surge request capacity")
 	}
 	if err := CheckFleetManagement(ctx, client, origin, snapshot); err != nil {
 		return snapshot, fmt.Errorf("fleet management: %w", err)
