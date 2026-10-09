@@ -190,6 +190,17 @@ for key in $categories; do
 		done
 done
 
+# Global allowlist entries the lab depends on, merged into whatever is already there (PUT replaces
+# the list, so read it first). api.adoptium.net: one of the categories above sinkholed it, which
+# broke actions/setup-java on the ARC runners (2026-10-09).
+allow="api.adoptium.net"
+al_json=$(call "$api/api/v1/allowlist")
+merged=$(jq -c --arg a "$allow" '{domains: ((.domains // []) + ($a | split(" ")) | unique), revision}' <<<"$al_json")
+if [ "$(jq -c '.domains | sort' <<<"$al_json")" != "$(jq -c .domains <<<"$merged")" ]; then
+	call -X PUT -d "$merged" "$api/api/v1/allowlist" >/dev/null
+	echo "allowlist updated: $allow"
+fi
+
 if ! k get secret nexora-join-token >/dev/null 2>&1; then
 	call -d '{"name":"kw-engines","ttl_seconds":31536000}' "$api/api/v1/join-tokens" | jq -r .token | tr -d '\n' >"$tmp/join-token"
 	k create secret generic nexora-join-token --from-file=join-token="$tmp/join-token"

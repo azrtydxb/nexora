@@ -16,7 +16,9 @@ import (
 	"github.com/piwi3910/nexora/mgmt/internal/config"
 )
 
-const openSearchTimeout = 5 * time.Second
+// openSearchTimeout bounds one search; a cold name search over a week of daily indices on the
+// single-node kw cluster takes several seconds.
+const openSearchTimeout = 15 * time.Second
 
 // OpenSearch searches the query-log documents an OpenTelemetry Collector's `opensearch` exporter
 // writes: the OTLP log attributes under `attributes.*` and the record time in `@timestamp`.
@@ -227,7 +229,7 @@ func filterClauses(q Query) []map[string]any {
 		filters = append(filters, map[string]any{"range": map[string]any{"@timestamp": r}})
 	}
 	if name := strings.TrimSuffix(q.Name, "."); name != "" {
-		// debt: leading-wildcard on .keyword scans every term of the day's index; revisit with an n-gram sub-field when a daily index passes 50M documents or searches exceed the 5 s timeout on kw
+		// debt: leading-wildcard on .keyword scans every term of the day's index; revisit with an n-gram sub-field when a daily index passes 50M documents or searches exceed the 15 s timeout on kw
 		filters = append(filters, map[string]any{"wildcard": map[string]any{"attributes.dns.question.name.keyword": map[string]any{
 			"value": "*" + EscapeWildcard(name) + "*", "case_insensitive": true,
 		}}})

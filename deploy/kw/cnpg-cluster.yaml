@@ -12,9 +12,14 @@ spec:
     initdb:
       database: nexora
       owner: nexora
+  postgresql:
+    parameters:
+      # A replication slot left behind by a broken replica kept WAL forever and
+      # filled the primary's volume (2026-10-09); past 5GB the slot is invalidated instead.
+      max_slot_wal_keep_size: 5GB
   storage:
     storageClass: longhorn
-    size: 10Gi
+    size: 50Gi
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }

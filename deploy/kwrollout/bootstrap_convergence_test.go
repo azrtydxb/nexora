@@ -126,6 +126,9 @@ func TestBootstrapConvergenceShell(t *testing.T) {
 					respond(map[string]bool{"enabled": true})
 				case "/api/v1/engine-groups":
 					respond([]any{})
+				case "/api/v1/allowlist":
+					// Converged: already holds what bootstrap.sh allowlists, so it must not PUT.
+					respond(map[string]any{"domains": []string{"api.adoptium.net", "other.example"}, "revision": 3})
 				default:
 					t.Errorf("unexpected API operation %s %s", r.Method, r.URL)
 					w.WriteHeader(404)

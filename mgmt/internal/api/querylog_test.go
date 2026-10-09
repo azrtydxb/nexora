@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/piwi3910/nexora/mgmt/internal/api"
 	"github.com/piwi3910/nexora/mgmt/internal/catalog"
@@ -46,6 +47,28 @@ func TestSearchQueryLogRepeatedParameters(t *testing.T) {
 	}
 	if code := c.do("GET", "/query-log?source=bogus", nil, nil); code != http.StatusBadRequest {
 		t.Fatalf("unknown source -> %d, want 400", code)
+	}
+}
+
+func TestSearchQueryLogDefaultWindow(t *testing.T) {
+	rb := &recordingBackend{}
+	e := newAPIWith(t, func(d *api.Deps) { d.QueryLog = rb })
+	c := e.client(t)
+	if code := c.do("POST", "/setup", map[string]any{"token": e.setup, "username": "admin", "email": "a@example.test", "password": "admin-password-1"}, nil); code != http.StatusCreated {
+		t.Fatalf("setup -> %d", code)
+	}
+	before := time.Now()
+	if code := c.do("GET", "/query-log?name=example", nil, nil); code != http.StatusOK {
+		t.Fatalf("no range -> %d", code)
+	}
+	if d := before.Add(-24 * time.Hour).Sub(rb.got.From); d > time.Second || d < -time.Minute || !rb.got.To.IsZero() {
+		t.Fatalf("default window: from %v to %v", rb.got.From, rb.got.To)
+	}
+	if code := c.do("GET", "/query-log?from=2026-01-01T00:00:00Z", nil, nil); code != http.StatusOK || rb.got.From.Year() != 2026 || rb.got.From.Month() != 1 {
+		t.Fatalf("explicit from -> %d %v", code, rb.got.From)
+	}
+	if code := c.do("GET", "/query-log?to=2026-01-02T00:00:00Z", nil, nil); code != http.StatusOK || !rb.got.From.IsZero() || rb.got.To.IsZero() {
+		t.Fatalf("explicit to must stay unbounded below: %v %v", rb.got.From, rb.got.To)
 	}
 }
 

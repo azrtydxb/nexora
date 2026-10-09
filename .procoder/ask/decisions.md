@@ -414,3 +414,33 @@ remove the `toolbox` Deployment and its 100Gi `work` volume. `scripts/dev-exec.s
 `dev-sync.sh` and `scripts/kw-acceptance.sh` currently require the standing pod, so they are
 converted first; the toolbox is deleted last, after the kw rollout and acceptance run that
 are in flight now.
+
+## Making the kw query log reliable (2026-10-09)
+
+The query log works, but `GET /query-log?name=…` intermittently returns `querylog_unavailable`. A cold leading-wildcard search over 28 daily indices (~13.8M docs, 1 node, 1g heap) can exceed mgmt's hard 5 s OpenSearch timeout (mgmt/internal/querylog/opensearch.go:19). Separately, index nexora-querylog-v2-2026.10.06 is red (TranslogCorruptedException since 2026-10-07 08:03); its data is unreadable. Replicas can never be placed on one node, so the cluster stays yellow.
+
+- Delete the corrupt 2026.10.06 index (loses that day's log, already unreadable), set number_of_replicas 0 on querylog indices, raise heap to 2g in deploy/kw/opensearch.yaml, and fix the name search in code (bounded default time window + 15 s timeout) (recommended)
+- Same, but keep the corrupt index (cluster stays red)
+- Only the code change
+
+**Decision (2026-10-09, owner):** all of it: delete the corrupt index, replicas 0, heap 2g, and the name-search code fix.
+
+## Deploying the query-log fix to kw (2026-10-09)
+
+PR #74 (24h default window, 15s timeout) is not live: kw runs mgmt sha-115317a, and cold name searches still hit the old 5s timeout (2 of 5 runs 503). The only deploy path is scripts/kw-deploy.sh, which builds both images and walks the guarded serial Helm stages over all four DNS engines (LAN DNS) with a DNS monitor; "sampled DNS success is not a zero-loss guarantee".
+
+- Deploy now from the PR branch with scripts/kw-deploy.sh, then rerun the five verification searches (recommended)
+- Merge PR #74 first (after review comments), then deploy from main
+- Leave it undeployed for now
+
+**Decision (2026-10-09, owner):** merge #74 after its review comments, then deploy from main with scripts/kw-deploy.sh and rerun the verification.
+
+## Merging nexora#74 over pre-existing red checks (2026-10-09)
+
+On #74 two checks fail exactly as on main and are unrelated to the PR: `operator` (TestValuesFromKwEquivalentInstallation, also red on main run 37925971706) and `e2e` (`unshare: Operation not permitted` on the ARC runners, also red on main). `mgmt` was red from a test fixture gap introduced by 08202d3; fixed in fb1e18c.
+
+- Merge once mgmt is green, accepting operator and e2e as known pre-existing failures, then deploy and verify (recommended)
+- Fix operator and e2e on main first, then merge #74
+- Hold #74
+
+**Decision (2026-10-09, owner):** fix operator and e2e on main first, then merge #74.
