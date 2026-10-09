@@ -350,7 +350,10 @@ jobs:
     container:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # The mDNS/netlab tests re-exec under `unshare -Urn`; Docker's default seccomp profile
+      # denies unshare(CLONE_NEWUSER) without CAP_SYS_ADMIN. Lifting only seccomp keeps every
+      # capability dropped (no --privileged, no --cap-add) and the namespaces stay unprivileged.
+      options: --user 0 --security-opt seccomp=unconfined
     timeout-minutes: 150
     # Existing test services documented in deploy/dev/dev-pod.yaml; no live kw opt-ins.
     # Their reachability and namespace support are required, not assumed accepted.
