@@ -72,6 +72,9 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 		}
 	}
 	acquire, release, ownership := serialized(lock.Acquire), serialized(lock.Release), serialized(lock.Check)
+	progress := func(ctx context.Context, stage string) {
+		_ = serialized(func(ctx context.Context) error { return lock.Note(ctx, stage) })(ctx) // advisory only
+	}
 	guard, err := newMutationGuard(ctx, ownership)
 	if err != nil {
 		return err
@@ -80,6 +83,7 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 	phase := func(name string) func(context.Context) error {
 		return func(ctx context.Context) error {
 			guard.setContext(ctx)
+			progress(ctx, "phase "+name)
 			config.Report("running guarded deployment phase: " + name)
 			command := commandSpec{Program: "bash", Args: []string{filepath.Join(config.Root, "scripts/kw-deploy.sh"), "--skip-build", "--tag", config.Tag}}
 			command.Env = guardEnvironment(os.Environ(), map[string]string{
@@ -127,7 +131,7 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 		}
 	}
 	s := steps{
-		lock: acquire, unlock: release, ownership: ownership,
+		lock: acquire, unlock: release, ownership: ownership, progress: progress,
 		prepare: phase("support"), finalize: phase("bootstrap"),
 		monitorInterval: time.Second,
 		checkDNS:        func(ctx context.Context) error { return probe(ctx, VIPDNSProbes()) },
