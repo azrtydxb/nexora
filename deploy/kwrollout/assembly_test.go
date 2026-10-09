@@ -168,6 +168,15 @@ func TestAssembledRuntimeMigration(t *testing.T) {
 					if args[1] == "pods" && slices.Contains(args, "--all-namespaces") {
 						return pods, nil
 					}
+					if args[0] == "get" && args[1] == "services" {
+						return []byte(l2ServicesFixture), nil
+					}
+					if args[0] == "get" && args[1] == "ciliuml2announcementpolicies" {
+						return []byte(l2PoliciesFixture), nil
+					}
+					if args[0] == "get" && args[1] == "lease" {
+						return []byte(`{"spec":{"holderIdentity":"master-11"}}`), nil
+					}
 					if args[0] == "patch" {
 						mutations = append(mutations, "enroll:"+args[2])
 					}
@@ -198,19 +207,34 @@ func TestAssembledRuntimeMigration(t *testing.T) {
 }
 
 func nodeFixtureJSON() ([]byte, []byte) {
-	var nodes, pods []json.RawMessage
+	var nodes []json.RawMessage
 	for _, node := range []string{"master-11", "master-12", "master-13"} {
 		nodes = append(nodes, json.RawMessage(fmt.Sprintf(`{"metadata":{"name":%q,"labels":{"kubernetes.io/hostname":%q}},"status":{"allocatable":{"cpu":"8","memory":"32Gi","pods":"110"},"conditions":[{"type":"Ready","status":"True"}]}}`, node, node)))
-		pods = append(pods, json.RawMessage(fmt.Sprintf(`{"metadata":{"name":%q,"namespace":"kube-system","ownerReferences":[{"controller":true,"kind":"DaemonSet","name":"kube-vip-ds","uid":"vip-uid"}]},"spec":{"nodeName":%q,"containers":[{"name":"vip","env":[{"name":"svc_election","value":"true"}]}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`, "kube-vip-ds-"+node, node)))
 	}
 	n, _ := json.Marshal(map[string]any{"items": nodes})
-	p, _ := json.Marshal(map[string]any{"items": pods})
-	return n, p
+	return n, []byte(`{"items":[]}`)
 }
 
+const l2ServicesFixture = `{"items":[
+{"metadata":{"name":"nexora-dns","namespace":"nexora","labels":{"lb.kw.watteel.lab/pinned":"dns136"},"annotations":{"lbipam.cilium.io/ips":"192.168.10.136"}},"spec":{"type":"LoadBalancer","loadBalancerClass":"io.cilium/l2-announcer","externalTrafficPolicy":"Local"}},
+{"metadata":{"name":"nexora-dns-2","namespace":"nexora","labels":{"lb.kw.watteel.lab/pinned":"dns139"},"annotations":{"lbipam.cilium.io/ips":"192.168.10.139"}},"spec":{"type":"LoadBalancer","loadBalancerClass":"io.cilium/l2-announcer","externalTrafficPolicy":"Local"}}]}`
+
+const l2PoliciesFixture = `{"items":[
+{"metadata":{"name":"kw-dns136"},"spec":{"loadBalancerIPs":true,"nodeSelector":{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"In","values":["master-12","master-11"]}]},"serviceSelector":{"matchLabels":{"lb.kw.watteel.lab/pinned":"dns136"}}}},
+{"metadata":{"name":"kw-dns139"},"spec":{"loadBalancerIPs":true,"nodeSelector":{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"In","values":["master-13","master-11"]}]},"serviceSelector":{"matchLabels":{"lb.kw.watteel.lab/pinned":"dns139"}}}},
+{"metadata":{"name":"kw-lan"},"spec":{"loadBalancerIPs":true,"nodeSelector":{"matchLabels":{"node-role.kubernetes.io/control-plane":"true"}},"serviceSelector":{"matchExpressions":[{"key":"lb.kw.watteel.lab/pinned","operator":"DoesNotExist"}]}}}]}`
+
 func TestNodeCapacityAndVIPFailures(t *testing.T) {
-	for _, mode := range []string{"ok", "cpu", "memory", "pods", "vip", "ready"} {
+	holders := map[string]string{"cilium-l2announce-nexora-nexora-dns": "master-12", "cilium-l2announce-nexora-nexora-dns-2": "master-11"}
+	for _, mode := range []string{"ok", "cpu", "memory", "pods", "ready",
+		"policy-missing", "policy-node-mismatch", "policy-selector-mismatch", "policy-lbips-off",
+		"service-class", "service-policy", "service-missing", "lease-missing", "lease-holder"} {
 		nodes, pods := nodeFixtureJSON()
+		services, policies := l2ServicesFixture, l2PoliciesFixture
+		leaseHolders := map[string]string{}
+		for k, v := range holders {
+			leaseHolders[k] = v
+		}
 		switch mode {
 		case "cpu":
 			nodes = []byte(strings.ReplaceAll(string(nodes), `"cpu":"8"`, `"cpu":"1"`))
@@ -218,16 +242,45 @@ func TestNodeCapacityAndVIPFailures(t *testing.T) {
 			nodes = []byte(strings.ReplaceAll(string(nodes), `"memory":"32Gi"`, `"memory":"512Mi"`))
 		case "pods":
 			nodes = []byte(strings.ReplaceAll(string(nodes), `"pods":"110"`, `"pods":"1"`))
-		case "vip":
-			pods = []byte(strings.ReplaceAll(string(pods), `"value":"true"`, `"value":"false"`))
 		case "ready":
 			nodes = []byte(strings.ReplaceAll(string(nodes), `"status":"True"`, `"status":"False"`))
+		case "policy-missing":
+			policies = `{"items":[]}`
+		case "policy-node-mismatch": // dns139 policy no longer selects master-13
+			policies = strings.Replace(policies, `"master-13","master-11"`, `"master-12","master-11"`, 1)
+		case "policy-selector-mismatch": // dns136 policy selects a different Service
+			policies = strings.Replace(policies, `/pinned":"dns136"}}}}`, `/pinned":"other"}}}}`, 1)
+		case "policy-lbips-off":
+			policies = strings.Replace(policies, `"loadBalancerIPs":true`, `"loadBalancerIPs":false`, 1)
+		case "service-class":
+			services = strings.Replace(services, `"loadBalancerClass":"io.cilium/l2-announcer"`, `"loadBalancerClass":"kube-vip.io/kube-vip-class"`, 1)
+		case "service-policy":
+			services = strings.Replace(services, `"externalTrafficPolicy":"Local"`, `"externalTrafficPolicy":"Cluster"`, 1)
+		case "service-missing":
+			services = strings.Replace(services, `192.168.10.139`, `192.168.10.200`, 1)
+		case "lease-missing":
+			delete(leaseHolders, "cilium-l2announce-nexora-nexora-dns")
+		case "lease-holder": // held by a node the dns136 policy does not select
+			leaseHolders["cilium-l2announce-nexora-nexora-dns"] = "master-13"
 		}
 		r := &FleetReader{execute: func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
-			if args[1] == "nodes" {
+			switch args[1] {
+			case "nodes":
 				return nodes, nil
+			case "pods":
+				return pods, nil
+			case "services":
+				return []byte(services), nil
+			case "ciliuml2announcementpolicies":
+				return []byte(policies), nil
+			case "lease":
+				h, ok := leaseHolders[args[2]]
+				if !ok || args[3] != "-n" || args[4] != "kube-system" {
+					return nil, fmt.Errorf("not found")
+				}
+				return []byte(fmt.Sprintf(`{"spec":{"holderIdentity":%q}}`, h)), nil
 			}
-			return pods, nil
+			return nil, fmt.Errorf("unexpected %v", args)
 		}}
 		err := r.CheckNodes(context.Background(), FleetSnapshot{})
 		if (mode == "ok") != (err == nil) {
