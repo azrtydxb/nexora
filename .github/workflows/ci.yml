@@ -9,7 +9,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # Every job runs on the arm64 ARC scale set inside the dev toolbox image (deploy/dev/Dockerfile:
 # Rust 1.97, Go 1.27, Node 26 + pnpm, protoc, PostgreSQL 17, dnsperf), because the runner image
-# carries no toolchains. The image's /work paths only exist in the dev pod, so caches move to /tmp.
+# carries no toolchains. The image's /work paths only exist in the dev pod, so caches move to /tmp;
+# the engine and Go jobs restore them from the GitHub cache (written by main pushes only).
 defaults:
   run:
     shell: bash
@@ -27,6 +28,9 @@ jobs:
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
     timeout-minutes: 45
+    # Workspace-relative target dir (overrides the /tmp one above) so Swatinem/rust-cache finds it.
+    env:
+      CARGO_TARGET_DIR: target
     steps:
       # Bootstrap before checkout; the bundle preserves public trust roots.
       - name: Install provisioned CI CA
@@ -73,10 +77,21 @@ jobs:
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Caches ~/.cargo registry and the dependency part of target/ (workspace crates are cleaned
+      # out before save). Keyed on Cargo.lock and the toolchain, so it saves only when those change,
+      # and only from main: an untrusted PR never writes the cache and big uploads stay rare.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked -p nexora-engine --all-targets -- -D warnings
       - run: cargo test --locked -p nexora-engine --all-targets
+      # Release-mode build of the whole engine is ~10 min; it runs on main pushes only, not PRs.
+      # Separate target dir so the release artifacts never bloat the cached debug target.
       - name: Filter index budget (release)
+        if: github.event_name == 'push'
+        env:
+          CARGO_TARGET_DIR: /tmp/target-release
         run: cargo test --locked --release -p nexora-engine --test filter_index_budget
       # The fuzz crate is outside the workspace; check it compiles against the current engine API.
       - run: cargo +nightly check --locked --manifest-path engine/fuzz/Cargo.toml --bins
@@ -133,6 +148,19 @@ jobs:
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
+      # Keyed on the toolbox image and go.sum, not the run, so main uploads only when dependencies
+      # or the toolchain change (the GitHub cache is behind the home uplink). The Go build cache
+      # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
+      - name: Restore Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: go-toolbox-2-mgmt-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-2-mgmt-
       - run: make webui-placeholder
       - name: gofmt
         run: test -z "$(gofmt -l mgmt e2e bench | tee /dev/stderr)"
@@ -144,6 +172,15 @@ jobs:
         run: |
           mkdir -p artifacts
           make ci-race 2>&1 | tee artifacts/race.log
+      # Only trusted main pushes write the cache; PRs restore from it.
+      - name: Save Go cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
       - name: Retain raw race output
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -204,12 +241,34 @@ jobs:
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
+      # Keyed on the toolbox image and go.sum, not the run, so main uploads only when dependencies
+      # or the toolchain change (the GitHub cache is behind the home uplink). The Go build cache
+      # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
+      - name: Restore Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: go-toolbox-2-operator-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-2-operator-
       - name: gofmt
         run: test -z "$(gofmt -l operator | tee /dev/stderr)"
       - run: cd operator && go vet ./...
       - run: make operator-test
       - name: Generated operator files are up to date
         run: make operator-generate && git diff --exit-code -- operator deploy/operator deploy/helm/nexora-operator
+      # Only trusted main pushes write the cache; PRs restore from it.
+      - name: Save Go cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   web:
     runs-on: arc-azrtydxb
@@ -405,10 +464,32 @@ jobs:
       # The checkout is owned by the runner user, not the container's root; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
+      # Keyed on the toolbox image and go.sum, not the run, so main uploads only when dependencies
+      # or the toolchain change (the GitHub cache is behind the home uplink). The Go build cache
+      # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
+      - name: Restore Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: go-toolbox-2-e2e-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-2-e2e-
       - name: Run ci-e2e
         run: |
           mkdir -p artifacts
           make ci-e2e 2>&1 | tee artifacts/e2e.log
+      # Only trusted main pushes write the cache; PRs restore from it.
+      - name: Save Go cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/cache/go-build
+            /tmp/cache/gomod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
       - name: Retain verification output
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
