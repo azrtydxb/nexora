@@ -1,7 +1,16 @@
 name: ci
+# Three-tier test model (azrtydxb CI standard §Test tiers):
+#   unit        = pull_request (web + failover-contracts) and push to main
+#   integration = nightly cron + manual (engine, mgmt, operator, e2e)
+#   full        = v* release tags (same heavy jobs, incl. race/coverage)
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+    tags: ["v*"]
   pull_request: {}
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
@@ -22,6 +31,8 @@ env:
   GOPROXY: https://192.168.10.131:8443/repository/golang/,direct
 jobs:
   engine:
+    # Heavy Rust build/test (~22m): integration tier (nightly/manual) + full tier (v* tags).
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
@@ -97,6 +108,8 @@ jobs:
       - run: cargo +nightly check --locked --manifest-path engine/fuzz/Cargo.toml --bins
 
   mgmt:
+    # Heavy Go build/race suite (~23m): integration tier + full tier only.
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
@@ -190,6 +203,8 @@ jobs:
           retention-days: 7
 
   operator:
+    # Heavy operator tests (~12m): integration tier + full tier only.
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
@@ -405,6 +420,8 @@ jobs:
           retention-days: 7
 
   e2e:
+    # End-to-end (~37m): integration tier + full tier only, never on PR.
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
