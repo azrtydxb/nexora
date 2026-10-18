@@ -23,3 +23,7 @@ spec:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
+  monitoring:
+    # kw's Prometheus selects every PodMonitor, so this is what gets the CNPG
+    # exporter scraped (job "nexora/nexora-db"); without it there are no metrics.
+    enablePodMonitor: true
