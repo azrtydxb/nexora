@@ -28,11 +28,11 @@ jobs:
           - { name: nexora-mgmt, file: deploy/docker/mgmt.Dockerfile }
           - { name: nexora-operator, file: deploy/docker/operator.Dockerfile }
         arch:
-          - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb-publish }
+          - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb }
           - {
               name: amd64,
               platform: linux/amd64,
-              runner: arc-azrtydxb-amd64-publish,
+              runner: arc-azrtydxb-amd64,
             }
     runs-on: ${{ matrix.arch.runner }}
     timeout-minutes: 90
@@ -95,7 +95,7 @@ jobs:
             insecure = false
             ca = ["$NEXORA_CI_CA_FILE"]
           [registry."docker.io"]
-            mirrors = ["192.168.10.131"]
+            mirrors = ["ant.azrty.com"]
           TOML
           docker buildx create --name nexora --driver docker-container \
             --platform "${{ matrix.arch.platform }}" --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
@@ -140,7 +140,7 @@ jobs:
     strategy:
       matrix:
         image: [nexora-engine, nexora-mgmt, nexora-operator]
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

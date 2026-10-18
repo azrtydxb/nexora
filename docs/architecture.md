@@ -828,7 +828,7 @@ The build is embedded into `nexora-mgmt`.
 ### Distribution
 
 - `.github/workflows/images.yml` builds `nexora-engine` and `nexora-mgmt`
-  natively on `arc-azrtydxb-publish` (arm64) and `arc-azrtydxb-amd64-publish`
+  natively on `arc-azrtydxb` (arm64) and `arc-azrtydxb-amd64`
   (amd64), pushes by digest to `192.168.10.131:5000/azrtydxb`, and merges
   digests into `:sha-<7>` (`:v*` on tags) plus `:main` on main.
 - `deploy/compose/` runs PostgreSQL, one mgmt, one engine (profile `engine`)

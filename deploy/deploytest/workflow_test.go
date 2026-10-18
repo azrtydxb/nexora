@@ -53,12 +53,12 @@ func TestImagesWorkflow(t *testing.T) {
 			t.Errorf("build matrix lacks image %s", want)
 		}
 	}
-	for _, want := range []string{"arc-azrtydxb-publish|linux/arm64", "arc-azrtydxb-amd64-publish|linux/amd64"} {
+	for _, want := range []string{"arc-azrtydxb|linux/arm64", "arc-azrtydxb-amd64|linux/amd64"} {
 		if !archs[want] {
 			t.Errorf("build matrix lacks %s", want)
 		}
 	}
-	if build.RunsOn != "${{ matrix.arch.runner }}" || merge.RunsOn != "arc-azrtydxb-publish" || merge.Needs != "build" {
+	if build.RunsOn != "${{ matrix.arch.runner }}" || merge.RunsOn != "arc-azrtydxb" || merge.Needs != "build" {
 		t.Errorf("runs-on/needs: build %q merge %q needs %v", build.RunsOn, merge.RunsOn, merge.Needs)
 	}
 	pinned := regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
