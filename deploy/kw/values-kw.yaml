@@ -44,7 +44,7 @@ mgmt:
     tlsSecretName: nexora-ingress-tls
 database:
   mode: external
-  external: { existingSecret: nexora-db-app, key: uri }
+  external: { existingSecret: nexora-db-shared, key: uri }
 engine:
   kind: DaemonSet
   workers: 2
