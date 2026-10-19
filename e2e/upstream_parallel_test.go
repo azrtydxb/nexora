@@ -12,22 +12,24 @@ import (
 )
 
 // parallelSetup starts management, an engine and two UDP upstreams: "slow" (position 0, every answer
-// delayed 150 ms) and "fast" (position 1).
-func parallelSetup(t *testing.T, node string) (*harness.API, *harness.Engine) {
+// delayed by slowDelay) and "fast" (position 1).
+func parallelSetup(t *testing.T, node string, slowDelay time.Duration) (*harness.API, *harness.Engine) {
 	env := harness.New(t)
 	pg := env.StartPostgres()
 	mgmt := env.StartMgmt(pg, env.InitCA(), harness.MgmtOptions{})
 	api := harness.Bootstrap(t, env, mgmt.SetupToken(t), mgmt.BaseURL)
 	api.DisableForwardedValidation()
 	slow, fast := env.StartDNSFixture(), env.StartDNSFixture()
-	slow.SetDelay(t, 150*time.Millisecond)
-	api.Must("POST", "/upstreams", map[string]any{"name": "slow", "protocol": "udp", "address": slow.UDP, "timeout_ms": 1000, "enabled": true, "position": 0}, nil, 201)
-	api.Must("POST", "/upstreams", map[string]any{"name": "fast", "protocol": "udp", "address": fast.UDP, "timeout_ms": 1000, "enabled": true, "position": 1}, nil, 201)
+	slow.SetDelay(t, slowDelay)
+	api.Must("POST", "/upstreams", map[string]any{"name": "slow", "protocol": "udp", "address": slow.UDP, "timeout_ms": 3000, "enabled": true, "position": 0}, nil, 201)
+	api.Must("POST", "/upstreams", map[string]any{"name": "fast", "protocol": "udp", "address": fast.UDP, "timeout_ms": 3000, "enabled": true, "position": 1}, nil, 201)
 	return api, env.StartManagedEngine(node, []string{mgmt.GRPCURL}, api.CreateJoinToken())
 }
 
 func TestUpstreamParallelStrategy(t *testing.T) {
-	api, eng := parallelSetup(t, "par-engine")
+	// The slow upstream is an order of magnitude slower than the bound below, so a loaded runner
+	// cannot make a correct race look like one that waited for it.
+	api, eng := parallelSetup(t, "par-engine", time.Second)
 	var rs map[string]any
 	api.Must("GET", "/resolver-settings", nil, &rs, 200)
 	rs["strategy"], rs["parallel_max"] = "parallel", 2
@@ -40,13 +42,13 @@ func TestUpstreamParallelStrategy(t *testing.T) {
 		t.Fatalf("parallel_max 9 -> %d", code)
 	}
 	v := api.LatestVersion()
-	api.WaitEngine("par-engine", 15*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion == v })
+	api.WaitEngine("par-engine", 60*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion == v })
 	name := harness.UniqueName("race")
 	start := time.Now()
 	if r := harness.MustQuery(t, eng.DNS, name, dns.TypeA, harness.QueryOpts{}); r.Rcode != dns.RcodeSuccess {
 		t.Fatalf("race query: %v", r)
 	}
-	if d := time.Since(start); d > 120*time.Millisecond {
+	if d := time.Since(start); d > 600*time.Millisecond {
 		t.Fatalf("parallel waited for the slow upstream: %s", d)
 	}
 	harness.EventuallyTrue(t, 5*time.Second, func() bool {
@@ -65,14 +67,14 @@ func TestUpstreamParallelStrategy(t *testing.T) {
 }
 
 func TestUpstreamParallelLatency(t *testing.T) {
-	api, eng := parallelSetup(t, "lat-engine")
+	api, eng := parallelSetup(t, "lat-engine", 150*time.Millisecond)
 	measure := func(strategy string) (p95, p99 time.Duration) {
 		var rs map[string]any
 		api.Must("GET", "/resolver-settings", nil, &rs, 200)
 		rs["strategy"], rs["parallel_max"] = strategy, 0
 		api.Must("PUT", "/resolver-settings", rs, nil, 200)
 		v := api.LatestVersion()
-		api.WaitEngine("lat-engine", 15*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion == v })
+		api.WaitEngine("lat-engine", 60*time.Second, func(e harness.EngineView) bool { return e.AppliedVersion == v })
 		var d []time.Duration
 		for i := 0; i < 2000; i++ {
 			_, rtt, err := harness.Query(t, eng.DNS, harness.UniqueName("lat-"+strategy), dns.TypeA, harness.QueryOpts{Timeout: 3 * time.Second})

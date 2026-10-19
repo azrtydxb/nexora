@@ -451,7 +451,7 @@ jobs:
           bootstrap.memory_lock: "false"
           DISABLE_SECURITY_PLUGIN: "true"
           DISABLE_INSTALL_DEMO_CONFIG: "true"
-          OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+          OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
         options: >-
           --health-cmd "curl -fsS http://localhost:9200/_cluster/health"
           --health-interval 10s
