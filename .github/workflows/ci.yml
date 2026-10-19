@@ -361,7 +361,10 @@ jobs:
       image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2"
       # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
       options: --user 0
-    timeout-minutes: 15
+    # The toolbox job container comes from the kw Nexus name and takes up to ~15
+    # minutes to pull on the OKE runners; 15 minutes cancelled the job before
+    # its first step ran.
+    timeout-minutes: 35
     steps:
       - name: Install provisioned CI CA
         env:
