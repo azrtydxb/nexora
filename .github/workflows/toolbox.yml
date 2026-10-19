@@ -1,9 +1,12 @@
 # Builds the dev toolbox (deploy/dev/Dockerfile, arm64 only: it runs on kw and in
 # the arm64 CI jobs) and publishes it to the authoritative Kuvryn Ant with a
-# GitHub OIDC docker login, no stored secret:
-#   ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:<tag>
-# kw replicates oci-hosted, so the toolbox pod and the node rewrite of the old
-# 192.168.10.131/azrtydxb/nexora-dev:<tag> name pick it up from kw's Ant.
+# GitHub OIDC docker login, no stored secret, under two names:
+#   ant.azrty.com/ci-images/nexora-dev:<tag>            anonymous-read feed the CI job
+#                                                       containers pull from (ci.yml, fuzz.yml)
+#   ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:<tag>  kw replicates oci-hosted, so the toolbox
+#                                                       pod and the node rewrite of the old
+#                                                       192.168.10.131/azrtydxb/nexora-dev:<tag>
+#                                                       name pick it up from kw's Ant
 # Bump the toolbox-N reference in ci.yml / fuzz.yml / deploy/dev/dev-pod.yaml
 # after publishing a new tag.
 name: toolbox
@@ -61,6 +64,8 @@ jobs:
           builder: toolbox
           platforms: linux/arm64
           push: true
-          tags: ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:${{ steps.meta.outputs.tag }}
+          tags: |
+            ant.azrty.com/ci-images/nexora-dev:${{ steps.meta.outputs.tag }}
+            ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:${{ steps.meta.outputs.tag }}
           provenance: false
           sbom: false

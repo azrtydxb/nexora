@@ -21,9 +21,9 @@ jobs:
   parse_query:
     # The dev toolbox image carries the nightly toolchain, cargo-fuzz and protoc (deploy/dev/Dockerfile).
     runs-on: arc-azrtydxb
-    container: { image: "192.168.10.131/azrtydxb/nexora-dev:toolbox-2" }
-    # One hour of fuzzing plus the toolbox pull from the kw Nexus name (up to
-    # ~15 minutes on the OKE runners) and the fuzz build: 80 minutes cancelled it.
+    container: { image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2" }
+    # One hour of fuzzing plus the toolbox pull (ci-images feed on the OKE Ant; it was
+    # 15-30 minutes from the kw Nexus name) and the fuzz build: 80 minutes cancelled it.
     timeout-minutes: 110
     steps:
       - name: Install provisioned CI CA

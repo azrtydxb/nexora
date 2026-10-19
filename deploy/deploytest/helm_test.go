@@ -107,7 +107,7 @@ func TestHelmTemplate(t *testing.T) {
 		t.Errorf("mgmt replicas = %v", mgmt.path("spec", "replicas"))
 	}
 	mc := container(t, mgmt, "mgmt")
-	if ref := env(mc, "NEXORA_DATABASE_URL").path("valueFrom", "secretKeyRef"); ref == nil || ref.(map[string]any)["name"] != "nexora-db-app" || ref.(map[string]any)["key"] != "uri" {
+	if ref := env(mc, "NEXORA_DATABASE_URL").path("valueFrom", "secretKeyRef"); ref == nil || ref.(map[string]any)["name"] != "nexora-db-shared" || ref.(map[string]any)["key"] != "uri" {
 		t.Errorf("database env = %v", env(mc, "NEXORA_DATABASE_URL"))
 	}
 	for name, want := range map[string]string{
