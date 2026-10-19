@@ -88,12 +88,12 @@ jobs:
       - run: git config --global --add safe.directory '*'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { path: head }
-      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: base
           ref: "${{ github.event.pull_request.base.sha || github.sha }}"
-      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
       - name: Build base and head engines, fixture and perfgate
         run: |
           (cd base && CARGO_TARGET_DIR=/tmp/target-base cargo build --locked --release -p nexora-engine)
@@ -202,7 +202,7 @@ jobs:
       # stamping work (ephemeral container, so trusting every path is harmless).
       - run: git config --global --add safe.directory '*'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
       - name: Build release binaries
         run: |
           cargo build --locked --release -p nexora-engine

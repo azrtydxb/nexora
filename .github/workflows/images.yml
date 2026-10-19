@@ -103,7 +103,7 @@ jobs:
           docker buildx create --name nexora --driver docker-container \
             --platform "${{ matrix.arch.platform }}" --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
           docker buildx inspect --bootstrap
-      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
         with:
           docker-login: "true"
           required: "true"
@@ -198,7 +198,7 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
         with:
           docker-login: "true"
           required: "true"
