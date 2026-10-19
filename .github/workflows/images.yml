@@ -103,8 +103,12 @@ jobs:
           docker buildx create --name nexora --driver docker-container \
             --platform "${{ matrix.arch.platform }}" --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
           docker buildx inspect --bootstrap
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - id: ant
+        uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
         with:
+          build-cache: "true"
+          cache-name: ${{ matrix.image.name }}
+          arch-suffix: ${{ matrix.arch.name }}
           docker-login: "true"
           required: "true"
           go: "false"
@@ -122,9 +126,8 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }}
-          # ignore-error: a cache write must never fail a publish.
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image.name }}-buildcache:${{ matrix.arch.name }},mode=max,image-manifest=true,ignore-error=true
+          cache-from: ${{ steps.ant.outputs.cache-from }}
+          cache-to: ${{ steps.ant.outputs.cache-to }}
           # Unresolved supply-chain debt: no build provenance or SBOM is emitted.
           # TLS verification does not supply artifact attestations.
           provenance: false
@@ -198,7 +201,7 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
         with:
           docker-login: "true"
           required: "true"
