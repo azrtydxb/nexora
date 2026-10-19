@@ -1,0 +1,66 @@
+# Builds the dev toolbox (deploy/dev/Dockerfile, arm64 only: it runs on kw and in
+# the arm64 CI jobs) and publishes it to the authoritative Kuvryn Ant with a
+# GitHub OIDC docker login, no stored secret:
+#   ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:<tag>
+# kw replicates oci-hosted, so the toolbox pod and the node rewrite of the old
+# 192.168.10.131/azrtydxb/nexora-dev:<tag> name pick it up from kw's Ant.
+# Bump the toolbox-N reference in ci.yml / fuzz.yml / deploy/dev/dev-pod.yaml
+# after publishing a new tag.
+name: toolbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/dev/Dockerfile"
+      - ".github/workflows/toolbox.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (for example toolbox-3); default toolbox-sha-<short>"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: toolbox-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: arc-azrtydxb
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: echo "tag=${INPUT_TAG:-toolbox-sha-${GITHUB_SHA::7}}" >> "$GITHUB_OUTPUT"
+      - name: Set up buildx
+        run: |
+          cat > "$RUNNER_TEMP/buildkitd.toml" <<'TOML'
+          [registry."docker.io"]
+            mirrors = ["ant.azrty.com"]
+          TOML
+          docker buildx create --name toolbox --driver docker-container \
+            --platform linux/arm64 --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
+          docker buildx inspect --bootstrap
+      - uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+        with:
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: deploy/dev
+          file: deploy/dev/Dockerfile
+          builder: toolbox
+          platforms: linux/arm64
+          push: true
+          tags: ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:${{ steps.meta.outputs.tag }}
+          provenance: false
+          sbom: false

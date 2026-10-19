@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build an image on the kw BuildKit (arm64) or novanas BuildKit (amd64) and push
-# it to Nexus. No Docker on the laptop — see azrtydxb/internal-lab docs/dev-builds.md.
+# it to Kuvryn Ant (ant.azrty.com/oci-hosted). No Docker on the laptop — see azrtydxb/internal-lab docs/dev-builds.md.
 #
 #   scripts/build-image.sh -f deploy/docker/engine.Dockerfile -n nexora-engine [-t tag] [-p linux/arm64] [context]
 #
@@ -8,9 +8,10 @@
 # time as BUILD_DATE; the Nexora Dockerfiles stamp them into the binaries and the GUI
 # (nexora-mgmt /api/v1/health and /api/v1/version, nexora-engine --version).
 #
-# Push credentials are read from the cluster (the `ci` account's dockerconfigjson)
-# into a temporary DOCKER_CONFIG that is deleted on exit, so no password is ever
-# written under $HOME.
+# Push credentials: ANT_TOKEN must hold a Kuvryn Ant token with publish on the
+# oci-hosted feed (Settings, Tokens on https://ant.azrty.com). It is written into a
+# temporary DOCKER_CONFIG that is deleted on exit, never under $HOME. CI publishes
+# the dev toolbox through .github/workflows/toolbox.yml with GitHub OIDC instead.
 set -euo pipefail
 
 dockerfile="Dockerfile"
@@ -67,15 +68,14 @@ for f in ca.crt tls.crt tls.key; do
 	kubectl --context "$kctx" get secret buildkit-client-tls -n buildkit \
 		-o "jsonpath={.data.${f/./\\.}}" | base64 -d >"$work/$f"
 done
-mkdir -p "$work/docker"
-kubectl --context kw -n novaforge-dev get secret nexus-pull \
-	-o 'jsonpath={.data.\.dockerconfigjson}' | base64 -d >"$work/docker/config.json"
-grep -q '192.168.10.131:5000' "$work/docker/config.json" || {
-	echo "no push credentials found" >&2
+[ -n "${ANT_TOKEN:-}" ] || {
+	echo "ANT_TOKEN (Kuvryn Ant token with publish on oci-hosted) is required" >&2
 	exit 1
 }
+mkdir -p "$work/docker"
+(umask 077 && jq -n --arg a "$(printf "ci:%s" "$ANT_TOKEN" | base64 | tr -d "\n")" '{auths: {"ant.azrty.com": {auth: $a}}}' >"$work/docker/config.json")
 
-image="192.168.10.131:5000/azrtydxb/${name}:${tag}"
+image="ant.azrty.com/oci-hosted/azrtydxb/${name}:${tag}"
 echo "building ${image} (${platform})"
 DOCKER_CONFIG="$work/docker" buildctl --addr "$addr" \
 	--tlscacert "$work/ca.crt" --tlscert "$work/tls.crt" --tlskey "$work/tls.key" \
@@ -88,4 +88,4 @@ DOCKER_CONFIG="$work/docker" buildctl --addr "$addr" \
 	--opt build-arg:COMMIT="$commit" \
 	--opt build-arg:BUILD_DATE="$build_date" \
 	--output "type=image,name=${image},push=true"
-echo "pull as 192.168.10.131/azrtydxb/${name}:${tag}"
+echo "pull on kw as ant.kw.watteel.lab/oci-hosted/azrtydxb/${name}:${tag} (or the legacy 192.168.10.131/azrtydxb/${name}:${tag} via the node rewrite) once replicated"

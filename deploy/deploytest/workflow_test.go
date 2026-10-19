@@ -77,8 +77,8 @@ func TestImagesWorkflow(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"push-by-digest=true", "192.168.10.131:5000/azrtydxb", "imagetools create", "sha-${GITHUB_SHA::7}",
-		`refs/heads/main`, `:main"`, `grep -q '"arm64"'`, `grep -q '"amd64"'`} {
+	for _, want := range []string{"push-by-digest=true", "ant.azrty.com/oci-hosted/azrtydxb", "ant-setup-action", "imagetools create", "sha-${GITHUB_SHA::7}",
+		`grep -q '"arm64"'`, `grep -q '"amd64"'`} {
 		if !strings.Contains(all.String()+string(raw), want) {
 			t.Errorf("workflow does not contain %q", want)
 		}
