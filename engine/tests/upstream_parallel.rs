@@ -66,7 +66,7 @@ fn spec(id: &str, addr: SocketAddr) -> UpstreamSpec {
         addr: Some(addr),
         tls_server_name: String::new(),
         doh_url: String::new(),
-        timeout: Duration::from_millis(400),
+        timeout: Duration::from_millis(1500),
         ca_pem: String::new(),
     }
 }
@@ -75,7 +75,9 @@ fn spec(id: &str, addr: SocketAddr) -> UpstreamSpec {
 async fn parallel_returns_first_valid_answer_and_updates_every_upstream() {
     local(async {
         let (fast, fast_n) = fake(Duration::from_millis(5), 0).await;
-        let (slow, slow_n) = fake(Duration::from_millis(120), 0).await;
+        // The slow upstream is far slower than the fast one, and the race must return well before it
+        // answers; the margins are wide because CI runners are loaded (the engine's overall deadline is 2 s).
+        let (slow, slow_n) = fake(Duration::from_millis(800), 0).await;
         let (fail, fail_n) = fake(Duration::from_millis(1), 2).await; // SERVFAIL, fastest of all
         let set = UpstreamSet::new(
             vec![spec("slow", slow), spec("fail", fail), spec("fast", fast)],
@@ -91,10 +93,10 @@ async fn parallel_returns_first_valid_answer_and_updates_every_upstream() {
         assert_eq!(set.specs[got.upstream_index].id, "fast");
         assert_eq!(got.raced, 3);
         assert!(
-            started.elapsed() < Duration::from_millis(100),
+            started.elapsed() < Duration::from_millis(500),
             "did not wait for the slow upstream"
         );
-        tokio::time::sleep(Duration::from_millis(300)).await; // losers drain
+        tokio::time::sleep(Duration::from_millis(1000)).await; // losers drain
         for (i, n) in [(0, &slow_n), (1, &fail_n), (2, &fast_n)] {
             assert_eq!(
                 n.load(Ordering::Relaxed),
@@ -111,7 +113,7 @@ async fn parallel_returns_first_valid_answer_and_updates_every_upstream() {
             );
         }
         assert!(
-            set.health[0].ewma_rtt_us.load(Ordering::Relaxed) >= 100_000,
+            set.health[0].ewma_rtt_us.load(Ordering::Relaxed) >= 500_000,
             "the slow loser's RTT was recorded"
         );
         assert_eq!(set.health[2].race_wins.load(Ordering::Relaxed), 1);
