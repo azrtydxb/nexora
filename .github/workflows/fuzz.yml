@@ -11,6 +11,7 @@ defaults:
     shell: bash
 permissions:
   contents: read
+  id-token: write # Kuvryn Ant OIDC (azrtydxb/ant-setup-action)
 concurrency:
   group: fuzz-${{ github.ref }}
   cancel-in-progress: true
@@ -64,6 +65,7 @@ jobs:
           } >>"$GITHUB_ENV"
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
       - name: Fuzz parse_query for one hour
         working-directory: engine/fuzz
         run: cargo +nightly fuzz run parse_query corpus/parse_query -- -max_total_time=3600 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
