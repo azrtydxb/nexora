@@ -34,14 +34,13 @@ def wiring_errors(name, text):
     if "    shell: bash\n" not in text:
         errors.append("shell failure propagation")
     if name == "images":
-        for registry in ("192.168.10.131", "192.168.10.131:5000"):
-            if (
-                f'[registry."{registry}"]\n'
-                "            http = false\n"
-                "            insecure = false\n"
-                '            ca = ["$NEXORA_CI_CA_FILE"]'
-            ) not in text:
-                errors.append("registry trust")
+        # Images build on the runner pod's BuildKit sidecar, whose buildkitd.toml
+        # carries the registry mirror and cluster CA; no per-job builder or
+        # inline registry trust.
+        if "uses: azrtydxb/.github/actions/setup-builder@" not in text or (
+            "--driver docker-container" in text or "[registry." in text
+        ):
+            errors.append("registry trust")
     return errors
 
 
@@ -83,8 +82,15 @@ class TrustedCATests(unittest.TestCase):
                 self.assertTrue(
                     wiring_errors(name, text.replace("shell: bash", "shell: sh"))
                 )
-        self.assertTrue(
-            wiring_errors("images", text.replace('ca = ["$NEXORA_CI_CA_FILE"]', ""))
+        self.assertIn(
+            "registry trust",
+            wiring_errors(
+                "images",
+                text.replace(
+                    "uses: azrtydxb/.github/actions/setup-builder@",
+                    "uses: docker/setup-buildx-action@",
+                ),
+            ),
         )
 
     def run_bootstrap(self, value, public_bundle=None):
