@@ -20,8 +20,8 @@ env:
 jobs:
   # Each architecture builds natively on its own publish runner (kw is arm64 with no emulation,
   # novanas is amd64) and pushes by digest; `merge` then tags the multi-arch manifest list.
-  # These jobs drive the runner's Docker daemon, so unlike the test jobs they run without
-  # `container:`, as the org's other image workflows do.
+  # These jobs build on the runner pod's BuildKit sidecar, so unlike the test jobs they run
+  # without `container:`, as the org's other image workflows do.
   build:
     strategy:
       fail-fast: false
@@ -32,11 +32,7 @@ jobs:
           - { name: nexora-operator, file: deploy/docker/operator.Dockerfile }
         arch:
           - { name: arm64, platform: linux/arm64, runner: arc-azrtydxb }
-          - {
-              name: amd64,
-              platform: linux/amd64,
-              runner: arc-azrtydxb-amd64,
-            }
+          - { name: amd64, platform: linux/amd64, runner: arc-azrtydxb-amd64 }
     runs-on: ${{ matrix.arch.runner }}
     timeout-minutes: 90
     steps:
@@ -84,25 +80,10 @@ jobs:
       - id: meta
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"; else echo "version=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"; fi
-      - name: Set up buildx
-        run: |
-          # Existing endpoints retain HTTPS; parent must validate their serving chain.
-          # buildx copies these explicit CA files into its BuildKit container.
-          cat > "$RUNNER_TEMP/buildkitd.toml" <<TOML
-          [registry."192.168.10.131"]
-            http = false
-            insecure = false
-            ca = ["$NEXORA_CI_CA_FILE"]
-          [registry."192.168.10.131:5000"]
-            http = false
-            insecure = false
-            ca = ["$NEXORA_CI_CA_FILE"]
-          [registry."docker.io"]
-            mirrors = ["ant.azrty.com"]
-          TOML
-          docker buildx create --name nexora --driver docker-container \
-            --platform "${{ matrix.arch.platform }}" --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
-          docker buildx inspect --bootstrap
+      # buildx on the runner pod's BuildKit sidecar, native to matrix.arch.runner; its
+      # buildkitd.toml carries the Docker Hub mirror and the cluster CA.
+      - id: builder
+        uses: azrtydxb/.github/actions/setup-builder@d021f2ca9fa3d6682085a7d069b7c8b1dc7b9b80 # main
       - id: ant
         uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
         with:
@@ -119,13 +100,15 @@ jobs:
         with:
           context: .
           file: ${{ matrix.image.file }}
-          builder: nexora
+          builder: ${{ steps.builder.outputs.name }}
           platforms: ${{ matrix.arch.platform }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          # Only main and v* tags publish; a manual run on another branch builds (reading
+          # the Ant cache) without pushing, since Ant's token there is read-only.
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           cache-from: ${{ steps.ant.outputs.cache-from }}
           cache-to: ${{ steps.ant.outputs.cache-to }}
           # Unresolved supply-chain debt: no build provenance or SBOM is emitted.
@@ -145,6 +128,7 @@ jobs:
 
   merge:
     needs: build
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         image: [nexora-engine, nexora-mgmt, nexora-operator]
