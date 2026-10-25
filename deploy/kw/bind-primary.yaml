@@ -56,7 +56,7 @@ spec:
         }
       containers:
         - name: named
-          image: 192.168.10.131/ubuntu/bind9:9.20-25.04_edge
+          image: docker.io/ubuntu/bind9:9.20-25.04_edge
           command: ["named", "-g", "-c", "/etc/nexora-bind/named.conf"]
           ports:
             - { name: dns-tcp, containerPort: 5353, protocol: TCP }

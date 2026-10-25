@@ -33,7 +33,7 @@ spec:
         }
       containers:
         - name: httpd
-          image: 192.168.10.131/library/busybox:1.37
+          image: docker.io/library/busybox:1.37
           command: ["httpd", "-f", "-v", "-p", "8080", "-h", "/www"]
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe: { tcpSocket: { port: http }, periodSeconds: 5 }

@@ -31,9 +31,11 @@ spec:
     metadata:
       labels: { app: toolbox }
     spec:
+      imagePullSecrets:
+        - name: ant-pull
       containers:
         - name: toolbox
-          image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-3
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-dev:toolbox-3
           command: ["sleep", "infinity"]
           env:
             # Shared test services on kw (deploy/kw/, observability namespace).

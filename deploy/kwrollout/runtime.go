@@ -97,7 +97,7 @@ func rolloutWith(ctx context.Context, config RuntimeConfig, client *http.Client,
 		}
 	}
 	reader := &FleetReader{execute: kubectlWith(config.Context, "nexora", execute)}
-	image := "192.168.10.131/azrtydxb/nexora-engine:" + config.Tag
+	image := "ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-engine:" + config.Tag
 	probe := func(ctx context.Context, probes []DNSProbe) error {
 		return remoteDNSWith(ctx, kubectlWith(config.Context, "nexora-dev", execute), config.ProbeHelper, probes, func(sample ProbeSample) {
 			body, _ := json.Marshal(sample)

@@ -17,12 +17,12 @@ spec:
       securityContext: { fsGroup: 1000 } # the image runs as uid/gid 1000; the volume is root-owned
       initContainers:
         - name: sysctl
-          image: 192.168.10.131/library/busybox:1.37
+          image: docker.io/library/busybox:1.37
           command: ["sysctl", "-w", "vm.max_map_count=262144"]
           securityContext: { privileged: true }
       containers:
         - name: opensearch
-          image: 192.168.10.131/opensearchproject/opensearch:3.8.0
+          image: docker.io/opensearchproject/opensearch:3.8.0
           env:
             - { name: discovery.type, value: single-node }
             - { name: bootstrap.memory_lock, value: "false" }

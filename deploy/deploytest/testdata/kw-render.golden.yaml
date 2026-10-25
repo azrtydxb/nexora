@@ -278,7 +278,7 @@ spec:
       initContainers:
         # The hostPath directory is created root-owned; hand it to the engine user.
         - name: state-owner
-          image: 192.168.10.131/library/busybox:1.37
+          image: docker.io/library/busybox:1.37
           imagePullPolicy: Always
           command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]
           securityContext:
@@ -291,7 +291,7 @@ spec:
             - { name: state, mountPath: /var/lib/nexora }
       containers:
         - name: engine
-          image: 192.168.10.131/azrtydxb/nexora-engine:golden
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-engine:golden
           imagePullPolicy: Always
           args: ["--config", "/etc/nexora/engine.toml"]
           env:
@@ -418,7 +418,7 @@ spec:
       initContainers:
         # The hostPath directory is created root-owned; hand it to the engine user.
         - name: state-owner
-          image: 192.168.10.131/library/busybox:1.37
+          image: docker.io/library/busybox:1.37
           imagePullPolicy: Always
           command: ["sh", "-c", "chown 10001:10001 /var/lib/nexora && chmod 0700 /var/lib/nexora"]
           securityContext:
@@ -431,7 +431,7 @@ spec:
             - { name: state, mountPath: /var/lib/nexora }
       containers:
         - name: engine
-          image: 192.168.10.131/azrtydxb/nexora-engine:golden
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-engine:golden
           imagePullPolicy: Always
           args: ["--config", "/etc/nexora/engine.toml"]
           env:
@@ -532,7 +532,7 @@ spec:
                     app.kubernetes.io/instance: nexora
       initContainers:
         - name: migrate
-          image: 192.168.10.131/azrtydxb/nexora-mgmt:golden
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-mgmt:golden
           imagePullPolicy: Always
           args: ["migrate"]
           env:
@@ -548,7 +548,7 @@ spec:
               drop: [ALL]
       containers:
         - name: mgmt
-          image: 192.168.10.131/azrtydxb/nexora-mgmt:golden
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-mgmt:golden
           imagePullPolicy: Always
           args: ["serve"]
           ports:

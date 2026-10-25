@@ -27,7 +27,7 @@ func TestAssembledRuntimeMigration(t *testing.T) {
 			fleet := newFleetFixture(t, false, true)
 			store := &lockStore{}
 			var mutations []string
-			image := "192.168.10.131/azrtydxb/nexora-engine:sha-1234567"
+			image := "ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-engine:sha-1234567"
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
