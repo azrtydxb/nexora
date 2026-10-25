@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: toolbox
-          image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-2
+          image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-3
           command: ["sleep", "infinity"]
           env:
             # Shared test services on kw (deploy/kw/, observability namespace).

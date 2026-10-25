@@ -35,9 +35,10 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace); PostgreSQL fixtures run directly as dev. No container options:
+      # the ARC kubernetes-mode hooks ignore them.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     timeout-minutes: 45
     # Workspace-relative target dir (overrides the /tmp one above) so Swatinem/rust-cache finds it.
     env:
@@ -86,7 +87,7 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Caches ~/.cargo registry and the dependency part of target/ (workspace crates are cleaned
@@ -113,9 +114,10 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace); PostgreSQL fixtures run directly as dev. No container options:
+      # the ARC kubernetes-mode hooks ignore them.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     timeout-minutes: 45
     steps:
       - name: Install provisioned CI CA
@@ -160,7 +162,7 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
@@ -174,8 +176,8 @@ jobs:
           path: |
             /tmp/cache/go-build
             /tmp/cache/gomod
-          key: go-toolbox-2-mgmt-${{ hashFiles('go.sum', 'operator/go.sum') }}
-          restore-keys: go-toolbox-2-mgmt-
+          key: go-toolbox-3-mgmt-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-3-mgmt-
       - run: make webui-placeholder
       - name: gofmt
         run: test -z "$(gofmt -l mgmt e2e bench | tee /dev/stderr)"
@@ -209,9 +211,10 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace); PostgreSQL fixtures run directly as dev. No container options:
+      # the ARC kubernetes-mode hooks ignore them.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     timeout-minutes: 30
     steps:
       - name: Install provisioned CI CA
@@ -256,7 +259,7 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
@@ -270,8 +273,8 @@ jobs:
           path: |
             /tmp/cache/go-build
             /tmp/cache/gomod
-          key: go-toolbox-2-operator-${{ hashFiles('go.sum', 'operator/go.sum') }}
-          restore-keys: go-toolbox-2-operator-
+          key: go-toolbox-3-operator-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-3-operator-
       - name: gofmt
         run: test -z "$(gofmt -l operator | tee /dev/stderr)"
       - run: cd operator && go vet ./...
@@ -291,9 +294,10 @@ jobs:
   web:
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace); PostgreSQL fixtures run directly as dev. No container options:
+      # the ARC kubernetes-mode hooks ignore them.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     timeout-minutes: 30
     steps:
       - name: Install provisioned CI CA
@@ -338,7 +342,7 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Web checks and M8 unit tests
@@ -358,9 +362,10 @@ jobs:
   failover-contracts:
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      options: --user 0
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace); PostgreSQL fixtures run directly as dev. No container options:
+      # the ARC kubernetes-mode hooks ignore them.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     # The toolbox job container comes from the anonymous-read ci-images feed on the OKE
     # Ant (same cluster as the runners). It used to come from the kw Nexus name, which
     # took 15-30 minutes to pull; the generous timeout is kept as headroom.
@@ -408,11 +413,9 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install contract test prerequisite
-        run: apt-get update && apt-get install -y --no-install-recommends python3
       - run: make ci-coverage-test
       - name: Run ci-failover
         run: |
@@ -432,17 +435,21 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: arc-azrtydxb
     container:
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-2"
-      # Fixtures drop PostgreSQL to dev; prerequisite package installation needs root.
-      # The mDNS/netlab tests re-exec under `unshare -Urn`; Docker's default seccomp profile
-      # denies unshare(CLONE_NEWUSER) without CAP_SYS_ADMIN. Lifting only seccomp keeps every
-      # capability dropped (no --privileged, no --cap-add) and the namespaces stay unprivileged.
-      options: --user 0 --security-opt seccomp=unconfined
+      # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
+      # workflow pod's workspace). No container options: the ARC kubernetes-mode hooks ignore
+      # them. The mDNS/netlab tests re-exec under `unshare -Urn`; the workflow pod runs with the
+      # node's default (unconfined) seccomp, so unprivileged user namespaces work without
+      # --security-opt, every capability stays dropped and the namespaces stay unprivileged.
+      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
     timeout-minutes: 150
     # The e2e suite needs an OpenSearch and a Jaeger. The kw cluster hosts the shared ones
     # (deploy/dev/dev-pod.yaml), but the runners are on OKE where those names do not resolve,
-    # so each run gets its own as service containers (reachable by their service name from
-    # this job container). Same images as deploy/kw, security plugin off, memory-only Jaeger.
+    # so each run gets its own as service containers. In kubernetes container mode they are
+    # sidecars of the workflow pod, reachable on localhost only (service names do not resolve),
+    # and their health options are ignored, so a step below waits for them. Jaeger's ports
+    # (4317/4318/5778/14250/14268/16686) and OpenSearch's (9200/9300/9600) must stay clear of
+    # the suite's own listeners, which pick free 127.0.0.1 ports. Same images as deploy/kw,
+    # security plugin off, memory-only Jaeger.
     services:
       opensearch:
         image: opensearchproject/opensearch:3.8.0
@@ -452,19 +459,14 @@ jobs:
           DISABLE_SECURITY_PLUGIN: "true"
           DISABLE_INSTALL_DEMO_CONFIG: "true"
           OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
-        options: >-
-          --health-cmd "curl -fsS http://localhost:9200/_cluster/health"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 30
       jaeger:
         image: jaegertracing/all-in-one:1.62.0
         env:
           COLLECTOR_OTLP_ENABLED: "true"
           MEMORY_MAX_TRACES: "50000"
     env:
-      NEXORA_E2E_OPENSEARCH_URL: http://opensearch:9200
-      NEXORA_E2E_JAEGER_QUERY_URL: http://jaeger:16686
+      NEXORA_E2E_OPENSEARCH_URL: http://localhost:9200
+      NEXORA_E2E_JAEGER_QUERY_URL: http://localhost:16686
     steps:
       - name: Install provisioned CI CA
         env:
@@ -508,7 +510,7 @@ jobs:
           trap - EXIT
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      # The checkout is owned by the runner user, not the container's root; without this git (and
+      # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Go build and module caches. The pod is ephemeral, so /tmp/cache starts empty every run.
@@ -522,8 +524,14 @@ jobs:
           path: |
             /tmp/cache/go-build
             /tmp/cache/gomod
-          key: go-toolbox-2-e2e-${{ hashFiles('go.sum', 'operator/go.sum') }}
-          restore-keys: go-toolbox-2-e2e-
+          key: go-toolbox-3-e2e-${{ hashFiles('go.sum', 'operator/go.sum') }}
+          restore-keys: go-toolbox-3-e2e-
+      # The service containers start with the pod but nothing gates the job on their health.
+      - name: Wait for OpenSearch and Jaeger
+        timeout-minutes: 6
+        run: |
+          until curl -fsS --max-time 5 "$NEXORA_E2E_OPENSEARCH_URL/_cluster/health" >/dev/null; do sleep 5; done
+          until curl -fsS --max-time 5 "$NEXORA_E2E_JAEGER_QUERY_URL/api/services" >/dev/null; do sleep 5; done
       - name: Run ci-e2e
         run: |
           mkdir -p artifacts
