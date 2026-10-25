@@ -82,7 +82,7 @@ func TestKwClickHouseManifest(t *testing.T) {
 
 	sts := find(t, docs, "StatefulSet", "clickhouse")
 	c := container(t, sts, "clickhouse")
-	if img := c["image"]; img != "192.168.10.131/clickhouse/clickhouse-server:26.8.4.11" {
+	if img := c["image"]; img != "docker.io/clickhouse/clickhouse-server:26.8.4.11" {
 		t.Errorf("image = %v", img)
 	}
 	claims, _ := sts.path("spec", "volumeClaimTemplates").([]any)

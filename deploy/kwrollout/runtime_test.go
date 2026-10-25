@@ -23,7 +23,7 @@ func TestRenderedRuntimeStages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		image := "192.168.10.131/azrtydxb/nexora-engine:sha-1234567"
+		image := "ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-engine:sha-1234567"
 		if err := validateRenderedEngines(out, stage, image); err != nil {
 			t.Fatal(err)
 		}

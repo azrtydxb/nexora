@@ -1,6 +1,6 @@
 # kw release (scripts/kw-deploy.sh): helm upgrade --install nexora deploy/helm/nexora -n nexora -f deploy/kw/values-kw.yaml --set image.tag=<tag>
 image:
-  registry: 192.168.10.131/azrtydxb
+  registry: ant.kw.watteel.lab/oci-hosted/azrtydxb
   pullPolicy: Always # kw tags are rebuilt in place
 mgmt:
   replicas: 2
@@ -48,7 +48,7 @@ database:
 engine:
   kind: DaemonSet
   workers: 2
-  initImage: 192.168.10.131/library/busybox:1.37
+  initImage: docker.io/library/busybox:1.37
   ports: { dns: 53, metrics: 9153, dot: 853, doh: 443, doq: 853 }
   stateDir: { type: hostPath, hostPathPrefix: /var/lib/nexora }
   # Explicit memory limit: the engine caps its filter index at 50% of the cgroup limit (512 MiB here)

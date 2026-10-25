@@ -96,7 +96,7 @@ covering `mgmt/`, `e2e/`, `bench/`, `gen/go/`.
 ## Development workflow
 
 - The engine is Linux-only. All builds and tests run in the dev pod on kw
-  (`deploy/dev/`), image `192.168.10.131/azrtydxb/nexora-dev:<tag>`. Source is
+  (`deploy/dev/`), image `ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-dev:<tag>`. Source is
   synced with `scripts/dev-sync.sh` (rsync over `kubectl exec`), commands run
   with `scripts/dev-exec.sh <cmd>`.
 - Code is edited on the laptop (the source of truth; the pod copy is
@@ -107,7 +107,8 @@ covering `mgmt/`, `e2e/`, `bench/`, `gen/go/`.
 - `make` targets (run inside the dev pod): `make proto`, `make engine-test`,
   `make mgmt-test`, `make web-test`, `make e2e`, `make lint`, `make build`.
 - Images build on the kw BuildKit via `scripts/build-image.sh` and push to
-  Nexus `:5000`; deployments pull from `192.168.10.131/azrtydxb/...`.
+  Kuvryn Ant (`ant.azrty.com/oci-hosted/azrtydxb/...`); kw deployments pull
+  the replicated copy from `ant.kw.watteel.lab/oci-hosted/azrtydxb/...`.
 
 ## Engine
 

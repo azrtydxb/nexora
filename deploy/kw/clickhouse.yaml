@@ -71,7 +71,7 @@ spec:
       securityContext: { fsGroup: 101 } # the server runs as uid/gid 101; the volume is root-owned
       containers:
         - name: clickhouse
-          image: 192.168.10.131/clickhouse/clickhouse-server:26.8.4.11
+          image: docker.io/clickhouse/clickhouse-server:26.8.4.11
           env:
             - name: CLICKHOUSE_WRITER_PASSWORD
               valueFrom:

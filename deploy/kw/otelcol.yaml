@@ -85,7 +85,7 @@ spec:
         }
       containers:
         - name: otelcol
-          image: 192.168.10.131/otel/opentelemetry-collector-contrib:0.160.0
+          image: docker.io/otel/opentelemetry-collector-contrib:0.160.0
           args: ["--config=/conf/config.yaml"]
           env:
             - name: CLICKHOUSE_WRITER_PASSWORD
