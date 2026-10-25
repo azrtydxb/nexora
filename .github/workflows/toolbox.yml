@@ -41,15 +41,10 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: echo "tag=${INPUT_TAG:-toolbox-sha-${GITHUB_SHA::7}}" >> "$GITHUB_OUTPUT"
-      - name: Set up buildx
-        run: |
-          cat > "$RUNNER_TEMP/buildkitd.toml" <<'TOML'
-          [registry."docker.io"]
-            mirrors = ["ant.azrty.com"]
-          TOML
-          docker buildx create --name toolbox --driver docker-container \
-            --platform linux/arm64 --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
-          docker buildx inspect --bootstrap
+      # buildx on the runner pod's BuildKit sidecar (linux/arm64); its buildkitd.toml
+      # carries the Docker Hub mirror.
+      - id: builder
+        uses: azrtydxb/.github/actions/setup-builder@d021f2ca9fa3d6682085a7d069b7c8b1dc7b9b80 # main
       - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
         with:
           docker-login: "true"
@@ -61,9 +56,10 @@ jobs:
         with:
           context: deploy/dev
           file: deploy/dev/Dockerfile
-          builder: toolbox
+          builder: ${{ steps.builder.outputs.name }}
           platforms: linux/arm64
-          push: true
+          # Only main publishes; a manual run on another branch only builds.
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
             ant.azrty.com/ci-images/nexora-dev:${{ steps.meta.outputs.tag }}
             ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:${{ steps.meta.outputs.tag }}
