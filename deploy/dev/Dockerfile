@@ -11,7 +11,7 @@ ARG CLICKHOUSE_VERSION=26.8.4.11
 ARG LOKI_VERSION=3.6.7
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      postgresql postgresql-contrib \
+      postgresql postgresql-contrib python3 \
       dnsperf bind9 bind9-dnsutils knot-dnsutils ldnsutils \
       softhsm2 opensc libsofthsm2 \
       protobuf-compiler libprotobuf-dev clang lld cmake pkg-config libssl-dev \
@@ -42,10 +42,14 @@ RUN rustup component add clippy rustfmt \
  && go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2 \
  && go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 \
  && npx -y playwright@1.63.0 install --with-deps chromium \
- && useradd -m -s /bin/bash dev
+ && useradd -m -u 1001 -s /bin/bash dev
 
 # Default to an unprivileged user; the dedicated development pod explicitly
-# opts into root for namespace and PostgreSQL fixture orchestration.
+# opts into root for namespace and PostgreSQL fixture orchestration. dev is uid 1001,
+# the ARC runner's uid: in kubernetes container mode the CI job runs as this user in a
+# workflow pod whose workspace directories belong to uid 1001, so any other uid could not
+# write the checkout. python3 is baked in for the failover contract suite, which can no
+# longer apt-get it as root (the hooks ignore container options such as --user 0).
 USER dev
 WORKDIR /work/nexora
 CMD ["sleep", "infinity"]
