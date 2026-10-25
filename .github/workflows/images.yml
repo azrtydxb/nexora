@@ -83,7 +83,7 @@ jobs:
       # buildx on the runner pod's BuildKit sidecar, native to matrix.arch.runner; its
       # buildkitd.toml carries the Docker Hub mirror and the cluster CA.
       - id: builder
-        uses: azrtydxb/.github/actions/setup-builder@d021f2ca9fa3d6682085a7d069b7c8b1dc7b9b80 # main
+        uses: azrtydxb/.github/actions/setup-builder@a6fb8e66bd50b411a1f20b826567ef320aec469b # main
       - id: ant
         uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
         with:
