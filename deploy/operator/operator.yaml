@@ -167,7 +167,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: operator
-          image: 192.168.10.131/azrtydxb/nexora-operator:main
+          image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-operator:main
           imagePullPolicy: IfNotPresent
           args:
             - --chart-dir=/charts/nexora

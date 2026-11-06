@@ -38,7 +38,7 @@ services:
     restart: "no"
 
   ca-init:
-    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    image: ${NEXORA_REGISTRY:-ant.azrty.com/oci-hosted/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
     command: ["ca", "init", "--out", "/var/lib/nexora-ca", "--if-missing"]
     user: "65532:65532"
     volumes:
@@ -48,7 +48,7 @@ services:
     restart: "no"
 
   migrate:
-    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    image: ${NEXORA_REGISTRY:-ant.azrty.com/oci-hosted/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
     command: ["migrate"]
     environment:
       NEXORA_DATABASE_URL: postgres://nexora@postgres:5432/nexora?sslmode=disable&passfile=/run/secrets/pgpass
@@ -58,7 +58,7 @@ services:
     restart: "no"
 
   mgmt:
-    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    image: ${NEXORA_REGISTRY:-ant.azrty.com/oci-hosted/azrtydxb}/nexora-mgmt:${NEXORA_TAG:?set NEXORA_TAG in .env}
     command: ["serve"]
     user: "65532:65532"
     restart: unless-stopped
@@ -82,7 +82,7 @@ services:
       migrate: { condition: service_completed_successfully }
 
   engine:
-    image: ${NEXORA_REGISTRY:-192.168.10.131/azrtydxb}/nexora-engine:${NEXORA_TAG:?set NEXORA_TAG in .env}
+    image: ${NEXORA_REGISTRY:-ant.azrty.com/oci-hosted/azrtydxb}/nexora-engine:${NEXORA_TAG:?set NEXORA_TAG in .env}
     profiles: ["engine"]
     restart: unless-stopped
     command: ["--config", "/etc/nexora/engine.toml"]

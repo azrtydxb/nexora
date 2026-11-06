@@ -18,7 +18,7 @@ spec:
                 values: [worker-21, worker-22, worker-23]
   containers:
     - name: probe
-      image: 192.168.10.131/azrtydxb/nexora-dev:toolbox-1
+      image: ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-dev:toolbox-1
       command: ["sleep", "infinity"]
       resources:
         requests: { cpu: 100m, memory: 128Mi }

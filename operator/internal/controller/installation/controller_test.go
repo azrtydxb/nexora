@@ -327,7 +327,7 @@ func TestInstallationDefaultsImageTagToOperatorVersion(t *testing.T) {
 	inst := e.reconcile()
 	var mgmt appsv1.Deployment
 	_ = e.get(&mgmt, "nexora-mgmt")
-	if img := mgmt.Spec.Template.Spec.Containers[0].Image; img != "192.168.10.131/azrtydxb/nexora-mgmt:sha-abc1234" || inst.Status.Version != "sha-abc1234" {
+	if img := mgmt.Spec.Template.Spec.Containers[0].Image; img != "ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-mgmt:sha-abc1234" || inst.Status.Version != "sha-abc1234" {
 		t.Fatalf("image %s version %s", img, inst.Status.Version)
 	}
 	e.r.OperatorVersion = "dev"

@@ -77,7 +77,7 @@ func TestOperatorChart(t *testing.T) {
 	find(t, cluster, "ClusterRoleBinding", "nexora-operator")
 	d := find(t, cluster, "Deployment", "nexora-operator")
 	c := container(t, d, "operator")
-	if c["image"] != "192.168.10.131/azrtydxb/nexora-operator:sha-1234567" {
+	if c["image"] != "ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-operator:sha-1234567" {
 		t.Errorf("image = %v", c["image"])
 	}
 	if a := args(t, d); !strings.Contains(a, "--chart-dir=/charts/nexora") || strings.Contains(a, "--watch-namespaces") {

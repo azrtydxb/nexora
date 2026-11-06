@@ -6,7 +6,7 @@ metadata:
   name: nexora-optest
 spec:
   image:
-    registry: 192.168.10.131/azrtydxb
+    registry: ant.kw.watteel.lab/oci-hosted/azrtydxb
     tag: TAG
     pullPolicy: Always
   mgmt:
@@ -28,7 +28,7 @@ spec:
   engine:
     kind: DaemonSet
     workers: 2
-    initImage: 192.168.10.131/library/busybox:1.37
+    initImage: docker.io/library/busybox:1.37
     stateDir:
       type: hostPath
       hostPathPrefix: /var/lib/nexora-optest

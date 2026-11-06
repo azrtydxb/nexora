@@ -4,9 +4,8 @@
 #   ant.azrty.com/ci-images/nexora-dev:<tag>            anonymous-read feed the CI job
 #                                                       containers pull from (ci.yml, fuzz.yml)
 #   ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:<tag>  kw replicates oci-hosted, so the toolbox
-#                                                       pod and the node rewrite of the old
-#                                                       192.168.10.131/azrtydxb/nexora-dev:<tag>
-#                                                       name pick it up from kw's Ant
+#                                                       pod pulls it from kw's Ant as
+#                                                       ant.kw.watteel.lab/oci-hosted/azrtydxb/nexora-dev:<tag>
 # Both are also copied to ghcr.io/azrtydxb/nexora-dev:<tag>, which the GitHub-hosted CI job
 # containers pull with the workflow token (ghcr-mirror job).
 # Bump the toolbox-N reference in ci.yml / fuzz.yml / deploy/dev/dev-pod.yaml

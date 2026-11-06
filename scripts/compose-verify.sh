@@ -2,12 +2,15 @@
 # Runs the "Install with Docker Compose" and "Plain PostgreSQL and Compose" steps of docs/operations.md
 # on a Docker host over ssh, checks enrollment, DNS, the collector, backup and restore, and removes
 # everything it created. Usage: scripts/compose-verify.sh user@host
+# The images come from the org Kuvryn Ant; log the laptop in first with an Ant personal access
+# token or publish token (never put it in the repository):
+#   docker login ant.azrty.com -u x --password-stdin
 # shellcheck disable=SC2016 # single-quoted commands expand on the host, not here
 set -euo pipefail
 HOST=${1:?usage: scripts/compose-verify.sh user@host}
 ADDR=${HOST#*@}
 TAG=${NEXORA_TAG:-sha-$(git rev-parse --short=7 HEAD)}
-SRC=${NEXORA_SOURCE_REGISTRY:-192.168.10.131:5000/azrtydxb}
+SRC=${NEXORA_SOURCE_REGISTRY:-ant.azrty.com/oci-hosted/azrtydxb}
 DIR=nexora-compose-verify
 API=http://$ADDR:18080/api/v1
 WORK=$(mktemp -d)
@@ -28,8 +31,7 @@ arch=$(ssh -o BatchMode=yes "$HOST" 'uname -m')
 case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
 ssh -o BatchMode=yes "$HOST" "test ! -e ~/$DIR && docker image ls -q | sort -u > ~/$DIR.images-before"
 for image in nexora-mgmt nexora-engine; do
-	# --insecure: the kw Nexus certificate is not in the laptop's trust store either.
-	crane pull --insecure --platform "linux/$arch" "$SRC/$image:$TAG" "$WORK/$image.tar"
+	crane pull --platform "linux/$arch" "$SRC/$image:$TAG" "$WORK/$image.tar"
 	ssh -o BatchMode=yes "$HOST" 'docker load' <"$WORK/$image.tar" >/dev/null
 done
 ok pull
