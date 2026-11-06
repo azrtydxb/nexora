@@ -13,6 +13,7 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
+  packages: read # pull the toolbox from ghcr.io
   id-token: write
 concurrency:
   group: ci-${{ github.ref }}
@@ -37,7 +38,10 @@ jobs:
     container:
       # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
       # workspace); PostgreSQL fixtures run directly as dev.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 45
     # Workspace-relative target dir (overrides the /tmp one above) so Swatinem/rust-cache finds it.
     env:
@@ -115,7 +119,10 @@ jobs:
     container:
       # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
       # workspace); PostgreSQL fixtures run directly as dev.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 45
     steps:
       - name: Install provisioned CI CA
@@ -211,7 +218,10 @@ jobs:
     container:
       # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
       # workspace); PostgreSQL fixtures run directly as dev.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 30
     steps:
       - name: Install provisioned CI CA
@@ -293,7 +303,10 @@ jobs:
     container:
       # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
       # workspace); PostgreSQL fixtures run directly as dev.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 30
     steps:
       - name: Install provisioned CI CA
@@ -360,7 +373,10 @@ jobs:
     container:
       # Runs as the image's unprivileged dev user (uid 1001, the runner's uid, so it owns the
       # workspace); PostgreSQL fixtures run directly as dev.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     # The toolbox job container comes from the anonymous-read ci-images feed on the OKE
     # Ant (same cluster as the runners). It used to come from the kw Nexus name, which
     # took 15-30 minutes to pull; the generous timeout is kept as headroom.
@@ -434,7 +450,10 @@ jobs:
       # workspace). The mDNS/netlab tests re-exec under `unshare -Urn`, which Docker's default
       # seccomp profile blocks, so the container runs with seccomp unconfined; every capability
       # stays dropped and the namespaces stay unprivileged.
-      image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3"
+      image: "ghcr.io/azrtydxb/nexora-dev:toolbox-3"
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
       options: --security-opt seccomp=unconfined
     timeout-minutes: 150
     # The e2e suite needs an OpenSearch and a Jaeger: each run gets its own as service containers,
