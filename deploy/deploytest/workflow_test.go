@@ -39,37 +39,29 @@ func TestImagesWorkflow(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &wf); err != nil {
 		t.Fatal(err)
 	}
-	build, merge := wf.Jobs["build"], wf.Jobs["merge"]
-	images, archs := map[string]bool{}, map[string]bool{}
+	build := wf.Jobs["build"]
+	images := map[string]bool{}
 	for _, im := range build.Strategy.Matrix["image"].([]any) {
 		images[im.(map[string]any)["name"].(string)] = true
-	}
-	for _, a := range build.Strategy.Matrix["arch"].([]any) {
-		m := a.(map[string]any)
-		archs[fmt.Sprint(m["runner"], "|", m["platform"])] = true
 	}
 	for _, want := range []string{"nexora-engine", "nexora-mgmt", "nexora-operator"} {
 		if !images[want] {
 			t.Errorf("build matrix lacks image %s", want)
 		}
 	}
-	for _, want := range []string{"arc-azrtydxb|linux/arm64", "arc-azrtydxb-amd64|linux/amd64"} {
-		if !archs[want] {
-			t.Errorf("build matrix lacks %s", want)
-		}
+	if build.RunsOn != "ubuntu-latest" {
+		t.Errorf("build runs-on %q, want a GitHub-hosted ubuntu-latest", build.RunsOn)
 	}
-	if build.RunsOn != "${{ matrix.arch.runner }}" || merge.RunsOn != "arc-azrtydxb" || merge.Needs != "build" {
-		t.Errorf("runs-on/needs: build %q merge %q needs %v", build.RunsOn, merge.RunsOn, merge.Needs)
-	}
-	pinned := regexp.MustCompile(`^[^@]+@[0-9a-f]{40}$`)
+	// Actions are referenced by version tag (policy), never by commit hash.
+	tagged := regexp.MustCompile(`^[^@]+@v[0-9][0-9.]*$|^azrtydxb/\.github/.+@main$`)
 	var all strings.Builder
 	for name, j := range wf.Jobs {
 		if j.TimeoutMinutes == 0 {
 			t.Errorf("job %s has no timeout-minutes", name)
 		}
 		for _, s := range j.Steps {
-			if s.Uses != "" && !pinned.MatchString(s.Uses) {
-				t.Errorf("job %s step %q uses unpinned action %s", name, s.Name, s.Uses)
+			if s.Uses != "" && !tagged.MatchString(s.Uses) {
+				t.Errorf("job %s step %q does not use a version tag: %s", name, s.Name, s.Uses)
 			}
 			all.WriteString(s.Run)
 			for _, v := range s.With {
@@ -77,7 +69,7 @@ func TestImagesWorkflow(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"push-by-digest=true", "ant.azrty.com/oci-hosted/azrtydxb", "ant-setup-action", "imagetools create", "sha-${GITHUB_SHA::7}",
+	for _, want := range []string{"linux/amd64,linux/arm64", "ant.azrty.com/oci-hosted/azrtydxb", "ant-setup-action", "imagetools inspect", "sha-${GITHUB_SHA::7}",
 		`grep -q '"arm64"'`, `grep -q '"amd64"'`} {
 		if !strings.Contains(all.String()+string(raw), want) {
 			t.Errorf("workflow does not contain %q", want)

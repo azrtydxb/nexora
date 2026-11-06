@@ -27,6 +27,8 @@ defaults:
     shell: bash
 env:
   CARGO_TARGET_DIR: /tmp/target
+  # The toolbox's /usr/local/cargo is root-owned; the job runs as the unprivileged dev user.
+  CARGO_HOME: /tmp/cargo
   GOCACHE: /tmp/cache/go-build
   GOMODCACHE: /tmp/cache/gomod
   PNPM_HOME: /tmp/cache/pnpm
