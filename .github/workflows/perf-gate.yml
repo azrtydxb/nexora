@@ -86,14 +86,14 @@ jobs:
       # Container root does not own the runner's checkout; trust it so git and go build's VCS
       # stamping work (ephemeral container, so trusting every path is harmless).
       - run: git config --global --add safe.directory '*'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with: { path: head }
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azrtydxb/ant-setup-action@v1
+      - uses: actions/checkout@v7
         with:
           path: base
           ref: "${{ github.event.pull_request.base.sha || github.sha }}"
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: azrtydxb/ant-setup-action@v1
       - name: Build base and head engines, fixture and perfgate
         run: |
           (cd base && CARGO_TARGET_DIR=/tmp/target-base cargo build --locked --release -p nexora-engine)
@@ -136,7 +136,7 @@ jobs:
           done
           files() { seq 1 9 | sed "s/.*/filter-$1-&.json/" | paste -sd, -; }
           ./perfgate filter-compare --base "$(files base)" --head "$(files head)" --max-regress 0.05
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: perf-relative, path: "*.json" }
 
@@ -201,8 +201,8 @@ jobs:
       # Container root does not own the runner's checkout; trust it so git and go build's VCS
       # stamping work (ephemeral container, so trusting every path is harmless).
       - run: git config --global --add safe.directory '*'
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       - name: Build release binaries
         run: |
           cargo build --locked --release -p nexora-engine
@@ -224,6 +224,6 @@ jobs:
       - name: Stop the engine
         if: always()
         run: ssh -i ~/.ssh/nexora-ref "$REF_HOST" 'kill $(cat /tmp/perfgate.pid)' || true
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: perf-absolute, path: absolute.json }

@@ -36,7 +36,7 @@ jobs:
     runs-on: arc-azrtydxb
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
       - id: meta
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -44,15 +44,15 @@ jobs:
       # buildx on the runner pod's BuildKit sidecar (linux/arm64); its buildkitd.toml
       # carries the Docker Hub mirror.
       - id: builder
-        uses: azrtydxb/.github/actions/setup-builder@a6fb8e66bd50b411a1f20b826567ef320aec469b # main
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+        uses: azrtydxb/.github/actions/setup-builder@main
+      - uses: azrtydxb/ant-setup-action@v1
         with:
           docker-login: "true"
           required: "true"
           go: "false"
           cargo: "false"
           pip: "false"
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@v7
         with:
           context: deploy/dev
           file: deploy/dev/Dockerfile

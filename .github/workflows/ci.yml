@@ -85,15 +85,15 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # Caches ~/.cargo registry and the dependency part of target/ (workspace crates are cleaned
       # out before save). Keyed on Cargo.lock and the toolchain, so it saves only when those change,
       # and only from main: an untrusted PR never writes the cache and big uploads stay rare.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
@@ -160,8 +160,8 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -171,7 +171,7 @@ jobs:
       # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
       - name: Restore Go cache
         id: go-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -192,7 +192,7 @@ jobs:
       # Only trusted main pushes write the cache; PRs restore from it.
       - name: Save Go cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -200,7 +200,7 @@ jobs:
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
       - name: Retain raw race output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ci-race
           path: artifacts/
@@ -257,8 +257,8 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -268,7 +268,7 @@ jobs:
       # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
       - name: Restore Go cache
         id: go-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -284,7 +284,7 @@ jobs:
       # Only trusted main pushes write the cache; PRs restore from it.
       - name: Save Go cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -340,8 +340,8 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -351,7 +351,7 @@ jobs:
           make web-test web-unit-test 2>&1 | tee artifacts/web.log
       - name: Retain web output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ci-web
           path: |
@@ -411,8 +411,8 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -423,7 +423,7 @@ jobs:
           make ci-failover 2>&1 | tee artifacts/failover-contracts.log
       - name: Retain verification output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ci-failover-contracts
           path: |
@@ -508,8 +508,8 @@ jobs:
           	echo "CURL_CA_BUNDLE=$ca_dir/ca-bundle.crt"
           } >>"$GITHUB_ENV"
           trap - EXIT
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azrtydxb/ant-setup-action@7c6f1b8ca34a0a127b43040f4e16bbafdbd83791 # v1
+      - uses: actions/checkout@v7
+      - uses: azrtydxb/ant-setup-action@v1
       # The checkout may be owned by a different uid than the step user; without this git (and
       # go build's VCS stamping) refuses the repository as dubious ownership.
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -519,7 +519,7 @@ jobs:
       # is content-addressed, so an older entry can only cost a rebuild, never a stale result.
       - name: Restore Go cache
         id: go-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -539,7 +539,7 @@ jobs:
       # Only trusted main pushes write the cache; PRs restore from it.
       - name: Save Go cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: |
             /tmp/cache/go-build
@@ -547,7 +547,7 @@ jobs:
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
       - name: Retain verification output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ci-e2e
           path: |
