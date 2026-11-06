@@ -17,7 +17,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: cleanup
-          image: 192.168.10.131/library/busybox:1.37
+          image: docker.io/library/busybox:1.37
           # The parent is mounted: a mount point itself cannot be removed.
           command: ["rm", "-rf", "/host/var/lib/nexora-optest"]
           volumeMounts:

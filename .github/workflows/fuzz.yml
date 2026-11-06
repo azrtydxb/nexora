@@ -31,7 +31,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     # One hour of fuzzing plus the toolbox pull (ci-images feed on the OKE Ant; it was
-    # 15-30 minutes from the kw Nexus name) and the fuzz build: 80 minutes cancelled it.
+    # 15-30 minutes from a slow on-prem registry) and the fuzz build: 80 minutes cancelled it.
     timeout-minutes: 110
     steps:
       - name: Install provisioned CI CA

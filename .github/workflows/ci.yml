@@ -380,7 +380,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     # The toolbox job container comes from the anonymous-read ci-images feed on the OKE
-    # Ant (same cluster as the runners). It used to come from the kw Nexus name, which
+    # Ant (same cluster as the runners). It used to come from a slow on-prem registry, which
     # took 15-30 minutes to pull; the generous timeout is kept as headroom.
     timeout-minutes: 35
     steps:

@@ -14,8 +14,8 @@ concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: false
 env:
-  # Push to the authoritative Kuvryn Ant (OKE); kw replicates oci-hosted and serves the old
-  # 192.168.10.131/azrtydxb/<image> names through the node registry rewrite.
+  # Push to the authoritative Kuvryn Ant (OKE); kw replicates oci-hosted and pulls
+  # ant.kw.watteel.lab/oci-hosted/azrtydxb/<image>.
   REGISTRY: ant.azrty.com/oci-hosted/azrtydxb
 jobs:
   # One job per image builds linux/amd64 + linux/arm64 together on a GitHub-hosted runner and pushes

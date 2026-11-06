@@ -1,5 +1,5 @@
 image:
-  registry: 192.168.10.131/azrtydxb
+  registry: ant.kw.watteel.lab/oci-hosted/azrtydxb
   # Default: the chart appVersion.
   tag: ""
   pullPolicy: IfNotPresent

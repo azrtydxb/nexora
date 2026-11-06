@@ -88,4 +88,4 @@ DOCKER_CONFIG="$work/docker" buildctl --addr "$addr" \
 	--opt build-arg:COMMIT="$commit" \
 	--opt build-arg:BUILD_DATE="$build_date" \
 	--output "type=image,name=${image},push=true"
-echo "pull on kw as ant.kw.watteel.lab/oci-hosted/azrtydxb/${name}:${tag} (or the legacy 192.168.10.131/azrtydxb/${name}:${tag} via the node rewrite) once replicated"
+echo "pull on kw as ant.kw.watteel.lab/oci-hosted/azrtydxb/${name}:${tag} once replicated"
