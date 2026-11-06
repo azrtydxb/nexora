@@ -2,7 +2,6 @@
 package deploytest
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"strings"

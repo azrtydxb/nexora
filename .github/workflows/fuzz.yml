@@ -18,6 +18,7 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TARGET_DIR: /tmp/target
+  CARGO_HOME: /tmp/cargo
 jobs:
   parse_query:
     # The dev toolbox image carries the nightly toolchain, cargo-fuzz and protoc (deploy/dev/Dockerfile).
