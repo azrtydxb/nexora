@@ -34,7 +34,7 @@ jobs:
     # Base and head run interleaved on the same pod, so only their ratio matters, not the absolute
     # numbers. The dedicated amd64 scale set (14 CPU) keeps other jobs' load off the measurement;
     # the toolbox image is arm64-only, so the tools are installed as in the absolute job.
-    runs-on: arc-azrtydxb-amd64
+    runs-on: ubuntu-latest
     container: { image: "rust:1.97-trixie" }
     timeout-minutes: 75
     steps:
@@ -146,7 +146,7 @@ jobs:
     if: github.event_name != 'pull_request' && vars.NEXORA_REFERENCE_HOST != ''
     # debt: the load is generated from an amd64 ARC pod rather than a dedicated load host, so a
     # failing run may be the pod's ceiling; revisit when a dedicated load host joins the org.
-    runs-on: arc-azrtydxb-amd64
+    runs-on: ubuntu-latest
     container: { image: "rust:1.97-trixie" }
     timeout-minutes: 90
     env:

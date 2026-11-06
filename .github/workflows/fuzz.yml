@@ -22,7 +22,7 @@ jobs:
     # The dev toolbox image carries the nightly toolchain, cargo-fuzz and protoc (deploy/dev/Dockerfile).
     # toolbox-3's dev user is uid 1001, the runner's uid, so it can write the kubernetes-mode
     # workflow pod's workspace.
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-24.04-arm
     container: { image: "ant.azrty.com/ci-images/nexora-dev:toolbox-3" }
     # One hour of fuzzing plus the toolbox pull (ci-images feed on the OKE Ant; it was
     # 15-30 minutes from the kw Nexus name) and the fuzz build: 80 minutes cancelled it.
