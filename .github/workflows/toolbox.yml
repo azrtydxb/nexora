@@ -7,6 +7,8 @@
 #                                                       pod and the node rewrite of the old
 #                                                       192.168.10.131/azrtydxb/nexora-dev:<tag>
 #                                                       name pick it up from kw's Ant
+# Both are also copied to ghcr.io/azrtydxb/nexora-dev:<tag>, which the GitHub-hosted CI job
+# containers pull with the workflow token (ghcr-mirror job).
 # Bump the toolbox-N reference in ci.yml / fuzz.yml / deploy/dev/dev-pod.yaml
 # after publishing a new tag.
 name: toolbox
@@ -22,10 +24,15 @@ on:
       tag:
         description: "Tag to publish (for example toolbox-3); default toolbox-sha-<short>"
         required: false
+      mirror_only:
+        description: "Skip the build and only copy an already published Ant tag to ghcr.io"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: toolbox-${{ github.ref }}
@@ -33,7 +40,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: arc-azrtydxb
+    if: ${{ !inputs.mirror_only }}
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
@@ -41,10 +49,8 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: echo "tag=${INPUT_TAG:-toolbox-sha-${GITHUB_SHA::7}}" >> "$GITHUB_OUTPUT"
-      # buildx on the runner pod's BuildKit sidecar (linux/arm64); its buildkitd.toml
-      # carries the Docker Hub mirror.
-      - id: builder
-        uses: azrtydxb/.github/actions/setup-builder@main
+      # Native linux/arm64 build on a GitHub-hosted arm64 runner (no emulation).
+      - uses: docker/setup-buildx-action@v4
       - uses: azrtydxb/ant-setup-action@v1
         with:
           docker-login: "true"
@@ -56,7 +62,6 @@ jobs:
         with:
           context: deploy/dev
           file: deploy/dev/Dockerfile
-          builder: ${{ steps.builder.outputs.name }}
           platforms: linux/arm64
           # Only main publishes; a manual run on another branch only builds.
           push: ${{ github.ref == 'refs/heads/main' }}
@@ -65,3 +70,28 @@ jobs:
             ant.azrty.com/oci-hosted/azrtydxb/nexora-dev:${{ steps.meta.outputs.tag }}
           provenance: false
           sbom: false
+
+  # GitHub-hosted job containers are pulled by the Docker daemon, which cannot pull from Ant
+  # (it challenges /v2/ with Basic auth and the daemon will not fall back to anonymous), so
+  # ci.yml and fuzz.yml pull the toolbox from ghcr.io with the workflow token. This copies the
+  # published tag over (registry to registry, no rebuild) and labels it with the source repo so
+  # the package is linked to it.
+  ghcr-mirror:
+    needs: build
+    if: ${{ always() && needs.build.result != 'failure' && needs.build.result != 'cancelled' && (github.ref == 'refs/heads/main' || inputs.mirror_only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install crane
+        run: curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz | sudo tar -xz -C /usr/local/bin crane
+      - name: Copy the toolbox from Ant to ghcr.io
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-toolbox-sha-${GITHUB_SHA::7}}"
+          echo "$GHCR_TOKEN" | crane auth login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          crane mutate "ant.azrty.com/ci-images/nexora-dev:${tag}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER}/nexora-dev:${tag}"

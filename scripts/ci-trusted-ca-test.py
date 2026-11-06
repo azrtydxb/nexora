@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/ci-trusted-ca.sh"
-COUNTS = {"ci": 6, "fuzz": 1, "perf-gate": 2, "images": 2}
+COUNTS = {"ci": 6, "fuzz": 1, "perf-gate": 2, "images": 1}
 
 
 def wiring_errors(name, text):
@@ -34,10 +34,10 @@ def wiring_errors(name, text):
     if "    shell: bash\n" not in text:
         errors.append("shell failure propagation")
     if name == "images":
-        # Images build on the runner pod's BuildKit sidecar, whose buildkitd.toml
-        # carries the registry mirror and cluster CA; no per-job builder or
-        # inline registry trust.
-        if "uses: azrtydxb/.github/actions/setup-builder@" not in text or (
+        # Images build on a GitHub-hosted runner with the stock buildx builder;
+        # no ARC BuildKit-sidecar builder and no inline registry trust.
+        if "uses: docker/setup-buildx-action@" not in text or (
+            "azrtydxb/.github/actions/setup-builder@" in text or
             "--driver docker-container" in text or "[registry." in text
         ):
             errors.append("registry trust")
@@ -87,8 +87,8 @@ class TrustedCATests(unittest.TestCase):
             wiring_errors(
                 "images",
                 text.replace(
-                    "uses: azrtydxb/.github/actions/setup-builder@",
                     "uses: docker/setup-buildx-action@",
+                    "uses: azrtydxb/.github/actions/setup-builder@",
                 ),
             ),
         )
