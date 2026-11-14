@@ -1,5 +1,10 @@
 # Nexora's PostgreSQL on kw. CNPG generates the application password into the secret
 # nexora-db-app (key `uri` is the connection string nexora-mgmt reads); it is never written down.
+#
+# WAL is archived continuously and a base backup is taken hourly (plus a daily anchor) to TrueNAS
+# MinIO (kw-backup/nexora-db) through the barman-cloud plugin, the same way shared-pg and ant-pg do.
+# The MinIO key is the `kuvryn-backup` service account in the `nexora-db-backup-credentials` Secret,
+# created out of band (a copy of shared-pg's `shared-pg-backup-credentials`), not in git.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -23,3 +28,63 @@ spec:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { cpu: "1", memory: 1Gi }
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: nexora-db-backups
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: nexora-db-backups
+  namespace: nexora
+spec:
+  retentionPolicy: "7d"
+  configuration:
+    # No trailing slash: MinIO rejects the "//" barman would build from one.
+    destinationPath: s3://kw-backup/nexora-db
+    endpointURL: http://192.168.10.253:9000
+    s3Credentials:
+      accessKeyId: { name: nexora-db-backup-credentials, key: ACCESS_KEY_ID }
+      secretAccessKey:
+        { name: nexora-db-backup-credentials, key: ACCESS_SECRET_KEY }
+      region: { name: nexora-db-backup-credentials, key: REGION }
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip
+  instanceSidecarConfiguration:
+    env:
+      # MinIO rejects the default CRC checksums newer boto3 sends; request them only when required.
+      - { name: AWS_REQUEST_CHECKSUM_CALCULATION, value: when_required }
+      - { name: AWS_RESPONSE_CHECKSUM_VALIDATION, value: when_required }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: nexora-db-hourly
+  namespace: nexora
+spec:
+  schedule: "0 0 * * * *" # top of every hour UTC (seconds first)
+  immediate: true
+  backupOwnerReference: self
+  cluster: { name: nexora-db }
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: nexora-db-daily
+  namespace: nexora
+spec:
+  schedule: "0 30 2 * * *" # 02:30 UTC daily anchor
+  immediate: true
+  backupOwnerReference: self
+  cluster: { name: nexora-db }
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
